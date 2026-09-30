@@ -206,6 +206,7 @@ mod tests {
             total_count: total,
             unique_count: unique,
             unique_count_is_approximate: unique.map(|_| false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
@@ -414,6 +415,7 @@ mod tests {
             duplicate_rows: 40,
             rows_checked: 1000,
             approximate: true,
+            max_duplicate_rows: 40,
         };
         let with = calculator
             .calculate(&data, &profiles, 1000, &[], Some(summary))

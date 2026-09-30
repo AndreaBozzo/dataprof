@@ -956,9 +956,11 @@ impl QualityPolicy {
                 "the estimated duplicate-row count is above the allowance"
             }
             CheckStatus::Failed => "duplicate rows were observed above the allowance",
+            // Every row may have been read: the gap is the estimate, which
+            // can neither witness duplicates nor rule them out (#819).
             CheckStatus::NotEvaluated(_) if estimated => {
-                "the duplicate-row count is estimated, so it witnesses nothing about the \
-                 rows that were not read"
+                "the duplicate-row count is an estimate, which can neither witness \
+                 duplicates above the allowance nor rule them out"
             }
             CheckStatus::NotEvaluated(_) => {
                 "no duplicate above the allowance was observed, and the rows that were not \
@@ -1214,6 +1216,7 @@ mod tests {
             total_count: total,
             unique_count: None,
             unique_count_is_approximate: None,
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
@@ -1837,11 +1840,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.verdict, Verdict::Inconclusive);
+        let check = check_for(&result, CheckCode::MaxDuplicateRows);
         assert_eq!(
-            check_for(&result, CheckCode::MaxDuplicateRows).not_evaluated(),
+            check.not_evaluated(),
             Some(&NotEvaluated::EvidenceIncomplete {
                 gap: EvidenceGap::Truncated
             })
+        );
+        // The gap is the estimate, not unread rows: the message said "the rows
+        // that were not read" on a source read to the end (#819).
+        assert_eq!(
+            check.message,
+            "the duplicate-row count is an estimate, which can neither witness \
+             duplicates above the allowance nor rule them out"
         );
     }
 

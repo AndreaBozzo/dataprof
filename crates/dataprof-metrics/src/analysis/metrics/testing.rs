@@ -33,6 +33,7 @@ pub(super) fn string_profile(name: &str, total: usize, nulls: usize) -> ColumnPr
         total_count: total,
         unique_count: Some(unique_count),
         unique_count_is_approximate: Some(false),
+        unique_count_lower_bound: None,
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,

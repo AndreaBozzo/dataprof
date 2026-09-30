@@ -31,7 +31,7 @@ use super::utils::is_likely_date_column;
 use super::validity::ValidityCalculator;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::quality::{ScoreBounds, ScoreInterval};
+use crate::quality::{RowDuplicateSummary, ScoreBounds, ScoreInterval};
 use crate::types::{ColumnProfile, QualityDimension, QualityMetrics};
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -95,6 +95,7 @@ pub(crate) fn score_bounds(
     temporal_columns: &[String],
     metrics: &QualityMetrics,
     sampled: &[String],
+    row_duplicates: Option<RowDuplicateSummary>,
 ) -> Result<Option<ScoreBounds>, DataProfilerError> {
     if sampled.is_empty() {
         return Ok(None);
@@ -143,6 +144,12 @@ pub(crate) fn score_bounds(
         };
         let interval = match shares.get(&dimension) {
             None => Some((score, score)),
+            // Uniqueness is not a share of failing values; its sampled
+            // components are estimated counts, bounded with certainty from
+            // what the exact sets held.
+            Some(None) if dimension == QualityDimension::Uniqueness => {
+                uniqueness_interval(metrics, column_profiles, row_duplicates, &is_sampled)
+            }
             Some(None) => None,
             Some(Some(dimension_shares)) => Some(dimension_interval(dimension_shares, log_term)),
         };
@@ -183,6 +190,70 @@ pub(crate) fn score_bounds(
             })
             .collect(),
     }))
+}
+
+/// An interval for the uniqueness score that holds with certainty, or `None`
+/// when a sampled component has nothing to bound it with (#819).
+///
+/// The score is the mean of two components, as in
+/// [`QualityMetrics::uniqueness_score`], and each is bounded on its own:
+///
+/// - Share of non-duplicate rows. An estimated count comes from a row tracker
+///   whose exact set was dropped; it held that many distinct rows then, so
+///   there are at most `max_duplicate_rows` duplicates and at least none. A
+///   duplicate scan over a sample (engines without a tracker) is not bounded.
+/// - Key uniqueness, the key column's distinct count over its rows. An
+///   estimated count is at least what the column's exact set held, and at
+///   most its non-null values.
+///
+/// Neither bound is probabilistic, so neither spends any of the error budget
+/// the sampled shares split.
+fn uniqueness_interval(
+    metrics: &QualityMetrics,
+    column_profiles: &[ColumnProfile],
+    row_duplicates: Option<RowDuplicateSummary>,
+    is_sampled: &dyn Fn(&str) -> bool,
+) -> Option<(f64, f64)> {
+    let uniqueness = metrics.uniqueness.as_ref().filter(|u| u.is_assessed())?;
+    let mut components: Vec<(f64, f64)> = Vec::new();
+
+    if uniqueness.rows_checked > 0 {
+        let rows = uniqueness.rows_checked as f64;
+        let share = |duplicates: usize| (1.0 - duplicates as f64 / rows) * 100.0;
+        if !is_sampled("duplicate_rows") {
+            let exact = share(uniqueness.duplicate_rows);
+            components.push((exact, exact));
+        } else {
+            // Only a tracker's estimate has a floor; its summary carries it.
+            let summary = row_duplicates.filter(|summary| {
+                summary.rows_checked == uniqueness.rows_checked && summary.approximate
+            })?;
+            components.push((share(summary.max_duplicate_rows), 100.0));
+        }
+    }
+
+    if let Some(key) = uniqueness.key_column.as_deref() {
+        if !is_sampled("key_uniqueness") {
+            components.push((uniqueness.key_uniqueness, uniqueness.key_uniqueness));
+        } else {
+            let profile = column_profiles.iter().find(|profile| profile.name == key)?;
+            let floor = profile.unique_count_lower_bound?;
+            let total = profile.total_count as f64;
+            if total == 0.0 {
+                return None;
+            }
+            let non_null = profile.total_count.saturating_sub(profile.null_count) as f64;
+            components.push((floor as f64 / total * 100.0, non_null / total * 100.0));
+        }
+    }
+
+    if components.is_empty() {
+        return None;
+    }
+    let count = components.len() as f64;
+    let lower = components.iter().map(|c| c.0).sum::<f64>() / count;
+    let upper = components.iter().map(|c| c.1).sum::<f64>() / count;
+    Some((lower.clamp(0.0, 100.0), upper.clamp(0.0, 100.0)))
 }
 
 fn dimension_weight(metrics: &QualityMetrics, dimension: QualityDimension) -> f64 {
@@ -469,7 +540,8 @@ fn collect_shares(
         .map(|dimension| {
             // A sampled uniqueness component is an estimated key count or a
             // duplicate scan over an aligned sample: neither is a share of
-            // failing values, so neither is bounded here.
+            // failing values. `uniqueness_interval` bounds the estimated
+            // counts; the sample scan stays unbounded.
             let shares = dimension_shares.remove(dimension).flatten();
             (*dimension, shares)
         })
@@ -914,9 +986,115 @@ mod tests {
             &[],
             &result.metrics,
             &[],
+            None,
         )
         .unwrap();
         assert!(bounds.is_none());
+    }
+
+    /// Uniqueness metrics for `rows` rows, as a run would record them.
+    fn uniqueness_metrics(
+        rows: usize,
+        duplicates: usize,
+        approximate: bool,
+        key: Option<(&str, f64)>,
+    ) -> QualityMetrics {
+        QualityMetrics {
+            uniqueness: Some(crate::quality::UniquenessMetrics {
+                duplicate_rows: duplicates,
+                key_uniqueness: key.map_or(100.0, |(_, share)| share),
+                high_cardinality_warning: false,
+                rows_checked: rows,
+                key_column: key.map(|(name, _)| name.to_string()),
+                duplicate_rows_approximate: approximate,
+            }),
+            ..QualityMetrics::default()
+        }
+    }
+
+    fn sampled(labels: &'static [&'static str]) -> impl Fn(&str) -> bool {
+        move |component| labels.contains(&component)
+    }
+
+    /// #819: past a million distinct rows the tracker's count is estimated.
+    /// Its exact set held 1,000,001 rows when dropped, so at most 199,999 of
+    /// 1,200,000 rows are duplicates: a certain interval, not a sampled one.
+    #[test]
+    fn an_estimated_duplicate_count_is_bounded_by_the_rows_its_exact_set_held() {
+        let metrics = uniqueness_metrics(1_200_000, 6_063, true, None);
+        let summary = RowDuplicateSummary {
+            duplicate_rows: 6_063,
+            rows_checked: 1_200_000,
+            approximate: true,
+            max_duplicate_rows: 199_999,
+        };
+
+        let (lower, upper) =
+            uniqueness_interval(&metrics, &[], Some(summary), &sampled(&["duplicate_rows"]))
+                .expect("bounded");
+
+        assert!((lower - (1.0 - 199_999.0 / 1_200_000.0) * 100.0).abs() < 1e-9);
+        assert_eq!(upper, 100.0);
+        let score = metrics.uniqueness_score().unwrap();
+        assert!(
+            lower <= score && score <= upper,
+            "{score} in [{lower}, {upper}]"
+        );
+    }
+
+    #[test]
+    fn an_estimated_key_count_is_bounded_by_its_floor_and_its_values() {
+        let metrics = uniqueness_metrics(1_200_000, 6_000, false, Some(("id", 99.52)));
+        let mut id = profile("id", DataType::Integer, 1_200_000, 200_000);
+        id.unique_count = Some(994_240);
+        id.unique_count_is_approximate = Some(true);
+        id.unique_count_lower_bound = Some(900_000);
+        let summary = RowDuplicateSummary {
+            duplicate_rows: 6_000,
+            rows_checked: 1_200_000,
+            approximate: false,
+            max_duplicate_rows: 6_000,
+        };
+
+        let (lower, upper) = uniqueness_interval(
+            &metrics,
+            &[id],
+            Some(summary),
+            &sampled(&["key_uniqueness"]),
+        )
+        .expect("bounded");
+
+        // Mean of the exact duplicate share and the key's [floor, non-null].
+        let duplicates = (1.0 - 6_000.0 / 1_200_000.0) * 100.0;
+        let key_lower = 900_000.0 / 1_200_000.0 * 100.0;
+        let key_upper = 1_000_000.0 / 1_200_000.0 * 100.0;
+        assert!(
+            (lower - (duplicates + key_lower) / 2.0).abs() < 1e-9,
+            "{lower}"
+        );
+        assert!(
+            (upper - (duplicates + key_upper) / 2.0).abs() < 1e-9,
+            "{upper}"
+        );
+    }
+
+    #[test]
+    fn an_estimate_with_nothing_to_bound_it_stays_unbounded() {
+        // A key count read back from a document carries no floor.
+        let metrics = uniqueness_metrics(0, 0, false, Some(("id", 90.0)));
+        let mut id = profile("id", DataType::Integer, 2_000_000, 0);
+        id.unique_count_is_approximate = Some(true);
+        assert_eq!(
+            uniqueness_interval(&metrics, &[id], None, &sampled(&["key_uniqueness"])),
+            None
+        );
+
+        // A duplicate scan over a sample, with no tracker behind it.
+        let metrics = uniqueness_metrics(10_000, 12, false, None);
+        assert_eq!(
+            uniqueness_interval(&metrics, &[], None, &sampled(&["duplicate_rows"])),
+            None
+        );
     }
 
     #[test]

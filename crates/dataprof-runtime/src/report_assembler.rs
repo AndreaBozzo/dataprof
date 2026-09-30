@@ -623,6 +623,7 @@ mod tests {
                 duplicate_rows: 25,
                 rows_checked: 1000,
                 approximate: false,
+                max_duplicate_rows: 25,
             }))
             .build();
 
@@ -654,6 +655,7 @@ mod tests {
                 duplicate_rows: 500,
                 rows_checked: 20_000,
                 approximate: true,
+                max_duplicate_rows: 500,
             }))
             .build();
 

@@ -1306,6 +1306,7 @@ impl ColumnAnalyzer {
             null_count: self.null_count,
             unique_count: Some(self.cardinality.estimate()),
             unique_count_is_approximate: Some(self.cardinality.is_approximate()),
+            unique_count_lower_bound: Some(self.cardinality.distinct_lower_bound()),
             sample_values: self.sample_values.samples(),
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,

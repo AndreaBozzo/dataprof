@@ -179,6 +179,11 @@ pub struct CardinalityEstimator {
     threshold: usize,
     /// Values inserted, duplicates included: the ceiling on any distinct count.
     inserted: u64,
+    /// Distinct values the exact set held when it was dropped: the floor on
+    /// any distinct count once only the sketch is left (#819). Fingerprints
+    /// can only collide into fewer entries than there are values, so this
+    /// never exceeds the true count.
+    floor: usize,
 }
 
 impl CardinalityEstimator {
@@ -192,6 +197,7 @@ impl CardinalityEstimator {
             hll: HyperLogLog::new(),
             threshold,
             inserted: 0,
+            floor: 0,
         }
     }
 
@@ -218,6 +224,7 @@ impl CardinalityEstimator {
     /// For callers under memory pressure: the sketch has seen every value, so
     /// the estimate stays honest, and [`Self::is_approximate`] reports it.
     pub fn spill(&mut self) {
+        self.floor = self.distinct_lower_bound();
         self.exact = None;
     }
 
@@ -230,7 +237,7 @@ impl CardinalityEstimator {
             .as_ref()
             .is_some_and(|exact| exact.len() > self.threshold)
         {
-            self.exact = None;
+            self.spill();
         }
     }
 
@@ -238,11 +245,15 @@ impl CardinalityEstimator {
     /// estimate, which is capped at the number of values inserted. The sketch
     /// can overshoot by its error margin (50,755 for 50,000 unique ids), and a
     /// count above the values seen is impossible rather than approximate.
+    /// It can undershoot too, and a count below the distinct values the exact
+    /// set held is impossible for the same reason, so the estimate never
+    /// falls under [`Self::distinct_lower_bound`] (#819).
     pub fn estimate(&self) -> usize {
         match &self.exact {
             Some(exact) => exact.len(),
             None => (self.hll.count() as usize)
-                .min(usize::try_from(self.inserted).unwrap_or(usize::MAX)),
+                .min(usize::try_from(self.inserted).unwrap_or(usize::MAX))
+                .max(self.floor),
         }
     }
 
@@ -251,19 +262,40 @@ impl CardinalityEstimator {
         self.exact.is_none()
     }
 
+    /// A count the true distinct count is certain to reach: the exact count
+    /// while it is retained, and afterwards the distinct values the exact set
+    /// held when it was dropped.
+    ///
+    /// Unlike [`Self::estimate`], this holds with certainty, so it can bound a
+    /// score without spending any of a confidence budget (#819).
+    pub fn distinct_lower_bound(&self) -> usize {
+        match &self.exact {
+            Some(exact) => exact.len(),
+            None => self.floor,
+        }
+    }
+
     pub fn merge(&mut self, other: &CardinalityEstimator) {
         self.inserted += other.inserted;
         self.hll.merge(&other.hll);
+        // The union holds at least as many distinct values as either side.
+        let floor = self
+            .distinct_lower_bound()
+            .max(other.distinct_lower_bound());
         match (self.exact.as_mut(), other.exact.as_ref()) {
             (Some(mine), Some(theirs)) => {
                 mine.extend(theirs.iter().cloned());
                 if mine.len() > self.threshold {
-                    self.exact = None;
+                    // The union's own size, which is at least `floor`.
+                    self.spill();
                 }
             }
             // If either side already spilled, the union can only be larger, so the
             // merged result is approximate too; the merged HLL carries the estimate.
-            _ => self.exact = None,
+            _ => {
+                self.exact = None;
+                self.floor = floor;
+            }
         }
     }
 
@@ -357,6 +389,87 @@ mod tests {
 
     fn spilled_over(distinct: usize) -> CardinalityEstimator {
         fill(CardinalityEstimator::with_threshold(SPILL_AT), distinct)
+    }
+
+    #[test]
+    fn the_distinct_floor_survives_every_way_the_exact_set_is_dropped() {
+        // Past the threshold: the set held one value more than it.
+        let over = spilled_over(SPILL_AT + 500);
+        assert!(over.is_approximate());
+        assert_eq!(over.distinct_lower_bound(), SPILL_AT + 1);
+
+        // Under memory pressure, well below it.
+        let mut pressured = estimator_over(1_234);
+        pressured.spill();
+        assert!(pressured.is_approximate());
+        assert_eq!(pressured.distinct_lower_bound(), 1_234);
+        // Spilling again keeps what is known rather than resetting it.
+        pressured.spill();
+        assert_eq!(pressured.distinct_lower_bound(), 1_234);
+
+        // Exact: the count itself.
+        assert_eq!(estimator_over(77).distinct_lower_bound(), 77);
+    }
+
+    #[test]
+    fn a_merge_keeps_the_larger_floor_or_the_union() {
+        // One side spilled: the union holds at least what either side knew.
+        let mut spilled = estimator_over(300);
+        spilled.spill();
+        let mut merged = estimator_over(900);
+        merged.merge(&spilled);
+        assert!(merged.is_approximate());
+        assert_eq!(merged.distinct_lower_bound(), 900);
+
+        // Both exact, and the union crosses the threshold: its own size.
+        let mut left = CardinalityEstimator::with_threshold(SPILL_AT);
+        let mut right = CardinalityEstimator::with_threshold(SPILL_AT);
+        for value in 0..8_000 {
+            left.insert(&value.to_string());
+        }
+        for value in 4_000..12_000 {
+            right.insert(&value.to_string());
+        }
+        left.merge(&right);
+        assert!(left.is_approximate());
+        assert_eq!(left.distinct_lower_bound(), 12_000);
+    }
+
+    #[test]
+    fn an_estimate_never_falls_below_the_floor() {
+        // Just past the threshold the sketch undershoots about half the time;
+        // a count below the distinct values the exact set held is impossible.
+        let mut undershoots = 0;
+        for set in 0..20 {
+            let mut est = CardinalityEstimator::with_threshold(SPILL_AT);
+            for value in 0..=SPILL_AT {
+                est.insert(&format!("{set}-{value}"));
+            }
+            assert!(est.is_approximate());
+            if (est.hll.count() as usize) < est.distinct_lower_bound() {
+                undershoots += 1;
+            }
+            assert!(
+                est.estimate() >= est.distinct_lower_bound(),
+                "set {set}: {} < {}",
+                est.estimate(),
+                est.distinct_lower_bound()
+            );
+        }
+        // The clamp is exercised, not vacuous.
+        assert!(undershoots > 0, "no set made the sketch undershoot");
+    }
+
+    #[test]
+    fn the_floor_never_exceeds_the_true_distinct_count() {
+        // Duplicates past the spill add inserts, not distinct values.
+        let mut est = CardinalityEstimator::with_threshold(SPILL_AT);
+        for round in 0..3 {
+            for value in 0..(SPILL_AT + 10) {
+                est.insert(&format!("{value}"));
+            }
+            assert!(est.distinct_lower_bound() <= SPILL_AT + 10, "round {round}");
+        }
     }
 
     fn fill(mut est: CardinalityEstimator, distinct: usize) -> CardinalityEstimator {

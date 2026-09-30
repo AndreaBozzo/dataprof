@@ -987,9 +987,17 @@ next to `evidence`, which still says `quality_sampled`. On a clean column of
 10,000 sampled values the interval is about 0.15 points wide; at 5% failures,
 about 2 points.
 
-Some sampled components have no bound, and a requirement that reads one stays
-unevaluated as before: an estimated key count (past a million distinct
-values) and a duplicate-row scan over a sample. Start/end date ordering is
+Past a million distinct values the key count and the duplicate-row count are
+estimates rather than samples. They are bounded with certainty instead of at
+0.999: when an exact count is dropped, the distinct values it held are a floor
+the true count cannot go under. Uniqueness then gets an interval from those
+floors, wide on a source far past a million rows (the floor is a million of
+its rows), and the overall score is bounded again. A `max_duplicate_rows`
+requirement on an estimated count stays unevaluated, since the estimate can
+neither witness duplicates nor rule them out.
+
+A duplicate-row scan over a sample, on engines without a row tracker, has no
+bound, and a requirement that reads it stays unevaluated. Start/end date ordering is
 compared only between columns whose samples hold the same rows, so a pair
 where either date column has nulls is not compared. When no pair is compared,
 the `temporal_order_violations` finding reads `not_assessed`.

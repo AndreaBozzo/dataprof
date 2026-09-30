@@ -775,6 +775,7 @@ impl MetricsCalculator {
             &temporal_columns,
             &metrics,
             &sampled_dimensions,
+            row_duplicates,
         )?;
 
         Ok(BifurcatedResult {
@@ -836,6 +837,7 @@ mod tests {
             total_count: 1_000,
             unique_count: Some(100),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
@@ -854,6 +856,7 @@ mod tests {
                     duplicate_rows: 0,
                     rows_checked: 1_000,
                     approximate: false,
+                    max_duplicate_rows: 0,
                 }),
             )
             .expect("quality metrics");
@@ -876,6 +879,7 @@ mod tests {
             total_count: 5_000_000,
             unique_count: Some(4_990_000),
             unique_count_is_approximate: Some(approximate),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
@@ -934,6 +938,7 @@ mod tests {
             total_count: 1,
             unique_count: Some(1),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
@@ -977,6 +982,7 @@ mod tests {
             total_count: 100,
             unique_count: Some(10),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,

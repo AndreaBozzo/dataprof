@@ -622,9 +622,10 @@ class _Policy:
                 else "duplicate rows were observed above the allowance"
             )
         elif estimated:
+            # Every row may have been read: the gap is the estimate (#819).
             message = (
-                "the duplicate-row count is estimated, so it witnesses nothing about "
-                "the rows that were not read"
+                "the duplicate-row count is an estimate, which can neither witness "
+                "duplicates above the allowance nor rule them out"
             )
         else:
             message = (

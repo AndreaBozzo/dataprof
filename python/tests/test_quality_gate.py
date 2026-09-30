@@ -327,3 +327,21 @@ def test_a_boolean_is_not_a_percentage(report):
     """`True` is 1.0 to `float()`, which would quietly become a 1% floor."""
     with pytest.raises(ValueError):
         report.check(min_quality_score=True)
+
+
+def test_an_estimated_duplicate_count_names_the_estimate_as_the_gap(report):
+    """Past a million distinct rows the count is estimated although every row
+    was read, so the message must not claim rows went unread (#819)."""
+    document = report.to_dict()
+    document["quality"]["uniqueness"]["duplicate_rows_approximate"] = True
+    document["quality"]["sampled_dimensions"] = ["duplicate_rows"]
+    estimated = dp.ProfileReport.from_dict(document)
+
+    result = estimated.check(max_duplicate_rows=0)
+
+    assert result.verdict == "inconclusive"
+    (check,) = result.checks
+    assert check.message == (
+        "the duplicate-row count is an estimate, which can neither witness "
+        "duplicates above the allowance nor rule them out"
+    )
