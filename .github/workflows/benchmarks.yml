@@ -112,6 +112,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
+          # Start from an empty Criterion directory. The Rust cache can restore
+          # part of an earlier run's target/criterion, and Criterion then tries to
+          # compare against that "base": it printed "Failed to access file
+          # .../base/sample.json" for every benchmark, and when a comparison did
+          # load it measured this runner against a different one. The page reads
+          # only each benchmark's new/ results, so nothing uses the comparison.
+          rm -rf target/criterion
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
             echo "Running full benchmark suite"
             cargo bench --bench benchmarks 2>&1 | tee benchmark-results/output.txt
