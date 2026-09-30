@@ -1,328 +1,122 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/AndreaBozzo/dataprof/HEAD/assets/images/logo.webp" alt="dataprof logo" width="800" />
   <h1>dataprof</h1>
-  <p>
-    <strong>High-performance data profiling and quality assessment</strong>
-  </p>
+  <p><strong>Know what's in your data before it ships.</strong></p>
 
+  [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
   [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
   [![docs.rs](https://docs.rs/dataprof/badge.svg)](https://docs.rs/dataprof)
-  [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE)
 
-  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md) · [Release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md)
+  [Website](https://andreabozzo.github.io/dataprof/) · [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md) · [Python API](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md) · [Release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md)
 
 </div>
 
----
+dataprof profiles CSV, JSON, Parquet, DataFrames and Arrow tables in one call: types, nulls, distributions, patterns and a quality score. Then it can gate your pipeline on what it found. It runs locally, gives the same numbers for the same data whichever way you load it, and says "can't tell" instead of guessing.
 
-dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and assesses data quality across dimensions informed by ISO 8000 and ISO/IEC 25012, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
+A Rust library with a Python package on top. No server, no account, no network.
 
-It earns its place twice. The first run is the first ten minutes with unfamiliar data: find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious values before they turn into pipeline bugs. After that it stays in the pipeline as a checkpoint, re-reading the same feed on every load and deciding whether it still looks like itself.
-
-> [!NOTE]
-> dataprof is in beta. Current releases ship a Rust crate and a Python package. The historical CLI remains documented only for older releases.
-
-## What dataprof answers quickly
-
-| Question | What you get back |
-|---|---|
-| Which columns are thin, empty, or structurally broken? | Null counts, completeness metrics, and schema shape in one pass |
-| Did this feed drift or spike somewhere suspicious? | Numeric summaries, outlier signals, and range checks |
-| Are these IDs really unique or just pretending to be keys? | Distinct counts, uniqueness ratios, and duplicate warnings |
-| Are my timestamps plausible and fresh? | Future-date detection, stale-data signals, and timeliness scoring |
-| Did parsing silently go wrong? | Type inference, pattern matches, format violations, and source metadata |
-| Is today's load good enough to accept? | A declared policy, evaluated into pass, fail, or "cannot tell from this scan" |
-
-## Pick your entry point
-
-| You are doing this | Start with |
-|---|---|
-| Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof` and `Profiler::new().analyze_file(...)` |
-| Gating a pipeline or CI job on data quality | `report.check(...)` / `QualityPolicy::new()`, or [`python -m dataprof.check` (0.12+)](docs/python/README.md#python--m-dataprofcheck----ci-entrypoint-012) |
-| Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
-| Profiling streams, remote Parquet, or database queries | Rust feature flags, or a source-built Python extension with async/database features enabled |
-
-## Start in 30 Seconds
-
-### Python
+## Install
 
 ```bash
-uv pip install dataprof
+pip install dataprof          # or: uv pip install dataprof
 ```
 
-Supports standard CPython 3.10–3.14. Release wheels target these versions on
-Linux, macOS and Windows; PyPy, preview Python and free-threaded builds are not
-part of the supported wheel set. See the [interpreter policy](docs/CONTRIBUTING.md#python-interpreters-and-release-wheels).
+Wheels for CPython 3.10 to 3.14 on Linux, macOS and Windows, with no Python dependencies.
 
-The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, byte buffers (including Parquet), and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame). Async profiling, including HTTP URLs and remote Parquet, is in the wheel too; database connectors are the one documented feature that still needs a source build.
-
-#### 1. Profile
+## Profile a file
 
 ```python
 import dataprof as dp
 
-report = dp.profile("data.csv")
-print(f"{report.rows} rows, {report.columns} columns")
+report = dp.profile("orders.csv")        # also .json, .jsonl, .parquet, DataFrames, dicts
+print(report.rows, "rows,", report.columns, "columns, quality", report.quality_score)
 
-# Ad-hoc inputs work the same way, with no pandas involved
-scratch = dp.profile({"age": [31, 42, 29], "city": ["Rome", "Milan", "Rome"]})
-incoming = dp.profile(b"age,city\n31,Rome\n", format="csv")
+amount = report["amount"]
+print(amount.data_type, amount.mean, amount.null_percentage)
 ```
 
-Too big to profile fully? Get the shape first, then commit:
-
-```python
-structure = dp.analyze_structure("data.csv")   # cheap first pass
-print(structure.format, len(structure.columns), structure.row_count.count)
-```
-
-#### 2. Interpret
-
-```python
-print(f"quality={report.quality_score:.1f}")   # 0-100, weighted across assessed dimensions
-print(report.quality_summary())                # per-dimension scores
-
-age = report["age"]
-print(age.data_type, age.mean, age.null_percentage)
-```
-
-Or ask the report what deserves attention. Findings carry a stable code, a
-severity and the evidence behind them, never a raw value, and list the rules
-they could not evaluate instead of reading an unanalyzed metric as clean:
+Ask it what deserves attention. Each finding has a stable code and the evidence behind it, never a raw value:
 
 ```python
 for finding in report.findings():
-    print(finding.severity, finding.code, finding.column, finding.evidence)
+    print(finding.severity, finding.code, finding.column)
+# warning locale_numbers price       ("10,50"-style numbers, left out of the stats)
+# warning null_heavy email
+# info sensitive_pattern email
 ```
 
-#### 3. Export
+## Gate a pipeline
+
+State what "good enough" means and get a verdict: `pass`, `fail`, or `inconclusive` when the data can't prove it either way.
 
 ```python
-report.save("report.json")       # full report, reloadable
-print(report.to_markdown())      # a table for a PR comment or a notebook
-```
-
-In 0.12, JSON saves use the complete Rust report document in both languages.
-Python `to_dict()` remains the flat convenience summary. Existing flat JSON
-reports still load; see the [persistence migration](docs/schema/README.md#the-v1-compatibility-decision-714).
-
-#### 4. Gate
-
-State a policy as data and get a structured verdict. Nothing is printed and the
-process is not exited, so it composes into any pipeline without a CLI:
-
-```python
-result = report.check(
-    min_quality_score=90,
-    max_null_percentage={"customer_id": 0, "*": 20},
-    require_metrics=["quality"],
-)
+result = report.check(min_quality_score=90, max_null_percentage={"customer_id": 0, "*": 20})
 if not result.passed:
     for check in result.violations:
-        print(check.code, check.column, check.message, check.observed)
+        print(check.code, check.column, check.message)
 ```
 
-The verdict has three values. `"fail"` means a requirement was conclusively
-violated, `"pass"` means everything was checked and met, and `"inconclusive"`
-means nothing was violated and something could not be checked -- an unanalyzed
-metric, or a scan that did not read as far as the policy asks about.
-`result.passed` is true only for `"pass"`, so an unanswerable gate never reads
-as a green one. On a large file that was read in full, quality scores come from
-a bounded sample; the report carries a 99.9% interval for each, and the gate
-decides a score requirement on it, staying inconclusive only when the threshold
-falls inside the interval.
+Or from CI, with no code at all:
 
-#### 5. Compare
-
-Profile before and after a cleaning step, or yesterday against today:
-
-```python
-before = dp.ProfileReport.load("report.json")
-after = dp.profile("data_clean.csv")
-
-delta = before.compare(after)    # what changed, per column
+```bash
+python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"
+# exit 0 = pass, 1 = fail, 2 = inconclusive or bad input
 ```
 
-#### 6. Hand it to an agent
+## Hand it to an agent
 
-A token-bounded summary of shape, quality flags, and schema. Values matching a
-sensitive pattern are never echoed, and no raw cell values are included unless
-you ask:
+A token-bounded summary for an LLM. Values that look like personal data are never echoed:
 
 ```python
 print(report.to_llm_context(max_tokens=500))
 ```
 
-## Three problems, solved end to end
+## Use it from Rust
 
-Each example generates its own data and runs from a clean checkout. Every number
-they print is real profiler output, and CI runs all six on every push.
-
-| Scenario | What it shows | Run it |
-|---|---|---|
-| [Messy CSV inspection](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/messy_csv_inspection.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/messy_csv_inspection.py) | A duplicated key, null-heavy columns, a negative price, and PII flagged but never printed | `cargo run --example messy_csv_inspection` |
-| [ETL quality gate](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/etl_quality_gate.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/etl_quality_gate.py) | Accept, reject or hold a daily drop on a declared policy, with the reason in the log | `cargo run --example etl_quality_gate` |
-| [Before/after cleaning](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/before_after_cleaning.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/before_after_cleaning.py) | Save a baseline report, diff it against the cleaned data, and check the defects really went away | `cargo run --example before_after_cleaning` |
-
-See [examples/README.md](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md) for the Python commands and a note on
-two quality metrics that surprise people.
-
-### Rust
-
-```toml
-[dependencies]
-dataprof = "0.11"
-# or: dataprof = { version = "0.11", default-features = false }
+```bash
+cargo add dataprof
 ```
-
-Minimum supported Rust version: 1.96. Every published feature graph — the
-default build, `no-default-features`, the async and database features, and the
-Python extension crate — is compiled on 1.96 in CI and before each release, so
-this is a verified floor rather than a declared one. Development itself pins a
-newer toolchain for linting and testing; see
-[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#rust-toolchains-msrv-vs-pinned).
 
 ```rust
-use dataprof::Profiler;
+use dataprof::{Profiler, QualityPolicy, Verdict};
 
-let report = Profiler::new().analyze_file("data.csv")?;
-println!("Rows: {}", report.execution.rows_processed);
-println!("Quality: {:.1}%", report.quality_score().unwrap_or(0.0));
-
-for col in &report.column_profiles {
-  println!("{} {:?} nulls={}", col.name, col.data_type, col.null_count);
-}
+let report = Profiler::new().analyze_file("orders.csv")?;
+let result = QualityPolicy::new().min_quality_score(90.0).evaluate(&report)?;
+assert_eq!(result.verdict, Verdict::Pass);
 ```
 
-The same gate is available here, with the same verdicts and the same serialized
-result:
+Minimum supported Rust: 1.96.
 
-```rust
-use dataprof::{QualityPolicy, Verdict};
+## What you can count on
 
-let result = QualityPolicy::new()
-    .min_quality_score(90.0)
-    .max_null_percentage("customer_id", 0.0)
-    .max_null_percentage_any(20.0)
-    .require_quality()
-    .evaluate(&report)?;
+- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it.
+- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators.
+- **Honest verdicts.** A sampled or partial scan never passes a claim about the whole file; scores carry their confidence interval.
+- **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
+- **Private by default.** Reports and summaries carry counts and patterns, not your values.
 
-if result.verdict != Verdict::Pass {
-    for check in result.violations() {
-        eprintln!("{}: {}", check.code, check.message);
-    }
-}
-```
+## Status
 
-## Why it feels modern
+Beta, and moving fast toward a stable 1.0 contract. Some things are still narrow, and we'd rather tell you than have you find out: numbers written with a decimal comma are detected and flagged but not yet parsed, and markers like `NA` or `N/A` aren't treated as nulls yet. The [release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) list what changed and what's known.
 
-- **Fast first-pass signal** -- surface null pockets, type drift, duplicate keys, and outliers quickly
-- **True streaming** -- bounded-memory profiling with online algorithms for files bigger than RAM
-- **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
-- **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
-- **Async-ready** -- Rust async APIs and a Python async module that ships in the wheel cover stream pipelines, services, and remote Parquet sources
-- **Explainable quality assessment** -- seven selectively requestable dimensions, including validity and decimal-scale precision, with inspectable facts behind every score
-- **Gates that say when they cannot tell** -- a declared policy returns pass, fail, or inconclusive, and a truncated or sampled scan never passes a claim about the whole source
+Found something wrong? [Open an issue](https://github.com/AndreaBozzo/dataprof/issues). A file that profiles badly is the most useful bug report there is.
 
-## Feature Flags
+## Learn more
 
-| Feature | Description |
-|---|---|
-| `arrow` | Arrow-backed columnar engine |
-| `parquet` *(default)* | Parquet profiling; includes `arrow` |
-| `async-streaming` | Async profiling engine with tokio |
-| `parquet-async` | Profile Parquet files over HTTP; includes `parquet` and `async-streaming` |
-| `database` | Database profiling (connection handling, retry, SSL) |
-| `postgres` | PostgreSQL connector (includes `database`) |
-| `mysql` | MySQL/MariaDB connector (includes `database`) |
-| `sqlite` | SQLite connector (includes `database`) |
-| `all-db` | All three database connectors |
-
-For the leanest Rust build, use `default-features = false` or `cargo --no-default-features` instead of a separate `minimal` alias.
-
-## Supported Formats
-
-| Format | Engine | Notes |
-|---|---|---|
-| CSV | Incremental, Columnar | Auto-detects `,` `;` `\|` `\t` delimiters |
-| JSON | Incremental | Array-of-objects |
-| JSONL / NDJSON | Incremental | One object per line |
-| Parquet | Columnar | Reads metadata for schema/count without scanning rows |
-| Database query | Async | PostgreSQL, MySQL, SQLite via connection string |
-| pandas / polars DataFrame | Columnar | Python API only |
-| Arrow RecordBatch | Columnar | Via PyCapsule (zero-copy) or Rust API |
-| Arrow C Stream producer | Columnar | Python `RecordBatchReader`, DuckDB relation, or `__arrow_c_stream__` object; consumed batch by batch |
-| dict / list of dicts | Columnar | Python API only; no dependencies |
-| bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON, JSONL, and Parquet need no Python dependencies |
-| Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
-
-Reported columns follow source order in every format and on every transport: the
-CSV header, the Parquet/Arrow schema, and for JSON/JSONL the first record's field
-order, with fields that only appear in later records appended where they were
-first seen. Converting a dataset between formats does not reshuffle the report.
-
-For Parquet, `max_rows` selects a deterministic sample spread across the file.
-`report.sampled_row_ranges` records the exact zero-based, half-open intervals;
-metrics describe those selected rows. See the [Python guide](docs/python/README.md)
-for cap behavior and sampling provenance.
-
-## Quality Metrics
-
-dataprof reports seven quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):
-
-| Dimension | What it measures |
-|---|---|
-| **Completeness** | Missing-cell percentage, share of rows with no nulls, columns past the null threshold |
-| **Consistency** | Data type consistency, format violations, encoding issues |
-| **Uniqueness** | Duplicate rows, key uniqueness, high-cardinality warnings |
-| **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |
-| **Timeliness** | Future dates, stale data ratio, temporal ordering violations in explicit temporal columns |
-| **Validity** | Conformance to confidently detected semantic patterns, such as email or identifier formats |
-| **Precision** | Consistency of effective decimal places within floating-point columns |
-
-The overall quality score (0 -- 100) is dataprof's weighted average of the
-dimensions that had data to assess. The aggregation formula is not mandated or
-certified by ISO. Rust callers can customize the relative weights through
-`IsoQualityConfig::score_weights`; default weights are 0.25 / 0.20 / 0.15 /
-0.15 / 0.10 / 0.10 / 0.05 in the table order above.
-
-## Documentation
-
-### Start here
-
-- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md) -- an honest comparison with Polars/pandas `describe()` and ydata-profiling, including when to prefer them
-- [Getting Started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
-- [Examples Cookbook](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
-- [Agent Workflows](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/agent-workflows.md) -- copy-paste guidance for AGENTS.md, Cursor rules, and Claude Code skills
-
-### Integrate it
-
-- [Python API Guide](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md) -- files, DataFrames, Arrow interop, exports, and optional source-built async/database features
-- [Database Connectors](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup and connection patterns
-
-### Understand it
-
-- [Crate Redesign Notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/architecture/crate-redesign.md) -- what the facade owns and why the workspace is split this way
-- [Release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) -- upgrade checklist, migration details, and known limitations
-- [Contributing](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md)
-- [Changelog](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CHANGELOG.md)
-
-### Historical
-
-- [Archived CLI Guide](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/archive/CLI_USAGE_GUIDE.md) -- pre-0.8 reference only
+- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md): an honest comparison with pandas, polars and ydata-profiling, including when to pick them instead
+- [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md): the metrics and how to read them
+- [Python API](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md): every function, the gate and the CI entrypoint
+- [Examples](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md): a messy CSV, an ETL gate, before and after cleaning, runnable from a clean checkout
+- [Agent workflows](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/agent-workflows.md): AGENTS.md, Cursor rules and Claude Code skills
+- [Report schema](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md): the saved document and its guarantees
+- [Database connectors](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md) and [feature flags](https://docs.rs/dataprof): Rust-side options
+- [Changelog](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CHANGELOG.md) and [contributing](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md)
 
 ## Citing dataprof
 
-Use the **Cite this repository** button in the GitHub sidebar, which generates
-APA and BibTeX from [`CITATION.cff`](https://github.com/AndreaBozzo/dataprof/blob/HEAD/CITATION.cff), or read that file directly.
-
-The citation is for the software. dataprof has no associated publication or DOI,
-so `CITATION.cff` carries no `preferred-citation` entry and the generated BibTeX
-is a `@misc` software record. Reproducible benchmark material lives in
-[scalcom2026-dataprof](https://github.com/AndreaBozzo/scalcom2026-dataprof).
-
+Use **Cite this repository** in the GitHub sidebar, which builds APA and BibTeX from [CITATION.cff](https://github.com/AndreaBozzo/dataprof/blob/HEAD/CITATION.cff). The citation is for the software; benchmark material lives in [scalcom2026-dataprof](https://github.com/AndreaBozzo/scalcom2026-dataprof).
 
 ## License
 
-Dual-licensed under either the [MIT License](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE) or the [Apache License, Version 2.0](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE-APACHE), at your option.
+Either the [MIT License](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE) or the [Apache License, Version 2.0](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE-APACHE), at your option.

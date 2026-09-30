@@ -41,6 +41,7 @@
 .scope-note { border-left: 3px solid var(--rust); background: color-mix(in srgb, var(--rust) 6%, var(--bg-raised)); padding: 14px 18px; margin: 24px 0; font-size: .91rem; color: var(--muted); }
 .scope-note strong { color: var(--ink); }
 .evidence-details { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 14px; }
+.card > .evidence-details:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 summary { cursor: pointer; font-weight: 600; color: var(--accent-ink); }
 .evidence-details dl { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 10px 18px; font-size: .88rem; }
 .evidence-details dt { color: var(--muted); }
@@ -52,7 +53,8 @@ summary { cursor: pointer; font-weight: 600; color: var(--accent-ink); }
 .js .filter-control { display: block; }
 .filter-control label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
 .group-card { box-shadow: none; min-width: 0; }
-.group-card .group-preview { max-height: 330px; overflow: auto; }
+.group-card .group-report { display: inline-block; margin-top: 14px; font-size: .88rem; font-weight: 600; }
+#boundaries { margin-top: 54px; }
 .criterion-heading { display: flex; align-items: center; gap: 12px; }
 .criterion-heading .pill { font-size: .72rem; }
 .repro-section { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 54px; }
