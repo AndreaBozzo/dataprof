@@ -40,6 +40,8 @@ the [0.12.0 release notes](release-notes.md).
 
 ### Changed
 
+- Run benchmarks from an empty Criterion directory by @AndreaBozzo
+
 - Stop PR runs from evicting master's caches and building the extension twice (#795) by @AndreaBozzo
 
 - Throttle per-chunk peak memory sampling (#775) by @AndreaBozzo
