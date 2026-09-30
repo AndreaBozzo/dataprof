@@ -360,6 +360,11 @@ impl StreamingStatistics {
         self.distinct.is_approximate()
     }
 
+    /// See [`CardinalityEstimator::distinct_lower_bound`].
+    pub fn unique_count_lower_bound(&self) -> usize {
+        self.distinct.distinct_lower_bound()
+    }
+
     /// Answer distinct counts from the sketch from here on, freeing the exact
     /// set. For memory pressure; the count is then reported approximate.
     pub fn spill_distinct(&mut self) {
@@ -557,6 +562,9 @@ impl RowUniquenessTracker {
             duplicate_rows: self.duplicate_rows(),
             rows_checked: self.rows_seen,
             approximate: self.is_approximate(),
+            max_duplicate_rows: self
+                .rows_seen
+                .saturating_sub(self.distinct.distinct_lower_bound()),
         })
     }
 }

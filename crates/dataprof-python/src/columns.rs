@@ -232,6 +232,7 @@ pub fn profile_columns(
                 unique_count: Some(unique_count),
                 // Distinct values are counted with an exact HashSet above.
                 unique_count_is_approximate: Some(false),
+                unique_count_lower_bound: None,
                 sample_values: &present,
                 text_lengths: None,
                 boolean_counts: None,

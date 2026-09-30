@@ -100,6 +100,7 @@ fn whole_columns_with_nulls_in_place_are_still_compared() {
         total_count: 4,
         unique_count: None,
         unique_count_is_approximate: None,
+        unique_count_lower_bound: None,
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,

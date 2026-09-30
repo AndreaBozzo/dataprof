@@ -71,6 +71,10 @@ pub struct RowDuplicateSummary {
     pub duplicate_rows: usize,
     pub rows_checked: usize,
     pub approximate: bool,
+    /// The most duplicate rows there can be: `rows_checked` minus the distinct
+    /// rows the tracker's exact set held when it was dropped. Equal to
+    /// `duplicate_rows` while the count is exact (#819).
+    pub max_duplicate_rows: usize,
 }
 
 /// Full-stream complete-record counts produced by an engine's row tracker.

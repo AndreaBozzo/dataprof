@@ -34,6 +34,10 @@ pub struct ColumnProfileInput<'a> {
     /// `unique_count: None`; `Some(false)` for exact counts; `Some(true)` once
     /// the engine's cardinality estimator has spilled to its HLL sketch.
     pub unique_count_is_approximate: Option<bool>,
+    /// See [`ColumnProfile::unique_count_lower_bound`]: the estimator's
+    /// [`distinct_lower_bound`](dataprof_metrics::CardinalityEstimator::distinct_lower_bound),
+    /// or `None` when the caller has no estimator behind the count.
+    pub unique_count_lower_bound: Option<usize>,
     pub sample_values: &'a [String],
     /// Pre-computed text lengths for engines that track them incrementally.
     /// When `Some`, text stats are built from these instead of re-scanning samples.
@@ -246,6 +250,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         total_count: input.total_count,
         unique_count: input.unique_count,
         unique_count_is_approximate: input.unique_count_is_approximate,
+        unique_count_lower_bound: input.unique_count_lower_bound,
         invalid_count,
         // Classified over the retained sample, so the counts are bounded by the
         // engine's reservoir on a large source. `classified_count()` against
@@ -274,6 +279,7 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         total_count,
         unique_count: None,
         unique_count_is_approximate: None,
+        unique_count_lower_bound: None,
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,
@@ -399,6 +405,7 @@ pub fn profile_from_stats_with_hints(
         null_count: stats.null_count,
         unique_count: Some(stats.unique_count()),
         unique_count_is_approximate: Some(stats.unique_count_is_approximate()),
+        unique_count_lower_bound: Some(stats.unique_count_lower_bound()),
         sample_values: stats.sample_values(),
         text_lengths: Some(TextLengths {
             min_length: text_stats.min_length,
@@ -538,6 +545,7 @@ mod tests {
             null_count: 1_000,
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -588,6 +596,7 @@ mod tests {
                     null_count,
                     unique_count: None,
                     unique_count_is_approximate: None,
+                    unique_count_lower_bound: None,
                     sample_values: &samples,
                     text_lengths: None,
                     boolean_counts: None,
@@ -623,6 +632,7 @@ mod tests {
                 null_count: 1,
                 unique_count: None,
                 unique_count_is_approximate: None,
+                unique_count_lower_bound: None,
                 sample_values: &samples,
                 text_lengths: None,
                 boolean_counts: Some((0, 2)),
@@ -671,6 +681,7 @@ mod tests {
             null_count: 0,
             unique_count: None,
             unique_count_is_approximate: None,
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -711,6 +722,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(2),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: Some((2, 1)),
@@ -745,6 +757,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(2),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -775,6 +788,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -799,6 +813,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(2),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -828,6 +843,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(2),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -851,6 +867,7 @@ mod tests {
             null_count: 0,
             unique_count: Some(2),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,

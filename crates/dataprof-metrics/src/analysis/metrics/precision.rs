@@ -100,6 +100,7 @@ mod tests {
             total_count: 4,
             unique_count: Some(4),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,

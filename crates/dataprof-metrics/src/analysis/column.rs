@@ -204,6 +204,7 @@ fn analyze_column_with_options(
         // Distinct values are counted with an exact HashSet, so the count is
         // exact whenever it was computed at all.
         unique_count_is_approximate: unique_count.map(|_| false),
+        unique_count_lower_bound: None,
         invalid_count,
         // Classified over `data`, which on this path is the whole column, so the
         // counts are exact rather than sampled. Not gated by the analysis

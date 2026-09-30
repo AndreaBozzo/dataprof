@@ -24,6 +24,18 @@ pub struct ColumnProfile {
     /// is unsafe for those checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_count_is_approximate: Option<bool>,
+    /// A distinct count the column is certain to reach when `unique_count` is
+    /// an estimate: the distinct values the exact set held when it was
+    /// dropped. `None` when no floor was recorded, which includes every exact
+    /// count (the count is its own floor) and every report read back from a
+    /// document.
+    ///
+    /// Not serialized: it exists so quality bounds computed during the run can
+    /// bound a key column's uniqueness with certainty (#819). A saved report
+    /// keeps the bounds themselves.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub unique_count_lower_bound: Option<usize>,
     /// Non-null values that failed the column type's raw validity predicate:
     /// non-finite or malformed numbers on numeric columns, and values that do
     /// not parse directly as calendar dates on date columns. The date predicate
@@ -369,6 +381,7 @@ mod tests {
             total_count: 10,
             unique_count: Some(8),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: Some(0),
             type_homogeneity: None,
             locale_number_count: None,
@@ -424,6 +437,7 @@ mod tests {
             total_count: 3,
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
+            unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
