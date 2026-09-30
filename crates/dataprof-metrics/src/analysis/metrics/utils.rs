@@ -8,6 +8,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::stats::datetime::{parse_raw_datetime_date, parse_raw_datetime_year};
+use crate::types::SlashDateOrder;
 
 // Pre-compile date validation regex patterns for better performance
 pub(crate) static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -181,8 +182,14 @@ pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
 /// Required wherever dates are ordered or compared against a reference point:
 /// two of the supported formats put the day first, so neither the year alone
 /// nor the raw string orders them correctly.
-pub(crate) fn extract_date(date_str: &str) -> Option<NaiveDate> {
-    parse_raw_datetime_date(date_str)
+///
+/// `order` is the value's column's [`resolve_slash_order`] result; read the
+/// column's values with it, or an ambiguous `01/02/2024` in a month-first
+/// column is dated a month off (#811).
+///
+/// [`resolve_slash_order`]: crate::stats::datetime::resolve_slash_order
+pub(crate) fn extract_date(date_str: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
+    parse_raw_datetime_date(date_str, order)
 }
 
 /// Calculate percentile using linear interpolation (Type 7 - R/Excel default)

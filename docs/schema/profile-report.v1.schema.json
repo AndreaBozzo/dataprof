@@ -590,6 +590,17 @@
           },
           "type": "object"
         },
+        "slash_date_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlashDateOrder"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the column's `NN/NN/YYYY` values were read (#811).\n\nDecided once per column from its own values, so `01/02/2024` is read\nthe same way as the `12/31/2024` beside it. `None` when the column\nholds no slash dates, or the report predates the field."
+        },
         "year_distribution": {
           "patternProperties": {
             "^-?\\d+$": {
@@ -2405,6 +2416,31 @@
         {
           "const": "temporal",
           "description": "A [`SemanticHints::temporal_columns`] entry.",
+          "type": "string"
+        }
+      ]
+    },
+    "SlashDateOrder": {
+      "description": "The day/month order a column's slash dates were read in.",
+      "oneOf": [
+        {
+          "const": "day_first",
+          "description": "Some values only parse day-first (`31/12/2024`) and none only\nmonth-first.",
+          "type": "string"
+        },
+        {
+          "const": "month_first",
+          "description": "Some values only parse month-first (`12/31/2024`) and none only\nday-first.",
+          "type": "string"
+        },
+        {
+          "const": "assumed_day_first",
+          "description": "Every value parses both ways, so nothing in the column decides it; the\nvalues were read day-first.",
+          "type": "string"
+        },
+        {
+          "const": "mixed",
+          "description": "Values that only parse day-first and values that only parse\nmonth-first are both present. The column contradicts itself: each value\nwas read in the order it parses, day-first where both do, and the dates\ncannot all be right.",
           "type": "string"
         }
       ]
