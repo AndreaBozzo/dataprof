@@ -248,6 +248,26 @@ pub fn validate_ipv6(s: &str) -> bool {
     s.parse::<std::net::Ipv6Addr>().is_ok()
 }
 
+/// Validate a North American Numbering Plan number (#812).
+///
+/// Ten digits after an optional leading country code `1`. The area code and
+/// the exchange each start with 2-9 and are not an `N11` service code. Any
+/// ten-digit integer used to match the phone regex, so ID columns and Unix
+/// epoch seconds were reported as personal contact data; about a third of
+/// random ten-digit values, every epoch second of this century, and every
+/// sequential ID with a `0` or `1` exchange fail this check.
+pub fn validate_phone_us(s: &str) -> bool {
+    let digits: Vec<u8> = s.bytes().filter(u8::is_ascii_digit).collect();
+    let number = match digits.as_slice() {
+        [b'1', rest @ ..] if rest.len() == 10 => rest,
+        all if all.len() == 10 => all,
+        _ => return false,
+    };
+    // A NANP code starts with 2-9; `N11` is reserved for services (411, 911).
+    let valid_code = |code: &[u8]| code[0] >= b'2' && code[1..] != *b"11";
+    valid_code(&number[0..3]) && valid_code(&number[3..6])
+}
+
 /// Validate a US Social Security Number.
 ///
 /// Checks that the area number (first 3 digits) is not 000, 666, or 900-999.
@@ -414,6 +434,37 @@ mod tests {
     }
 
     // ---- SSN (US) validator ----
+
+    #[test]
+    fn test_phone_us_follows_the_numbering_plan() {
+        for valid in [
+            "(212) 555-0123",
+            "212-555-0123",
+            "212.555.0123",
+            "2125550123",
+            "+1 212 555 0123",
+            "1-212-555-0123",
+            "+12125550123",
+        ] {
+            assert!(validate_phone_us(valid), "{valid}");
+        }
+        for invalid in [
+            // Area or exchange starting with 0 or 1.
+            "1705312200", // epoch seconds (the leading 1 is not a country code here)
+            "0125550123",
+            "2120550123",
+            "2121550123",
+            "555-123-4567", // the usual fake: exchange 123
+            // N11 service codes.
+            "4115550123",
+            "2129110123",
+            // Wrong length.
+            "212555012",
+            "22125550123", // eleven digits without a leading 1
+        ] {
+            assert!(!validate_phone_us(invalid), "{invalid}");
+        }
+    }
 
     #[test]
     fn test_ssn_valid() {
