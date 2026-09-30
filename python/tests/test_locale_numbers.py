@@ -53,6 +53,12 @@ def csv_path(tmp_path: Path) -> Path:
     return path
 
 
+def _flags(report: dp.ProfileReport) -> list[str]:
+    """The lines of the context's flags section, without its header."""
+    context = report.to_llm_context()
+    return context.split("\nflags (", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+
+
 def _locale_findings(report: dp.ProfileReport) -> list[str]:
     return [f.column for f in report.findings() if f.code == "locale_numbers" and f.column]
 
@@ -170,10 +176,10 @@ def test_the_flat_exports_carry_the_count(csv_path: Path):
 
 
 def test_the_llm_context_flags_the_column(csv_path: Path):
-    context = dp.profile(str(csv_path)).to_llm_context()
-    flags = context.split("\nflags (", 1)[1].split("\n\n", 1)[0].splitlines()[1:]
+    report = dp.profile(str(csv_path))
+    context = report.to_llm_context()
 
-    assert flags == [
+    assert _flags(report) == [
         "- importo: 6 of 6 values are numbers with a decimal comma or digit "
         "grouping, left out of numeric stats",
         "- prezzo: 6 of 6 values are numbers with a decimal comma or digit "
@@ -194,3 +200,24 @@ def test_both_summary_backings_write_the_count(csv_path: Path):
     assert native["columns"][0]["locale_number_count"] == 6
     assert reloaded == native
     assert dp.column_to_dict(report["importo"])["locale_number_count"] == 6
+
+
+def test_a_sampled_count_discloses_its_scope(tmp_path: Path):
+    """The counts come from the engine's 10k reservoir; the flag says so."""
+    path = tmp_path / "big.csv"
+    rows = (f"{i % 900 + 1}.{i % 1000:03d},{i % 100:02d}" for i in range(50_000))
+    path.write_text("importo\n" + "\n".join(f'"{row}"' for row in rows) + "\n", encoding="utf-8")
+
+    report = dp.profile(str(path))
+    column = report["importo"]
+    assert column.total_count == 50_000
+    assert column.locale_number_count == 10_000
+
+    assert _flags(report) == [
+        "- importo: 10,000 of 10,000 values are numbers with a decimal comma or digit "
+        "grouping, left out of numeric stats (sampled 10,000 of 50,000 values)"
+    ]
+
+
+def test_an_unsampled_count_claims_no_scope(csv_path: Path):
+    assert not any("sampled" in line for line in _flags(dp.profile(str(csv_path))))

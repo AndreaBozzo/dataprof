@@ -199,10 +199,15 @@ def _locale_number_flag(col: ColumnProfile) -> tuple[float, str] | None:
     # Nonzero: the locale numbers are among the classified values.
     classified = sum(counts.values())
     name = _one_line(col.name)
+    # The counts cover the values the profiler retained; say so when that is a
+    # sample, as the mixed types flag does, so "10,000 of 10,000" does not read
+    # as a fact about a column of a million.
+    non_null = (col.total_count or 0) - (col.null_count or 0)
+    scope = f" (sampled {classified:,} of {non_null:,} values)" if classified < non_null else ""
     return (
         100.0 * locale / classified,
         f"{name}: {locale:,} of {classified:,} values are numbers with a decimal comma "
-        "or digit grouping, left out of numeric stats",
+        f"or digit grouping, left out of numeric stats{scope}",
     )
 
 
