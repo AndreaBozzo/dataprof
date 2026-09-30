@@ -30,7 +30,7 @@ ship.
 
 ```toml
 [dependencies]
-dataprof = { version = "0.11", features = ["postgres"] }
+dataprof = { version = "0.12", features = ["postgres"] }
 ```
 
 For local Python extension development:
