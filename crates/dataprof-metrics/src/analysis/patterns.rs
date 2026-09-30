@@ -60,7 +60,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
             specificity: 70,
             locale: Some(Locale::Us),
             min_threshold: 5.0,
-            validator: None,
+            validator: Some(validators::validate_phone_us),
         },
         PatternDef {
             name: "Phone (IT)",
@@ -706,16 +706,63 @@ mod tests {
 
     #[test]
     fn test_detect_us_phone_pattern() {
+        // Valid NANP numbers in the fictional 555-01XX range. `555-123-4567`,
+        // the usual fake, is not one: its exchange starts with 1.
         let data = vec![
-            "(555) 123-4567".to_string(),
-            "555-123-4567".to_string(),
-            "5551234567".to_string(),
+            "(212) 555-0123".to_string(),
+            "212-555-0147".to_string(),
+            "2125550188".to_string(),
+            "+1 212 555 0199".to_string(),
         ];
         let patterns = detect_patterns(&data, None);
 
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0].name, "Phone (US)");
         assert_eq!(patterns[0].category, PatternCategory::Contact);
+        // Confident enough for the sensitive-pattern finding without a locale.
+        assert!(patterns[0].confidence >= 0.5, "{}", patterns[0].confidence);
+    }
+
+    /// #812: ten-digit integers matched the phone regex, and a
+    /// locale-specific pattern at 0.525 confidence cleared the 0.5 bar for the
+    /// sensitive-pattern finding. The NANP validator takes them below it.
+    #[test]
+    fn ten_digit_integers_are_not_confident_us_phone_numbers() {
+        let columns: [(&str, Vec<String>); 4] = [
+            (
+                "sequential ids",
+                (2_000_000_000u64..2_000_000_060)
+                    .map(|n| n.to_string())
+                    .collect(),
+            ),
+            (
+                "ids starting with 1",
+                (1_100_000_000u64..1_100_000_060)
+                    .map(|n| n.to_string())
+                    .collect(),
+            ),
+            (
+                "epoch seconds",
+                (0..60u64)
+                    .map(|i| (1_705_312_200 + i * 86_400).to_string())
+                    .collect(),
+            ),
+            (
+                // A deterministic spread over the whole ten-digit range, of
+                // which about two thirds pass NANP by chance.
+                "spread ids",
+                (0..60u64)
+                    .map(|i| (1_000_000_000 + i * 150_000_017).to_string())
+                    .collect(),
+            ),
+        ];
+        for (label, values) in columns {
+            let phone = detect_patterns(&values, None)
+                .into_iter()
+                .find(|pattern| pattern.name == "Phone (US)");
+            let confidence = phone.map_or(0.0, |pattern| pattern.confidence);
+            assert!(confidence < 0.5, "{label}: Phone (US) at {confidence}");
+        }
     }
 
     #[test]
