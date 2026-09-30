@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dataprof — high-performance data profiling for Rust and Python</title>
-  <meta name="description" content="dataprof profiles tabular data at Rust speed: column statistics, type and pattern detection, and ISO 8000/25012 quality scoring with bounded memory — from Python or Rust.">
+  <title>dataprof: data profiling and quality gates for Python and Rust</title>
+  <meta name="description" content="Profile CSV, JSON, Parquet, DataFrames and Arrow in one call: types, nulls, distributions, patterns and a quality score. Then gate your pipeline on it. Local, deterministic, bounded memory.">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
   <link rel="stylesheet" href="style.css">
-  <meta property="og:title" content="dataprof — high-performance data profiling">
-  <meta property="og:description" content="Column statistics, type detection, and ISO 8000/25012 quality scoring with bounded memory. Rust crate and Python package.">
+  <meta property="og:title" content="dataprof: know what's in your data before it ships">
+  <meta property="og:description" content="Profiling and quality gates for tabular data. The same numbers from every input, verdicts that say when they cannot tell. Python package and Rust crate.">
   <meta property="og:image" content="https://andreabozzo.github.io/dataprof/assets/og-image.jpg">
   <meta property="og:url" content="https://andreabozzo.github.io/dataprof/">
   <meta property="og:type" content="website">
@@ -230,13 +230,14 @@
   <section class="hero wrap">
     <div class="hero-grid">
       <div>
-        <a class="pill release-pill" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md">0.11.0 release notes &rarr;</a>
+        <a class="pill release-pill" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md">0.12.0 release notes &rarr;</a>
         <span class="eyebrow">Rust core &middot; Python native &middot; ISO 8000/25012</span>
         <h1>Know your data <em>before</em> it bites.</h1>
         <p class="hero-sub">
-          dataprof profiles tabular data at Rust speed: column statistics, type and pattern
-          detection, and standards-based quality scoring &mdash; with bounded memory, so datasets
-          far larger than RAM are fair game.
+          Profile CSV, JSON, Parquet, DataFrames and Arrow in one call: types, nulls,
+          distributions, patterns and a quality score. Then gate your pipeline on what it found.
+          It runs locally, gives the same numbers however you load the data, and says
+          &ldquo;can&rsquo;t tell&rdquo; instead of guessing.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="#quickstart">Start in 30 seconds</a>
@@ -258,18 +259,16 @@
 
 report = dp.<span class="t-fn">profile</span>(<span class="t-str">"orders.csv"</span>)
 
-report.rows, report.columns
-<span class="t-out">(1_048_576, 14)</span>
+report.rows, report.columns, report.quality_score
+<span class="t-out">(200, 5, 92.98)</span>
 
-report.quality_score
-<span class="t-out">87.4</span>  <span class="t-cm"># 0&ndash;100 across assessed dimensions</span>
+[(f.code, f.column) <span class="t-kw">for</span> f <span class="t-kw">in</span> report.<span class="t-fn">findings</span>()]
+<span class="t-out">[('locale_numbers', 'price'),
+ ('null_heavy', 'email'),
+ ('sensitive_pattern', 'email')]</span>
 
-age = report[<span class="t-str">"customer_age"</span>]
-age.data_type, age.null_percentage
-<span class="t-out">('integer', 2.31)</span>
-
-<span class="t-cm"># token-bounded summary for an agent, PII never echoed</span>
-<span class="t-fn">print</span>(report.<span class="t-fn">to_llm_context</span>(max_tokens=<span class="t-num">500</span>))</code></pre>
+report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90</span>).verdict
+<span class="t-out">'pass'</span>  <span class="t-cm"># or 'fail', or 'inconclusive'</span></code></pre>
       </div>
     </div>
   </section>
@@ -312,9 +311,9 @@ age.data_type, age.null_percentage
   <section id="quickstart" class="block wrap">
     <div class="section-head">
       <span class="eyebrow">Quickstart</span>
-      <h2>Two polished entry points</h2>
-      <p>A Python package that feels natural in notebooks, and a compact Rust facade for
-        services, ETL jobs, and batch tools.</p>
+      <h2>Profile, then gate</h2>
+      <p>A Python package for notebooks, scripts and CI, and a Rust crate for services and
+        batch jobs. Same engine, same numbers.</p>
     </div>
 
     <div class="tabs" role="tablist" aria-label="Language">
@@ -332,13 +331,14 @@ age.data_type, age.null_percentage
 report = dp.<span class="t-fn">profile</span>(<span class="t-str">"data.csv"</span>)          <span class="t-cm"># files, dicts, bytes, DataFrames, Arrow</span>
 <span class="t-fn">print</span>(report.<span class="t-fn">quality_summary</span>())        <span class="t-cm"># per-dimension ISO scores</span>
 
-report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)             <span class="t-cm"># full report, reloadable</span>
-<span class="t-fn">print</span>(report.<span class="t-fn">to_markdown</span>())            <span class="t-cm"># a table for a PR comment</span>
+result = report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90</span>, max_null_percentage={<span class="t-str">"*"</span>: <span class="t-num">20</span>})
+<span class="t-fn">print</span>(result.verdict)                        <span class="t-cm"># pass, fail or inconclusive</span>
 
-before = dp.ProfileReport.<span class="t-fn">load</span>(<span class="t-str">"report.json"</span>)
-delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</span>(<span class="t-str">"data_clean.csv"</span>))</code></pre>
-      <p class="note">Standard, GIL-enabled CPython 3.10–3.14. Pre-built wheels have <strong>zero Python dependencies</strong> &mdash;
-        pandas is optional, for DataFrame-typed exports and Parquet byte buffers.
+report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)             <span class="t-cm"># full report, reloadable</span>
+<span class="t-fn">print</span>(report.<span class="t-fn">to_llm_context</span>(max_tokens=<span class="t-num">500</span>))  <span class="t-cm"># for an agent, no raw values</span></code></pre>
+      <p class="note">In CI, with no code: <code>python -m dataprof.check data.csv --min-quality 90</code>
+        exits 0, 1 or 2 for pass, fail or inconclusive.
+        Wheels for CPython 3.10 to 3.14 with no Python dependencies; pandas is optional, for DataFrame-typed exports.
         See the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide</a>.</p>
     </div>
 
@@ -365,19 +365,19 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
 
   <section class="block wrap">
     <div class="section-head">
-      <span class="eyebrow">Why it feels modern</span>
-      <h2>Fast by construction, honest about memory</h2>
+      <span class="eyebrow">What you can count on</span>
+      <h2>Careful numbers, bounded memory</h2>
     </div>
     <div class="card-grid">
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-        <h3>Fast first-pass signal</h3>
-        <p>Surface null pockets, type drift, duplicate keys, and outliers quickly &mdash; before you commit to a full analysis.</p>
+        <h3>Same data, same numbers</h3>
+        <p>CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile on every engine. CI checks it on every push.</p>
       </article>
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg></div>
-        <h3>True streaming</h3>
-        <p>Bounded-memory profiling with online algorithms. Files bigger than RAM are a normal Tuesday.</p>
+        <h3>Bounded memory</h3>
+        <p>Files larger than RAM stream through fixed-size accumulators, and exact counts hold up to a million distinct values.</p>
       </article>
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
@@ -386,18 +386,18 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
       </article>
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></div>
-        <h3>Two polished entry points</h3>
-        <p>A compact Rust facade and a Python package that feels native in notebooks, scripts, and data apps.</p>
+        <h3>Verdicts that can say &ldquo;can&rsquo;t tell&rdquo;</h3>
+        <p>A sampled or partial scan never passes a claim about the whole file. Scores carry their confidence interval, and the gate decides on it.</p>
       </article>
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-        <h3>Async-ready</h3>
-        <p>Rust async APIs and opt-in Python builds cover stream pipelines, services, and remote Parquet sources.</p>
+        <h3>Absence is not zero</h3>
+        <p>A metric that was not computed is reported as missing, never as a plausible default. Findings list the rules they could not evaluate.</p>
       </article>
       <article class="card feature-card">
         <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 4v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V7l7-4z"/></svg></div>
         <h3>Agent-safe summaries</h3>
-        <p>Token-bounded LLM context with sensitive values never echoed &mdash; profiling that plugs into agent workflows.</p>
+        <p>Token-bounded LLM context that carries counts and patterns, never your values. Profiling that plugs into agent workflows.</p>
       </article>
     </div>
   </section>

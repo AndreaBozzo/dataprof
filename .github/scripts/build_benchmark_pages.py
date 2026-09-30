@@ -354,21 +354,44 @@ def load_comparison(pages: Path) -> dict | None:
     return document
 
 
+def log_axis(values: list[float]) -> tuple[float, float]:
+    """Bounds of a logarithmic axis over positive `values`, padded a little each side.
+
+    The tools compared differ by orders of magnitude (1 ms against 300 ms), so on a
+    linear axis every fast tool collapses onto the left edge and the chart shows only
+    the slowest one.
+    """
+    positive = [value for value in values if value > 0] or [1e-6]
+    low, high = math.log10(min(positive)), math.log10(max(positive))
+    pad = max((high - low) * 0.08, 0.05)
+    return low - pad, high + pad
+
+
+def axis_position(value: float, axis: tuple[float, float]) -> float:
+    """Percentage position of `value` on a log axis, clamped to the track."""
+    low, high = axis
+    position = (math.log10(max(value, 10**low)) - low) / (high - low) * 100
+    return min(max(position, 0.0), 100.0)
+
+
 def render_timing_chart(document: dict, mode: str) -> str:
-    maximum = max(cell[mode]["q3_seconds"] for cell in document["results"].values())
-    scale = maximum * 1.08 or 1
+    cells = [modes[mode] for modes in document["results"].values()]
+    axis = log_axis(
+        [cell[key] for cell in cells for key in ("q1_seconds", "median_seconds", "q3_seconds")]
+    )
     rows = []
     for tool, modes in document["results"].items():
         cell = modes[mode]
         lower, upper, median = (cell[key] for key in ("q1_seconds", "q3_seconds", "median_seconds"))
+        left, right = axis_position(lower, axis), axis_position(upper, axis)
         accent = " is-dataprof" if tool == "dataprof" else ""
         rows.append(f"""<div class="timing-row{accent}">
           <span class="timing-name">{html.escape(tool)}</span>
           <div class="timing-track" aria-hidden="true">
             <span class="timing-iqr"
-              style="left:{lower / scale * 100:.4f}%;
-                width:{(upper - lower) / scale * 100:.4f}%"></span>
-            <span class="timing-median" style="left:{median / scale * 100:.4f}%"></span>
+              style="left:{left:.4f}%;
+                width:{max(right - left, 0.0):.4f}%"></span>
+            <span class="timing-median" style="left:{axis_position(median, axis):.4f}%"></span>
           </div>
           <span class="timing-value">{fmt_time(median * 1000)}</span>
         </div>""")
@@ -382,7 +405,8 @@ def render_timing_chart(document: dict, mode: str) -> str:
       <h3>{"Warm operations" if mode == "warm" else "Fresh-process operations"}</h3>
       <p>{description}</p>{"".join(rows)}
       <div class="chart-legend"><span>● Median &nbsp; ▰ Middle 50% of samples (IQR)</span>
-        <span>Linear scale from 0 to {fmt_time(scale * 1000)} · Lower is faster</span></div>
+        <span>Log scale from {fmt_time(10 ** axis[0] * 1000)} to {fmt_time(10 ** axis[1] * 1000)}
+          · Lower is faster</span></div>
     </div>"""
 
 
@@ -456,13 +480,15 @@ def render_comparison(document: dict | None) -> str:
       Each tool computes a different summary; metric equivalence is not established.
       Fresh process does not imply cold storage. These measurements describe this run,
       not a universal ranking. IQR shows variation, not a confidence interval.</div>
+    <details class="evidence-details"><summary>How to read these numbers</summary>
     <p><strong>Diagnostic evidence — no established baseline.</strong>
       Publication mode increases the experiment budget; it does not certify precision.
       Warm samples share a process within each block. Separate blocks use fresh processes,
       but share host and OS caches. Within-run intervals do not demonstrate across-run stability;
       repeat-run IQR overlap is a diagnostic, not a significance test.</p>
-    {render_ordered_samples(document)}
     {resource_note}
+    </details>
+    {render_ordered_samples(document)}
     <details class="evidence-details"><summary>Exact workloads and timing table</summary>
     <div class="bench-table"><table><caption>Seconds: median [IQR]</caption>
       <thead><tr><th>Tool</th><th>Cold median [IQR]</th><th>Warm median [IQR]</th>
@@ -626,19 +652,27 @@ def render_boundaries(document: dict | None) -> str:
                 )
             )
             rows.append(f"<tr><td>{html.escape(case['id'])}</td><td>{condition}</td>{cells}</tr>")
-    return f"""<section id="boundaries"><h2>Python / Arrow boundaries</h2>
+    return f"""<section id="boundaries">
+      <div class="section-head"><div><span class="eyebrow">Python / Arrow handoff</span>
+        <h2>Python / Arrow boundaries</h2>
+        <p>What it costs to hand pandas, polars and Arrow data to dataprof, stage by stage.</p>
+      </div></div>
+      <div class="card comparison-card">
+      <details class="evidence-details"><summary>How to read these numbers</summary>
       <p>Diagnostic evidence, no established baseline. Exact serialized column metrics,
       absence, integers, nulls and order are checked before comparison. Consumer import
       and profiling share one timer; lazy stream construction happens inside it.
       End-to-end includes both independent exports. Fresh means a new process, not cold storage.</p>
-      <details><summary>Stage times: median [IQR], seconds</summary>
+      <p>Peak RSS includes native buffers, imports and warmups across the worker lifetime.
+      Arrow pool observations are partial allocator evidence, not profiler-only memory.</p>
+      </details>
+      <details class="evidence-details"><summary>Stage times: median [IQR], seconds</summary>
       <div class="bench-table"><table><thead><tr><th>Producer / rows / chunk / offset</th>
       <th>Condition</th><th>Prepare</th><th>Import + profile</th><th>Dict</th><th>JSON</th>
       <th>End-to-end</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div></details>
-      <p>Peak RSS includes native buffers, imports and warmups across the worker lifetime.
-      Arrow pool observations are partial allocator evidence, not profiler-only memory.</p>
-      <p><a href="boundaries/results.json">Raw samples, memory and fingerprints</a> ·
-      <a href="boundaries/boundaries.md">Experiment table and scope</a></p></section>"""
+      <div class="download-links"><a href="boundaries/results.json">Raw samples, memory and
+        fingerprints ↗</a> <a href="boundaries/boundaries.md">Experiment table and scope ↗</a></div>
+      </div></section>"""
 
 
 def render_index(
@@ -676,12 +710,9 @@ def render_index(
                 </tr>"""
             )
 
-        preview = ""
-        if group["preview"]:
-            preview = f"""<div class="group-preview">
-              <a href="{group["report"]}"><img src="{group["preview"]}"
-                alt="{html.escape(group["label"])} preview" loading="lazy"></a>
-            </div>"""
+        report_link = (
+            f'<a class="group-report" href="{group["report"]}">Distributions and estimates ↗</a>'
+        )
 
         count = len(group["benchmarks"])
         search_text = html.escape((group["name"] + " " + group["description"]).lower(), quote=True)
@@ -696,7 +727,6 @@ def render_index(
                 </div>
                 <span class="pill">{count} benchmark{"s" if count != 1 else ""}</span>
               </div>
-              {preview}
               <div class="bench-table">
                 <table>
                   <thead><tr><th>Benchmark</th><th>Mean</th>
@@ -704,6 +734,7 @@ def render_index(
                   <tbody>{"".join(rows)}</tbody>
                 </table>
               </div>
+              {report_link}
             </article>"""
         )
 
@@ -720,6 +751,13 @@ def render_index(
         full_index_link = '<a href="report/index.html">Full Criterion index ↗</a>'
 
     comparison_nav = '<a href="#comparison">Tool comparison</a>' if comparison else ""
+    # Filtering two or three groups is busywork; routine CI publishes two.
+    search_control = (
+        """<div class="filter-control"><label for="scenario-search">Find a scenario</label>
+        <input id="scenario-search" type="search" placeholder="Try CSV or scaling"></div>"""
+        if len(groups) > 3
+        else ""
+    )
     evidence = (
         f"<dt>Comparison run</dt><dd>{html.escape(comparison['created_at'][:10])}</dd>"
         f"<dt>Fixture</dt><dd>{comparison['fixture']['expected']['rows']:,} rows · 3 columns</dd>"
@@ -762,8 +800,7 @@ def render_index(
       <h2>Explore the pipeline.</h2>
       <p>Repeated in-process measurements, from scan and column profiling to full report assembly.
         Each case links to its Criterion distributions and estimates.</p></div>
-      <div class="filter-control"><label for="scenario-search">Find a scenario</label>
-        <input id="scenario-search" type="search" placeholder="Try CSV or scaling"></div>
+      {search_control}
     </div>
     <p id="scenario-count" class="sr-only" aria-live="polite">
       {len(groups)} scenario groups shown</p>
