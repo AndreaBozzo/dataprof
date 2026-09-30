@@ -97,6 +97,10 @@ pub enum FindingCode {
     DuplicateRows,
     /// Date values lie after the time the report was produced.
     FutureDates,
+    /// At least half of a column's text values are numbers written with a
+    /// decimal comma or digit-group separators, which no numeric statistic
+    /// includes.
+    LocaleNumbers,
     /// A column's values split across lexical types.
     MixedTypes,
     /// A column's null share is at or above the policy threshold.
@@ -122,6 +126,7 @@ impl FindingCode {
             Self::AllNull
             | Self::DuplicateRows
             | Self::FutureDates
+            | Self::LocaleNumbers
             | Self::MixedTypes
             | Self::NullHeavy
             | Self::RaggedRows
@@ -143,6 +148,10 @@ impl FindingCode {
             Self::ConstantColumn => "every non-null value in this column is the same",
             Self::DuplicateRows => "the source contains exact duplicate rows",
             Self::FutureDates => "some date values lie in the future",
+            Self::LocaleNumbers => {
+                "at least half of the text values in this column are numbers written with a \
+                 decimal comma or digit grouping, so no numeric statistic includes them"
+            }
             Self::MixedTypes => "this column's values are split across lexical types",
             Self::NullHeavy => "this column's null share is at or above the threshold",
             Self::PartialScan => {
@@ -170,6 +179,7 @@ impl fmt::Display for FindingCode {
             Self::ConstantColumn => "constant_column",
             Self::DuplicateRows => "duplicate_rows",
             Self::FutureDates => "future_dates",
+            Self::LocaleNumbers => "locale_numbers",
             Self::MixedTypes => "mixed_types",
             Self::NullHeavy => "null_heavy",
             Self::PartialScan => "partial_scan",
@@ -465,6 +475,7 @@ impl FindingPolicy {
             Some(_) => {}
         }
 
+        locale_numbers(index, column, out);
         self.mixed_types(index, column, non_null, out);
         sensitive_patterns(index, column, non_null, out);
     }
@@ -522,6 +533,69 @@ impl FindingPolicy {
             ],
         );
     }
+}
+
+/// Report a column at least half of whose text values are numbers written in
+/// a locale format (#433).
+///
+/// Measured against the text values rather than the whole column, so it
+/// covers both ways these numbers go missing: a column of `1.234,56` typed
+/// `string` with no numeric statistics, and a numeric column whose
+/// decimal-comma values were counted as invalid. At least half, so that a free
+/// text column holding a stray `1,5` is not reported.
+fn locale_numbers(index: usize, column: &ColumnProfile, out: &mut Collector) {
+    let name = column.name.as_str();
+    // The exemption `mixed_types` makes: `1.234.567` in an identifier
+    // scheme is a code, not an amount.
+    if column.data_type == DataType::Identifier {
+        return;
+    }
+    let Some(homogeneity) = column.type_homogeneity.as_ref() else {
+        out.skip(
+            FindingCode::LocaleNumbers,
+            NotEvaluatedReason::NotComputed,
+            name,
+        );
+        return;
+    };
+    // Classified, but by a release that did not count these yet.
+    let Some(locale_numbers) = column.locale_number_count else {
+        out.skip(
+            FindingCode::LocaleNumbers,
+            NotEvaluatedReason::Unrecorded,
+            name,
+        );
+        return;
+    };
+    let classified = homogeneity.classified_count();
+    if classified == 0 {
+        out.skip(
+            FindingCode::LocaleNumbers,
+            NotEvaluatedReason::NoValues,
+            name,
+        );
+        return;
+    }
+    let text = homogeneity.text;
+    if locale_numbers == 0 || locale_numbers * 2 < text {
+        return;
+    }
+    out.column(
+        FindingCode::LocaleNumbers,
+        index,
+        name,
+        [
+            ("locale_number_count", EvidenceValue::Count(locale_numbers)),
+            ("text_count", EvidenceValue::Count(text)),
+            // Counted over the values the profiler retained, as in
+            // `mixed_types`.
+            ("classified_count", EvidenceValue::Count(classified)),
+            (
+                "non_null_count",
+                EvidenceValue::Count(column.total_count.saturating_sub(column.null_count)),
+            ),
+        ],
+    );
 }
 
 impl ProfileReport {
@@ -914,6 +988,7 @@ mod tests {
             unique_count_is_approximate: None,
             invalid_count: None,
             type_homogeneity: None,
+            locale_number_count: None,
             stats: ColumnStats::None,
             patterns: None,
         }
@@ -1154,6 +1229,97 @@ mod tests {
 
         let current = report(vec![], ExecutionMetadata::new(5, 0, 10)).findings();
         assert_eq!(skipped(&current, FindingCode::RaggedRows), None);
+    }
+
+    /// A classified column of `numeric` numbers and `text` text values,
+    /// `locale` of them locale-formatted numbers.
+    fn classified(name: &str, numeric: usize, text: usize, locale: Option<usize>) -> ColumnProfile {
+        let mut profile = column(name, numeric + text, 0);
+        profile.type_homogeneity = Some(TypeHomogeneity {
+            numeric,
+            date: 0,
+            boolean: 0,
+            text,
+        });
+        profile.locale_number_count = locale;
+        profile
+    }
+
+    fn locale_number_columns(result: &FindingsResult) -> Vec<&str> {
+        result
+            .findings
+            .iter()
+            .filter(|finding| finding.code == FindingCode::LocaleNumbers)
+            .filter_map(|finding| finding.column.as_deref())
+            .collect()
+    }
+
+    #[test]
+    fn locale_numbers_are_reported_from_half_of_the_text_values() {
+        let result = report(
+            vec![
+                classified("half", 0, 4, Some(2)),
+                classified("under_half", 0, 5, Some(2)),
+                // A float column whose decimal-comma values were invalid.
+                classified("float_with_commas", 9, 1, Some(1)),
+                classified("clean", 0, 4, Some(0)),
+            ],
+            ExecutionMetadata::new(10, 0, 10),
+        )
+        .findings();
+
+        assert_eq!(
+            locale_number_columns(&result),
+            ["half", "float_with_commas"]
+        );
+        let half = &result.findings[0];
+        assert_eq!(half.code, FindingCode::LocaleNumbers);
+        assert_eq!(
+            half.evidence,
+            BTreeMap::from([
+                ("classified_count".to_string(), EvidenceValue::Count(4)),
+                ("locale_number_count".to_string(), EvidenceValue::Count(2)),
+                ("non_null_count".to_string(), EvidenceValue::Count(4)),
+                ("text_count".to_string(), EvidenceValue::Count(4)),
+            ])
+        );
+        assert_eq!(skipped(&result, FindingCode::LocaleNumbers), None);
+    }
+
+    #[test]
+    fn an_identifier_column_is_exempt_from_locale_numbers() {
+        let mut codes = classified("codes", 0, 4, Some(4));
+        codes.data_type = DataType::Identifier;
+
+        let result = report(vec![codes], ExecutionMetadata::new(4, 0, 10)).findings();
+
+        assert!(locale_number_columns(&result).is_empty());
+        assert_eq!(skipped(&result, FindingCode::LocaleNumbers), None);
+    }
+
+    #[test]
+    fn a_report_from_before_locale_number_counting_does_not_read_as_clean() {
+        // Classified by a release that did not count locale numbers yet.
+        let result = report(
+            vec![classified("legacy", 0, 4, None)],
+            ExecutionMetadata::new(4, 0, 10),
+        )
+        .findings();
+        assert_eq!(
+            skipped(&result, FindingCode::LocaleNumbers),
+            Some(&NotEvaluatedReason::Unrecorded)
+        );
+
+        // Not classified at all: nothing was computed to count from.
+        let result = report(
+            vec![column("unclassified", 4, 0)],
+            ExecutionMetadata::new(4, 0, 10),
+        )
+        .findings();
+        assert_eq!(
+            skipped(&result, FindingCode::LocaleNumbers),
+            Some(&NotEvaluatedReason::NotComputed)
+        );
     }
 
     #[test]

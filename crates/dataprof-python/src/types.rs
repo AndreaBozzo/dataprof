@@ -76,6 +76,12 @@ pub struct PyColumnProfile {
     /// full-column count from one bounded by the engine's reservoir sample.
     #[pyo3(get)]
     pub type_homogeneity: Option<std::collections::BTreeMap<String, usize>>,
+    /// Of the `text` values in `type_homogeneity`, how many are numbers
+    /// written with a decimal comma or digit-group separators (`10,50`,
+    /// `1.234,56`, `1,234.56`). They are in no numeric statistic. `None` =
+    /// the count did not run (or the report predates it); `Some(0)` = none.
+    #[pyo3(get)]
+    pub locale_number_count: Option<usize>,
     /// Percentage of null values, or `None` for a zero-row column where the
     /// ratio (`null_count / total_count`) is undefined — absent means "not
     /// measured", never "0% nulls".
@@ -253,6 +259,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             unique_count_is_approximate: profile.unique_count_is_approximate,
             invalid_count: profile.invalid_count,
             type_homogeneity,
+            locale_number_count: profile.locale_number_count,
             null_percentage,
             uniqueness_ratio,
             min,

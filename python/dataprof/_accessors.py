@@ -118,6 +118,7 @@ class ColumnProfile(_View):
     unique_count_is_approximate = _Field[bool | None]()
     invalid_count = _Field[int | None]()
     type_homogeneity = _Field[dict[str, int] | None]()
+    locale_number_count = _Field[int | None]()
     null_percentage = _Field[float | None]()
     uniqueness_ratio = _Field[float | None]()
     min = _Field[float | None](section="stats")

@@ -85,6 +85,7 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
         "constant_column",
         "duplicate_rows",
         "future_dates",
+        "locale_numbers",
         "mixed_types",
         "null_heavy",
         "partial_scan",

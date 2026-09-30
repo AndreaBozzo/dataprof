@@ -56,6 +56,21 @@ pub struct ColumnProfile {
     /// zero rows) is `Some` with every count zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_homogeneity: Option<TypeHomogeneity>,
+    /// Of the values `type_homogeneity` counted as `text`, how many are
+    /// numbers written with a decimal comma or with digit-group separators:
+    /// `10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56` (#433).
+    ///
+    /// dataprof does not parse these as numbers, so they are in no numeric
+    /// statistic: a column of them is typed `string`, and a numeric column
+    /// counts them in `invalid_count`. The count does not say which
+    /// convention they follow; `1,234` is a thousand in one and a fraction in
+    /// another.
+    ///
+    /// Counted over the same values as `type_homogeneity`, and present
+    /// whenever it is. `None` means the count did not run, including a report
+    /// written before dataprof recorded it; `Some(0)` means none were found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale_number_count: Option<usize>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -356,6 +371,7 @@ mod tests {
             unique_count_is_approximate: Some(false),
             invalid_count: Some(0),
             type_homogeneity: None,
+            locale_number_count: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -410,6 +426,7 @@ mod tests {
             unique_count_is_approximate: Some(false),
             invalid_count: None,
             type_homogeneity: None,
+            locale_number_count: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,

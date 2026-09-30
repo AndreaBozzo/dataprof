@@ -417,12 +417,13 @@ Per-column profiling statistics.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Column name |
-| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"`, `"nested"`. A `nested` column (struct, list or map) reports its counts only: `unique_count`, `type_homogeneity`, `stats` and `patterns` are `None` |
+| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"`, `"nested"`. A `nested` column (struct, list or map) reports its counts only: `unique_count`, `type_homogeneity`, `locale_number_count`, `stats` and `patterns` are `None` |
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
 | `invalid_count` | `int \| None` | Non-null values that did not parse as a finite number (parse failures and non-finite tokens like `inf`/`NaN`) and are excluded from the statistics. `None` = check did not run (non-numeric column, or statistics skipped); `0` = every non-null value parsed |
 | `type_homogeneity` | `dict[str, int] \| None` | Non-null values counted by lexical class: `{"numeric", "date", "boolean", "text"}`. Tells a `string` column of ordinary text from one that defeated type inference, which `data_type` cannot. All four keys are always present; all-zero = classified with nothing to classify (all-null or no rows); `None` = the classification did not run. Counted over the values the profiler retained, so sum them against `total_count - null_count` to tell an exact count from one bounded by the 10k reservoir sample |
+| `locale_number_count` | `int \| None` | Of the `text` values in `type_homogeneity`, how many are numbers written with a decimal comma or digit-group separators (`10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56`). dataprof does not parse them as numbers, so they are in no numeric statistic: a column of them is typed `string`, and a numeric column counts them in `invalid_count`. `None` = the count did not run (a `nested` column, or a report saved before 0.12); `0` = none found |
 | `null_percentage` | `float` | Null ratio (0.0--100.0) |
 | `uniqueness_ratio` | `float` | Unique values / total values |
 | `min` | `float \| None` | Minimum (numeric columns) |
@@ -676,7 +677,8 @@ table = report.to_arrow()
 ```
 
 Columns included: `name`, `data_type`, `total_count`, `null_count`, `null_percentage`,
-`unique_count`, `uniqueness_ratio`, `dominant_type`, `dominant_type_share`,
+`unique_count`, `uniqueness_ratio`, `locale_number_count`, `dominant_type`,
+`dominant_type_share`,
 `min`, `max`, `mean`, `std_dev`, `variance`,
 `median`, `mode`, `skewness`, `kurtosis`, `coefficient_of_variation`, `q1`, `q2`,
 `q3`, `iqr`, `is_approximate`, `min_length`, `max_length`, `avg_length`,
@@ -827,6 +829,7 @@ names; no finding carries a raw cell value.
 | `all_null` | warning | Every value of a column is null |
 | `null_heavy` | warning | A column's null percentage is at least `null_heavy_percentage` (default 20) |
 | `mixed_types` | warning | Values outside a column's dominant lexical type are at least `mixed_types_percentage` (default 5) of those classified. `dominant_type` in the evidence says which way the mix leans. Identifier columns are exempt |
+| `locale_numbers` | warning | At least half of a column's text values are numbers written with a decimal comma or digit grouping (`locale_number_count`), which no numeric statistic includes. Identifier columns are exempt |
 | `duplicate_rows` | warning | The source holds exact duplicate rows |
 | `future_dates` | warning | Date values lie after the time the report was produced |
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
@@ -869,7 +872,7 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
 | `estimated` | The duplicate count is an estimate, which witnesses nothing |
 | `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
-| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage before 0.12 |
+| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage and locale-formatted numbers before 0.12 |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 

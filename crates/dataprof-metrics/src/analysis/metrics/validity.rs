@@ -86,6 +86,7 @@ mod tests {
             unique_count_is_approximate: Some(false),
             invalid_count: None,
             type_homogeneity: None,
+            locale_number_count: None,
             stats: ColumnStats::None,
             patterns,
         }

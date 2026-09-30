@@ -198,6 +198,9 @@ def _describe_column(report: Any, name: str) -> int:
         # is text or a column that defeated type inference. Counts, not values:
         # nothing here echoes a cell.
         "type_homogeneity": column.type_homogeneity,
+        # Of the text values, how many are numbers like 1.234,56 that no
+        # numeric statistic includes.
+        "locale_number_count": column.locale_number_count,
         "patterns": patterns,
     }
     # Pattern names only. Values are withheld unconditionally: this script has

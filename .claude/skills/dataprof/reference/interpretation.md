@@ -129,6 +129,26 @@ column's classified values fall outside its dominant class. That threshold is
 display only — it changes no score — and `identifier` columns are exempt,
 because an ID scheme mixing `A1` and `123` is intended rather than a defect.
 
+## Locale-formatted numbers
+
+dataprof reads numbers in one convention: `.` for decimals, no grouping.
+`report["col"].locale_number_count` counts the text values that are numbers in
+another one: `10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56`. None of
+them is in any numeric statistic. A column made of them is typed `string` with
+no mean or range; a float column holding a few counts them in `invalid_count`.
+
+When at least half of a column's text values are such numbers, the
+`locale_numbers` finding names it and `to_llm_context()` flags it:
+
+```
+- importo: 6 of 6 values are numbers with a decimal comma or digit grouping, left out of numeric stats
+```
+
+Say that the column holds numbers the profile did not read, not that it is
+text. The count does not say which convention applies (`1,234` is a thousand
+in the US and a fraction in Italy), so do not state a converted value. `None`
+means the count did not run, as for `type_homogeneity`.
+
 ## Approximation provenance
 
 `is_approximate`, `unique_count_is_approximate`, and the structure report's

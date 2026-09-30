@@ -5,7 +5,8 @@
     "header_only.csv": "a,b\n",
     "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n",
     "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n",
-    "unclosed.csv": "id,text\n1,\"never closed\n2,x\n3,y\n"
+    "unclosed.csv": "id,text\n1,\"never closed\n2,x\n3,y\n",
+    "locale.csv": "id;prezzo;importo;peso;note\n1;10,50;1.234,56;1.5;consegna rapida\n2;20,00;2.345,67;2.5;1,5\n3;7,25;9.876,54;3,5;fragile\n4;3,10;12.000,00;4.5;ok\n5;1,99;500,00;5.5;da verificare\n6;;1.000.000,01;6.5;urgente\n"
   },
   "cases": [
     {
@@ -119,6 +120,13 @@
             ]
           },
           {
+            "code": "locale_numbers",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
             "code": "mixed_types",
             "reason": "no_values",
             "columns": [
@@ -220,6 +228,13 @@
         "not_evaluated": [
           {
             "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "locale_numbers",
             "reason": "no_values",
             "columns": [
               "notes"
@@ -344,6 +359,13 @@
             ]
           },
           {
+            "code": "locale_numbers",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
             "code": "mixed_types",
             "reason": "no_values",
             "columns": [
@@ -445,6 +467,13 @@
             "code": "future_dates",
             "reason": "quality_unavailable",
             "quality_status": "not_requested"
+          },
+          {
+            "code": "locale_numbers",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
           },
           {
             "code": "mixed_types",
@@ -560,6 +589,13 @@
         "not_evaluated": [
           {
             "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "locale_numbers",
             "reason": "no_values",
             "columns": [
               "notes"
@@ -716,6 +752,13 @@
             "reason": "not_assessed"
           },
           {
+            "code": "locale_numbers",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
             "code": "mixed_types",
             "reason": "not_computed",
             "columns": [
@@ -771,6 +814,14 @@
             "reason": "not_assessed"
           },
           {
+            "code": "locale_numbers",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
             "code": "mixed_types",
             "reason": "no_values",
             "columns": [
@@ -793,6 +844,77 @@
               "a",
               "b"
             ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "locale_formatted_numbers_are_reported",
+      "why": "A semicolon export with decimal commas and dot grouping: prezzo and importo are typed string, peso is a float whose one decimal-comma value is invalid, and note holds a single 1,5 among free text, which is not enough.",
+      "options": {
+        "input": "locale.csv"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "locale_numbers",
+            "severity": "warning",
+            "column": "prezzo",
+            "evidence": {
+              "classified_count": 5,
+              "locale_number_count": 5,
+              "non_null_count": 5,
+              "text_count": 5
+            },
+            "summary": "at least half of the text values in this column are numbers written with a decimal comma or digit grouping, so no numeric statistic includes them"
+          },
+          {
+            "code": "locale_numbers",
+            "severity": "warning",
+            "column": "importo",
+            "evidence": {
+              "classified_count": 6,
+              "locale_number_count": 6,
+              "non_null_count": 6,
+              "text_count": 6
+            },
+            "summary": "at least half of the text values in this column are numbers written with a decimal comma or digit grouping, so no numeric statistic includes them"
+          },
+          {
+            "code": "locale_numbers",
+            "severity": "warning",
+            "column": "peso",
+            "evidence": {
+              "classified_count": 6,
+              "locale_number_count": 1,
+              "non_null_count": 6,
+              "text_count": 1
+            },
+            "summary": "at least half of the text values in this column are numbers written with a decimal comma or digit grouping, so no numeric statistic includes them"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "peso",
+            "evidence": {
+              "classified_count": 6,
+              "dominant_percentage": 83.33,
+              "dominant_type": "numeric",
+              "non_null_count": 6,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
           },
           {
             "code": "temporal_order_violations",

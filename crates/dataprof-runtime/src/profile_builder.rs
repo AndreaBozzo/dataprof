@@ -13,7 +13,8 @@ use dataprof_core::{
 };
 use dataprof_metrics::{
     analysis::inference::{
-        classify_lexical_forms, is_integer_token, is_null_like_token, parse_strict_boolean_token,
+        classify_lexical_forms, count_locale_numbers, is_integer_token, is_null_like_token,
+        parse_strict_boolean_token,
     },
     analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
@@ -252,6 +253,8 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         // Not gated by `skip_statistics`: which forms a column holds is
         // schema-level evidence like the inferred type, not a statistic.
         type_homogeneity: Some(classify_lexical_forms(input.sample_values)),
+        // Over the same retained sample, so it stays a subset of `text` above.
+        locale_number_count: Some(count_locale_numbers(input.sample_values)),
         stats,
         patterns,
     }
@@ -273,6 +276,7 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         unique_count_is_approximate: None,
         invalid_count: None,
         type_homogeneity: None,
+        locale_number_count: None,
         stats: ColumnStats::None,
         patterns: None,
     }

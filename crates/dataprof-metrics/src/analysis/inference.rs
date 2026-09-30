@@ -44,6 +44,34 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     ]
 });
 
+/// A number written with a decimal comma or with digit-group separators: the
+/// forms locale-formatted exports carry and plain numeric parsing rejects.
+///
+/// Digits are ASCII on purpose: `\d` is Unicode-aware in this crate and would
+/// accept digits no numeric parser here reads. Space-like grouping requires a
+/// decimal part, because `333 123 456` is more often a phone number or a code
+/// than an integer. The pattern alone also accepts `1.234`, which plain parsing
+/// reads as a number; [`is_locale_number_token`] keeps only text values.
+static LOCALE_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^[+-]?(?:",
+        // 10,50 and 1,234: a decimal comma, or one comma-grouped thousand.
+        r"[0-9]+,[0-9]+",
+        // 1.234,56 and 1.234.567: dot grouping, optional comma decimals.
+        r"|[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?",
+        // 1,234.56 and 1,234,567: comma grouping, optional dot decimals.
+        r"|[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?",
+        // 12,34,567.89: Indian grouping, pairs above the first thousand.
+        r"|[0-9]{1,2}(?:,[0-9]{2})+,[0-9]{3}(?:\.[0-9]+)?",
+        // 1'234.56: apostrophe grouping, either decimal mark.
+        r"|[0-9]{1,3}(?:['\u{2019}][0-9]{3})+(?:[.,][0-9]+)?",
+        // 1 234,56: space, no-break or narrow no-break space grouping.
+        r"|[0-9]{1,3}(?:[ \u{A0}\u{202F}][0-9]{3})+[.,][0-9]+",
+        r")$",
+    ))
+    .expect("BUG: Invalid hardcoded regex pattern for locale-formatted numbers")
+});
+
 pub fn infer_type(data: &[String]) -> DataType {
     // Filter null-like strings for more robust inference.
     let non_empty: Vec<&String> = data
@@ -201,6 +229,33 @@ pub fn classify_lexical_forms<S: AsRef<str>>(values: &[S]) -> TypeHomogeneity {
     homogeneity
 }
 
+/// Whether a trimmed value is a number written with a decimal comma or with
+/// digit-group separators, such as `10,50`, `1.234,56`, `1,234.56`,
+/// `1'234.56` or `1 234,56` (#433).
+///
+/// Only [`LexicalClass::Text`] values qualify, so every value this accepts is
+/// one [`classify_lexical_forms`] counted as text, and one no statistic read
+/// as a number. Which convention a value uses is not decided here: `1,234` is
+/// a thousand in one locale and a fraction in another, and either way it was
+/// not read as a number.
+pub fn is_locale_number_token(value: &str) -> bool {
+    // The regex first: almost no value matches it, and `lexical_class` parses
+    // and runs the date patterns.
+    LOCALE_NUMBER_REGEX.is_match(value) && lexical_class(value) == LexicalClass::Text
+}
+
+/// Count the non-null `values` that [`is_locale_number_token`] accepts.
+///
+/// Classified over the same values as [`classify_lexical_forms`], so the count
+/// is a subset of that result's `text` count.
+pub fn count_locale_numbers<S: AsRef<str>>(values: &[S]) -> usize {
+    values
+        .iter()
+        .map(|value| value.as_ref().trim())
+        .filter(|trimmed| !is_null_like_token(trimmed) && is_locale_number_token(trimmed))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +316,86 @@ mod tests {
         // Not the same as "never classified": the caller can tell the two apart
         // because one is `Some` and the other is absent from the profile.
         assert_eq!(classify_lexical_forms(&values), TypeHomogeneity::default());
+    }
+
+    #[test]
+    fn locale_formatted_numbers_are_recognized_and_nothing_else_is() {
+        for value in [
+            "10,50",
+            "-0,5",
+            "+3,14",
+            "1,234",
+            "1.234,56",
+            "1.234.567",
+            "12.345.678,9",
+            "1,234.56",
+            "1,234,567",
+            "12,34,567",
+            "1,00,000.50",
+            "1'234.56",
+            "1\u{2019}234,5",
+            "1 234,56",
+            "1\u{A0}234,56",
+            "1\u{202F}234.5",
+        ] {
+            assert!(is_locale_number_token(value), "{value:?} not recognized");
+            assert_eq!(lexical_class(value), LexicalClass::Text, "{value:?}");
+        }
+
+        for value in [
+            // Read as numbers already: not text, so not a missed number.
+            "1.234",
+            "10.50",
+            "1234",
+            "-7",
+            "1e3",
+            // Dates and other dotted or grouped forms.
+            "15.01.2024",
+            "2024-01-15",
+            "1.2.3",
+            "192.168.1.1",
+            // Space grouping without decimals is a phone number or a code as
+            // often as it is an integer.
+            "333 123 456",
+            "1 234",
+            // Malformed grouping and separators without digits.
+            "1,2,3",
+            "1,23,4",
+            "123,45,678",
+            "1.23,4",
+            ",5",
+            "5,",
+            "1,,5",
+            // Not ASCII digits.
+            "\u{0661},\u{0665}",
+            // Units, currencies and other text around a number are out of
+            // scope for this recognizer.
+            "10,50 EUR",
+            "\u{20AC} 10,50",
+            "10,5%",
+            "junk",
+        ] {
+            assert!(!is_locale_number_token(value), "{value:?} recognized");
+        }
+    }
+
+    #[test]
+    fn locale_numbers_are_counted_among_the_text_values_only() {
+        let values = [
+            "1.234,56",
+            " 10,50 ",
+            "",
+            "null",
+            "1.234",
+            "12",
+            "junk",
+            "15.01.2024",
+        ]
+        .map(String::from);
+
+        assert_eq!(count_locale_numbers(&values), 2);
+        // The same values `classify_lexical_forms` puts in `text`, and no more.
+        assert_eq!(classify_lexical_forms(&values).text, 3);
     }
 
     #[test]

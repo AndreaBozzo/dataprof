@@ -178,6 +178,13 @@ re-read and eyeball two files by hand.
   sample; the flag says `sampled N of M values` when that is the case, and
   summing the counts against `total_count - null_count` tells you directly.
 
+- **A `string` column of `1.234,56` holds numbers dataprof did not read.**
+  Decimal commas and digit grouping are not parsed, so such values are in no
+  numeric statistic. `locale_number_count` counts them, and the
+  `locale_numbers` finding and a `to_llm_context()` flag name the column
+  once they are at least half of its text values. Report the column as
+  unread numbers, and do not guess the convention: `1,234` is ambiguous.
+
 - **A `nested` column was counted, not analyzed.** Structs, lists and maps
   report `total_count` and `null_count` only; the absent distinct count, stats
   and patterns mean "not analyzed", not "none found". Say that the column's
