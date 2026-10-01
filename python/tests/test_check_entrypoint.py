@@ -258,6 +258,55 @@ def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_
     assert "--baseline is not supported by the quality-gate API yet" in result.stderr
 
 
+def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
+    path = tmp_path / "policy.json"
+    # Deep enough that json.loads raises RecursionError (a RuntimeError), which
+    # the pre-fix except clause let escape as a traceback with exit 1.
+    path.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["path"] == str(path)
+    assert error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("flag", ["--engine", "--format"])
+def test_bogus_engine_and_format_are_argument_errors(source: Path, flag: str):
+    result = run_check(source, flag, "bogus", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "bogus" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_engine_alias_still_accepted(source: Path):
+    result = run_check(source, "--engine", "streaming", "--max-null", "*=100")
+    assert result.returncode == 0, result.stderr
+
+
+def test_negative_max_rows_is_an_argument_error(source: Path):
+    result = run_check(source, "--max-rows", "-1", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_flag_only_policy_mistake_has_no_path(source: Path):
+    result = run_check(source, "--min-quality", "150", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert "path" not in error
+    assert result.stderr == ""
+
+
 def test_missing_source_is_an_input_error(tmp_path: Path):
     missing = tmp_path / "missing.csv"
     result = run_check(missing, "--min-quality", "0", "--json")

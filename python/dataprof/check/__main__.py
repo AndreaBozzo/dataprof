@@ -35,6 +35,41 @@ def _named_percentage(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
 
 
+# The names profile_file() accepts for --engine/--format, mirroring the
+# case-insensitive parsing (and aliases) on the Rust side. argparse choices=
+# would reject the documented aliases ("streaming", "arrow", "ndjson") and
+# case variants the API accepts, so validate explicitly: bogus names still
+# fail here as argument errors instead of surfacing later as input errors.
+_ENGINES = ("auto", "incremental", "columnar", "streaming", "arrow")
+_FORMATS = ("csv", "json", "jsonl", "ndjson", "parquet")
+
+
+def _engine_name(value: str) -> str:
+    if value.lower() not in _ENGINES:
+        raise argparse.ArgumentTypeError(
+            f"invalid engine: {value!r} (choose from {', '.join(_ENGINES)})"
+        )
+    return value
+
+
+def _format_name(value: str) -> str:
+    if value.lower() not in _FORMATS:
+        raise argparse.ArgumentTypeError(
+            f"invalid format: {value!r} (choose from {', '.join(_FORMATS)})"
+        )
+    return value
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}") from None
+    if result < 0:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}")
+    return result
+
+
 def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
     """Detect --json (or an unambiguous abbreviation) using argparse's own rules.
 
@@ -48,6 +83,8 @@ def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
         if not arg.startswith("--"):
             continue
         name = arg.split("=", 1)[0]
+        # _option_string_actions is private argparse API; the abbreviated---json
+        # test pins this behavior so an upstream rename fails loudly, not silently.
         matches = [opt for opt in parser._option_string_actions if opt.startswith(name)]
         if matches == ["--json"]:
             return True
@@ -146,9 +183,22 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         choices=("full_source", "observed"),
         help="require evidence about the full source (default) or the observed population",
     )
-    parser.add_argument("--engine", default="auto", help="profiling engine (default: auto)")
-    parser.add_argument("--format", help="explicit input format; inferred from the path by default")
-    parser.add_argument("--max-rows", type=int, help="cap the number of profiled rows")
+    parser.add_argument(
+        "--engine",
+        default="auto",
+        type=_engine_name,
+        help="profiling engine (default: auto)",
+    )
+    parser.add_argument(
+        "--format",
+        type=_format_name,
+        help="explicit input format; inferred from the path by default",
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=_non_negative_int,
+        help="cap the number of profiled rows",
+    )
     parser.add_argument(
         "--metric",
         dest="metrics",
@@ -223,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--baseline is not supported by the quality-gate API yet")
     try:
         policy = _policy(args)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         return _report_error("policy", str(exc), path=args.policy, json_output=args.json)
     try:
         report = profile_file(
