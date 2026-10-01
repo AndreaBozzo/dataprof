@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from argparse import ArgumentParser
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from dataprof import profile_file
 from dataprof._gate import _Policy
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
+_ERROR_EXIT_CODE = 3
 _POLICY_DEFAULTS: dict[str, Any] = {
     "min_quality_score": None,
     "min_dimension_scores": None,
@@ -32,13 +35,48 @@ def _named_percentage(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+class _CheckArgumentParser(ArgumentParser):
+    """An ArgumentParser whose usage errors exit 3, not argparse's default 2.
+
+    With --json, a usage error writes ``{"error": {"kind": "argument", ...}}``
+    to stdout instead of printing usage to stderr, so machine consumers never
+    need to parse stderr.
+    """
+
+    def __init__(self, *args: Any, argv: Sequence[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
+
+    def error(self, message: str) -> NoReturn:
+        if self._json_errors:
+            print(json.dumps({"error": {"kind": "argument", "message": message}}))
+        else:
+            self.print_usage(sys.stderr)
+            sys.stderr.write(f"{self.prog}: error: {message}\n")
+        raise SystemExit(_ERROR_EXIT_CODE)
+
+
+def _report_error(kind: str, message: str, *, path: Path | None, json_output: bool) -> int:
+    """Report an input, policy, or argument error; always returns exit code 3."""
+    if json_output:
+        error: dict[str, Any] = {"kind": kind, "message": message}
+        if path is not None:
+            error["path"] = str(path)
+        print(json.dumps({"error": error}))
+    else:
+        print(f"dataprof.check: error: {message}", file=sys.stderr)
+    return _ERROR_EXIT_CODE
+
+
+def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
+    parser = _CheckArgumentParser(
         prog="python -m dataprof.check",
+        argv=argv,
         description="Profile a local file and evaluate a quality policy.",
         epilog=(
             "Exit codes: 0 = pass (also --help); 1 = a proven policy violation; "
-            "2 = inconclusive, invalid arguments/policy, or input error. "
+            "2 = inconclusive (a threshold could not be evaluated); "
+            "3 = an argument, policy, or source could not be read or used. "
             "A proven violation takes precedence over unevaluated checks. "
             "Baseline comparison is not yet supported by the gate API."
         ),
@@ -103,7 +141,7 @@ def _parser() -> argparse.ArgumentParser:
         "--baseline",
         type=Path,
         metavar="PATH",
-        help="unsupported: baseline comparison awaits support in the gate API (exits 2)",
+        help="unsupported: baseline comparison awaits support in the gate API (exits 3)",
     )
     return parser
 
@@ -154,18 +192,21 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run a gate; return 0 for pass, 1 for fail, or 2 when inconclusive/error.
+    """Run a gate; return 0 for pass, 1 for fail, 2 when inconclusive, 3 on error.
 
     Raises:
-        SystemExit: Argument parsing exits with 0 for ``--help``, or 2 for
+        SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
             invalid arguments or the unsupported ``--baseline`` option.
     """
-    parser = _parser()
+    parser = _parser(argv)
     args = parser.parse_args(argv)
     if args.baseline is not None:
         parser.error("--baseline is not supported by the quality-gate API yet")
     try:
         policy = _policy(args)
+    except (OSError, ValueError) as exc:
+        return _report_error("policy", str(exc), path=args.policy, json_output=args.json)
+    try:
         report = profile_file(
             args.source,
             engine=args.engine,
@@ -175,8 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = report.check(**policy)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
-        print(f"dataprof.check: {exc}", file=sys.stderr)
-        return 2
+        return _report_error("input", str(exc), path=args.source, json_output=args.json)
 
     if args.json:
         print(result.to_json())
