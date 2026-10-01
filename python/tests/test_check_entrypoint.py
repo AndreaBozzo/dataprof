@@ -280,6 +280,16 @@ def test_unknown_flag_is_an_argument_error(source: Path):
     assert "Traceback" not in result.stderr
 
 
+def test_abbreviated_json_flag_still_selects_json_errors(source: Path):
+    result = run_check(source, "--js", "--bogus-flag")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "--bogus-flag" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
 def test_unknown_flag_without_json_prints_usage_on_stderr(source: Path):
     result = run_check(source, "--bogus-flag")
     assert result.returncode == 3

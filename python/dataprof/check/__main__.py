@@ -35,6 +35,25 @@ def _named_percentage(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
 
 
+def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
+    """Detect --json (or an unambiguous abbreviation) using argparse's own rules.
+
+    argparse accepts unambiguous long-option abbreviations (``allow_abbrev``),
+    so ``--js`` selects ``--json``. Mirror that here so usage errors honor the
+    JSON error contract no matter how the flag was spelled.
+    """
+    for arg in argv:
+        if arg == "--":
+            break
+        if not arg.startswith("--"):
+            continue
+        name = arg.split("=", 1)[0]
+        matches = [opt for opt in parser._option_string_actions if opt.startswith(name)]
+        if matches == ["--json"]:
+            return True
+    return False
+
+
 class _CheckArgumentParser(ArgumentParser):
     """An ArgumentParser whose usage errors exit 3, not argparse's default 2.
 
@@ -45,10 +64,10 @@ class _CheckArgumentParser(ArgumentParser):
 
     def __init__(self, *args: Any, argv: Sequence[str] | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._json_errors = "--json" in (sys.argv[1:] if argv is None else argv)
+        self._argv = list(sys.argv[1:] if argv is None else argv)
 
     def error(self, message: str) -> NoReturn:
-        if self._json_errors:
+        if _json_requested(self, self._argv):
             print(json.dumps({"error": {"kind": "argument", "message": message}}))
         else:
             self.print_usage(sys.stderr)
