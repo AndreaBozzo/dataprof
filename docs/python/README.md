@@ -1063,8 +1063,8 @@ python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > ve
 ```
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above.
-Thresholds are JSON numbers; a quoted one such as `"90"` is an input error
-(exit 2). Commit it alongside the pipeline so threshold changes can be reviewed:
+Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
+(exit 3). Commit it alongside the pipeline so threshold changes can be reviewed:
 
 ```json
 {
@@ -1083,7 +1083,7 @@ any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 entries; the last occurrence of a repeated mapping key wins.
 `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the other policy
 keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
-inside dimension or column mappings) are input errors.
+inside dimension or column mappings) are policy errors (exit 3).
 
 `--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through
 to `profile_file()`. As with the library, capped or sampled evidence may leave a
@@ -1095,15 +1095,21 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 |---|---|
 | `0` | Every requirement passed; also used by `--help` |
 | `1` | The gate found a proven violation, even if other checks are unevaluated |
-| `2` | The gate is inconclusive, or an argument, policy, or source could not be read or used |
+| `2` | The gate is inconclusive: a threshold could not be evaluated |
+| `3` | An argument, policy, or source could not be read or used |
 
 Human summaries go to stderr. With `--json`, stdout contains only the existing
-`QualityGateResult.to_json()` document, including inconclusive results. Input
-errors produce no result document and leave stdout empty. Without `--json`,
-stdout is empty. `--help` prints usage to stdout and lists every flag and code.
+`QualityGateResult.to_json()` document, including inconclusive results. Errors
+(exit `3`) write an error object instead of a result document:
+`{"error": {"kind": "argument" | "policy" | "input", "message": "...", "path": "..."}}`,
+where `path` is present when the error names a file. A `policy` error without
+`path` comes from a command-line flag (for example `--min-quality 150`), not
+from the policy file. Without `--json`, errors
+go to stderr and stdout stays empty. `--help` prints usage to stdout and lists
+every flag and code.
 
 Baseline-relative gates await support in `ProfileReport.check()`.
-`--baseline PATH` currently exits `2` with an explicit unsupported-operation
+`--baseline PATH` currently exits `3` with an explicit unsupported-operation
 message, whether or not the path exists. It never ignores the requested
 comparison or substitutes an absolute check.
 

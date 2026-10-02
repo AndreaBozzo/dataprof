@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from argparse import ArgumentParser
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from dataprof import profile_file
 from dataprof._gate import _Policy
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
+_ERROR_EXIT_CODE = 3
 _POLICY_DEFAULTS: dict[str, Any] = {
     "min_quality_score": None,
     "min_dimension_scores": None,
@@ -32,13 +35,104 @@ def _named_percentage(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+# The names profile_file() accepts for --engine/--format, mirroring the
+# case-insensitive parsing (and aliases) on the Rust side. argparse choices=
+# would reject the documented aliases ("streaming", "arrow", "ndjson") and
+# case variants the API accepts, so validate explicitly: bogus names still
+# fail here as argument errors instead of surfacing later as input errors.
+_ENGINES = ("auto", "incremental", "columnar", "streaming", "arrow")
+_FORMATS = ("csv", "json", "jsonl", "ndjson", "parquet")
+
+
+def _engine_name(value: str) -> str:
+    if value.lower() not in _ENGINES:
+        raise argparse.ArgumentTypeError(
+            f"invalid engine: {value!r} (choose from {', '.join(_ENGINES)})"
+        )
+    return value
+
+
+def _format_name(value: str) -> str:
+    if value.lower() not in _FORMATS:
+        raise argparse.ArgumentTypeError(
+            f"invalid format: {value!r} (choose from {', '.join(_FORMATS)})"
+        )
+    return value
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}") from None
+    if result < 0:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}")
+    return result
+
+
+def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
+    """Detect --json (or an unambiguous abbreviation) using argparse's own rules.
+
+    argparse accepts unambiguous long-option abbreviations (``allow_abbrev``),
+    so ``--js`` selects ``--json``. Mirror that here so usage errors honor the
+    JSON error contract no matter how the flag was spelled.
+    """
+    for arg in argv:
+        if arg == "--":
+            break
+        if not arg.startswith("--"):
+            continue
+        name = arg.split("=", 1)[0]
+        # _option_string_actions is private argparse API; the abbreviated---json
+        # test pins this behavior so an upstream rename fails loudly, not silently.
+        matches = [opt for opt in parser._option_string_actions if opt.startswith(name)]
+        if matches == ["--json"]:
+            return True
+    return False
+
+
+class _CheckArgumentParser(ArgumentParser):
+    """An ArgumentParser whose usage errors exit 3, not argparse's default 2.
+
+    With --json, a usage error writes ``{"error": {"kind": "argument", ...}}``
+    to stdout instead of printing usage to stderr, so machine consumers never
+    need to parse stderr.
+    """
+
+    def __init__(self, *args: Any, argv: Sequence[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._argv = list(sys.argv[1:] if argv is None else argv)
+
+    def error(self, message: str) -> NoReturn:
+        if _json_requested(self, self._argv):
+            print(json.dumps({"error": {"kind": "argument", "message": message}}))
+        else:
+            self.print_usage(sys.stderr)
+            sys.stderr.write(f"{self.prog}: error: {message}\n")
+        raise SystemExit(_ERROR_EXIT_CODE)
+
+
+def _report_error(kind: str, message: str, *, path: Path | None, json_output: bool) -> int:
+    """Report an input, policy, or argument error; always returns exit code 3."""
+    if json_output:
+        error: dict[str, Any] = {"kind": kind, "message": message}
+        if path is not None:
+            error["path"] = str(path)
+        print(json.dumps({"error": error}))
+    else:
+        print(f"dataprof.check: error: {message}", file=sys.stderr)
+    return _ERROR_EXIT_CODE
+
+
+def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
+    parser = _CheckArgumentParser(
         prog="python -m dataprof.check",
+        argv=argv,
         description="Profile a local file and evaluate a quality policy.",
         epilog=(
             "Exit codes: 0 = pass (also --help); 1 = a proven policy violation; "
-            "2 = inconclusive, invalid arguments/policy, or input error. "
+            "2 = inconclusive (a threshold could not be evaluated); "
+            "3 = an argument, policy, or source could not be read or used. "
             "A proven violation takes precedence over unevaluated checks. "
             "Baseline comparison is not yet supported by the gate API."
         ),
@@ -89,9 +183,22 @@ def _parser() -> argparse.ArgumentParser:
         choices=("full_source", "observed"),
         help="require evidence about the full source (default) or the observed population",
     )
-    parser.add_argument("--engine", default="auto", help="profiling engine (default: auto)")
-    parser.add_argument("--format", help="explicit input format; inferred from the path by default")
-    parser.add_argument("--max-rows", type=int, help="cap the number of profiled rows")
+    parser.add_argument(
+        "--engine",
+        default="auto",
+        type=_engine_name,
+        help="profiling engine (default: auto)",
+    )
+    parser.add_argument(
+        "--format",
+        type=_format_name,
+        help="explicit input format; inferred from the path by default",
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=_non_negative_int,
+        help="cap the number of profiled rows",
+    )
     parser.add_argument(
         "--metric",
         dest="metrics",
@@ -103,7 +210,7 @@ def _parser() -> argparse.ArgumentParser:
         "--baseline",
         type=Path,
         metavar="PATH",
-        help="unsupported: baseline comparison awaits support in the gate API (exits 2)",
+        help="unsupported: baseline comparison awaits support in the gate API (exits 3)",
     )
     return parser
 
@@ -154,18 +261,21 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run a gate; return 0 for pass, 1 for fail, or 2 when inconclusive/error.
+    """Run a gate; return 0 for pass, 1 for fail, 2 when inconclusive, 3 on error.
 
     Raises:
-        SystemExit: Argument parsing exits with 0 for ``--help``, or 2 for
+        SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
             invalid arguments or the unsupported ``--baseline`` option.
     """
-    parser = _parser()
+    parser = _parser(argv)
     args = parser.parse_args(argv)
     if args.baseline is not None:
         parser.error("--baseline is not supported by the quality-gate API yet")
     try:
         policy = _policy(args)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _report_error("policy", str(exc), path=args.policy, json_output=args.json)
+    try:
         report = profile_file(
             args.source,
             engine=args.engine,
@@ -175,8 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = report.check(**policy)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
-        print(f"dataprof.check: {exc}", file=sys.stderr)
-        return 2
+        return _report_error("input", str(exc), path=args.source, json_output=args.json)
 
     if args.json:
         print(result.to_json())

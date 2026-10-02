@@ -181,21 +181,37 @@ def test_repeated_policy_flags_match_library(source: Path):
         '{"max_null_percentage": {"*": "20"}}',
     ],
 )
-def test_invalid_policy_is_an_input_error(source: Path, tmp_path: Path, policy: str):
+def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: str):
     path = tmp_path / "policy.json"
     path.write_text(policy, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert "dataprof.check:" in result.stderr
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["path"] == str(path)
+    assert error["message"]
+    assert result.stderr == ""
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("flag", ["--policy", "--baseline"])
-def test_absent_policy_or_baseline_never_passes(source: Path, tmp_path: Path, flag: str):
-    result = run_check(source, flag, tmp_path / "missing.json", "--min-quality", "0", "--json")
-    assert result.returncode == 2
-    assert result.stdout == ""
+def test_absent_policy_file_is_a_policy_error(source: Path, tmp_path: Path):
+    missing = tmp_path / "missing.json"
+    result = run_check(source, "--policy", missing, "--min-quality", "0", "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["path"] == str(missing)
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_absent_baseline_is_an_argument_error(source: Path, tmp_path: Path):
+    result = run_check(source, "--baseline", tmp_path / "missing.json", "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "--baseline is not supported by the quality-gate API yet" in error["message"]
+    assert result.stderr == ""
     assert "Traceback" not in result.stderr
 
 
@@ -214,9 +230,11 @@ def test_duplicate_policy_keys_cannot_silently_relax_a_gate(
     path = tmp_path / "policy.json"
     path.write_text(policy, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
-    assert result.returncode == 2, result.stderr
-    assert result.stdout == ""
-    assert "duplicate policy key" in result.stderr
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert "duplicate policy key" in error["message"]
+    assert result.stderr == ""
     assert "Traceback" not in result.stderr
 
 
@@ -224,16 +242,124 @@ def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Pat
     baseline = tmp_path / "baseline.json"
     dp.profile_file(source).save(baseline)
     result = run_check(source, "--baseline", baseline, "--min-quality", "0", "--json")
-    assert result.returncode == 2
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "--baseline is not supported by the quality-gate API yet" in error["message"]
+    assert result.stderr == ""
+
+
+def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_path: Path):
+    baseline = tmp_path / "baseline.json"
+    dp.profile_file(source).save(baseline)
+    result = run_check(source, "--baseline", baseline, "--min-quality", "0")
+    assert result.returncode == 3
     assert result.stdout == ""
     assert "--baseline is not supported by the quality-gate API yet" in result.stderr
 
 
-def test_missing_source_is_an_input_error(tmp_path: Path):
-    result = run_check(tmp_path / "missing.csv", "--min-quality", "0", "--json")
-    assert result.returncode == 2
-    assert result.stdout == ""
+def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
+    path = tmp_path / "policy.json"
+    # Deep enough that json.loads raises RecursionError (a RuntimeError), which
+    # the pre-fix except clause let escape as a traceback with exit 1.
+    path.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["path"] == str(path)
+    assert error["message"]
+    assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("flag", ["--engine", "--format"])
+def test_bogus_engine_and_format_are_argument_errors(source: Path, flag: str):
+    result = run_check(source, flag, "bogus", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "bogus" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_engine_alias_still_accepted(source: Path):
+    result = run_check(source, "--engine", "streaming", "--max-null", "*=100")
+    assert result.returncode == 0, result.stderr
+
+
+def test_negative_max_rows_is_an_argument_error(source: Path):
+    result = run_check(source, "--max-rows", "-1", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_flag_only_policy_mistake_has_no_path(source: Path):
+    result = run_check(source, "--min-quality", "150", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert "path" not in error
+    assert result.stderr == ""
+
+
+def test_missing_source_is_an_input_error(tmp_path: Path):
+    missing = tmp_path / "missing.csv"
+    result = run_check(missing, "--min-quality", "0", "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "input"
+    assert error["path"] == str(missing)
+    assert error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_unknown_flag_is_an_argument_error(source: Path):
+    result = run_check(source, "--bogus-flag", "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "--bogus-flag" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_abbreviated_json_flag_still_selects_json_errors(source: Path):
+    result = run_check(source, "--js", "--bogus-flag")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "--bogus-flag" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_unknown_flag_without_json_prints_usage_on_stderr(source: Path):
+    result = run_check(source, "--bogus-flag")
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert "usage:" in result.stderr
+    assert "error: unrecognized arguments: --bogus-flag" in result.stderr
+
+
+def test_invalid_flag_value_is_an_argument_error(source: Path):
+    result = run_check(source, "--max-null", "not-a-pair", "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "NAME=PERCENT" in error["message"]
+    assert result.stderr == ""
+
+
+def test_inconclusive_still_exits_2(source: Path):
+    result = run_check(source, "--metric", "schema", "--min-quality", "90", "--json")
+    assert result.returncode == 2, result.stderr
+    assert json.loads(result.stdout)["verdict"] == "inconclusive"
 
 
 def test_help_documents_flags_and_exit_codes():
@@ -249,5 +375,6 @@ def test_help_documents_flags_and_exit_codes():
         "0 =",
         "1 =",
         "2 =",
+        "3 =",
     ):
         assert text in result.stdout
