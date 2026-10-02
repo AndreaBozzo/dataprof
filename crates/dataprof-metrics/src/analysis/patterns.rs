@@ -1,6 +1,7 @@
 use regex::{Regex, RegexSet};
 use std::sync::LazyLock;
 
+use crate::analysis::inference::is_null_like_token;
 use crate::analysis::validators;
 use crate::types::{Locale, Pattern, PatternCategory};
 
@@ -461,7 +462,9 @@ pub fn list_patterns(locale: Option<Locale>) -> Vec<PatternMetadata> {
 /// specificity-based overlap resolution to reduce false positives.
 ///
 /// # Arguments
-/// * `data` - Slice of string values to analyze
+/// * `data` - Slice of string values to analyze. Null-like tokens are skipped,
+///   so match percentages are shares of the values, as on the streaming engines,
+///   whose samples never hold a null.
 /// * `locale` - Optional locale (e.g. [`Locale::It`]). When set, locale-matching
 ///   patterns receive a confidence boost and non-matching locale patterns are
 ///   suppressed. Without a locale, locale-specific candidates remain available
@@ -472,11 +475,10 @@ pub fn list_patterns(locale: Option<Locale>) -> Vec<PatternMetadata> {
 /// Vector of detected patterns sorted by confidence descending, after overlap
 /// suppression and locale filtering.
 pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> {
-    // Filter empty and whitespace-only strings for robust analysis
     let non_empty: Vec<&str> = data
         .iter()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() || is_null_like_token("x"))
         .collect();
 
     if non_empty.is_empty() {

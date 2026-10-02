@@ -178,6 +178,60 @@ fn column_analysis_counts_them_too() {
     assert_numeric_with_markers(&analyze_column("na", &values), "analyze_column");
 }
 
+/// A pattern's share is of the values, not of the rows. The streaming
+/// engines' samples never hold a null; `analyze_column` hands pattern
+/// detection every cell, so it has to skip the markers itself.
+#[test]
+fn pattern_shares_leave_the_markers_out_on_every_path() {
+    let emails = [
+        "a@x.com", "NA", "b@x.com", "null", "c@x.com", "None", "d@x.com", "\\N",
+    ];
+    let mut csv = NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(csv, "email").unwrap();
+    for email in emails {
+        writeln!(csv, "{email}").unwrap();
+    }
+    csv.flush().unwrap();
+
+    let values: Vec<String> = emails.map(String::from).to_vec();
+    let mut profiles = vec![(
+        "analyze_column".to_string(),
+        analyze_column("email", &values),
+    )];
+    profiles.push((
+        "standard".to_string(),
+        analyze_csv_file(csv.path(), &CsvParserConfig::default())
+            .unwrap()
+            .column_profiles
+            .remove(0),
+    ));
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(csv.path())
+            .unwrap_or_else(|e| panic!("[{engine:?}] {e}"));
+        profiles.push((format!("{engine:?}"), report.column_profiles[0].clone()));
+    }
+
+    for (label, profile) in profiles {
+        assert_eq!(profile.null_count, 4, "[{label}]");
+        let patterns = profile.patterns.expect("patterns detected");
+        let email = patterns
+            .iter()
+            .find(|pattern| pattern.name == "Email")
+            .unwrap_or_else(|| panic!("[{label}] Email in {patterns:?}"));
+        assert_eq!(
+            (email.match_count, email.match_percentage),
+            (4, 100.0),
+            "[{label}]"
+        );
+    }
+}
+
 #[test]
 fn every_report_records_the_vocabulary() {
     for (label, report) in reports() {
