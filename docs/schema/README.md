@@ -589,3 +589,31 @@ report as `unrecorded` rather than clean.
 
 The field is additive and not `required`, so stored v1 reports remain valid.
 Every engine and input path reports the same count for the same values.
+
+## v1 additive change: `metric_semantics.null_tokens`
+
+`metric_semantics` gains a second definition (#813):
+
+| field | values | meaning |
+| --- | --- | --- |
+| `null_tokens` | `"common_markers"` | the text values counted as null |
+
+Under `common_markers` a value is null when it is empty or whitespace, `null`
+or `nan` in any case, or exactly one of `NA`, `N/A`, `n/a`, `#N/A`, `\N` and
+`None`, ignoring surrounding whitespace. The markers match only in that
+spelling, so `Na` and `none` stay values. Typed nulls (an Arrow null, SQL
+`NULL`, Python `None`, a float NaN) are null on every path, as before.
+
+Through 0.12 only empty, `null` and `nan` were nulls, and the markers were
+counted as values: completeness read 100% on columns that were mostly missing,
+and a numeric column with markers in it could fall below the inference
+threshold and be typed `string`. Null counts, completeness, inferred types and
+every statistic of a column holding these markers can differ from a 0.12 report
+of the same data.
+
+A 0.12 report records `text_length_unit` and not `null_tokens`, so its null
+vocabulary reads back as unknown and Python's `compare()` reports
+`comparable: None` against a current report. Every engine and input path
+records the same value. The field is additive and not `required`, so stored v1
+reports remain valid; an explicit `null` is malformed, as for
+`text_length_unit`.

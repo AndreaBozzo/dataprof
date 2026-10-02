@@ -46,7 +46,7 @@ score 83.5 to 97.9) while dropping half the rows. An agent that reports only the
 score improvement has missed the row loss.
 
 `fixtures/payments_mixed_amount.csv` — 10 payment rows where 4 of the
-`amount_eur` values are placeholders (`pending`, `n/a`, `see invoice`,
+`amount_eur` values are placeholders (`pending`, `TBD`, `see invoice`,
 `awaiting PO`). Past the 80% numeric threshold, type inference gives up and calls
 the column `string`. Consistency now scores that column on its dominant lexical
 class, so it contributes 6 of 10 values and the file scores **97.9/100** rather

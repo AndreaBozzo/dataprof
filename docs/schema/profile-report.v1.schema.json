@@ -898,12 +898,26 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "null_tokens": {
+          "$ref": "#/$defs/NullTokenSet",
+          "description": "The text values counted as null, which every `null_count` and every\ncompleteness figure depend on.\n\nAbsent means not recorded: the release that wrote the report counted\nonly empty, `null` and `nan`, or recorded nothing at all."
+        },
         "text_length_unit": {
           "$ref": "#/$defs/TextLengthUnit",
           "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
         }
       },
       "type": "object"
+    },
+    "NullTokenSet": {
+      "description": "The null vocabulary a report was measured with, as recorded in its metric\nsemantics.\n\nOnly the current vocabulary has a value. Releases that knew only empty,\n`null` and `nan` recorded none, and a report from one reads back with the\nvocabulary unknown rather than as one it never declared.",
+      "oneOf": [
+        {
+          "const": "common_markers",
+          "description": "Empty, `null` and `nan` in any case, and [`NULL_MARKERS`] exactly, as\nmatched by [`is_null_like_token`].",
+          "type": "string"
+        }
+      ]
     },
     "NumericStats": {
       "description": "Statistics for numeric (integer or float) columns.",

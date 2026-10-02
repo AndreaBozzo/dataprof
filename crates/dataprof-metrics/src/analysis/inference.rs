@@ -172,12 +172,7 @@ pub fn is_integer_token(value: &str) -> bool {
     value.parse::<i64>().is_ok() || value.parse::<u64>().is_ok()
 }
 
-pub fn is_null_like_token(value: &str) -> bool {
-    let trimmed = value.trim();
-    trimmed.is_empty()
-        || trimmed.eq_ignore_ascii_case("null")
-        || trimmed.eq_ignore_ascii_case("nan")
-}
+pub use dataprof_core::is_null_like_token;
 
 pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
     let trimmed = value.trim();

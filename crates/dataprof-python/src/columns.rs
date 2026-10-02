@@ -34,8 +34,8 @@ pub type PyColumn = (String, Vec<Option<String>>, Vec<usize>);
 /// Profile named columns of optional strings.
 ///
 /// A cell is null when Python handed us `None` *or* when it is a null-like token
-/// (`""`, `"null"`, `"nan"`), which is the same rule the Arrow string path and the
-/// CSV engine apply. Nulls take no part in statistics, uniqueness, or inference.
+/// (see `dataprof_core::is_null_like_token`), which is the same rule the Arrow
+/// string path and the CSV engine apply. Nulls take no part in statistics, uniqueness, or inference.
 ///
 /// Column order is preserved as given, so reports over the same input are
 /// byte-identical across processes.
