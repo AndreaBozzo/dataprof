@@ -267,14 +267,15 @@ fn a_report_without_the_vocabulary_reads_back_unknown() {
     let csv = csv_fixture();
     let report = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
     let mut document = serde_json::to_value(&report).unwrap();
-    document["metric_semantics"]
-        .as_object_mut()
-        .unwrap()
-        .remove("null_tokens");
+    // Written out as 0.12 wrote it, rather than derived from current output.
+    document["metric_semantics"] = json!({"text_length_unit": "unicode_scalar"});
     let restored: ProfileReport = serde_json::from_value(document).unwrap();
     let semantics = restored.metric_semantics.expect("still recorded");
     assert_eq!(semantics.null_tokens, None);
-    assert!(semantics.text_length_unit.is_some());
+    assert_eq!(
+        semantics.text_length_unit,
+        Some(dataprof::TextLengthUnit::UnicodeScalar)
+    );
 
     let mut document = serde_json::to_value(&report).unwrap();
     document["metric_semantics"]["null_tokens"] = serde_json::Value::Null;

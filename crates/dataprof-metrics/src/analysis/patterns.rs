@@ -478,7 +478,7 @@ pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> 
     let non_empty: Vec<&str> = data
         .iter()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty() || is_null_like_token("x"))
+        .filter(|s| !is_null_like_token(s))
         .collect();
 
     if non_empty.is_empty() {
