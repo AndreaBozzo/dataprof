@@ -1081,7 +1081,10 @@ mod tests {
         let report = report_without_quality();
         assert_eq!(report.metric_semantics, Some(MetricSemantics::current()));
         let mut document = serde_json::to_value(&report).unwrap();
-        let recorded = json!({"text_length_unit": "unicode_scalar"});
+        let recorded = json!({
+            "text_length_unit": "unicode_scalar",
+            "null_tokens": "common_markers",
+        });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
 
@@ -1104,6 +1107,8 @@ mod tests {
             json!("unicode_scalar"),
             json!({"text_length_unit": "utf8_byte"}),
             json!({"text_length_unit": null}),
+            json!({"null_tokens": "empty_null_nan"}),
+            json!({"null_tokens": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();
