@@ -239,10 +239,11 @@ class ProfileReport:
         """How this report's measurements were defined.
 
         A dict of named definitions, currently
-        ``{"text_length_unit": "unicode_scalar"}``. ``schema_version`` says
-        whether a document validates, not whether two reports measured the
-        same way: text lengths counted UTF-8 bytes through 0.11 with no change
-        to the document's shape.
+        ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}``.
+        ``schema_version`` says whether a document validates, not whether two
+        reports measured the same way: text lengths counted UTF-8 bytes through
+        0.11, and only empty, ``null`` and ``nan`` were nulls through 0.12, with
+        no change to the document's shape.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded this, whose definitions are unknown rather than the current

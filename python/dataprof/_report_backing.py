@@ -158,7 +158,10 @@ def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
 
 
 # Each named metric definition and the values a document may record for it.
-_METRIC_SEMANTICS = {"text_length_unit": ("unicode_scalar",)}
+_METRIC_SEMANTICS = {
+    "text_length_unit": ("unicode_scalar",),
+    "null_tokens": ("common_markers",),
+}
 
 
 def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:

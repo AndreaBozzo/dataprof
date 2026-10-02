@@ -8,7 +8,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
-CURRENT = {"text_length_unit": "unicode_scalar"}
+CURRENT = {"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
 
@@ -78,6 +78,21 @@ def test_a_unit_change_is_not_reported_as_comparable():
     assert unknown.compare(unknown)["metric_semantics"]["comparable"] is None
 
 
+def test_a_report_without_the_null_vocabulary_is_not_comparable():
+    """0.12 recorded its text-length unit, and counted only empty, null and nan.
+
+    Its completeness figures used a smaller null vocabulary than this build's
+    (#813), so a comparison with it cannot read a completeness change as data.
+    """
+    current = dataprof.profile({"x": ["1", "NA", "3"]})
+    document = current.to_dict()
+    document["metric_semantics"] = {"text_length_unit": "unicode_scalar"}
+    release_0_12 = dataprof.ProfileReport.from_dict(document)
+    assert release_0_12.metric_semantics == {"text_length_unit": "unicode_scalar"}
+    assert release_0_12.compare(current)["metric_semantics"]["comparable"] is None
+    assert current.compare(release_0_12)["metric_semantics"]["comparable"] is None
+
+
 def test_the_canonical_fixture_without_semantics_resaves_byte_identical(tmp_path):
     fixture = FIXTURES / "canonical_report.json"
     report = dataprof.ProfileReport.load(fixture)
@@ -105,8 +120,18 @@ def _through_both_readers(value):
         {"text_length_unit": "utf8_byte"},
         {"text_length_unit": 1},
         {"text_length_unit": None},
+        {"null_tokens": "empty_null_nan"},
+        {"null_tokens": None},
     ],
-    ids=["null", "string", "unknown-unit", "non-string-unit", "null-unit"],
+    ids=[
+        "null",
+        "string",
+        "unknown-unit",
+        "non-string-unit",
+        "null-unit",
+        "unknown-null-tokens",
+        "null-null-tokens",
+    ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
     summary, canonical = _through_both_readers(value)
@@ -130,7 +155,11 @@ def test_both_readers_agree_on_accepted_semantics(value):
 
 
 @pytest.mark.parametrize("dialect", ["summary", "canonical"])
-@pytest.mark.parametrize("value", [None, {"text_length_unit": None}], ids=["null", "null-unit"])
+@pytest.mark.parametrize(
+    "value",
+    [None, {"text_length_unit": None}, {"null_tokens": None}],
+    ids=["null", "null-unit", "null-null-tokens"],
+)
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):
     report = dataprof.profile(CITIES)
     document = report.to_dict() if dialect == "summary" else json.loads(report.to_json())

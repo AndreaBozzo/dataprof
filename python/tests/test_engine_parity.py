@@ -272,7 +272,7 @@ def test_serialized_parity_preserves_full_precision_accessors(engine, tmp_path):
 def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
     """Provenance, so identical on every path and in both documents (#675)."""
     report = build_report(engine, tmp_path)
-    expected = {"text_length_unit": "unicode_scalar"}
+    expected = {"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected
     assert json.loads(report.to_json())["metric_semantics"] == expected

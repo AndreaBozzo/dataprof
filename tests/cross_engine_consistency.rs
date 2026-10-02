@@ -114,7 +114,8 @@ fn create_sorted_30k_csv() -> NamedTempFile {
 fn null_and_non_finite_numeric_tokens_match_across_csv_engines() {
     for (token, null_count) in [
         ("", 1),
-        ("N/A", 0),
+        ("N/A", 1),
+        ("pending", 0),
         ("NaN", 1),
         ("inf", 0),
         ("-inf", 0),

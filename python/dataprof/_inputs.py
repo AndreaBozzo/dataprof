@@ -65,8 +65,9 @@ def _cell_to_str(value: object) -> str | None:
     """Render one Python cell as the string the core will type-infer.
 
     ``None`` and float NaN become nulls here; the core additionally treats
-    null-like tokens (``""``, ``"null"``, ``"nan"``) as missing, so the result
-    matches what the CSV and Arrow paths report for the same data.
+    null-like tokens (``""``, ``"null"``, ``"nan"``, ``"NA"``, ``"None"``, ...) as
+    missing, so the result matches what the CSV and Arrow paths report for the
+    same data.
     """
     if value is None:
         return None

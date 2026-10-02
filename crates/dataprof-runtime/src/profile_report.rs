@@ -1,6 +1,6 @@
 use dataprof_core::{
-    ColumnProfile, DataSource, ExecutionMetadata, QualityScoreWeights, SemanticHintBinding,
-    TextLengthUnit,
+    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, QualityScoreWeights,
+    SemanticHintBinding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -88,6 +88,18 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "TextLengthUnit")]
     pub text_length_unit: Option<TextLengthUnit>,
+    /// The text values counted as null, which every `null_count` and every
+    /// completeness figure depend on.
+    ///
+    /// Absent means not recorded: the release that wrote the report counted
+    /// only empty, `null` and `nan`, or recorded nothing at all.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "NullTokenSet")]
+    pub null_tokens: Option<NullTokenSet>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -105,6 +117,7 @@ impl MetricSemantics {
     pub fn current() -> Self {
         Self {
             text_length_unit: Some(TextLengthUnit::UnicodeScalar),
+            null_tokens: Some(NullTokenSet::CommonMarkers),
         }
     }
 }
@@ -1068,7 +1081,10 @@ mod tests {
         let report = report_without_quality();
         assert_eq!(report.metric_semantics, Some(MetricSemantics::current()));
         let mut document = serde_json::to_value(&report).unwrap();
-        let recorded = json!({"text_length_unit": "unicode_scalar"});
+        let recorded = json!({
+            "text_length_unit": "unicode_scalar",
+            "null_tokens": "common_markers",
+        });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
 
@@ -1091,6 +1107,8 @@ mod tests {
             json!("unicode_scalar"),
             json!({"text_length_unit": "utf8_byte"}),
             json!({"text_length_unit": null}),
+            json!({"null_tokens": "empty_null_nan"}),
+            json!({"null_tokens": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

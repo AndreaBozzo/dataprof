@@ -140,10 +140,12 @@ through the same compiled Arrow reader as Parquet files, so the two report the
 same types, column order, and statistics, and `capabilities().local_parquet`
 predicts both.
 
-A cell is missing when it is `None`, NaN, or a null-like token (`""`, `"null"`,
-`"nan"`) -- the same rule the CSV and Arrow paths use. Note that a `dict` is
-*not* round-tripped through pandas, so an integer column containing a null stays
-`integer` rather than being widened to `float`.
+A cell is missing when it is `None`, NaN, or a null-like token -- the same rule
+the CSV, JSON, Parquet and Arrow paths use. The tokens are empty or whitespace,
+`"null"` and `"nan"` in any case, and exactly `"NA"`, `"N/A"`, `"n/a"`, `"#N/A"`,
+`"\N"` and `"None"`; `metric_semantics["null_tokens"]` records this vocabulary.
+Note that a `dict` is *not* round-tripped through pandas, so an integer column
+containing a null stays `integer` rather than being widened to `float`.
 
 **Column order** follows the source on every input and transport: the CSV
 header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
@@ -273,7 +275,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar"}`; `None` for a report written before 0.12, whose definitions are unknown |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records no `null_tokens`: it counted only empty, `null` and `nan` as missing |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |

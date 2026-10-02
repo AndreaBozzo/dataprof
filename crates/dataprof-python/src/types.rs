@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
+    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, ProfileReport,
     QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, ScoreInterval,
     SemanticHintKind, TextLengthUnit, TruncationReason,
 };
@@ -1173,6 +1173,14 @@ impl PyProfileReport {
                 "text_length_unit",
                 match unit {
                     TextLengthUnit::UnicodeScalar => "unicode_scalar",
+                },
+            )?;
+        }
+        if let Some(tokens) = semantics.null_tokens {
+            dict.set_item(
+                "null_tokens",
+                match tokens {
+                    NullTokenSet::CommonMarkers => "common_markers",
                 },
             )?;
         }

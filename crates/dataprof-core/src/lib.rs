@@ -8,6 +8,7 @@ pub mod io;
 pub mod locale;
 pub mod memory_sampler;
 pub mod memory_tracker;
+pub mod null_tokens;
 pub mod output;
 pub mod partial;
 pub mod pattern;
@@ -37,6 +38,7 @@ pub use io::Utf8BomReader;
 pub use locale::Locale;
 pub use memory_sampler::PeakMemorySampler;
 pub use memory_tracker::{MemoryLeak, MemoryTracker};
+pub use null_tokens::{NULL_MARKERS, NullTokenSet, is_null_like_token};
 pub use output::OutputFormat;
 pub use partial::{
     ColumnSchema, CountMethod, RowCountEstimate, SchemaResult, StructureColumnSummary,
