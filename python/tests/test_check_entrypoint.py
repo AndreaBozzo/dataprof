@@ -289,6 +289,22 @@ def test_engine_alias_still_accepted(source: Path):
     assert result.returncode == 0, result.stderr
 
 
+def test_bogus_metric_is_an_argument_error(source: Path):
+    result = run_check(source, "--metric", "bogus", "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert "path" not in error
+    assert "bogus" in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_metric_pack_name_is_case_insensitive(source: Path):
+    result = run_check(source, "--metric", "SCHEMA", "--max-null", "*=100")
+    assert result.returncode == 0, result.stderr
+
+
 def test_negative_max_rows_is_an_argument_error(source: Path):
     result = run_check(source, "--max-rows", "-1", "--json")
     assert result.returncode == 3, result.stderr

@@ -35,13 +35,14 @@ def _named_percentage(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
 
 
-# The names profile_file() accepts for --engine/--format, mirroring the
-# case-insensitive parsing (and aliases) on the Rust side. argparse choices=
-# would reject the documented aliases ("streaming", "arrow", "ndjson") and
-# case variants the API accepts, so validate explicitly: bogus names still
+# The names profile_file() accepts for --engine/--format/--metric, mirroring
+# the case-insensitive parsing (and aliases) on the Rust side. argparse
+# choices= would reject the documented aliases ("streaming", "arrow", "ndjson")
+# and case variants the API accepts, so validate explicitly: bogus names still
 # fail here as argument errors instead of surfacing later as input errors.
 _ENGINES = ("auto", "incremental", "columnar", "streaming", "arrow")
 _FORMATS = ("csv", "json", "jsonl", "ndjson", "parquet")
+_METRIC_PACKS = ("schema", "statistics", "patterns", "quality")
 
 
 def _engine_name(value: str) -> str:
@@ -56,6 +57,14 @@ def _format_name(value: str) -> str:
     if value.lower() not in _FORMATS:
         raise argparse.ArgumentTypeError(
             f"invalid format: {value!r} (choose from {', '.join(_FORMATS)})"
+        )
+    return value
+
+
+def _metric_pack(value: str) -> str:
+    if value.lower() not in _METRIC_PACKS:
+        raise argparse.ArgumentTypeError(
+            f"invalid metric pack: {value!r} (choose from {', '.join(_METRIC_PACKS)})"
         )
     return value
 
@@ -204,6 +213,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         dest="metrics",
         action="append",
         metavar="PACK",
+        type=_metric_pack,
         help="select a profiling metric pack; repeatable; default: all packs",
     )
     parser.add_argument(
