@@ -140,7 +140,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         argv=argv,
         description="Profile a local file and evaluate a quality policy.",
         epilog=(
-            "Exit codes: 0 = pass (also --help); 1 = a proven policy violation; "
+            "Exit codes: 0 = pass (also --help and --version); 1 = a proven policy violation; "
             "2 = inconclusive (a threshold could not be evaluated); "
             "3 = an argument, policy, or source could not be read or used. "
             "A proven violation takes precedence over unevaluated checks. "
