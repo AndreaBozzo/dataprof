@@ -5,8 +5,7 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, ColumnStats, DataType, Locale, SemanticHintBinding, SemanticHintKind,
-    SemanticHints, char_len,
+    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
@@ -1317,7 +1316,16 @@ impl ColumnAnalyzer {
             0.0
         };
 
-        let mut profile = build_column_profile(ColumnProfileInput {
+        // A binary value has no characters. The only text this column holds is
+        // a rendering of its bytes (hex, or the `<binary:N bytes>` sample), so
+        // anything built from text would measure that rendering: a 2-byte value
+        // reported length 10, and 8-byte fingerprints whose hex is all digits
+        // matched Credit Card (#852). Both are skipped rather than computed and
+        // discarded. Patterns are then `None`, not empty: the bytes were never
+        // scanned, so sensitivity is unknown, not absent. Both stay absent until
+        // #645 decides what a binary column reports.
+        let encoded_bytes = self.renders_values_as_encoded_bytes();
+        build_column_profile(ColumnProfileInput {
             name,
             data_type,
             total_count: self.total_count,
@@ -1336,24 +1344,12 @@ impl ColumnAnalyzer {
             } else {
                 None
             },
-            skip_statistics,
-            skip_patterns,
+            skip_statistics: skip_statistics || encoded_bytes,
+            skip_patterns: skip_patterns || encoded_bytes,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
-        });
-        // A binary value has no characters. The only text this column holds is
-        // a rendering of its bytes (hex, or the `<binary:N bytes>` sample), so
-        // anything built above from text measured that rendering: a 2-byte
-        // value reported length 10, and 8-byte fingerprints whose hex is all
-        // digits matched Credit Card (#852). Patterns are `None`, not empty:
-        // the bytes were never scanned, so sensitivity is unknown, not absent.
-        // Both stay absent until #645 decides what a binary column reports.
-        if self.renders_values_as_encoded_bytes() {
-            profile.stats = ColumnStats::None;
-            profile.patterns = None;
-        }
-        profile
+        })
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -1384,6 +1380,7 @@ mod tests {
     use arrow::array::{Float64Array, Int64Array, StringArray, TimestampMicrosecondArray};
     use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
+    use dataprof_core::ColumnStats;
     use std::sync::Arc;
 
     #[test]
