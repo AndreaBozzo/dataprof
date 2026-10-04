@@ -230,3 +230,41 @@ def test_a_partial_scan_names_its_reason_and_truncation_wins(dated: dp.ProfileRe
     for edit, expected in ((sampled, "sampled"), (both, "truncated")):
         finding = next(f for f in _edited(dated, edit).findings() if f.code == "partial_scan")
         assert finding.evidence["reason"] == expected
+
+
+BINARY_ROUTES = ["arrow", "stream", "pandas", "parquet"]
+
+
+def _binary_tokens(route: str, tmp_path: Path) -> dp.ProfileReport:
+    pa = pytest.importorskip("pyarrow")
+    # 200 distinct tokens of one length: the length was the distinct key (#851).
+    tokens = pa.array([bytes([i, 255 - i]) for i in range(200)], type=pa.binary())
+    table = pa.table({"token": tokens})
+    if route == "arrow":
+        return dp.profile(table)
+    if route == "stream":
+        return dp.profile(pa.RecordBatchReader.from_batches(table.schema, table.to_batches()))
+    if route == "pandas":
+        pytest.importorskip("pandas")
+        return dp.profile(table.to_pandas())
+    pq = pytest.importorskip("pyarrow.parquet")
+    path = tmp_path / "tokens.parquet"
+    pq.write_table(table, path)
+    return dp.profile(path)
+
+
+@pytest.mark.parametrize("route", BINARY_ROUTES)
+def test_distinct_binary_tokens_are_not_a_constant_column(tmp_path: Path, route: str):
+    report = _binary_tokens(route, tmp_path)
+    column = report.to_dict()["columns"][0]
+
+    assert column["unique_count"] == 200
+    assert ("constant_column", "token") not in _codes(report.findings())
+    # A binary value has no characters; lengths of its rendering are not
+    # reported (#645 decides what binary reports). No statistics leaves the key
+    # out, as for a nested column.
+    assert "stats" not in column
+
+    saved = tmp_path / f"tokens-{route}.json"
+    report.save(saved)
+    assert dp.ProfileReport.load(saved).to_dict()["columns"][0] == column
