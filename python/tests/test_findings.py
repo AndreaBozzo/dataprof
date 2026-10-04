@@ -264,6 +264,9 @@ def test_distinct_binary_tokens_are_not_a_constant_column(tmp_path: Path, route:
     # reported (#645 decides what binary reports). No statistics leaves the key
     # out, as for a nested column.
     assert "stats" not in column
+    # Patterns are never scanned over a rendering of bytes (#852): absent,
+    # because "nothing matched" would claim the bytes were checked.
+    assert "patterns" not in column
 
     saved = tmp_path / f"tokens-{route}.json"
     report.save(saved)

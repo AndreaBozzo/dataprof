@@ -1344,11 +1344,14 @@ impl ColumnAnalyzer {
         });
         // A binary value has no characters. The only text this column holds is
         // a rendering of its bytes (hex, or the `<binary:N bytes>` sample), so
-        // any length statistic built above measured that rendering: a 2-byte
-        // value reported length 10. Absent until #645 decides what a binary
-        // column reports.
+        // anything built above from text measured that rendering: a 2-byte
+        // value reported length 10, and 8-byte fingerprints whose hex is all
+        // digits matched Credit Card (#852). Patterns are `None`, not empty:
+        // the bytes were never scanned, so sensitivity is unknown, not absent.
+        // Both stay absent until #645 decides what a binary column reports.
         if self.renders_values_as_encoded_bytes() {
             profile.stats = ColumnStats::None;
+            profile.patterns = None;
         }
         profile
     }

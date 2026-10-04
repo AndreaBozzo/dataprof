@@ -200,27 +200,27 @@ fn three_values_of_one_length() -> Vec<&'static [u8]> {
     (0..60).map(|i| distinct[i % 3]).collect()
 }
 
-fn every_binary_layout(values: Vec<&'static [u8]>) -> Vec<(&'static str, ArrayRef)> {
+fn every_binary_layout(values: &[&[u8]]) -> Vec<(&'static str, ArrayRef)> {
     vec![
-        ("Binary", Arc::new(BinaryArray::from(values.clone()))),
+        ("Binary", Arc::new(BinaryArray::from(values.to_vec()))),
         (
             "LargeBinary",
-            Arc::new(LargeBinaryArray::from(values.clone())),
+            Arc::new(LargeBinaryArray::from(values.to_vec())),
         ),
         (
             "BinaryView",
-            Arc::new(BinaryViewArray::from(values.clone())),
+            Arc::new(BinaryViewArray::from(values.to_vec())),
         ),
         (
             "FixedSizeBinary",
-            Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter()).unwrap()),
+            Arc::new(FixedSizeBinaryArray::try_from_iter(values.iter()).unwrap()),
         ),
     ]
 }
 
 #[test]
 fn every_binary_layout_counts_distinct_values_by_their_bytes() {
-    for (name, array) in every_binary_layout(three_values_of_one_length()) {
+    for (name, array) in every_binary_layout(&three_values_of_one_length()) {
         let profile = profile(array);
         assert_eq!(
             profile.unique_count,
@@ -231,12 +231,38 @@ fn every_binary_layout_counts_distinct_values_by_their_bytes() {
     }
 }
 
+/// Sixty distinct 8-byte values whose bytes are all below `0x0a`, so their hex
+/// rendering is sixteen decimal digits: the shape the Credit Card pattern
+/// matched on `FixedSizeBinary` (#852).
+fn fingerprints_that_render_as_digits() -> Vec<[u8; 8]> {
+    (0..60u8)
+        .map(|i| [i / 10, i % 10, 0, 1, 2, 3, 4, 5])
+        .collect()
+}
+
+/// Pattern detection reads text, and a binary column's only text is a rendering
+/// of its bytes. `None` rather than empty: the bytes were never scanned, so a
+/// consumer gating on sensitivity must see "unknown", not "nothing found".
+#[test]
+fn a_binary_column_reports_no_patterns() {
+    let fingerprints = fingerprints_that_render_as_digits();
+    let values: Vec<&[u8]> = fingerprints.iter().map(|f| f.as_slice()).collect();
+    for (name, array) in every_binary_layout(&values) {
+        let profile = profile(array);
+        assert!(
+            profile.patterns.is_none(),
+            "{name} reported patterns of a rendering: {:?}",
+            profile.patterns
+        );
+    }
+}
+
 /// A binary value has no characters, so a length statistic can only measure a
 /// rendering of it: `<binary:2>` gave a 2-byte value length 10, and hex gives
 /// twice the byte count. Absent until #645 decides what binary reports.
 #[test]
 fn a_binary_column_reports_no_length_statistics() {
-    for (name, array) in every_binary_layout(three_values_of_one_length()) {
+    for (name, array) in every_binary_layout(&three_values_of_one_length()) {
         let profile = profile(array);
         assert!(
             matches!(profile.stats, ColumnStats::None),
