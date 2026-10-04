@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import dataprof
 from argparse import ArgumentParser
 from collections.abc import Sequence
 from pathlib import Path
@@ -158,6 +159,11 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="write the QualityGateResult JSON to stdout",
     )
     parser.add_argument(
+        "--version",
+        action="version",
+        version=f"dataprof {dataprof.__version__}",
+    )
+    parser.add_argument(
         "--min-quality",
         dest="min_quality_score",
         type=float,
@@ -300,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(result.to_json())
     print(
+        f"dataprof {dataprof.__version__}: "
         f"{result.verdict}: {len(result.checks)} checks, "
         f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
         f"(scope: {result.scope})",
