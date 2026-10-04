@@ -97,6 +97,10 @@ change; run what matches the change and list the commands in the PR body.
 ## Key docs
 
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — full contributor workflow.
-- [docs/release-notes.md](docs/release-notes.md) — real state of the current
-  release, including breaking changes.
+- [docs/release-notes.md](docs/release-notes.md) — what the latest published
+  release shipped, including breaking changes. It is rewritten at release time
+  from the merged PRs, so do not edit it in a feature or fix PR, and do not ask
+  for an entry in review: an unreleased change added there is credited to a
+  release that does not contain it. Describe behaviour changes, and any
+  re-baselining they require, in the PR description instead.
 - [docs/SECURITY.md](docs/SECURITY.md) — supported versions, reporting.
