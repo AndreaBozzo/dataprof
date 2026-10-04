@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
+import dataprof
 from dataprof import profile_file
 from dataprof._gate import _Policy
 
@@ -139,7 +140,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         argv=argv,
         description="Profile a local file and evaluate a quality policy.",
         epilog=(
-            "Exit codes: 0 = pass (also --help); 1 = a proven policy violation; "
+            "Exit codes: 0 = pass (also --help and --version); 1 = a proven policy violation; "
             "2 = inconclusive (a threshold could not be evaluated); "
             "3 = an argument, policy, or source could not be read or used. "
             "A proven violation takes precedence over unevaluated checks. "
@@ -156,6 +157,11 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--json",
         action="store_true",
         help="write the QualityGateResult JSON to stdout",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"dataprof {dataprof.__version__}",
     )
     parser.add_argument(
         "--min-quality",
@@ -300,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(result.to_json())
     print(
+        f"dataprof {dataprof.__version__}: "
         f"{result.verdict}: {len(result.checks)} checks, "
         f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
         f"(scope: {result.scope})",

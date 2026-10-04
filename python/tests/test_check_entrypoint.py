@@ -35,7 +35,7 @@ def test_verdict_and_json_match_the_library(source: Path, limit: int, code: int)
     expected = dp.profile_file(source).check(max_null_percentage={"*": limit})
     assert result.returncode == code, result.stderr
     assert json.loads(result.stdout) == expected.to_dict()
-    assert result.stderr.startswith(f"{expected.verdict}:")
+    assert result.stderr.startswith(f"dataprof {dp.__version__}: {expected.verdict}:")
     if code == 1:
         assert "max_null_percentage [amount]" in result.stderr
 
@@ -394,3 +394,15 @@ def test_help_documents_flags_and_exit_codes():
         "3 =",
     ):
         assert text in result.stdout
+
+
+def test_version_flag():
+    result = run_check("--version")
+    assert result.returncode == 0
+    assert result.stdout.strip() == f"dataprof {dp.__version__}"
+    assert result.stderr == ""
+
+
+def test_verdict_summary_includes_version(source: Path):
+    result = run_check(source, "--max-null", "*=100")
+    assert f"dataprof {dp.__version__}" in result.stderr

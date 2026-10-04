@@ -1095,7 +1095,7 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | Every requirement passed; also used by `--help` |
+| `0` | Every requirement passed; also used by `--help` and `--version` |
 | `1` | The gate found a proven violation, even if other checks are unevaluated |
 | `2` | The gate is inconclusive: a threshold could not be evaluated |
 | `3` | An argument, policy, or source could not be read or used |
@@ -1108,7 +1108,7 @@ where `path` is present when the error names a file. A `policy` error without
 `path` comes from a command-line flag (for example `--min-quality 150`), not
 from the policy file. Without `--json`, errors
 go to stderr and stdout stays empty. `--help` prints usage to stdout and lists
-every flag and code.
+every flag and code. `--version` prints `dataprof <version>` to stdout and exits 0.
 
 Baseline-relative gates await support in `ProfileReport.check()`.
 `--baseline PATH` currently exits `3` with an explicit unsupported-operation
