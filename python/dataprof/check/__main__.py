@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import dataprof
 from argparse import ArgumentParser
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
+import dataprof
 from dataprof import profile_file
 from dataprof._gate import _Policy
 
