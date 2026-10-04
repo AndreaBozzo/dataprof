@@ -151,7 +151,8 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     parser.add_argument(
         "--policy",
         type=Path,
-        help="UTF-8 JSON object of check() keywords; flags replace matching keys",
+        metavar="PATH",
+        help="path to a UTF-8 JSON file of check() keywords; flags replace matching keys",
     )
     parser.add_argument(
         "--json",
@@ -244,10 +245,13 @@ def _unique_policy_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _policy(args: argparse.Namespace) -> dict[str, Any]:
     policy = dict(_POLICY_DEFAULTS)
     if args.policy is not None:
-        document = json.loads(
-            args.policy.read_text(encoding="utf-8"),
-            object_pairs_hook=_unique_policy_keys,
-        )
+        try:
+            document = json.loads(
+                args.policy.read_text(encoding="utf-8-sig"),
+                object_pairs_hook=_unique_policy_keys,
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"policy file {args.policy} is not valid JSON: {exc}") from exc
         if not isinstance(document, dict):
             raise ValueError("policy file must contain a JSON object of check() keywords")
         unknown = document.keys() - policy.keys()

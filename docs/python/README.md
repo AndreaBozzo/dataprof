@@ -1064,7 +1064,8 @@ python -m dataprof.check daily_drop.csv --min-quality 90 --max-null 'customer_id
 python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
 ```
 
-The policy file is a UTF-8 JSON object containing the `check()` keywords above.
+The policy file is a UTF-8 JSON object containing the `check()` keywords above;
+a leading byte-order mark (BOM) is accepted.
 Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 (exit 3). Commit it alongside the pipeline so threshold changes can be reviewed:
 

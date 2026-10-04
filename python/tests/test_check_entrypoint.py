@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import subprocess
 import sys
@@ -126,6 +127,16 @@ def test_flags_replace_matching_policy_keys(source: Path, tmp_path: Path):
     )
 
 
+def test_policy_file_may_start_with_a_utf8_bom(source: Path, tmp_path: Path):
+    path = tmp_path / "policy.json"
+    path.write_bytes(codecs.BOM_UTF8 + b'{"min_quality_score": 0}')
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == (
+        dp.profile_file(source).check(min_quality_score=0).to_dict()
+    )
+
+
 def test_repeated_policy_flags_match_library(source: Path):
     result = run_check(
         source,
@@ -192,6 +203,16 @@ def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: 
     assert error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+
+def test_invalid_json_policy_error_names_the_file(source: Path, tmp_path: Path):
+    path = tmp_path / "policy.json"
+    path.write_text("{", encoding="utf-8")
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["message"].startswith(f"policy file {path} is not valid JSON: ")
 
 
 def test_absent_policy_file_is_a_policy_error(source: Path, tmp_path: Path):
@@ -383,7 +404,7 @@ def test_help_documents_flags_and_exit_codes():
     assert result.returncode == 0
     assert result.stderr == ""
     for text in (
-        "--policy",
+        "--policy PATH",
         "--json",
         "--min-quality",
         "--baseline",
