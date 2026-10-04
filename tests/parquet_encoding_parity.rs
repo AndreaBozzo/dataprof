@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BinaryViewArray, FixedSizeBinaryArray, Float32Array, Int32Array,
-    LargeStringArray, StringArray, StringViewArray,
+    LargeBinaryArray, LargeStringArray, StringArray, StringViewArray,
 };
 use arrow::datatypes::{Field, Schema};
 use arrow::record_batch::RecordBatch;
@@ -190,9 +190,58 @@ fn a_binary_rendering_is_never_re_inferred_as_the_number_it_spells() {
         DataType::String,
         "a hex rendering was read back as data"
     );
-    assert!(
-        matches!(profile.stats, ColumnStats::Text(_)),
-        "expected text statistics, got {:?}",
-        profile.stats
-    );
+}
+
+/// Three distinct two-byte values, twenty of each. Equal lengths are the point:
+/// the `Binary` arm keyed distinct values by byte length and counted one value,
+/// so a column of unique tokens was reported as constant (#851).
+fn three_values_of_one_length() -> Vec<&'static [u8]> {
+    let distinct: [&'static [u8]; 3] = [b"\x00\x01", b"\xff\xfe", b"ab"];
+    (0..60).map(|i| distinct[i % 3]).collect()
+}
+
+fn every_binary_layout(values: Vec<&'static [u8]>) -> Vec<(&'static str, ArrayRef)> {
+    vec![
+        ("Binary", Arc::new(BinaryArray::from(values.clone()))),
+        (
+            "LargeBinary",
+            Arc::new(LargeBinaryArray::from(values.clone())),
+        ),
+        (
+            "BinaryView",
+            Arc::new(BinaryViewArray::from(values.clone())),
+        ),
+        (
+            "FixedSizeBinary",
+            Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter()).unwrap()),
+        ),
+    ]
+}
+
+#[test]
+fn every_binary_layout_counts_distinct_values_by_their_bytes() {
+    for (name, array) in every_binary_layout(three_values_of_one_length()) {
+        let profile = profile(array);
+        assert_eq!(
+            profile.unique_count,
+            Some(3),
+            "{name} counted distinct values by something other than their bytes"
+        );
+        assert_eq!(profile.unique_count_is_approximate, Some(false), "{name}");
+    }
+}
+
+/// A binary value has no characters, so a length statistic can only measure a
+/// rendering of it: `<binary:2>` gave a 2-byte value length 10, and hex gives
+/// twice the byte count. Absent until #645 decides what binary reports.
+#[test]
+fn a_binary_column_reports_no_length_statistics() {
+    for (name, array) in every_binary_layout(three_values_of_one_length()) {
+        let profile = profile(array);
+        assert!(
+            matches!(profile.stats, ColumnStats::None),
+            "{name} reported statistics of a rendering: {:?}",
+            profile.stats
+        );
+    }
 }

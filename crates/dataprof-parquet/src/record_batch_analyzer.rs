@@ -5,7 +5,8 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
+    ColumnProfile, ColumnStats, DataType, Locale, SemanticHintBinding, SemanticHintKind,
+    SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
@@ -781,7 +782,7 @@ impl ColumnAnalyzer {
             }
             arrow::datatypes::DataType::LargeBinary => {
                 if let Some(binary_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
-                    self.process_large_binary_array(binary_array)?;
+                    self.process_binary_array(binary_array)?;
                 } else {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeBinaryArray"));
                 }
@@ -1113,27 +1114,30 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<()> {
+    /// Distinct values are counted by their bytes, keyed by Arrow's hex
+    /// rendering: the key `FixedSizeBinary` already gets through the generic
+    /// fallback, so every binary layout counts the same data the same way. The
+    /// key used to be the byte length, so 500 distinct 16-byte tokens counted
+    /// as one value and the column was reported as constant.
+    ///
+    /// No text lengths are taken here; see `to_column_profile`.
+    fn process_binary_array<O: OffsetSizeTrait>(
+        &mut self,
+        array: &GenericBinaryArray<O>,
+    ) -> Result<()> {
+        let formatter = ArrayFormatter::try_new(array, &Default::default()).map_err(|error| {
+            anyhow::anyhow!("no hex rendering for {} column: {error}", array.data_type())
+        })?;
+        // One buffer for every key: the estimator keeps a fingerprint, not the
+        // text, so a large blob's rendering only has to exist while it is hashed.
+        let mut key = String::new();
         for index in 0..array.len() {
             if !array.is_null(index) {
-                let bytes = array.value(index);
-                let len = bytes.len();
-                self.update_text_stats(&format!("<binary:{}>", len));
-                self.cardinality.insert_owned(format!("len:{}", len));
-                self.offer_sample(format!("<binary:{} bytes>", len));
-            }
-        }
-        Ok(())
-    }
-
-    fn process_large_binary_array(&mut self, array: &LargeBinaryArray) -> Result<()> {
-        for index in 0..array.len() {
-            if !array.is_null(index) {
-                let bytes = array.value(index);
-                let len = bytes.len();
-                self.update_text_stats(&format!("<binary:{}>", len));
-                self.cardinality.insert_owned(format!("len:{}", len));
-                self.offer_sample(format!("<binary:{} bytes>", len));
+                let len = array.value(index).len();
+                key.clear();
+                write!(key, "{}", formatter.value(index))?;
+                self.cardinality.insert(&key);
+                self.offer_sample(format!("<binary:{len} bytes>"));
             }
         }
         Ok(())
@@ -1313,7 +1317,7 @@ impl ColumnAnalyzer {
             0.0
         };
 
-        build_column_profile(ColumnProfileInput {
+        let mut profile = build_column_profile(ColumnProfileInput {
             name,
             data_type,
             total_count: self.total_count,
@@ -1337,7 +1341,16 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
-        })
+        });
+        // A binary value has no characters. The only text this column holds is
+        // a rendering of its bytes (hex, or the `<binary:N bytes>` sample), so
+        // any length statistic built above measured that rendering: a 2-byte
+        // value reported length 10. Absent until #645 decides what a binary
+        // column reports.
+        if self.renders_values_as_encoded_bytes() {
+            profile.stats = ColumnStats::None;
+        }
+        profile
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -1368,7 +1381,6 @@ mod tests {
     use arrow::array::{Float64Array, Int64Array, StringArray, TimestampMicrosecondArray};
     use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
-    use dataprof_core::ColumnStats;
     use std::sync::Arc;
 
     #[test]
