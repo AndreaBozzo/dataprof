@@ -255,8 +255,31 @@ def test_duplicate_policy_keys_cannot_silently_relax_a_gate(
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert "duplicate policy key" in error["message"]
+    assert str(path) in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_is_reported_clearly(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert f"policy file {path} is not UTF-8: " in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} is not UTF-8: " in result.stderr
+
 
 
 def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Path):
