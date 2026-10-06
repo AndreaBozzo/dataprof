@@ -11,6 +11,7 @@ ISO and slash dates reported none.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -72,37 +73,45 @@ def _routes(tmp_path: Path) -> dict[str, Callable[[str, list[str]], Any]]:
         return dp.profile(str(path))
 
     def parquet_file(name: str, values: list[str]) -> Any:
-        pa = pytest.importorskip("pyarrow")
-        pq = pytest.importorskip("pyarrow.parquet")
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
         path = tmp_path / f"{name}.parquet"
         pq.write_table(pa.table({name: pa.array(values, pa.string())}), path)
         return dp.profile(str(path))
 
     def arrow(name: str, values: list[str]) -> Any:
-        pa = pytest.importorskip("pyarrow")
+        import pyarrow as pa
+
         return dp.profile(pa.table({name: pa.array(values, pa.string())}))
 
     def pandas(name: str, values: list[str]) -> Any:
-        pd = pytest.importorskip("pandas")
+        import pandas as pd
+
         return dp.profile(pd.DataFrame({name: values}))
 
     def polars(name: str, values: list[str]) -> Any:
-        pl = pytest.importorskip("polars")
+        import polars as pl
+
         return dp.profile(pl.DataFrame({name: values}))
 
-    return {
+    routes: dict[str, Callable[[str, list[str]], Any]] = {
         "auto": csv_file("auto"),
         "incremental": csv_file("incremental"),
         "columnar": csv_file("columnar"),
         "json": json_file,
         "jsonl": jsonl_file,
-        "parquet": parquet_file,
         "dict": lambda name, values: dp.profile({name: values}),
         "rows": lambda name, values: dp.profile([{name: v} for v in values]),
-        "arrow": arrow,
-        "pandas": pandas,
-        "polars": polars,
     }
+    # An optional library drops only its own routes; skipping inside a route
+    # would skip the whole test and every route it had not reached yet.
+    optional = {"parquet": ("pyarrow", parquet_file), "arrow": ("pyarrow", arrow)}
+    optional |= {"pandas": ("pandas", pandas), "polars": ("polars", polars)}
+    for label, (module, route) in optional.items():
+        if importlib.util.find_spec(module) is not None:
+            routes[label] = route
+    return routes
 
 
 def _consistency(report: Any) -> dict[str, Any]:
