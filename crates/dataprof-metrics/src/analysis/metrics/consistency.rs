@@ -160,9 +160,9 @@ impl ConsistencyCalculator {
     ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
-        for (column_name, values) in data {
+        for (_, values) in data {
             // Check for mixed date formats
-            violations += Self::count_mixed_date_formats(column_name, values);
+            violations += Self::count_mixed_date_formats(values);
 
             // Check for other format inconsistencies
             violations += Self::count_other_format_violations(values);
@@ -171,14 +171,13 @@ impl ConsistencyCalculator {
         Ok(violations)
     }
 
-    /// Count mixed date formats within a column
-    /// Uses pre-compiled regex patterns for optimal performance
-    fn count_mixed_date_formats(column_name: &str, values: &[String]) -> usize {
-        // Skip if column name doesn't suggest it contains dates
-        if !is_likely_date_column(column_name) {
-            return 0;
-        }
-
+    /// Count mixed date formats within a column.
+    ///
+    /// Runs on every column whatever its name (#869): the format patterns are
+    /// anchored whole-value dates, so a value only counts when it is a date in
+    /// a minority form. Gating on an English name skipped `data_ordine` or
+    /// `bestelldatum` holding the same mixture.
+    fn count_mixed_date_formats(values: &[String]) -> usize {
         let mut format_counts = HashMap::new();
 
         // Use trim() for consistent whitespace handling

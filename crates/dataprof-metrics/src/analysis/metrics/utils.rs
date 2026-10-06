@@ -105,21 +105,42 @@ pub(crate) fn is_valid_date_format(value: &str) -> bool {
         .any(|regex| regex.is_match(value))
 }
 
-/// Check if column name suggests it contains dates
+/// Check if column name suggests it contains dates.
+///
+/// Matches whole words of the name, split the way identifier names are, so
+/// `order_date`, `created_at` and `startTime` match while `candidate_name`,
+/// `validated_by` and `lifetime_tier` do not (#869). Two shapes that hold a
+/// date word but no date are excluded: a name ending in `by` names an actor
+/// (`created_by`, `updated_by`), and a `zone` word names a time zone
+/// (`time_zone`). `birth` alone is not a date word (`birth_place`);
+/// `date_of_birth` matches on `date`. Concatenated lowercase names such as
+/// `starttime` no longer match; their columns are scored by their dominant
+/// value form like any other string column.
 pub(crate) fn is_likely_date_column(column_name: &str) -> bool {
-    let date_indicators = [
+    const DATE_WORDS: [&str; 9] = [
         "date",
         "time",
+        "datetime",
+        "timestamp",
         "created",
         "updated",
-        "timestamp",
-        "birth",
+        "birthdate",
+        "birthday",
         "expiry",
     ];
-    let name_lower = column_name.to_lowercase();
-    date_indicators
-        .iter()
-        .any(|indicator| name_lower.contains(indicator))
+    let words = identifier_words(column_name);
+    let is_actor = words
+        .last()
+        .is_some_and(|word| word.eq_ignore_ascii_case("by"));
+    let is_time_zone = words.iter().any(|word| word.eq_ignore_ascii_case("zone"));
+    if is_actor || is_time_zone {
+        return false;
+    }
+    words.iter().any(|word| {
+        DATE_WORDS
+            .iter()
+            .any(|date_word| word.eq_ignore_ascii_case(date_word))
+    })
 }
 
 /// Check if column is likely an ID column

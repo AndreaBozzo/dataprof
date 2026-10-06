@@ -72,8 +72,9 @@ evidence is `type_homogeneity` (see below). Read the two together.
 Two kinds of column keep the plain type check rather than the dominant-class
 rule, so a low score there means something different: columns declared through
 `identifier_columns` (mixed forms are intended in an ID scheme), and columns
-whose name announces dates, which are held to date formats however their values
-look.
+whose name has a date word (`order_date`, `created_at`, but not `candidate_name`,
+`created_by` or `time_zone`), which are held to date formats however their
+values look.
 
 **Uniqueness** — duplicate rows and key behavior. `key_uniqueness` and
 `duplicate_rows` are the evidence. A high-cardinality column is not a key, and
