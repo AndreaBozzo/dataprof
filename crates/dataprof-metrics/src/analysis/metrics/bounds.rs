@@ -27,7 +27,6 @@ use super::accuracy::AccuracyCalculator;
 use super::consistency::ConsistencyCalculator;
 use super::precision::PrecisionCalculator;
 use super::timeliness::TimelinessCalculator;
-use super::utils::is_likely_date_column;
 use super::validity::ValidityCalculator;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
@@ -461,15 +460,11 @@ fn collect_shares(
                 metrics.values_checked,
                 1,
             ));
-            // A value can be both a minority date format and a minority
-            // decimal separator, but only in a column whose name announces
-            // dates.
-            let format_rules = 1 + usize::from(is_likely_date_column(&profile.name));
-            formats.push(counts(
-                metrics.format_violations,
-                metrics.values_checked,
-                format_rules,
-            ));
+            // A value adds at most one format violation: the mixed-date rule
+            // only counts whole-value dates (digits, `-` and `/`), and the
+            // decimal rule only values holding `.` or `,`, so no value is
+            // counted by both (#869).
+            formats.push(counts(metrics.format_violations, metrics.values_checked, 1));
             encodings.push(counts(metrics.encoding_issues, metrics.values_checked, 1));
         }
         if wants(QualityDimension::Accuracy) {
@@ -1109,6 +1104,30 @@ mod tests {
         assert_eq!((interval.lower, interval.upper), (30.0, 30.0));
         let interval = outward(-0.5, 100.5);
         assert_eq!((interval.lower, interval.upper), (0.0, 100.0));
+    }
+
+    #[test]
+    fn mixed_date_formats_are_bounded_alike_whatever_the_column_name() {
+        // The format count no longer depends on the name (#869), so neither may
+        // its bound: a value adds at most one format violation in any column.
+        let values = strings((0..300).map(|index| {
+            let day = index % 28 + 1;
+            if index % 5 == 0 {
+                format!("{day:02}/01/2024")
+            } else {
+                format!("2024-01-{day:02}")
+            }
+        }));
+        let consistency = |name: &str| {
+            let data = HashMap::from([(name.to_string(), values.clone())]);
+            let profiles = [profile(name, DataType::Date, 3_000, 0)];
+            interval(&bounds_for(&data, &profiles), QualityDimension::Consistency)
+        };
+        let english = consistency("order_date");
+        assert!(english.lower < 100.0, "the mixture is counted: {english:?}");
+        for name in ["data_ordine", "bestelldatum", "fecha_pedido"] {
+            assert_eq!(consistency(name), english, "{name}");
+        }
     }
 
     #[test]

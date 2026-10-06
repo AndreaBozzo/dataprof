@@ -142,7 +142,9 @@ the ratio rather than reading the ratio alone.
 Measures whether values conform to their expected types and formats.
 
 - `data_type_consistency` -- fraction of values matching the column's type
-- `format_violations` -- values that don't match detected patterns (e.g. an email column with non-email values)
+- `format_violations` -- values in a column's minority date format (`15/01/2024`
+  beside `2024-01-15`, checked over each column's first 50 values, whatever the
+  column is called) or minority decimal separator (`1,5` beside `3.5`)
 - `encoding_issues` -- invalid character encoding detected
 
 For a column with an inferred type, `data_type_consistency` is the fraction of
@@ -153,7 +155,9 @@ boolean, or text -- and the score is the share held by the largest class. So a
 column of 60% numbers and 40% junk reports 60, while a genuinely textual column
 reports 100. Two exceptions keep the plain type check: columns you declared via
 `identifier_columns`, whose schemes mix forms on purpose, and columns whose name
-announces dates, which stay held to dates.
+has a date word (`order_date`, `created_at`, `startTime`), which stay held to
+dates. The name is read by its words, so `candidate_name` or `lifetime_tier` is
+not a date name, nor is an actor (`created_by`) or a `time_zone`.
 
 `data_type_consistency` is a dataset-level number and cannot say *which* column
 is mixed. Each column carries its own evidence in `type_homogeneity`, a count of
