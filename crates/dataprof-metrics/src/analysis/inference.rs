@@ -101,12 +101,15 @@ pub fn infer_type(data: &[String]) -> DataType {
         }
     }
 
-    if integer_count == non_empty.len() {
+    // Codes written in digits are text: typed numeric, they get a mean (#814).
+    let digit_codes = holds_digit_codes(non_empty.iter().map(|s| s.trim()));
+
+    if !digit_codes && integer_count == non_empty.len() {
         return DataType::Integer;
     }
 
     // 80% threshold: tolerates a few non-numeric values (e.g. "N/A", missing)
-    if float_count as f64 / non_empty.len() as f64 > 0.8 {
+    if !digit_codes && float_count as f64 / non_empty.len() as f64 > 0.8 {
         return DataType::Float;
     }
 
@@ -161,6 +164,62 @@ pub(crate) fn is_inferred_date_token(value: &str) -> bool {
 /// a date" means for classification.
 pub(crate) fn is_date_token(value: &str) -> bool {
     is_inferred_date_token(value) || crate::analysis::metrics::utils::is_valid_date_format(value)
+}
+
+/// Whether trimmed, non-null `values` are codes written in digits rather than
+/// quantities, so a numeric type would give them a mean (#814).
+///
+/// Two shapes qualify:
+///
+/// - Any value that keeps a leading zero, such as `007` or a postal code
+///   `08001`. No quantity is written that way, so one such value is evidence
+///   for the whole column. `0` alone is a quantity and does not count.
+/// - Every numeric value is an eight-digit `YYYYMMDD` calendar date, such as
+///   `20240115`. Recognizing these as dates is #815; until then they are text.
+///
+/// Both inference paths, [`infer_type`] and the streaming one, ask this before
+/// typing a column numeric, so every engine and input path agrees. A column a
+/// source declares numeric (an Arrow integer type) is not re-inferred: it has
+/// no leading zeros to see.
+pub fn holds_digit_codes<'a>(values: impl IntoIterator<Item = &'a str>) -> bool {
+    let mut numeric = 0usize;
+    let mut compact_dates = 0usize;
+    for value in values {
+        if is_zero_padded_digits(value) {
+            return true;
+        }
+        if is_integer_token(value) || value.parse::<f64>().is_ok() {
+            numeric += 1;
+            if is_compact_date_token(value) {
+                compact_dates += 1;
+            }
+        }
+    }
+    numeric > 0 && compact_dates == numeric
+}
+
+/// `0` followed by one or more ASCII digits, and nothing else.
+fn is_zero_padded_digits(value: &str) -> bool {
+    value.len() > 1 && value.starts_with('0') && value.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// An eight-digit `YYYYMMDD` value naming a real calendar day in 1800-2199.
+///
+/// The year window keeps arbitrary eight-digit numbers out: `10101010` is a
+/// valid date in year 1010, and no data this profiler reads dates from then.
+fn is_compact_date_token(value: &str) -> bool {
+    let digits = value.as_bytes();
+    if digits.len() != 8 || !digits.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let number = |range: std::ops::Range<usize>| {
+        digits[range]
+            .iter()
+            .fold(0u32, |n, digit| n * 10 + u32::from(digit - b'0'))
+    };
+    let year = number(0..4);
+    (1800..=2199).contains(&year)
+        && chrono::NaiveDate::from_ymd_opt(year as i32, number(4..6), number(6..8)).is_some()
 }
 
 /// Return whether a token is an integer representable by dataprof's signed or
@@ -271,6 +330,34 @@ mod tests {
             ("N/A", LexicalClass::Text),
         ] {
             assert_eq!(lexical_class(value), expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn digit_codes_are_text_and_quantities_stay_numeric() {
+        let strings = |values: &[&str]| values.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+
+        // #814: a leading zero anywhere, or every value a YYYYMMDD date.
+        for codes in [
+            &["00123", "00456", "01234", "09999"][..],
+            &["28013", "08001", "41001"],
+            &["20240115", "20240216", "19991231"],
+            &["0612345678", "3471234567"],
+            &["007", "12", "N/A"],
+            &["20240115", "", "null"],
+        ] {
+            assert_eq!(infer_type(&strings(codes)), DataType::String, "{codes:?}");
+        }
+
+        for (quantities, expected) in [
+            (&["0", "1", "10", "250"][..], DataType::Integer),
+            (&["12345678", "20240115"], DataType::Integer),
+            (&["20241315", "20240230"], DataType::Integer),
+            (&["17991231", "22000101"], DataType::Integer),
+            (&["0.5", "0.25", "12"], DataType::Float),
+            (&["-01", "-02", "3"], DataType::Integer),
+        ] {
+            assert_eq!(infer_type(&strings(quantities)), expected, "{quantities:?}");
         }
     }
 
