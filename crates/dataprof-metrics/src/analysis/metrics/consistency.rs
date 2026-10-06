@@ -5,8 +5,8 @@
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column};
 use crate::analysis::inference::{
-    classify_lexical_forms, is_date_token, is_integer_token, is_null_like_token, lexical_class,
-    parse_strict_boolean_token,
+    classify_lexical_forms, holds_digit_codes, is_date_token, is_integer_token, is_null_like_token,
+    lexical_class, parse_strict_boolean_token,
 };
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -86,10 +86,19 @@ impl ConsistencyCalculator {
                 // is only ever set by an explicit semantic hint, and identifier
                 // schemes mix forms on purpose ("A1", "123"). A column whose
                 // *name* announces dates is held to dates however its values
-                // happen to classify.
+                // happen to classify, unless its values are digit codes:
+                // `departure_time` holding `0930` or `date_key` holding
+                // `20240115`. Those were typed numeric before #814 and scored
+                // by numeric conformance; their numeric class scores them the
+                // same, where date forms would score every one a violation.
                 let dominant_class = if profile.data_type == DataType::String
-                    && !is_likely_date_column(&profile.name)
-                {
+                    && (!is_likely_date_column(&profile.name)
+                        || holds_digit_codes(
+                            column_data
+                                .iter()
+                                .map(|value| value.trim())
+                                .filter(|trimmed| !is_null_like_token(trimmed)),
+                        )) {
                     classify_lexical_forms(column_data)
                         .dominant()
                         .map(|(class, _)| class)

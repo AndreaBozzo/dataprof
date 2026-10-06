@@ -13,8 +13,8 @@ use dataprof_core::{
 };
 use dataprof_metrics::{
     analysis::inference::{
-        classify_lexical_forms, count_locale_numbers, is_integer_token, is_null_like_token,
-        parse_strict_boolean_token,
+        classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_integer_token,
+        is_null_like_token, parse_strict_boolean_token,
     },
     analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
@@ -430,8 +430,11 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
         .collect();
 
     if !non_empty.is_empty() {
+        // The same question `infer_type` asks, so codes are text on every engine.
+        let digit_codes = holds_digit_codes(non_empty.iter().map(|s| s.trim()));
+
         let all_integers = non_empty.iter().all(|s| is_integer_token(s.trim()));
-        if all_integers {
+        if !digit_codes && all_integers {
             return DataType::Integer;
         }
 
@@ -442,7 +445,7 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
             .iter()
             .filter(|s| s.trim().parse::<f64>().is_ok())
             .count();
-        if numeric_count as f64 / non_empty.len() as f64 > 0.8 {
+        if !digit_codes && numeric_count as f64 / non_empty.len() as f64 > 0.8 {
             return DataType::Float;
         }
 
