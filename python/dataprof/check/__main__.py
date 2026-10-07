@@ -303,7 +303,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.report is not None:
         target = args.report.resolve()
         for flag, other in (("source", args.source), ("--policy", args.policy)):
-            if other is not None and target == Path(other).resolve():
+            if other is not None and (
+                target == Path(other).resolve()
+                or (target.exists() and Path(other).exists() and target.samefile(other))
+            ):
                 parser.error(f"--report would overwrite the {flag} file: {args.report}")
     try:
         policy = _policy(args)

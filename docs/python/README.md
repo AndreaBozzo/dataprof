@@ -1074,7 +1074,8 @@ The path must end in `.json`; reload it with `dp.ProfileReport.load()`. It is th
 report the verdict was computed from, written on `pass`, `fail` and
 `inconclusive` and not when profiling fails. An existing file is overwritten; a
 write failure exits `3` and names the path. `--json` stdout is unchanged.
-The report path must not resolve to the source or policy file.
+The report path must not refer to the source or policy file, including through
+symbolic links, hard links or case-insensitive path aliases.
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.

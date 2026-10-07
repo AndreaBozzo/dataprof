@@ -50,6 +50,7 @@ def test_human_output_keeps_stdout_empty(source: Path):
     assert "pass:" in result.stderr
 
 
+@pytest.mark.parametrize("existing_report", [False, True])
 @pytest.mark.parametrize("json_output", [False, True])
 @pytest.mark.parametrize(
     "flags,code,verdict",
@@ -66,8 +67,11 @@ def test_report_is_reloadable_for_every_verdict(
     code: int,
     verdict: str,
     json_output: bool,
+    existing_report: bool,
 ):
     path = tmp_path / "quality report.JSON"
+    if existing_report:
+        path.write_text("previous report", encoding="utf-8")
     output_flags = ["--json"] if json_output else []
     result = run_check(source, *flags, "--report", path, *output_flags)
     assert result.returncode == code, result.stderr
@@ -152,7 +156,7 @@ def test_report_write_failure_is_an_output_error(
 
 
 @pytest.mark.parametrize("protected", ["source", "--policy"])
-@pytest.mark.parametrize("alias", ["direct", "parent", "symlink"])
+@pytest.mark.parametrize("alias", ["direct", "parent", "symlink", "hardlink", "case"])
 @pytest.mark.parametrize("json_output", [False, True])
 def test_report_cannot_overwrite_inputs(
     tmp_path: Path, protected: str, alias: str, json_output: bool
@@ -174,6 +178,17 @@ def test_report_cannot_overwrite_inputs(
         except OSError:
             pytest.skip("symlink creation is not available on this host")
         target = link
+    elif alias == "hardlink":
+        link = tmp_path / "report.json"
+        try:
+            link.hardlink_to(target)
+        except OSError:
+            pytest.skip("hard link creation is not available on this host")
+        target = link
+    elif alias == "case":
+        target = target.with_name(target.name.upper())
+        if not target.exists():
+            pytest.skip("filesystem is case-sensitive")
 
     output_flags = ["--json"] if json_output else []
     result = run_check(source, "--policy", policy, "--report", target, *output_flags)
