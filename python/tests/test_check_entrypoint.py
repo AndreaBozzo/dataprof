@@ -281,6 +281,26 @@ def test_non_utf8_policy_file_in_text_mode_names_file_on_stderr(source: Path, tm
     assert f"policy file {path} is not UTF-8: " in result.stderr
 
 
+def test_non_object_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_array.json"
+    path.write_text("[]", encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert (
+        f"policy file {path} must contain a JSON object of check() keywords"
+        in result.stderr
+    )
+
+
+def test_unknown_policy_keys_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_unknown.json"
+    path.write_text('{"typo": 90}', encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} has unknown policy keys: typo" in result.stderr
+
 
 def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Path):
     baseline = tmp_path / "baseline.json"

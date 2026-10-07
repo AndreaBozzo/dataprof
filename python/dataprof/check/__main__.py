@@ -248,7 +248,9 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
         try:
             raw_bytes = args.policy.read_bytes()
         except OSError as exc:
-            raise ValueError(f"cannot read policy file {args.policy}: {exc}") from exc
+            raise ValueError(
+                f"cannot read policy file {args.policy}: {exc.strerror}"
+            ) from exc
         try:
             text = raw_bytes.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
@@ -263,10 +265,14 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
         except ValueError as exc:
             raise ValueError(f"policy file {args.policy}: {exc}") from exc
         if not isinstance(document, dict):
-            raise ValueError(f"policy file {args.policy} must contain a JSON object of check() keywords")
+            raise ValueError(
+                f"policy file {args.policy} must contain a JSON object of check() keywords"
+            )
         unknown = document.keys() - policy.keys()
         if unknown:
-            raise ValueError(f"policy file {args.policy} has unknown policy keys: {', '.join(sorted(unknown))}")
+            raise ValueError(
+                f"policy file {args.policy} has unknown policy keys: {', '.join(sorted(unknown))}"
+            )
         policy.update(document)
     for key in policy:
         value = getattr(args, key)
@@ -280,13 +286,22 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     # scope, and empty-policy semantics belong to that validator.
     dimensions = policy["min_dimension_scores"]
     if dimensions is not None and not isinstance(dimensions, dict):
-        raise ValueError(f"policy file {args.policy}: min_dimension_scores must be a JSON object" if args.policy else "min_dimension_scores must be a JSON object")
+        raise ValueError(
+            f"policy file {args.policy}: min_dimension_scores must be a JSON object"
+        )
     required = policy["require_metrics"]
     if required is not None and (
         not isinstance(required, list) or not all(isinstance(name, str) for name in required)
     ):
-        raise ValueError(f"policy file {args.policy}: require_metrics must be a JSON array of names" if args.policy else "require_metrics must be a JSON array of names")
-    _Policy(**policy)
+        raise ValueError(
+            f"policy file {args.policy}: require_metrics must be a JSON array of names"
+        )
+    try:
+        _Policy(**policy)
+    except ValueError as exc:
+        if args.policy is None:
+            raise
+        raise ValueError(f"policy file {args.policy}: {exc}") from exc
     return policy
 
 
