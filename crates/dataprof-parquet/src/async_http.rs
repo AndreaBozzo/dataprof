@@ -130,7 +130,7 @@ impl HttpParquetReader {
         if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(ProbeFailure::protocol(match response.status() {
                 reqwest::StatusCode::OK => {
-                    "server ignored Range header during size probe and returned 200 OK".to_string()
+                    "server ignored Range header during size probe and returned 200 OK. This server does not support HTTP Range requests, which remote Parquet profiling needs. Download the file and profile the local copy instead.".to_string()
                 }
                 status => format!(
                     "expected 206 Partial Content from size probe, got {}",
@@ -141,7 +141,7 @@ impl HttpParquetReader {
 
         Self::content_length_from_content_range(response.headers()).ok_or_else(|| {
             ProbeFailure::protocol(
-                "server did not provide a parseable Content-Range total during size probe"
+                "server did not provide a parseable Content-Range total during size probe. This server does not support HTTP Range requests, which remote Parquet profiling needs. Download the file and profile the local copy instead."
                     .to_string(),
             )
         })
@@ -208,7 +208,7 @@ impl AsyncFileReader for HttpParquetReader {
             if res.status() != reqwest::StatusCode::PARTIAL_CONTENT {
                 if res.status() == reqwest::StatusCode::OK {
                     return Err(parquet::errors::ParquetError::General(
-                        "Server ignored Range header and returned 200 OK. Aborting to prevent full file download.".to_string(),
+                        "Server ignored Range header and returned 200 OK. Aborting to prevent full file download. This server does not support HTTP Range requests, which remote Parquet profiling needs. Download the file and profile the local copy instead.".to_string(),
                     ));
                 }
                 return Err(parquet::errors::ParquetError::General(format!(
@@ -672,6 +672,12 @@ mod tests {
             .expect("a server that ignores Range cannot yield a size");
 
         assert!(matches!(err, DataProfilerError::ParquetError { .. }));
+        assert!(
+            err.to_string().contains(
+                "server ignored Range header during size probe and returned 200 OK. This server does not support HTTP Range requests, which remote Parquet profiling needs. Download the file and profile the local copy instead."
+            ),
+            "unexpected error message: {err}"
+        );
         assert!(
             err.source().is_none(),
             "a protocol-only failure must not invent a cause: {:?}",
