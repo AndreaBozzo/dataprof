@@ -151,6 +151,46 @@ def test_report_write_failure_is_an_output_error(
     assert "Traceback" not in result.stderr
 
 
+@pytest.mark.parametrize("protected", ["source", "--policy"])
+@pytest.mark.parametrize("alias", ["direct", "parent", "symlink"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_report_cannot_overwrite_inputs(
+    tmp_path: Path, protected: str, alias: str, json_output: bool
+):
+    source = tmp_path / "events.json"
+    source.write_text('[{"id": 1, "amount": 10}, {"id": 2, "amount": 20}]', encoding="utf-8")
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"max_null_percentage": {"*": 100}}', encoding="utf-8")
+    before = {path: path.read_bytes() for path in (source, policy)}
+    target = source if protected == "source" else policy
+    if alias == "parent":
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        target = subdir / ".." / target.name
+    elif alias == "symlink":
+        link = tmp_path / "report.json"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink creation is not available on this host")
+        target = link
+
+    output_flags = ["--json"] if json_output else []
+    result = run_check(source, "--policy", policy, "--report", target, *output_flags)
+    for path, original in before.items():
+        assert path.read_bytes() == original
+    assert result.returncode == 3
+    message = f"--report would overwrite the {protected} file: {target}"
+    if json_output:
+        error = json.loads(result.stdout)["error"]
+        assert error["kind"] == "argument"
+        assert error["message"] == message
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert message in result.stderr
+
+
 @pytest.mark.parametrize("suffix", [".csv", ".parquet", ".html", ".md", ""])
 def test_report_rejects_formats_that_cannot_be_reloaded(source: Path, tmp_path: Path, suffix: str):
     path = tmp_path / f"report{suffix}"

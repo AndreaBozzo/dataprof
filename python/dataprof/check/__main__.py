@@ -300,6 +300,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--baseline is not supported by the quality-gate API yet")
     if args.report is not None and args.report.suffix.lower() != ".json":
         parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
+    if args.report is not None:
+        target = args.report.resolve()
+        for flag, other in (("source", args.source), ("--policy", args.policy)):
+            if other is not None and target == Path(other).resolve():
+                parser.error(f"--report would overwrite the {flag} file: {args.report}")
     try:
         policy = _policy(args)
     except (OSError, ValueError, RuntimeError) as exc:

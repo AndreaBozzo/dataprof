@@ -1070,13 +1070,11 @@ To keep the full profile behind the verdict, add `--report PATH` (0.13+):
 python -m dataprof.check daily_drop.csv --min-quality 90 --report profile.json --json > verdict.json
 ```
 
-The path must end in `.json`. The entrypoint uses `ProfileReport.save()` to
-persist the same report it checked, without profiling the source again. Reload
-it with `dp.ProfileReport.load("profile.json")`. Reports are saved for `pass`,
-`fail`, and `inconclusive`; if profiling fails, the report path is left untouched.
-The parent directory must exist, and an existing report file is overwritten.
-A write failure exits `3` and names the output path. The report goes to the file;
-`--json` still writes only the gate result to stdout when the run succeeds.
+The path must end in `.json`; reload it with `dp.ProfileReport.load()`. It is the
+report the verdict was computed from, written on `pass`, `fail` and
+`inconclusive` and not when profiling fails. An existing file is overwritten; a
+write failure exits `3` and names the path. `--json` stdout is unchanged.
+The report path must not resolve to the source or policy file.
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.
