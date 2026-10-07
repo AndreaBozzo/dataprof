@@ -7,9 +7,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import dataprof as dp
 import pytest
+from dataprof.check import __main__ as entrypoint
 
 
 def run_check(*args: str | Path) -> subprocess.CompletedProcess[str]:
@@ -46,6 +48,174 @@ def test_human_output_keeps_stdout_empty(source: Path):
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
     assert "pass:" in result.stderr
+
+
+@pytest.mark.parametrize("existing_report", [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    "flags,code,verdict",
+    [
+        (["--max-null", "*=100"], 0, "pass"),
+        (["--max-null", "*=0"], 1, "fail"),
+        (["--metric", "schema", "--min-quality", "90"], 2, "inconclusive"),
+    ],
+)
+def test_report_is_reloadable_for_every_verdict(
+    source: Path,
+    tmp_path: Path,
+    flags: list[str],
+    code: int,
+    verdict: str,
+    json_output: bool,
+    existing_report: bool,
+):
+    path = tmp_path / "quality report.JSON"
+    if existing_report:
+        path.write_text("previous report", encoding="utf-8")
+    output_flags = ["--json"] if json_output else []
+    result = run_check(source, *flags, "--report", path, *output_flags)
+    assert result.returncode == code, result.stderr
+    restored = dp.ProfileReport.load(path)
+    assert restored.rows == 3
+    assert restored.columns == 2
+    assert json.loads(restored.to_json()) == json.loads(path.read_text(encoding="utf-8"))
+    if verdict == "inconclusive":
+        assert restored.quality_score is None
+        expected = restored.check(min_quality_score=90)
+    else:
+        expected = restored.check(max_null_percentage={"*": 100 if verdict == "pass" else 0})
+    assert expected.verdict == verdict
+    if json_output:
+        assert json.loads(result.stdout) == expected.to_dict()
+    else:
+        assert result.stdout == ""
+    assert result.stderr.startswith(f"dataprof {dp.__version__}: {verdict}:")
+
+
+def test_report_preserves_the_original_profile_without_profiling_again(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    report = dp.profile_file(source)
+    expected = json.loads(report.to_json())
+    profiler = Mock(return_value=report)
+    monkeypatch.setattr(entrypoint, "profile_file", profiler)
+    path = tmp_path / "report.json"
+    code = entrypoint.main([str(source), "--max-null", "*=100", "--report", str(path)])
+    assert code == 0
+    assert profiler.call_count == 1
+    assert json.loads(path.read_text(encoding="utf-8")) == expected
+    assert json.loads(dp.ProfileReport.load(path).to_json()) == expected
+
+
+@pytest.mark.parametrize("existing_report", [False, True])
+def test_profiling_failure_does_not_write_a_report(tmp_path: Path, existing_report: bool):
+    path = tmp_path / "report.json"
+    if existing_report:
+        path.write_text("previous report", encoding="utf-8")
+    result = run_check(tmp_path / "missing.csv", "--min-quality", "0", "--report", path, "--json")
+    assert result.returncode == 3
+    assert json.loads(result.stdout)["error"]["kind"] == "input"
+    if existing_report:
+        assert path.read_text(encoding="utf-8") == "previous report"
+    else:
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("destination", ["missing/report.json", "directory.json"])
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--max-null", "*=100"],
+        ["--max-null", "*=0"],
+        ["--metric", "schema", "--min-quality", "90"],
+    ],
+)
+def test_report_write_failure_is_an_output_error(
+    source: Path, tmp_path: Path, destination: str, json_output: bool, flags: list[str]
+):
+    path = tmp_path / destination
+    if destination == "directory.json":
+        path.mkdir()
+    output_flags = ["--json"] if json_output else []
+    result = run_check(source, *flags, "--report", path, *output_flags)
+    assert result.returncode == 3
+    if json_output:
+        document = json.loads(result.stdout)
+        assert "verdict" not in document
+        error = document["error"]
+        assert error["kind"] == "output"
+        assert error["path"] == str(path)
+        assert str(path) in error["message"]
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert str(path) in result.stderr
+        assert "could not write report" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("protected", ["source", "--policy"])
+@pytest.mark.parametrize("alias", ["direct", "parent", "symlink", "hardlink", "case"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_report_cannot_overwrite_inputs(
+    tmp_path: Path, protected: str, alias: str, json_output: bool
+):
+    source = tmp_path / "events.json"
+    source.write_text('[{"id": 1, "amount": 10}, {"id": 2, "amount": 20}]', encoding="utf-8")
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"max_null_percentage": {"*": 100}}', encoding="utf-8")
+    before = {path: path.read_bytes() for path in (source, policy)}
+    target = source if protected == "source" else policy
+    if alias == "parent":
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        target = subdir / ".." / target.name
+    elif alias == "symlink":
+        link = tmp_path / "report.json"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink creation is not available on this host")
+        target = link
+    elif alias == "hardlink":
+        link = tmp_path / "report.json"
+        try:
+            link.hardlink_to(target)
+        except OSError:
+            pytest.skip("hard link creation is not available on this host")
+        target = link
+    elif alias == "case":
+        target = target.with_name(target.name.upper())
+        if not target.exists():
+            pytest.skip("filesystem is case-sensitive")
+
+    output_flags = ["--json"] if json_output else []
+    result = run_check(source, "--policy", policy, "--report", target, *output_flags)
+    for path, original in before.items():
+        assert path.read_bytes() == original
+    assert result.returncode == 3
+    message = f"--report would overwrite the {protected} file: {target}"
+    if json_output:
+        error = json.loads(result.stdout)["error"]
+        assert error["kind"] == "argument"
+        assert error["message"] == message
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert message in result.stderr
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".parquet", ".html", ".md", ""])
+def test_report_rejects_formats_that_cannot_be_reloaded(source: Path, tmp_path: Path, suffix: str):
+    path = tmp_path / f"report{suffix}"
+    result = run_check(source, "--max-null", "*=100", "--report", path, "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "argument"
+    assert ".json" in error["message"]
+    assert str(path) in error["message"]
+    assert not path.exists()
 
 
 def test_missing_quality_threshold_is_inconclusive(source: Path):
@@ -405,6 +575,7 @@ def test_help_documents_flags_and_exit_codes():
     assert result.stderr == ""
     for text in (
         "--policy PATH",
+        "--report PATH",
         "--json",
         "--min-quality",
         "--baseline",

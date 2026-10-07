@@ -123,7 +123,7 @@ class _CheckArgumentParser(ArgumentParser):
 
 
 def _report_error(kind: str, message: str, *, path: Path | None, json_output: bool) -> int:
-    """Report an input, policy, or argument error; always returns exit code 3."""
+    """Report an input, policy, argument, or output error; always returns exit code 3."""
     if json_output:
         error: dict[str, Any] = {"kind": kind, "message": message}
         if path is not None:
@@ -142,7 +142,8 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         epilog=(
             "Exit codes: 0 = pass (also --help and --version); 1 = a proven policy violation; "
             "2 = inconclusive (a threshold could not be evaluated); "
-            "3 = an argument, policy, or source could not be read or used. "
+            "3 = an argument, policy, or source could not be read or used, "
+            "or the report could not be written. "
             "A proven violation takes precedence over unevaluated checks. "
             "Baseline comparison is not yet supported by the gate API."
         ),
@@ -158,6 +159,12 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--json",
         action="store_true",
         help="write the QualityGateResult JSON to stdout",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        metavar="PATH",
+        help="save the full profile to a .json file, including on fail or inconclusive",
     )
     parser.add_argument(
         "--version",
@@ -291,6 +298,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.baseline is not None:
         parser.error("--baseline is not supported by the quality-gate API yet")
+    if args.report is not None and args.report.suffix.lower() != ".json":
+        parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
+    if args.report is not None:
+        target = args.report.resolve()
+        for flag, other in (("source", args.source), ("--policy", args.policy)):
+            if other is not None and (
+                target == Path(other).resolve()
+                or (target.exists() and Path(other).exists() and target.samefile(other))
+            ):
+                parser.error(f"--report would overwrite the {flag} file: {args.report}")
     try:
         policy = _policy(args)
     except (OSError, ValueError, RuntimeError) as exc:
@@ -306,6 +323,17 @@ def main(argv: list[str] | None = None) -> int:
         result = report.check(**policy)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
         return _report_error("input", str(exc), path=args.source, json_output=args.json)
+
+    if args.report is not None:
+        try:
+            report.save(args.report)
+        except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
+            return _report_error(
+                "output",
+                f"could not write report {args.report}: {exc}",
+                path=args.report,
+                json_output=args.json,
+            )
 
     if args.json:
         print(result.to_json())

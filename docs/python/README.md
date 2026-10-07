@@ -1064,6 +1064,19 @@ python -m dataprof.check daily_drop.csv --min-quality 90 --max-null 'customer_id
 python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
 ```
 
+To keep the full profile behind the verdict, add `--report PATH` (0.13+):
+
+```bash
+python -m dataprof.check daily_drop.csv --min-quality 90 --report profile.json --json > verdict.json
+```
+
+The path must end in `.json`; reload it with `dp.ProfileReport.load()`. It is the
+report the verdict was computed from, written on `pass`, `fail` and
+`inconclusive` and not when profiling fails. An existing file is overwritten; a
+write failure exits `3` and names the path. `--json` stdout is unchanged.
+The report path must not refer to the source or policy file, including through
+symbolic links, hard links or case-insensitive path aliases.
+
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.
 Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
@@ -1099,12 +1112,12 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 | `0` | Every requirement passed; also used by `--help` and `--version` |
 | `1` | The gate found a proven violation, even if other checks are unevaluated |
 | `2` | The gate is inconclusive: a threshold could not be evaluated |
-| `3` | An argument, policy, or source could not be read or used |
+| `3` | An argument, policy, or source could not be read or used, or the report could not be written |
 
 Human summaries go to stderr. With `--json`, stdout contains only the existing
 `QualityGateResult.to_json()` document, including inconclusive results. Errors
 (exit `3`) write an error object instead of a result document:
-`{"error": {"kind": "argument" | "policy" | "input", "message": "...", "path": "..."}}`,
+`{"error": {"kind": "argument" | "policy" | "input" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
 `path` comes from a command-line flag (for example `--min-quality 150`), not
 from the policy file. Without `--json`, errors
