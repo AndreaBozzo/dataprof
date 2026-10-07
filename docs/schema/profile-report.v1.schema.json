@@ -2354,7 +2354,7 @@
               }
             ]
           },
-          "description": "Interval per dimension, keyed like `QualityScores::dimension_scores`.\nAn exactly computed dimension's interval is its score. `None` for a\ndimension that was not assessed, or a sampled one with no bound: an\nestimated key count or a duplicate scan over a sample. Start/end\nordering is compared only between date columns whose samples hold the\nsame rows, so a pair where either column has nulls is not compared.",
+          "description": "Interval per dimension, keyed like `QualityScores::dimension_scores`.\nAn exactly computed dimension's interval is its score. `None` for a\ndimension that was not assessed, or a sampled one with no bound: a\nduplicate scan over a sample, or an estimated count with no recorded\nfloor. Start/end ordering is compared only between date columns whose\nsamples hold the same rows, so a pair where either column has nulls is\nnot compared.",
           "type": "object"
         },
         "overall_score": {

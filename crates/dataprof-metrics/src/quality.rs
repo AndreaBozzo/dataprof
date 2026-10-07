@@ -742,10 +742,11 @@ pub struct ScoreBounds {
     pub overall_score: Option<ScoreInterval>,
     /// Interval per dimension, keyed like `QualityScores::dimension_scores`.
     /// An exactly computed dimension's interval is its score. `None` for a
-    /// dimension that was not assessed, or a sampled one with no bound: an
-    /// estimated key count or a duplicate scan over a sample. Start/end
-    /// ordering is compared only between date columns whose samples hold the
-    /// same rows, so a pair where either column has nulls is not compared.
+    /// dimension that was not assessed, or a sampled one with no bound: a
+    /// duplicate scan over a sample, or an estimated count with no recorded
+    /// floor. Start/end ordering is compared only between date columns whose
+    /// samples hold the same rows, so a pair where either column has nulls is
+    /// not compared.
     pub dimension_scores: std::collections::BTreeMap<String, Option<ScoreInterval>>,
 }
 
