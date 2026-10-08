@@ -131,7 +131,12 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
-/// Macro to generate the streaming batch loop for profiling queries.
+/// Macro to execute a profiled query once and read its rows as a stream.
+///
+/// The query runs exactly once. Paging it as `LIMIT n OFFSET k` executions
+/// with no order of their own let pages overlap and skip rows: on PostgreSQL a
+/// sequential scan of a large table starts near where the previous one stopped
+/// (#887). `$batch_size` only sets how often progress is logged.
 #[macro_export]
 macro_rules! streaming_profile_loop {
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {
@@ -139,16 +144,17 @@ macro_rules! streaming_profile_loop {
     };
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
      [$($backend_ty:ty),* $(,)?]) => {{
+        use futures::TryStreamExt;
         use sqlx::{Column, Executor, Row};
-        use $crate::connectors::common::build_batch_query;
-        use $crate::streaming::{StreamingProgress, merge_column_batches};
+        use $crate::connectors::common::build_select_query;
+        use $crate::streaming::StreamingProgress;
 
+        let select_query = build_select_query($query)?;
         let mut progress = StreamingProgress::new(Some($total_rows as u64));
         // Describe the query before fetching rows. Row metadata is unavailable
-        // when the first batch is empty, but projection still needs the source
+        // when the result is empty, but projection still needs the source
         // schema to validate duplicate and unknown requested names.
-        let first_batch_query = build_batch_query($query, $batch_size, 0)?;
-        let description = ($pool).describe(&first_batch_query).await.map_err(|e| {
+        let description = ($pool).describe(&select_query).await.map_err(|e| {
             $crate::DataProfilerError::DatabaseQueryError {
                 message: format!("Query description failed: {}", e),
             }
@@ -163,63 +169,43 @@ macro_rules! streaming_profile_loop {
             concat!($db_name, " query result"),
         )?;
 
-        // Seed the merge with the schema so a zero-row query still returns
-        // named empty columns in query order.
-        let mut all_batches: Vec<$crate::QueryColumns> = vec![
-            $crate::QueryColumns::with_names(column_names.clone(), 0),
-        ];
-        let mut offset = 0usize;
+        // Built from the driver's column list, so a zero-row query still returns
+        // named empty columns, and values are filed by position in query order.
+        let mut columns = $crate::QueryColumns::with_names(column_names.clone(), 0);
+        let mut rows = sqlx::query(&select_query).fetch($pool);
+        let mut unlogged_rows = 0usize;
 
-        loop {
-            let batch_query = build_batch_query($query, $batch_size, offset)?;
-            let rows = sqlx::query(&batch_query)
-                .fetch_all($pool)
-                .await
-                .map_err(|e| $crate::DataProfilerError::DatabaseQueryError {
-                    message: format!("Batch query execution failed: {}", e),
-                })?;
-
-            if rows.is_empty() {
-                break;
+        while let Some(row) = rows.try_next().await.map_err(|e| {
+            $crate::DataProfilerError::DatabaseQueryError {
+                message: format!("Query execution failed: {}", e),
+            }
+        })? {
+            for i in 0..column_names.len() {
+                let value: Option<String> =
+                    $crate::db_column_to_string!(&row, i, [$($backend_ty),*]);
+                // decode-audit: no-data — None is SQL NULL (or a type
+                // db_column_to_string documents as unsupported); "" is
+                // the profiler's textual null.
+                columns.push_value(i, value.unwrap_or_default());
             }
 
-            // Built from the driver's column list, so the batch carries the
-            // query's column order and values are filed by position.
-            let mut batch_result =
-                $crate::QueryColumns::with_names(column_names.clone(), rows.len());
-
-            for row in &rows {
-                for i in 0..column_names.len() {
-                    let value: Option<String> =
-                        $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
-                    // decode-audit: no-data — None is SQL NULL (or a type
-                    // db_column_to_string documents as unsupported); "" is
-                    // the profiler's textual null.
-                    batch_result.push_value(i, value.unwrap_or_default());
+            unlogged_rows += 1;
+            if unlogged_rows == $batch_size {
+                progress.update(unlogged_rows as u64);
+                unlogged_rows = 0;
+                if let Some(percentage) = progress.percentage() {
+                    log::info!(
+                        "{} streaming progress: {:.1}% ({}/{} rows)",
+                        $db_name,
+                        percentage,
+                        progress.processed_rows,
+                        $total_rows
+                    );
                 }
-            }
-
-            let batch_size_actual = rows.len();
-            all_batches.push(batch_result);
-            progress.update(batch_size_actual as u64);
-
-            if let Some(percentage) = progress.percentage() {
-                log::info!(
-                    "{} streaming progress: {:.1}% ({}/{} rows)",
-                    $db_name,
-                    percentage,
-                    progress.processed_rows,
-                    $total_rows
-                );
-            }
-
-            offset += $batch_size;
-            if batch_size_actual < $batch_size {
-                break;
             }
         }
 
-        Ok(merge_column_batches(all_batches))
+        Ok(columns)
     }};
 }
 
@@ -283,23 +269,15 @@ pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
     }
 }
 
-/// Build a batch query with LIMIT and OFFSET
+/// Build the statement a query or table name is profiled with.
 #[allow(dead_code)]
-pub fn build_batch_query(
-    query: &str,
-    batch_size: usize,
-    offset: usize,
-) -> Result<String, DataProfilerError> {
-    let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
-        validate_base_query(query)?
+pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
+    if query.trim().to_uppercase().starts_with("SELECT") {
+        validate_base_query(query)
     } else {
         validate_sql_identifier(query)?;
-        format!("SELECT * FROM {}", query)
-    };
-    Ok(format!(
-        "{} LIMIT {} OFFSET {}",
-        validated_query, batch_size, offset
-    ))
+        Ok(format!("SELECT * FROM {}", query))
+    }
 }
 
 #[cfg(test)]
@@ -320,8 +298,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_batch_query() {
-        let result = build_batch_query("users", 100, 0).unwrap();
-        assert_eq!(result, "SELECT * FROM users LIMIT 100 OFFSET 0");
+    fn test_build_select_query() {
+        assert_eq!(build_select_query("users").unwrap(), "SELECT * FROM users");
+        assert_eq!(
+            build_select_query("SELECT id FROM users").unwrap(),
+            "SELECT id FROM users"
+        );
     }
 }
