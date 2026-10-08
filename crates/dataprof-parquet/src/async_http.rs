@@ -141,7 +141,7 @@ impl HttpParquetReader {
 
         Self::content_length_from_content_range(response.headers()).ok_or_else(|| {
             ProbeFailure::protocol(
-                "server did not provide a parseable Content-Range total during size probe. This server does not support HTTP Range requests, which remote Parquet profiling needs. Download the file and profile the local copy instead."
+                "server answered the size probe with 206 but no parseable Content-Range total. Download the file and profile the local copy instead."
                     .to_string(),
             )
         })
@@ -698,6 +698,29 @@ mod tests {
         let bytes = reader.get_bytes(10..20).await.unwrap();
         assert_eq!(bytes.len(), 10);
         assert_eq!(&bytes[..], &dummy_data[10..20]);
+
+        server.join();
+    }
+
+    #[tokio::test]
+    async fn test_http_parquet_reader_byte_ranges_rejects_ignored_range() {
+        let data: Vec<u8> = (0..255).map(|x| x as u8).collect();
+        let server = spawn_mock_server_with(
+            data,
+            HeadBehavior::WithContentLength,
+            RangeBehavior::IgnoreRange,
+        );
+
+        let mut reader = HttpParquetReader::try_new(server.url()).await.unwrap();
+        let err = reader
+            .get_bytes(0..10)
+            .await
+            .expect_err("server ignoring Range header should return an error");
+
+        assert!(
+            err.to_string()
+                .contains("Download the file and profile the local copy instead")
+        );
 
         server.join();
     }
