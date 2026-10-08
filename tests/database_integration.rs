@@ -307,6 +307,22 @@ mod profiler_builder_tests {
         assert!(report.quality.is_some());
     }
 
+    /// The query runs as written. Paging appended `LIMIT n OFFSET k` to it, so a
+    /// query with its own `LIMIT` became a syntax error (#887).
+    #[tokio::test]
+    async fn test_profiler_analyze_query_keeps_its_own_limit() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_query("SELECT * FROM test_users ORDER BY id LIMIT 2")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 2);
+    }
+
     #[tokio::test]
     async fn test_profiler_analyze_query_no_quality() {
         let (_dir, conn_str) = create_test_db();
