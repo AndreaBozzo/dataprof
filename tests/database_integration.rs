@@ -539,6 +539,34 @@ mod postgres_tests {
             "every id once, no row read twice"
         );
     }
+
+    /// An error partway through a result fails the profile. Reading the result
+    /// as a stream must not stop at the failing row and profile the rows before
+    /// it as if they were the whole result (#887).
+    #[tokio::test]
+    async fn test_postgres_error_partway_through_a_result_is_raised() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+
+        let error = Profiler::new()
+            .database(postgres_config(&url))
+            .analyze_query(
+                "SELECT CASE WHEN g = 30000 THEN 1 / (g - g) ELSE g END AS v \
+                 FROM generate_series(1, 50000) g",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                dataprof::DataProfilerError::DatabaseQueryError { message }
+                    if message.starts_with("Query execution failed")
+            ),
+            "{error:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

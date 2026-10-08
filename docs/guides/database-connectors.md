@@ -189,13 +189,13 @@ Examples:
 
 ## Large Results
 
-dataprof executes the query once and reads its rows as the driver returns them:
+dataprof evaluates the query twice: once to count its rows, then once to fetch its result, reading the rows as the driver returns them:
 
-1. Counts the rows, for progress logging
-2. Reads the result in one pass, logging progress every `batch_size` rows
+1. Counts the rows with `SELECT COUNT(*) FROM (<query>)`, for progress logging
+2. Fetches the result in one execution, logging progress every `batch_size` rows
 3. Profiles the collected columns
 
-The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or configure [sampling](#sampling).
+Plan for both evaluations when the query is expensive. The count only feeds the progress percentages, so if the data changes between the two, the logged total can differ from the rows profiled. The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or configure [sampling](#sampling).
 
 ## Sampling
 

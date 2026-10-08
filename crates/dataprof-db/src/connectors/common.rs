@@ -131,12 +131,14 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
-/// Macro to execute a profiled query once and read its rows as a stream.
+/// Macro to fetch a profiled query's result in one execution, read as a stream.
 ///
-/// The query runs exactly once. Paging it as `LIMIT n OFFSET k` executions
-/// with no order of their own let pages overlap and skip rows: on PostgreSQL a
-/// sequential scan of a large table starts near where the previous one stopped
-/// (#887). `$batch_size` only sets how often progress is logged.
+/// The result comes from a single execution. Paging it as `LIMIT n OFFSET k`
+/// executions with no order of their own let pages overlap and skip rows: on
+/// PostgreSQL a sequential scan of a large table starts near where the previous
+/// one stopped (#887). The connector runs a separate `COUNT(*)` over the query
+/// beforehand, for `$total_rows`. `$batch_size` only sets how often progress is
+/// logged.
 #[macro_export]
 macro_rules! streaming_profile_loop {
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {
@@ -173,6 +175,18 @@ macro_rules! streaming_profile_loop {
         // named empty columns, and values are filed by position in query order.
         let mut columns = $crate::QueryColumns::with_names(column_names.clone(), 0);
         let mut rows = sqlx::query(&select_query).fetch($pool);
+        let mut log_progress = |read: usize| {
+            progress.update(read as u64);
+            if let Some(percentage) = progress.percentage() {
+                log::info!(
+                    "{} streaming progress: {:.1}% ({}/{} rows)",
+                    $db_name,
+                    percentage,
+                    progress.processed_rows,
+                    $total_rows
+                );
+            }
+        };
         let mut unlogged_rows = 0usize;
 
         while let Some(row) = rows.try_next().await.map_err(|e| {
@@ -191,18 +205,14 @@ macro_rules! streaming_profile_loop {
 
             unlogged_rows += 1;
             if unlogged_rows == $batch_size {
-                progress.update(unlogged_rows as u64);
+                log_progress(unlogged_rows);
                 unlogged_rows = 0;
-                if let Some(percentage) = progress.percentage() {
-                    log::info!(
-                        "{} streaming progress: {:.1}% ({}/{} rows)",
-                        $db_name,
-                        percentage,
-                        progress.processed_rows,
-                        $total_rows
-                    );
-                }
             }
+        }
+        // The rows after the last full interval are progress too, so the last
+        // line accounts for every row read.
+        if unlogged_rows > 0 {
+            log_progress(unlogged_rows);
         }
 
         Ok(columns)
