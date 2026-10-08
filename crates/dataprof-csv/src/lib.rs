@@ -4,7 +4,7 @@ use std::path::Path;
 
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints,
+    SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -248,6 +248,40 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
     ),
     DataProfilerError,
 > {
+    let scan = scan_csv(reader, config, semantic_hints)?;
+    let profiles = profile_builder::profiles_from_streaming_with_hints(
+        &scan.column_stats,
+        false,
+        false,
+        None,
+        semantic_hints,
+    );
+
+    Ok((
+        profiles,
+        scan.column_stats,
+        scan.rows_read,
+        scan.header_names,
+    ))
+}
+
+/// What one pass over CSV input read, and how much of the input that was.
+struct CsvScan {
+    column_stats: StreamingColumnCollection,
+    header_names: Vec<String>,
+    rows_read: usize,
+    /// Records whose field count differs from the header's, padded or cut to
+    /// the header width before profiling.
+    ragged_rows: usize,
+    /// Set when `max_rows` stopped the pass with records left in the input.
+    truncation: Option<TruncationReason>,
+}
+
+fn scan_csv<R: Read>(
+    reader: R,
+    config: &CsvParserConfig,
+    semantic_hints: &SemanticHints,
+) -> Result<CsvScan, DataProfilerError> {
     let mut csv_builder = ReaderBuilder::new();
     csv_builder.has_headers(config.has_header);
     csv_builder.flexible(config.flexible);
@@ -294,11 +328,16 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
     // A header declares the columns even when no data records follow it.
     column_stats.init_columns(&header_names);
     let mut rows_read = 0;
+    let mut ragged_rows = 0;
+    let mut truncation = None;
 
     for result in csv_reader.records() {
         if let Some(max_rows) = config.max_rows
             && rows_read >= max_rows
         {
+            // A record past the cap means the cap, not the end of the input,
+            // stopped the pass. That record is neither profiled nor judged.
+            truncation = Some(TruncationReason::MaxRows(max_rows as u64));
             break;
         }
 
@@ -306,6 +345,9 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
         let mut values: Vec<String> = record.iter().map(|value| value.to_string()).collect();
 
         let header_len = header_names.len();
+        if values.len() != header_len {
+            ragged_rows += 1;
+        }
         if values.len() < header_len {
             values.resize(header_len, String::new());
         } else if values.len() > header_len {
@@ -316,21 +358,21 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
         rows_read += 1;
     }
 
-    let profiles = profile_builder::profiles_from_streaming_with_hints(
-        &column_stats,
-        false,
-        false,
-        None,
-        semantic_hints,
-    );
-
-    Ok((profiles, column_stats, rows_read, header_names))
+    Ok(CsvScan {
+        column_stats,
+        header_names,
+        rows_read,
+        ragged_rows,
+        truncation,
+    })
 }
 
 /// Analyze a CSV file, returning a full [`ProfileReport`].
 ///
-/// Opens the file, delegates to [`analyze_csv_from_reader`], and wraps the
-/// result with file metadata and ISO 8000/25012 data quality metrics.
+/// Opens the file, reads it as [`analyze_csv_from_reader`] does, and wraps the
+/// result with file metadata, ISO 8000/25012 data quality metrics, and the
+/// scan's own record: how many rows were ragged, and whether `max_rows` left
+/// rows unread.
 pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
@@ -364,8 +406,15 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read, _header_names) =
-        analyze_csv_from_reader_with_hints(buf_reader, config, semantic_hints)?;
+    let scan = scan_csv(buf_reader, config, semantic_hints)?;
+    let column_stats = &scan.column_stats;
+    let column_profiles = profile_builder::profiles_from_streaming_with_hints(
+        column_stats,
+        false,
+        false,
+        None,
+        semantic_hints,
+    );
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -375,20 +424,24 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
         parquet_metadata: None,
     };
 
-    let sample_columns = profile_builder::quality_check_samples(&column_stats);
+    let sample_columns = profile_builder::quality_check_samples(column_stats);
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    let mut assembler = ReportAssembler::new(
-        file_source,
-        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms).with_engine("csv"),
-    )
-    .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .with_row_duplicates(column_stats.row_duplicate_summary())
-    .with_row_completeness(column_stats.row_completeness_summary())
-    .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-    .with_semantic_hints(semantic_hints.clone());
+    let mut execution = ExecutionMetadata::new(scan.rows_read, num_columns, scan_time_ms)
+        .with_engine("csv")
+        .with_ragged_row_count(scan.ragged_rows);
+    if let Some(reason) = scan.truncation {
+        execution = execution.with_truncation(reason);
+    }
+
+    let mut assembler = ReportAssembler::new(file_source, execution)
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .with_row_duplicates(column_stats.row_duplicate_summary())
+        .with_row_completeness(column_stats.row_completeness_summary())
+        .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
+        .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }
@@ -608,6 +661,53 @@ mod tests {
         assert_eq!(report.execution.rows_processed, 5);
         assert_eq!(report.execution.columns_detected, 1);
         assert!((report.execution.sampling_ratio.unwrap_or(1.0) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_row_cap_that_leaves_rows_unread_is_a_truncation() {
+        let csv = write_csv("val\n1\n2\n3\n4\n5\n");
+        let config = CsvParserConfig::default().max_rows(Some(2));
+        let report = analyze_csv_file(csv.path(), &config).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert!(!report.execution.source_exhausted);
+        assert_eq!(
+            report.execution.truncation_reason,
+            Some(TruncationReason::MaxRows(2))
+        );
+    }
+
+    #[test]
+    fn a_row_cap_at_the_last_row_is_a_complete_scan() {
+        let csv = write_csv("val\n1\n2\n");
+        let config = CsvParserConfig::default().max_rows(Some(2));
+        let report = analyze_csv_file(csv.path(), &config).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert!(report.execution.source_exhausted);
+        assert_eq!(report.execution.truncation_reason, None);
+    }
+
+    #[test]
+    fn short_and_long_rows_are_counted_as_ragged() {
+        let csv = write_csv("a,b,c\n1,2,3\n4,5\n6,7,8,9\n10,11,12\n");
+        let report = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 4);
+        assert_eq!(report.execution.ragged_row_count, 2);
+    }
+
+    #[test]
+    fn a_ragged_row_past_the_row_cap_is_not_counted() {
+        let csv = write_csv("a,b,c\n1,2,3\n4,5\n");
+        let config = CsvParserConfig::default().max_rows(Some(1));
+        let report = analyze_csv_file(csv.path(), &config).unwrap();
+
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(
+            report.execution.truncation_reason,
+            Some(TruncationReason::MaxRows(1))
+        );
     }
 
     #[test]
