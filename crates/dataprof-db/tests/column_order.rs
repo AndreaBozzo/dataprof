@@ -202,3 +202,21 @@ async fn the_order_is_the_same_on_every_run() {
 
     connector.disconnect().await.unwrap();
 }
+
+#[tokio::test]
+async fn sqlite_absolute_url_opens_existing_database() {
+    let (_dir, db_path) = fixture(1).await;
+
+    let path = db_path.replace('\\', "/");
+    let url = if cfg!(windows) {
+        format!("sqlite:///{}", path)
+    } else {
+        format!("sqlite://{}", path)
+    };
+    let mut connector = connect(&url).await;
+
+    let columns = connector.profile_query("SELECT * FROM t").await.unwrap();
+    assert_eq!(names(&columns), DECLARED_ORDER);
+
+    connector.disconnect().await.unwrap();
+}

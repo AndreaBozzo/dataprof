@@ -72,7 +72,11 @@ impl ConnectionInfo {
             },
             password: url.password().map(|s| s.to_string()),
             database: if url.path().len() > 1 {
-                Some(url.path().trim_start_matches('/').to_string())
+                Some(if url.scheme() == "sqlite" {
+                    url.path().to_string()
+                } else {
+                    url.path().trim_start_matches('/').to_string()
+                })
             } else {
                 None
             },
@@ -233,6 +237,7 @@ mod tests {
 
         assert_eq!(info.scheme, "sqlite");
         assert_eq!(info.database_type(), "sqlite");
+        assert_eq!(info.database, Some("/path/to/db.sqlite".to_string()));
     }
 
     #[test]
