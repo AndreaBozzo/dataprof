@@ -12,10 +12,11 @@ readme = "README.md"
 [features]
 default = []
 # `sqlx/bigdecimal` rides with the two backends that have a decimal type.
-# SQLite has none, so a sqlite-only build does not pay for it.
-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/bigdecimal"]
-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/bigdecimal"]
-sqlite = ["dep:sqlx", "sqlx/sqlite"]
+# SQLite has none, so a sqlite-only build does not pay for it. `futures`
+# reads the row stream a profiled query is executed through.
+postgres = ["dep:sqlx", "dep:futures", "sqlx/postgres", "sqlx/bigdecimal"]
+mysql = ["dep:sqlx", "dep:futures", "sqlx/mysql", "sqlx/bigdecimal"]
+sqlite = ["dep:sqlx", "dep:futures", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
 [dependencies]
@@ -23,6 +24,7 @@ async-trait = { workspace = true }
 dataprof-core = { workspace = true }
 dataprof-metrics = { workspace = true }
 dataprof-runtime = { workspace = true }
+futures = { workspace = true, optional = true }
 log = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }

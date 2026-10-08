@@ -918,6 +918,7 @@ dependencies = [
  "dataprof-core",
  "dataprof-metrics",
  "dataprof-runtime",
+ "futures",
  "log",
  "rand 0.9.5",
  "regex",

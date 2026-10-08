@@ -179,7 +179,7 @@ Examples:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `connection_string` | `String` | required | Database connection URL |
-| `batch_size` | `usize` | `10000` | Rows per streaming batch |
+| `batch_size` | `usize` | `10000` | Rows read between progress log lines |
 | `max_connections` | `Option<u32>` | `Some(10)` | Connection pool size |
 | `connection_timeout` | `Option<Duration>` | `Some(30s)` | Connection timeout |
 | `retry_config` | `Option<RetryConfig>` | `Some(default)` | Retry with exponential backoff |
@@ -187,22 +187,15 @@ Examples:
 | `ssl_config` | `Option<SslConfig>` | `Some(default)` | SSL/TLS encryption settings |
 | `load_credentials_from_env` | `bool` | `true` | Load credentials from environment variables |
 
-## Streaming for Large Datasets
+## Large Results
 
-dataprof processes database results in configurable batches to handle tables with millions of rows without exceeding memory:
+dataprof evaluates the query twice: once to count its rows, then once to fetch its result, reading the rows as the driver returns them:
 
-1. Counts total rows for progress tracking
-2. Fetches data in batches (default: 10,000 rows)
-3. Merges statistics from all batches
-4. Reports progress
+1. Counts the rows with `SELECT COUNT(*) FROM (<query>)`, for progress logging
+2. Fetches the result in one execution, logging progress every `batch_size` rows
+3. Profiles the collected columns
 
-Adjust `batch_size` based on your dataset:
-
-| Dataset size | Recommended batch size |
-|---|---|
-| < 100k rows | `1000` -- `5000` |
-| 100k -- 1M rows | `10000` -- `25000` |
-| > 1M rows | `50000` -- `100000` |
+Plan for both evaluations when the query is expensive. The count only feeds the progress percentages, so if the data changes between the two, the logged total can differ from the rows profiled. The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or configure [sampling](#sampling).
 
 ## Sampling
 
@@ -325,5 +318,4 @@ print(f"Connection: {'OK' if ok else 'FAILED'}")
 1. **Add WHERE clauses** to filter data before profiling
 2. **Use indexes** on filtered columns for faster queries
 3. **Avoid SELECT \*** on very wide tables -- select relevant columns
-4. **Set appropriate batch sizes** based on row count (see table above)
-5. **Use connection pooling** (`max_connections`) for repeated queries
+4. **Use connection pooling** (`max_connections`) for repeated queries
