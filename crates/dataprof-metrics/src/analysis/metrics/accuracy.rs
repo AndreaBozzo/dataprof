@@ -3,7 +3,7 @@
 //! Measures the correctness of data values (syntactic and semantic accuracy).
 //! Key metrics: outlier ratio, range violations, negative values in positive fields.
 
-use super::utils::calculate_percentile;
+use super::utils::{calculate_percentile, has_identifier_word};
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
@@ -22,6 +22,37 @@ pub(crate) struct AccuracyMetrics {
     /// Numeric values in columns with enough of them for an outlier test:
     /// the denominator of `outlier_ratio`.
     pub outlier_values_checked: usize,
+}
+
+/// Which name-based range rules apply to a column.
+///
+/// A rule applies when a whole word of the name, split as identifier names are,
+/// is one of the rule's words: `age` and `customer_age` are held to ages, while
+/// `average_price`, `mileage` and `page_views` are not; `conversion_rate` is a
+/// percentage, `migrated_rows` is not; `item_count` must be non-negative,
+/// `discount` and `account_number` need not be (#871). Concatenated lowercase
+/// names such as `itemcount` no longer match. `years` is not a year word, since
+/// a plural names a duration (`years_of_service`), not a calendar year.
+///
+/// The counter and the score bounds both read this, so they cannot disagree on
+/// which rules a column is under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RangeRules {
+    age: bool,
+    percent: bool,
+    count: bool,
+    year: bool,
+}
+
+impl RangeRules {
+    fn for_column(column_name: &str) -> Self {
+        Self {
+            age: has_identifier_word(column_name, &["age"]),
+            percent: has_identifier_word(column_name, &["percent", "percentage", "rate", "rates"]),
+            count: has_identifier_word(column_name, &["count", "counts"]),
+            year: has_identifier_word(column_name, &["year"]),
+        }
+    }
 }
 
 /// Calculator for accuracy dimension metrics
@@ -74,12 +105,12 @@ impl<'a> AccuracyCalculator<'a> {
     /// value of `column_name` can add, since one value can break several of
     /// the name-based rules at once.
     pub fn max_violations_per_value(column_name: &str, positive_columns: &[String]) -> usize {
-        let name_lower = column_name.to_lowercase();
+        let range = RangeRules::for_column(column_name);
         let rules = [
-            name_lower.contains("age"),
-            name_lower.contains("percent") || name_lower.contains("rate"),
-            name_lower.contains("count"),
-            name_lower.contains("year"),
+            range.age,
+            range.percent,
+            range.count,
+            range.year,
             positive_columns
                 .iter()
                 .any(|candidate| candidate == column_name),
@@ -179,7 +210,7 @@ impl<'a> AccuracyCalculator<'a> {
     /// Check domain-specific range violations; returns `(violations, finite
     /// numeric values seen)`.
     fn check_domain_specific_ranges(column_name: &str, values: &[String]) -> (usize, usize) {
-        let name_lower = column_name.to_lowercase();
+        let rules = RangeRules::for_column(column_name);
         let mut violations = 0;
         let mut numeric_values = 0;
 
@@ -195,24 +226,22 @@ impl<'a> AccuracyCalculator<'a> {
                 numeric_values += 1;
 
                 // Age should be reasonable (0-150)
-                if name_lower.contains("age") && !(0.0..=150.0).contains(&num_value) {
+                if rules.age && !(0.0..=150.0).contains(&num_value) {
                     violations += 1;
                 }
 
                 // Percentage should be 0-100
-                if (name_lower.contains("percent") || name_lower.contains("rate"))
-                    && !(0.0..=100.0).contains(&num_value)
-                {
+                if rules.percent && !(0.0..=100.0).contains(&num_value) {
                     violations += 1;
                 }
 
                 // Counts should be non-negative
-                if name_lower.contains("count") && num_value < 0.0 {
+                if rules.count && num_value < 0.0 {
                     violations += 1;
                 }
 
                 // Years should be reasonable (1900-2100)
-                if name_lower.contains("year") && !(1900.0..=2100.0).contains(&num_value) {
+                if rules.year && !(1900.0..=2100.0).contains(&num_value) {
                     violations += 1;
                 }
             }
@@ -300,6 +329,58 @@ mod tests {
         assert!(
             metrics.outlier_ratio > 0.0,
             "small numeric samples above outlier_min_samples should still detect obvious outliers"
+        );
+    }
+
+    #[test]
+    fn range_rules_match_words_not_substrings() {
+        let rules = |age, percent, count, year| RangeRules {
+            age,
+            percent,
+            count,
+            year,
+        };
+        for (name, expected) in [
+            ("age", rules(true, false, false, false)),
+            ("customer_age", rules(true, false, false, false)),
+            ("customerAge", rules(true, false, false, false)),
+            ("conversion_rate", rules(false, true, false, false)),
+            ("discount_percentage", rules(false, true, false, false)),
+            ("item_count", rules(false, false, true, false)),
+            ("birth_year", rules(false, false, false, true)),
+            ("average_price", rules(false, false, false, false)),
+            ("mileage", rules(false, false, false, false)),
+            ("page_views", rules(false, false, false, false)),
+            ("migrated_rows", rules(false, false, false, false)),
+            ("generated_tokens", rules(false, false, false, false)),
+            ("discount", rules(false, false, false, false)),
+            ("account_number", rules(false, false, false, false)),
+            ("years_of_service", rules(false, false, false, false)),
+        ] {
+            assert_eq!(RangeRules::for_column(name), expected, "{name}");
+        }
+    }
+
+    /// The score bounds allow an unseen value as many violations as the rules
+    /// its column is under, so they must read the name as the counter does.
+    #[test]
+    fn max_violations_per_value_reads_the_name_by_words() {
+        for (name, expected) in [
+            ("average_price", 0),
+            ("mileage", 0),
+            ("discount", 0),
+            ("customer_age", 1),
+            ("item_count", 1),
+        ] {
+            assert_eq!(
+                AccuracyCalculator::max_violations_per_value(name, &[]),
+                expected,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            AccuracyCalculator::max_violations_per_value("mileage", &["mileage".to_string()]),
+            1
         );
     }
 
