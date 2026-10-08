@@ -22,7 +22,8 @@ use dataprof::{
 /// # Arguments
 /// * `connection_string` - Database connection string (postgres://, mysql://, sqlite://)
 /// * `query` - SQL query to analyze
-/// * `batch_size` - Optional batch size for streaming (default: 10000)
+/// * `batch_size` - Rows read between progress log lines (default: 10000); the
+///   query itself runs once
 /// * `calculate_quality` - Legacy coarse toggle. Left unset, quality is computed,
 ///   which is what every file path does; `False` drops the quality pack
 /// * `config` - Optional profiler config carrying `metrics`, `quality_dimensions`,
