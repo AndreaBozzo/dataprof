@@ -361,6 +361,26 @@ mod tests {
         }
     }
 
+    /// Each rule counts exactly the values outside its range, bounds included
+    /// in the range, and a name under no rule counts none.
+    #[test]
+    fn each_range_rule_counts_only_values_outside_its_range() {
+        for (name, values, expected) in [
+            ("customer_age", ["0", "150", "30", "-1"], 1),
+            ("conversion_rate", ["0", "100", "50", "101"], 1),
+            ("item_count", ["0", "5", "-1", "-2"], 2),
+            ("birth_year", ["1900", "2100", "1990", "1899"], 1),
+            ("price", ["-1", "200", "3000", "101"], 0),
+        ] {
+            let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+            assert_eq!(
+                AccuracyCalculator::check_domain_specific_ranges(name, &values),
+                (expected, 4),
+                "{name}"
+            );
+        }
+    }
+
     /// The score bounds allow an unseen value as many violations as the rules
     /// its column is under, so they must read the name as the counter does.
     #[test]
