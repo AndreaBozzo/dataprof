@@ -192,7 +192,10 @@ Measures duplication in the data.
 Measures whether values fall within expected ranges.
 
 - `outlier_ratio` -- fraction of values outside the interquartile range
-- `range_violations` -- values outside expected bounds
+- `range_violations` -- values outside the range a word of the column name
+  implies: `age` 0 to 150, `percent`, `percentage`, `rate` or `rates` 0 to 100,
+  `count` or `counts` not negative, `year` 1900 to 2100 (`customer_age`
+  matches, `average_price` does not)
 - `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
 
 ### Timeliness

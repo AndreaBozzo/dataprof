@@ -152,6 +152,14 @@ pub(crate) fn is_likely_id_column(column_name: &str) -> bool {
     })
 }
 
+/// Whether any word of `column_name`, split as [`identifier_words`] splits it,
+/// is one of `words`, ignoring ASCII case.
+pub(crate) fn has_identifier_word(column_name: &str, words: &[&str]) -> bool {
+    identifier_words(column_name)
+        .into_iter()
+        .any(|word| words.iter().any(|w| word.eq_ignore_ascii_case(w)))
+}
+
 /// Split snake/kebab/spaced and camel/Pascal case names into semantic words.
 /// This keeps identifier inference from treating unrelated names such as
 /// `paid`, `valid`, or `monkey` as keys merely because they contain `id` or

@@ -1141,4 +1141,21 @@ mod tests {
         assert_eq!(high, 1.0);
         assert!((low - 0.999).abs() < 0.000_01, "{low}");
     }
+
+    #[test]
+    fn a_rule_word_inside_a_longer_word_does_not_widen_the_accuracy_interval() {
+        // `average_price` holds `age` only inside `average`, so no range rule
+        // applies and its sample bounds exactly as `price` does (#871).
+        let values = strings((0..200).map(|index| 150 + index % 50));
+        let interval_under = |name: &str| {
+            let data = HashMap::from([(name.to_string(), values.clone())]);
+            let profiles = vec![profile(name, DataType::Integer, 10_000, 0)];
+            interval(&bounds_for(&data, &profiles), QualityDimension::Accuracy)
+        };
+        assert_eq!(
+            interval_under("average_price"),
+            interval_under("price"),
+            "average_price"
+        );
+    }
 }
