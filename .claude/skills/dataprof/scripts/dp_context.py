@@ -112,8 +112,13 @@ def _quality_block(report: Any) -> list[str]:
             return [f"quality: COMPUTATION FAILED -- {flattened}"]
         return [_QUALITY_ABSENCE.get(status, "quality: not analyzed")]
 
-    scores = quality.dimension_scores()
-    overall = quality.overall_quality_score()
+    # Read the values from the public serialized projection rather than the
+    # native quality object.  The latter exposes full-precision floats, while
+    # ``to_dict()`` applies the report contract's rounding to scores and every
+    # piece of dimension evidence.
+    serialized = report.to_dict()["quality"]
+    scores = serialized["dimension_scores"]
+    overall = serialized["overall_score"]
     # None means no dimension was assessable. Printing it as "None" invites the
     # reader to treat it as a zero; name the state instead.
     lines = [f"quality score: {overall if overall is not None else 'not assessed'}"]
@@ -124,7 +129,7 @@ def _quality_block(report: Any) -> list[str]:
             # which reads as a clean result.
             lines.append(f"  {dimension}: not assessed")
             continue
-        evidence = getattr(quality, dimension, None)
+        evidence = serialized.get(dimension)
         detail = ""
         if isinstance(evidence, dict):
             interesting = {
@@ -219,7 +224,10 @@ def main(argv: list[str] | None = None) -> int:
         "--max-tokens",
         type=int,
         default=1000,
-        help="token ceiling for the summary (default: 1000)",
+        help=(
+            "token ceiling for the LLM summary only; the quality block and "
+            "caveats follow it (default: 1000)"
+        ),
     )
     parser.add_argument("--column", help="print detail for one column instead of the summary")
     parser.add_argument(
