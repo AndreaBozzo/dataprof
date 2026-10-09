@@ -1351,16 +1351,23 @@ fn map_csv_encoding_error(file_path: &Path, err: DataProfilerError) -> DataProfi
     }
 }
 
-/// One-liner API for quick profiling with intelligent engine selection
-pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64, DataProfilerError> {
+/// One-liner API for quick profiling with intelligent engine selection.
+///
+/// Returns the report's [`quality_score`](ProfileReport::quality_score):
+/// `None` when nothing was assessable, such as a header-only CSV. Absence of
+/// evidence is not a zero, so a caller thresholding the score decides what an
+/// unassessed file means.
+pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<Option<f64>, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_file(file_path)?;
-    Ok(report.quality_score().unwrap_or(0.0))
+    Ok(report.quality_score())
 }
 
-/// One-liner API for quick profiling from a DataSource
-pub fn quick_quality_check_source(source: &DataSource) -> Result<f64, DataProfilerError> {
+/// One-liner API for quick profiling from a DataSource.
+///
+/// Returns `None` when nothing was assessable, as [`quick_quality_check`] does.
+pub fn quick_quality_check_source(source: &DataSource) -> Result<Option<f64>, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_source(source)?;
-    Ok(report.quality_score().unwrap_or(0.0))
+    Ok(report.quality_score())
 }
