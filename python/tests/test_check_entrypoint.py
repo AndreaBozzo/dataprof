@@ -287,10 +287,7 @@ def test_non_object_policy_file_in_text_mode_names_file_on_stderr(source: Path, 
     result = run_check(source, "--policy", path)
     assert result.returncode == 3
     assert result.stdout == ""
-    assert (
-        f"policy file {path} must contain a JSON object of check() keywords"
-        in result.stderr
-    )
+    assert f"policy file {path} must contain a JSON object of check() keywords" in result.stderr
 
 
 def test_unknown_policy_keys_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):

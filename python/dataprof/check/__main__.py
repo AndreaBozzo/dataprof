@@ -248,9 +248,7 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
         try:
             raw_bytes = args.policy.read_bytes()
         except OSError as exc:
-            raise ValueError(
-                f"cannot read policy file {args.policy}: {exc.strerror}"
-            ) from exc
+            raise ValueError(f"cannot read policy file {args.policy}: {exc.strerror}") from exc
         try:
             text = raw_bytes.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
@@ -286,9 +284,7 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     # scope, and empty-policy semantics belong to that validator.
     dimensions = policy["min_dimension_scores"]
     if dimensions is not None and not isinstance(dimensions, dict):
-        raise ValueError(
-            f"policy file {args.policy}: min_dimension_scores must be a JSON object"
-        )
+        raise ValueError(f"policy file {args.policy}: min_dimension_scores must be a JSON object")
     required = policy["require_metrics"]
     if required is not None and (
         not isinstance(required, list) or not all(isinstance(name, str) for name in required)
