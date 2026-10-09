@@ -1,4 +1,6 @@
 pub mod analysis_options;
+#[doc(hidden)]
+pub mod binary_input;
 pub mod classification;
 pub mod config;
 pub mod errors;

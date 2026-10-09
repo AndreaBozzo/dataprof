@@ -130,11 +130,22 @@ pub fn detect_format(file_path: &Path) -> FileFormat {
 // Format-aware internals (also used by Profiler methods)
 // ---------------------------------------------------------------------------
 
+/// Refuse a binary file (gzip, zstd, zip, Parquet) on every route that would
+/// read it as text, including an unknown extension, so it fails with what the
+/// file is rather than a parse error or an unsupported extension (#893).
+fn reject_binary_text_input(path: &Path, format: &FileFormat) -> Result<(), DataProfilerError> {
+    if matches!(format, FileFormat::Parquet) {
+        return Ok(());
+    }
+    dataprof_core::binary_input::reject_binary_input(path)
+}
+
 pub fn infer_schema_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<SchemaResult, DataProfilerError> {
     let start = Instant::now();
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Parquet => {
@@ -162,6 +173,7 @@ pub fn quick_row_count_with_format(
     format: FileFormat,
 ) -> Result<RowCountEstimate, DataProfilerError> {
     let start = Instant::now();
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Parquet => {
@@ -196,6 +208,7 @@ pub fn analyze_structure_with_format(
     })?;
 
     let limit = max_rows.unwrap_or(STRUCTURE_SAMPLE_ROWS);
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Csv => analyze_structure_csv(path, limit),

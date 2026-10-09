@@ -401,6 +401,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
+    dataprof_core::binary_input::reject_binary_input(file_path)?;
     let start = std::time::Instant::now();
 
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
