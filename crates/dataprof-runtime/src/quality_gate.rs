@@ -66,6 +66,7 @@ const PERCENTAGE_MAX: f64 = 100.0;
 /// configuration mistake, and reporting it as a failed gate would blame the
 /// data for it.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PolicyError {
     /// A threshold on the 0..=100 percentage scale fell outside it, or was not
     /// a finite number. Quality scores and null percentages are percentages,
@@ -117,6 +118,7 @@ impl std::error::Error for PolicyError {}
 /// question it asks rather than letting the evaluator guess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PolicyScope {
     /// The entire source. A requirement is evaluated only when the evidence
     /// covers it, or when the observed data already witnesses a violation that
@@ -155,6 +157,7 @@ impl std::str::FromStr for PolicyScope {
 /// Why the data behind a number falls short of the whole source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EvidenceGap {
     /// Profiling stopped before the source was exhausted.
     Truncated,
@@ -188,6 +191,7 @@ impl fmt::Display for EvidenceGap {
 /// Whether the data behind a number covers the whole source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "coverage", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Evidence {
     /// Every row of the source is behind the number.
     Complete,
@@ -229,6 +233,7 @@ impl Evidence {
 /// not change when the prose does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CheckCode {
     /// The overall quality score must be at least the threshold.
     MinQualityScore,
@@ -260,6 +265,7 @@ impl fmt::Display for CheckCode {
 /// whole numbers and are not widened into rounded floats.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum MetricValue {
     /// A count of rows or values.
     Count(usize),
@@ -281,6 +287,7 @@ impl fmt::Display for MetricValue {
 /// The constraint a check applied.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(tag = "comparison", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Expectation {
     /// The observed value must be at least `value`.
     AtLeast {
@@ -314,6 +321,7 @@ impl fmt::Display for Expectation {
 /// profiled, or a scan that does not reach as far as the requirement does.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NotEvaluated {
     /// The report carries no quality assessment, for this recorded reason.
     QualityUnavailable {
@@ -339,6 +347,7 @@ pub enum NotEvaluated {
 /// What happened to one requirement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CheckStatus {
     /// Evaluated and met.
     Passed,
@@ -350,6 +359,7 @@ pub enum CheckStatus {
 
 /// One requirement and what the report said about it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct Check {
     /// Which requirement this is.
     pub code: CheckCode,
@@ -405,6 +415,7 @@ impl Check {
 
 /// The interval a sampled score was decided on.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct CheckBounds {
     /// Lowest value the whole-source score can take.
     #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
@@ -419,6 +430,7 @@ pub struct CheckBounds {
 /// The overall outcome of a policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Verdict {
     /// Every requirement was evaluated and met.
     Pass,
@@ -441,6 +453,7 @@ impl fmt::Display for Verdict {
 
 /// The structured result of evaluating a [`QualityPolicy`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct GateResult {
     /// The overall outcome.
     pub verdict: Verdict,
@@ -479,6 +492,7 @@ impl GateResult {
 
 /// A metric a policy requires to have been analyzed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RequiredMetric {
     /// The quality assessment as a whole.
     Quality,
@@ -493,6 +507,7 @@ pub enum RequiredMetric {
 /// depend on the order they were added, so two callers stating the same policy
 /// get the same document out.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct QualityPolicy {
     min_quality_score: Option<f64>,
     min_dimension_scores: BTreeMap<String, (QualityDimension, f64)>,
@@ -1184,6 +1199,174 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         Evidence::Complete
     }
 }
+
+/// Every public gate type is `#[non_exhaustive]` (#894), so the gate can grow
+/// fields and variants (#749) without breaking callers again. The attribute
+/// only binds outside this crate, which is where doctests compile. Each block
+/// below must fail to compile for its one type: a struct literal, or a match
+/// with no wildcard arm.
+///
+/// Stable rustdoc does not check the error code of a `compile_fail` block, so
+/// any error would pass one. `tests/public_api_facade.rs` names the same
+/// variants and fields in code that must compile, so a renamed variant or
+/// field fails there instead of passing here for the wrong reason.
+///
+/// ```compile_fail
+/// let _ = dataprof_runtime::CheckBounds { lower: 0.0, upper: 1.0, confidence_level: 0.95 };
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::{Check, CheckCode, CheckStatus, Evidence, Expectation, PolicyScope};
+/// let _ = Check {
+///     code: CheckCode::RequireMetric,
+///     column: None,
+///     dimension: None,
+///     expected: Expectation::Analyzed,
+///     observed: None,
+///     scope: PolicyScope::FullSource,
+///     evidence: Evidence::Complete,
+///     bounds: None,
+///     status: CheckStatus::Passed,
+///     message: String::new(),
+/// };
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::{Evidence, GateResult, PolicyScope, Verdict};
+/// let _ = GateResult {
+///     verdict: Verdict::Pass,
+///     scope: PolicyScope::FullSource,
+///     evidence: Evidence::Complete,
+///     checks: Vec::new(),
+/// };
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::PolicyError;
+/// fn f(e: PolicyError) -> u8 {
+///     match e {
+///         PolicyError::ThresholdOutOfRange { .. } => 0,
+///         PolicyError::NoRequirements => 1,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::PolicyScope;
+/// fn f(s: PolicyScope) -> u8 {
+///     match s {
+///         PolicyScope::FullSource => 0,
+///         PolicyScope::Observed => 1,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::EvidenceGap;
+/// fn f(g: EvidenceGap) -> u8 {
+///     match g {
+///         EvidenceGap::Truncated => 0,
+///         EvidenceGap::Sampled => 1,
+///         EvidenceGap::RecordsSkipped => 2,
+///         EvidenceGap::QualitySampled => 3,
+///         EvidenceGap::CoverageUnrecorded => 4,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::Evidence;
+/// fn f(e: Evidence) -> u8 {
+///     match e {
+///         Evidence::Complete => 0,
+///         Evidence::Incomplete { .. } => 1,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::CheckCode;
+/// fn f(c: CheckCode) -> u8 {
+///     match c {
+///         CheckCode::MinQualityScore => 0,
+///         CheckCode::MinDimensionScore => 1,
+///         CheckCode::MaxNullPercentage => 2,
+///         CheckCode::MaxDuplicateRows => 3,
+///         CheckCode::RequireMetric => 4,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::MetricValue;
+/// fn f(v: MetricValue) -> u8 {
+///     match v {
+///         MetricValue::Count(_) => 0,
+///         MetricValue::Percentage(_) => 1,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::Expectation;
+/// fn f(e: Expectation) -> u8 {
+///     match e {
+///         Expectation::AtLeast { .. } => 0,
+///         Expectation::AtMost { .. } => 1,
+///         Expectation::Analyzed => 2,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::NotEvaluated;
+/// fn f(n: NotEvaluated) -> u8 {
+///     match n {
+///         NotEvaluated::QualityUnavailable { .. } => 0,
+///         NotEvaluated::NotAssessed => 1,
+///         NotEvaluated::ColumnNotProfiled => 2,
+///         NotEvaluated::EvidenceIncomplete { .. } => 3,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::CheckStatus;
+/// fn f(s: CheckStatus) -> u8 {
+///     match s {
+///         CheckStatus::Passed => 0,
+///         CheckStatus::Failed => 1,
+///         CheckStatus::NotEvaluated(_) => 2,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::Verdict;
+/// fn f(v: Verdict) -> u8 {
+///     match v {
+///         Verdict::Pass => 0,
+///         Verdict::Fail => 1,
+///         Verdict::Inconclusive => 2,
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::RequiredMetric;
+/// fn f(m: RequiredMetric) -> u8 {
+///     match m {
+///         RequiredMetric::Quality => 0,
+///         RequiredMetric::Dimension(_) => 1,
+///     }
+/// }
+/// ```
+///
+/// `QualityPolicy` has only private fields, so a literal of it never
+/// compiled outside this crate; its attribute keeps that true if a field
+/// is ever made public, and it has no block here.
+#[cfg(doctest)]
+struct NonExhaustiveGuards;
 
 #[cfg(test)]
 mod tests {

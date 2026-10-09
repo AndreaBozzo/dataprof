@@ -21,6 +21,7 @@ breaking public API change.
 | Quality metric DTOs | `AccuracyMetrics`, `CompletenessMetrics`, `ConsistencyMetrics`, `MetricConfidence`, `TimelinessMetrics`, `UniquenessMetrics` |
 | Format entry points | `CsvParserConfig`, `CsvDiagnostics`, `analyze_csv_file`, `analyze_csv_from_reader`, `JsonFormat`, `JsonParserConfig`, `analyze_json_file`, `analyze_json_from_reader` |
 | Analysis helpers | `MetricsCalculator`, `analyze_column_fast`, `detect_patterns`, `infer_type`, `calculate_numeric_stats`, `calculate_text_stats` |
+| Quality gate | `QualityPolicy`, `GateResult`, `Check`, `CheckBounds`, `CheckCode`, `CheckStatus`, `Evidence`, `EvidenceGap`, `Expectation`, `MetricValue`, `NotEvaluated`, `PolicyError`, `PolicyScope`, `RequiredMetric`, `Verdict` |
 
 ## Feature-Gated Stable Surface
 
@@ -76,6 +77,14 @@ Downstream effects to expect when upgrading:
 | construct one of the six cause-carrying variants directly | Call the matching constructor instead (`invalid_config` and `invalid_config_with_source` for `InvalidConfiguration`). |
 | call `AutoRecoveryManager::attempt_recovery` | It takes the error by value now rather than by reference. |
 | call `DataProfilerError::io_error(&err)` | Pass the error by value: `map_err(DataProfilerError::io_error)`. |
+
+## Quality Gate Compatibility
+
+Every quality-gate type is `#[non_exhaustive]`, so the gate can gain fields
+and variants without breaking callers. Outside `dataprof-runtime`, a `match`
+on a gate enum needs a `_` arm, a pattern on `Check`, `CheckBounds` or
+`GateResult` needs `..`, and none of the three can be built with a struct
+expression: `QualityPolicy::evaluate` is what produces them.
 
 ## Coverage Expectations
 
