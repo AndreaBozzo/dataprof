@@ -674,8 +674,11 @@ println!("{} rows (exact: {})", count.count, count.exact);
 ```rust
 use dataprof::quick_quality_check;
 
-let score = quick_quality_check("data.csv")?;
-println!("Quality: {:.1}%", score);
+// `None` when nothing was assessable, such as a header-only CSV.
+match quick_quality_check("data.csv")? {
+    Some(score) => println!("Quality: {score:.1}%"),
+    None => println!("Quality: not assessed"),
+}
 ```
 
 ### Async stream profiling
