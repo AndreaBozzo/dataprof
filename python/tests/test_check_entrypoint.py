@@ -333,6 +333,12 @@ def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
 
+    text_result = run_check(source, "--policy", path)
+    assert text_result.returncode == 3, text_result.stderr
+    assert text_result.stdout == ""
+    assert f"policy file {path} is nested too deeply: " in text_result.stderr
+    assert "Traceback" not in text_result.stderr
+
 
 @pytest.mark.parametrize("flag", ["--engine", "--format"])
 def test_bogus_engine_and_format_are_argument_errors(source: Path, flag: str):

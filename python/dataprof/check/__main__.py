@@ -260,6 +260,8 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
             )
         except json.JSONDecodeError as exc:
             raise ValueError(f"policy file {args.policy} is not valid JSON: {exc}") from exc
+        except RecursionError as exc:
+            raise ValueError(f"policy file {args.policy} is nested too deeply: {exc}") from exc
         except ValueError as exc:
             raise ValueError(f"policy file {args.policy}: {exc}") from exc
         if not isinstance(document, dict):
@@ -292,12 +294,7 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             f"policy file {args.policy}: require_metrics must be a JSON array of names"
         )
-    try:
-        _Policy(**policy)
-    except ValueError as exc:
-        if args.policy is None:
-            raise
-        raise ValueError(f"policy file {args.policy}: {exc}") from exc
+    _Policy(**policy)
     return policy
 
 
