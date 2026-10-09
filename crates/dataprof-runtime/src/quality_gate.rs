@@ -71,6 +71,7 @@ pub enum PolicyError {
     /// A threshold on the 0..=100 percentage scale fell outside it, or was not
     /// a finite number. Quality scores and null percentages are percentages,
     /// not 0..1 ratios.
+    #[non_exhaustive]
     ThresholdOutOfRange {
         /// The requirement that carried it.
         code: CheckCode,
@@ -196,6 +197,7 @@ pub enum Evidence {
     /// Every row of the source is behind the number.
     Complete,
     /// Some of the source is not, for this reason.
+    #[non_exhaustive]
     Incomplete {
         /// The gap between what was read and the whole source.
         reason: EvidenceGap,
@@ -290,11 +292,13 @@ impl fmt::Display for MetricValue {
 #[non_exhaustive]
 pub enum Expectation {
     /// The observed value must be at least `value`.
+    #[non_exhaustive]
     AtLeast {
         /// The threshold.
         value: MetricValue,
     },
     /// The observed value must be at most `value`.
+    #[non_exhaustive]
     AtMost {
         /// The threshold.
         value: MetricValue,
@@ -324,6 +328,7 @@ impl fmt::Display for Expectation {
 #[non_exhaustive]
 pub enum NotEvaluated {
     /// The report carries no quality assessment, for this recorded reason.
+    #[non_exhaustive]
     QualityUnavailable {
         /// The report's `quality_status` state, verbatim.
         quality_status: String,
@@ -338,6 +343,7 @@ pub enum NotEvaluated {
     ColumnNotProfiled,
     /// The requirement asks about the full source, the evidence does not reach
     /// that far, and nothing observed settles it regardless.
+    #[non_exhaustive]
     EvidenceIncomplete {
         /// The gap between the evidence and the requirement's scope.
         gap: EvidenceGap,
@@ -1200,19 +1206,19 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
     }
 }
 
-/// Every public type in this module is `#[non_exhaustive]` (#894), so the
-/// gate can gain enum variants and struct fields (#749) without breaking
-/// callers. A field added to an existing struct-like variant, such as
-/// `Evidence::Incomplete`, still breaks a caller that names that variant's
-/// fields without `..`: the attribute is on the enums, not on their variants.
+/// Every public type in this module is `#[non_exhaustive]` (#894), and so is
+/// every enum variant with named fields, so the gate can gain variants,
+/// struct fields and variant fields (#749) without breaking callers. Tuple
+/// variants such as `CheckStatus::NotEvaluated(_)` are not marked: growing
+/// one changes its positional shape, which is a redesign, not an extension.
 ///
 /// The attribute only binds outside this crate, which is where doctests
 /// compile. Each block below builds one struct with update syntax from a
 /// supplied value. That is rejected only for a non-exhaustive struct from
 /// another crate, so a field added later cannot make a block fail for a
-/// different reason. The enums are checked by
-/// `tests::every_public_type_is_non_exhaustive`, because no `match` stays
-/// independent of the variants an enum gains.
+/// different reason. The enums and their variants are checked by
+/// `tests::every_public_type_is_non_exhaustive`, because no `match` or
+/// pattern stays independent of the variants and fields they gain.
 ///
 /// Stable rustdoc does not check the error code of a `compile_fail` block, so
 /// any error would pass one. `tests/public_api_facade.rs` names the fields
@@ -1255,37 +1261,65 @@ mod tests {
     use super::*;
 
     /// The source-level half of `NonExhaustiveGuards` (#894): every `pub` type
-    /// declared in this module carries `#[non_exhaustive]`. Reading the source
-    /// keeps the check independent of the variants and fields the types gain,
-    /// and covers a type added later without a list to update.
+    /// declared in this module carries `#[non_exhaustive]`, and so does every
+    /// variant with named fields inside a `pub enum`. Reading the source keeps
+    /// the check independent of the variants and fields the types gain, and
+    /// covers a type or variant added later without a list to update.
     #[test]
     fn every_public_type_is_non_exhaustive() {
         let lines: Vec<&str> = include_str!("quality_gate.rs").lines().collect();
+        let marked = |i: usize| {
+            lines[..i]
+                .iter()
+                .rev()
+                .map(|l| l.trim())
+                .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
+                .any(|l| l == "#[non_exhaustive]")
+        };
+        let identifier = |s: &str| -> String {
+            s.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        };
         let mut declared = Vec::new();
+        let mut variants = Vec::new();
         let mut unmarked = Vec::new();
+        let mut in_enum: Option<String> = None;
         for (i, line) in lines.iter().enumerate() {
+            if let Some(enum_name) = &in_enum {
+                if *line == "}" {
+                    in_enum = None;
+                } else if let Some(rest) = line.strip_prefix("    ")
+                    && rest.starts_with(|c: char| c.is_ascii_uppercase())
+                    && rest.contains(" {")
+                {
+                    let variant = format!("{enum_name}::{}", identifier(rest));
+                    if !marked(i) {
+                        unmarked.push(variant.clone());
+                    }
+                    variants.push(variant);
+                }
+                continue;
+            }
             let Some(rest) = line
                 .strip_prefix("pub enum ")
                 .or_else(|| line.strip_prefix("pub struct "))
             else {
                 continue;
             };
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            declared.push(name.clone());
-            let marked = lines[..i]
-                .iter()
-                .rev()
-                .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
-                .any(|l| l.trim() == "#[non_exhaustive]");
-            if !marked {
-                unmarked.push(name);
+            let name = identifier(rest);
+            if !marked(i) {
+                unmarked.push(name.clone());
             }
+            if line.starts_with("pub enum ") {
+                in_enum = Some(name.clone());
+            }
+            declared.push(name);
         }
-        // Guard the premise: the scan found the module's types at all.
+        // Guard the premise: the scan found the module's types and the
+        // variants with named fields at all.
         assert!(declared.len() >= 15, "{declared:?}");
+        assert!(variants.len() >= 6, "{variants:?}");
         assert!(unmarked.is_empty(), "not #[non_exhaustive]: {unmarked:?}");
     }
     use crate::ReportAssembler;

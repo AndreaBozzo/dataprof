@@ -552,7 +552,7 @@ fn quality_gate_types_are_matched_with_a_wildcard() {
     };
     let evidence = |e: Evidence| match e {
         Evidence::Complete => 0,
-        Evidence::Incomplete { reason } => 1 + gap(reason),
+        Evidence::Incomplete { reason, .. } => 1 + gap(reason),
         _ => 7,
     };
     let code = |c: CheckCode| match c {
@@ -569,8 +569,8 @@ fn quality_gate_types_are_matched_with_a_wildcard() {
         _ => 2,
     };
     let expectation = |e: Expectation| match e {
-        Expectation::AtLeast { value: v } => value(v),
-        Expectation::AtMost { value: v } => value(v),
+        Expectation::AtLeast { value: v, .. } => value(v),
+        Expectation::AtMost { value: v, .. } => value(v),
         Expectation::Analyzed => 2,
         _ => 3,
     };
@@ -578,7 +578,7 @@ fn quality_gate_types_are_matched_with_a_wildcard() {
         NotEvaluated::QualityUnavailable { .. } => 0,
         NotEvaluated::NotAssessed => 1,
         NotEvaluated::ColumnNotProfiled => 2,
-        NotEvaluated::EvidenceIncomplete { gap: g } => 3 + gap(*g),
+        NotEvaluated::EvidenceIncomplete { gap: g, .. } => 3 + gap(*g),
         _ => 9,
     };
     let status = |s: &CheckStatus| match s {
