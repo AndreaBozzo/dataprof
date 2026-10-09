@@ -1200,171 +1200,45 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
     }
 }
 
-/// Every public gate type is `#[non_exhaustive]` (#894), so the gate can grow
-/// fields and variants (#749) without breaking callers again. The attribute
-/// only binds outside this crate, which is where doctests compile. Each block
-/// below must fail to compile for its one type: a struct literal, or a match
-/// with no wildcard arm.
+/// Every public type in this module is `#[non_exhaustive]` (#894), so the
+/// gate can gain enum variants and struct fields (#749) without breaking
+/// callers. A field added to an existing struct-like variant, such as
+/// `Evidence::Incomplete`, still breaks a caller that names that variant's
+/// fields without `..`: the attribute is on the enums, not on their variants.
+///
+/// The attribute only binds outside this crate, which is where doctests
+/// compile. Each block below builds one struct with update syntax from a
+/// supplied value. That is rejected only for a non-exhaustive struct from
+/// another crate, so a field added later cannot make a block fail for a
+/// different reason. The enums are checked by
+/// `tests::every_public_type_is_non_exhaustive`, because no `match` stays
+/// independent of the variants an enum gains.
 ///
 /// Stable rustdoc does not check the error code of a `compile_fail` block, so
-/// any error would pass one. `tests/public_api_facade.rs` names the same
-/// variants and fields in code that must compile, so a renamed variant or
-/// field fails there instead of passing here for the wrong reason.
+/// any error would pass one. `tests/public_api_facade.rs` names the fields
+/// used here in code that must compile, so a renamed field fails there instead
+/// of passing here for the wrong reason.
 ///
 /// ```compile_fail
-/// let _ = dataprof_runtime::CheckBounds { lower: 0.0, upper: 1.0, confidence_level: 0.95 };
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::{Check, CheckCode, CheckStatus, Evidence, Expectation, PolicyScope};
-/// let _ = Check {
-///     code: CheckCode::RequireMetric,
-///     column: None,
-///     dimension: None,
-///     expected: Expectation::Analyzed,
-///     observed: None,
-///     scope: PolicyScope::FullSource,
-///     evidence: Evidence::Complete,
-///     bounds: None,
-///     status: CheckStatus::Passed,
-///     message: String::new(),
-/// };
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::{Evidence, GateResult, PolicyScope, Verdict};
-/// let _ = GateResult {
-///     verdict: Verdict::Pass,
-///     scope: PolicyScope::FullSource,
-///     evidence: Evidence::Complete,
-///     checks: Vec::new(),
-/// };
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::PolicyError;
-/// fn f(e: PolicyError) -> u8 {
-///     match e {
-///         PolicyError::ThresholdOutOfRange { .. } => 0,
-///         PolicyError::NoRequirements => 1,
-///     }
+/// use dataprof_runtime::CheckBounds;
+/// fn f(base: CheckBounds) -> CheckBounds {
+///     CheckBounds { lower: 0.0, ..base }
 /// }
 /// ```
 ///
 /// ```compile_fail
-/// use dataprof_runtime::PolicyScope;
-/// fn f(s: PolicyScope) -> u8 {
-///     match s {
-///         PolicyScope::FullSource => 0,
-///         PolicyScope::Observed => 1,
-///     }
+/// use dataprof_runtime::Check;
+/// fn f(base: Check) -> Check {
+///     Check { message: String::new(), ..base }
 /// }
 /// ```
 ///
 /// ```compile_fail
-/// use dataprof_runtime::EvidenceGap;
-/// fn f(g: EvidenceGap) -> u8 {
-///     match g {
-///         EvidenceGap::Truncated => 0,
-///         EvidenceGap::Sampled => 1,
-///         EvidenceGap::RecordsSkipped => 2,
-///         EvidenceGap::QualitySampled => 3,
-///         EvidenceGap::CoverageUnrecorded => 4,
-///     }
+/// use dataprof_runtime::GateResult;
+/// fn f(base: GateResult) -> GateResult {
+///     GateResult { checks: Vec::new(), ..base }
 /// }
 /// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::Evidence;
-/// fn f(e: Evidence) -> u8 {
-///     match e {
-///         Evidence::Complete => 0,
-///         Evidence::Incomplete { .. } => 1,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::CheckCode;
-/// fn f(c: CheckCode) -> u8 {
-///     match c {
-///         CheckCode::MinQualityScore => 0,
-///         CheckCode::MinDimensionScore => 1,
-///         CheckCode::MaxNullPercentage => 2,
-///         CheckCode::MaxDuplicateRows => 3,
-///         CheckCode::RequireMetric => 4,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::MetricValue;
-/// fn f(v: MetricValue) -> u8 {
-///     match v {
-///         MetricValue::Count(_) => 0,
-///         MetricValue::Percentage(_) => 1,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::Expectation;
-/// fn f(e: Expectation) -> u8 {
-///     match e {
-///         Expectation::AtLeast { .. } => 0,
-///         Expectation::AtMost { .. } => 1,
-///         Expectation::Analyzed => 2,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::NotEvaluated;
-/// fn f(n: NotEvaluated) -> u8 {
-///     match n {
-///         NotEvaluated::QualityUnavailable { .. } => 0,
-///         NotEvaluated::NotAssessed => 1,
-///         NotEvaluated::ColumnNotProfiled => 2,
-///         NotEvaluated::EvidenceIncomplete { .. } => 3,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::CheckStatus;
-/// fn f(s: CheckStatus) -> u8 {
-///     match s {
-///         CheckStatus::Passed => 0,
-///         CheckStatus::Failed => 1,
-///         CheckStatus::NotEvaluated(_) => 2,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::Verdict;
-/// fn f(v: Verdict) -> u8 {
-///     match v {
-///         Verdict::Pass => 0,
-///         Verdict::Fail => 1,
-///         Verdict::Inconclusive => 2,
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// use dataprof_runtime::RequiredMetric;
-/// fn f(m: RequiredMetric) -> u8 {
-///     match m {
-///         RequiredMetric::Quality => 0,
-///         RequiredMetric::Dimension(_) => 1,
-///     }
-/// }
-/// ```
-///
-/// `QualityPolicy` has only private fields, so a literal of it never
-/// compiled outside this crate; its attribute keeps that true if a field
-/// is ever made public, and it has no block here.
 #[cfg(doctest)]
 struct NonExhaustiveGuards;
 
@@ -1379,6 +1253,41 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    /// The source-level half of `NonExhaustiveGuards` (#894): every `pub` type
+    /// declared in this module carries `#[non_exhaustive]`. Reading the source
+    /// keeps the check independent of the variants and fields the types gain,
+    /// and covers a type added later without a list to update.
+    #[test]
+    fn every_public_type_is_non_exhaustive() {
+        let lines: Vec<&str> = include_str!("quality_gate.rs").lines().collect();
+        let mut declared = Vec::new();
+        let mut unmarked = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let Some(rest) = line
+                .strip_prefix("pub enum ")
+                .or_else(|| line.strip_prefix("pub struct "))
+            else {
+                continue;
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            declared.push(name.clone());
+            let marked = lines[..i]
+                .iter()
+                .rev()
+                .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
+                .any(|l| l.trim() == "#[non_exhaustive]");
+            if !marked {
+                unmarked.push(name);
+            }
+        }
+        // Guard the premise: the scan found the module's types at all.
+        assert!(declared.len() >= 15, "{declared:?}");
+        assert!(unmarked.is_empty(), "not #[non_exhaustive]: {unmarked:?}");
+    }
     use crate::ReportAssembler;
 
     fn source() -> DataSource {

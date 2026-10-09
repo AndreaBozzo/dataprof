@@ -80,8 +80,10 @@ Downstream effects to expect when upgrading:
 
 ## Quality Gate Compatibility
 
-Every quality-gate type is `#[non_exhaustive]`, so the gate can gain fields
-and variants without breaking callers. Outside `dataprof-runtime`, a `match`
+Every quality-gate type is `#[non_exhaustive]`, so the gate can gain enum
+variants and struct fields without breaking callers. Adding a field to an
+existing struct-like variant, such as `Evidence::Incomplete`, is still
+breaking: the attribute is on the enums, not on their variants. Outside `dataprof-runtime`, a `match`
 on a gate enum needs a `_` arm, a pattern on `Check`, `CheckBounds` or
 `GateResult` needs `..`, and none of the three can be built with a struct
 expression: `QualityPolicy::evaluate` is what produces them.
