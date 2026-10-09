@@ -323,7 +323,7 @@ def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     # Deep enough that json.loads raises RecursionError (a RuntimeError), which
     # the pre-fix except clause let escape as a traceback with exit 1.
-    path.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    path.write_text("[" * 50000 + "]" * 50000, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 3, result.stderr
     error = json.loads(result.stdout)["error"]
