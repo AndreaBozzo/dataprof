@@ -80,6 +80,7 @@ fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::JsonParsingError { .. }
         | DataProfilerError::CsvParsingError { .. }
         | DataProfilerError::EncodingError { .. }
+        | DataProfilerError::BinaryInput { .. }
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
         DataProfilerError::IoError { .. } => {

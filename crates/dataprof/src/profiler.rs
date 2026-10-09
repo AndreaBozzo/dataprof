@@ -373,6 +373,11 @@ impl Profiler {
             .format_override
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
+        // A binary file bound for a text reader fails here with what it is,
+        // before every engine fails on it with parsing advice (#893).
+        if !matches!(format, FileFormat::Parquet) {
+            dataprof_core::binary_input::reject_binary_input(path)?;
+        }
         let is_csv = matches!(format, FileFormat::Csv);
 
         // Only the incremental CSV engine reports progress as it reads; every
@@ -1137,6 +1142,9 @@ impl Profiler {
             .format_override
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
+        if !matches!(format, FileFormat::Parquet) {
+            dataprof_core::binary_input::reject_binary_input(path)?;
+        }
 
         match format {
             FileFormat::Parquet => {

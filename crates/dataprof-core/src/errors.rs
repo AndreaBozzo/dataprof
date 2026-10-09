@@ -1,3 +1,4 @@
+use crate::binary_input::BinarySignature;
 use thiserror::Error;
 
 /// The file formats this build can actually read, reflecting compiled features.
@@ -186,6 +187,18 @@ pub enum DataProfilerError {
         path: String,
         detail: String,
         guess: String,
+    },
+
+    /// A file whose signature bytes name a binary format (gzip, zstd, zip,
+    /// Parquet) was about to reach a text reader (#893). Built with
+    /// [`DataProfilerError::binary_input`].
+    #[error("Binary input in {path}: the file is {detected}, not text\n{suggestion}")]
+    #[non_exhaustive]
+    BinaryInput {
+        path: String,
+        /// What the signature says the file is, e.g. `gzip-compressed`.
+        detected: String,
+        suggestion: String,
     },
 
     #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
@@ -422,6 +435,17 @@ impl DataProfilerError {
     pub fn file_not_found<P: AsRef<str>>(path: P) -> Self {
         DataProfilerError::FileNotFound {
             path: path.as_ref().to_string(),
+        }
+    }
+
+    /// A file at `path` whose bytes carry `signature`, refused before a text
+    /// reader parses it.
+    pub fn binary_input(path: &std::path::Path, signature: BinarySignature) -> Self {
+        let path = path.display().to_string();
+        DataProfilerError::BinaryInput {
+            detected: signature.description().to_string(),
+            suggestion: signature.suggestion(&path),
+            path,
         }
     }
 
@@ -775,6 +799,7 @@ impl DataProfilerError {
             | DataProfilerError::InvalidConfiguration { suggestion, .. }
             | DataProfilerError::InvalidSemanticHint { suggestion, .. }
             | DataProfilerError::SamplingError { suggestion, .. }
+            | DataProfilerError::BinaryInput { suggestion, .. }
             | DataProfilerError::DatabaseConnectionError { suggestion, .. } => {
                 Some(suggestion.clone())
             }
@@ -816,6 +841,7 @@ impl DataProfilerError {
             DataProfilerError::FileNotFound { .. } => "file_not_found",
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
             DataProfilerError::EncodingError { .. } => "encoding",
+            DataProfilerError::BinaryInput { .. } => "binary_input",
             DataProfilerError::MemoryLimitExceeded => "memory_limit",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
             DataProfilerError::InvalidSemanticHint { .. } => "semantic_hint",

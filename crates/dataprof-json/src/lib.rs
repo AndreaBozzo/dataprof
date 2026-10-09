@@ -1117,6 +1117,7 @@ pub fn analyze_json_file_with_options(
     }
     let config = &config;
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
+    dataprof_core::binary_input::reject_binary_input(file_path)?;
     let start = std::time::Instant::now();
 
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
