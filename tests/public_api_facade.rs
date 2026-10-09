@@ -475,3 +475,152 @@ fn async_streaming_facade_reexports_compile() {
         .stop_condition(StopCondition::Never);
     let _reader_type_size = std::mem::size_of::<MemoryMappedCsvReader>();
 }
+
+/// The quality-gate types are `#[non_exhaustive]` (#894): callers outside the
+/// crate match them with a wildcard arm and destructure them with `..`. This
+/// names every variant, and every field of `Check`, `CheckBounds` and
+/// `GateResult`, through the facade in code that must compile, so the
+/// `compile_fail` guards on `NonExhaustiveGuards` in `quality_gate.rs`, whose
+/// error codes stable rustdoc does not check, cannot pass because a name
+/// changed.
+#[test]
+fn quality_gate_types_are_matched_with_a_wildcard() {
+    use dataprof::{
+        Check, CheckBounds, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult,
+        MetricValue, NotEvaluated, PolicyError, PolicyScope, QualityDimension, QualityPolicy,
+        RequiredMetric, Verdict,
+    };
+
+    fn bounds(bounds: &CheckBounds) -> f64 {
+        let CheckBounds {
+            lower,
+            upper,
+            confidence_level,
+            ..
+        } = bounds;
+        lower + upper + confidence_level
+    }
+
+    fn check(check: &Check) -> usize {
+        let Check {
+            code,
+            column,
+            dimension,
+            expected,
+            observed,
+            scope,
+            evidence,
+            bounds: interval,
+            status,
+            message,
+            ..
+        } = check;
+        let _ = (code, column, dimension, expected, observed, scope, evidence);
+        let _ = (interval.as_ref().map(bounds), status);
+        message.len()
+    }
+
+    fn gate(result: &GateResult) -> usize {
+        let GateResult {
+            verdict,
+            scope,
+            evidence,
+            checks,
+            ..
+        } = result;
+        let _ = (verdict, scope, evidence);
+        checks.iter().map(check).sum()
+    }
+
+    let policy_error = |e: &PolicyError| match e {
+        PolicyError::ThresholdOutOfRange { .. } => 0,
+        PolicyError::NoRequirements => 1,
+        _ => 2,
+    };
+    let scope = |s: PolicyScope| match s {
+        PolicyScope::FullSource => 0,
+        PolicyScope::Observed => 1,
+        _ => 2,
+    };
+    let gap = |g: EvidenceGap| match g {
+        EvidenceGap::Truncated => 0,
+        EvidenceGap::Sampled => 1,
+        EvidenceGap::RecordsSkipped => 2,
+        EvidenceGap::QualitySampled => 3,
+        EvidenceGap::CoverageUnrecorded => 4,
+        _ => 5,
+    };
+    let evidence = |e: Evidence| match e {
+        Evidence::Complete => 0,
+        Evidence::Incomplete { reason, .. } => 1 + gap(reason),
+        _ => 7,
+    };
+    let code = |c: CheckCode| match c {
+        CheckCode::MinQualityScore => 0,
+        CheckCode::MinDimensionScore => 1,
+        CheckCode::MaxNullPercentage => 2,
+        CheckCode::MaxDuplicateRows => 3,
+        CheckCode::RequireMetric => 4,
+        _ => 5,
+    };
+    let value = |v: MetricValue| match v {
+        MetricValue::Count(_) => 0,
+        MetricValue::Percentage(_) => 1,
+        _ => 2,
+    };
+    let expectation = |e: Expectation| match e {
+        Expectation::AtLeast { value: v, .. } => value(v),
+        Expectation::AtMost { value: v, .. } => value(v),
+        Expectation::Analyzed => 2,
+        _ => 3,
+    };
+    let not_evaluated = |n: &NotEvaluated| match n {
+        NotEvaluated::QualityUnavailable { .. } => 0,
+        NotEvaluated::NotAssessed => 1,
+        NotEvaluated::ColumnNotProfiled => 2,
+        NotEvaluated::EvidenceIncomplete { gap: g, .. } => 3 + gap(*g),
+        _ => 9,
+    };
+    let status = |s: &CheckStatus| match s {
+        CheckStatus::Passed => 0,
+        CheckStatus::Failed => 1,
+        CheckStatus::NotEvaluated(reason) => 2 + not_evaluated(reason),
+        _ => 12,
+    };
+    let verdict = |v: Verdict| match v {
+        Verdict::Pass => 0,
+        Verdict::Fail => 1,
+        Verdict::Inconclusive => 2,
+        _ => 3,
+    };
+    let required = |m: RequiredMetric| match m {
+        RequiredMetric::Quality => 0,
+        RequiredMetric::Dimension(_) => 1,
+        _ => 2,
+    };
+
+    let mut tmp = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    std::io::Write::write_all(&mut tmp, b"id,name\n1,alpha\n2,\n").unwrap();
+    let report = Profiler::new().analyze_file(tmp.path()).unwrap();
+    let result = QualityPolicy::new()
+        .max_null_percentage("name", 10.0)
+        .require_quality()
+        .evaluate(&report)
+        .unwrap();
+
+    assert_eq!(verdict(result.verdict), 1, "{result:?}");
+    assert_eq!(scope(result.scope), 0);
+    assert_eq!(evidence(result.evidence), 0);
+    assert!(gate(&result) > 0);
+    let failed = result.violations().next().expect("a violation");
+    assert_eq!(code(failed.code), 2);
+    assert_eq!(expectation(failed.expected), 1);
+    assert_eq!(status(&failed.status), 1);
+    assert_eq!(
+        required(RequiredMetric::Dimension(QualityDimension::Completeness)),
+        1
+    );
+
+    let empty = QualityPolicy::new().evaluate(&report).unwrap_err();
+    assert_eq!(policy_error(&empty), 1);
+}
