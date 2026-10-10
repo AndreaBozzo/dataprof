@@ -943,8 +943,18 @@ where
     let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     match value {
         None => Ok(None),
-        Some(v) => {
-            if v.get("metrics").is_some() && v.get("confidence").is_some() {
+        Some(mut v) => {
+            // Either wrapper key marks the canonical shape. Read as flat
+            // metrics, a canonical object matches no field and decodes as an
+            // empty assessment, dropping every metric without an error.
+            if v.get("metrics").is_some() || v.get("confidence").is_some() {
+                if let Some(object) = v.as_object_mut() {
+                    // Metrics whose provenance was lost are kept, and the
+                    // provenance stays unknown, as for a flat legacy object.
+                    object
+                        .entry("confidence")
+                        .or_insert_with(|| serde_json::json!("Unrecorded"));
+                }
                 let assessment: QualityAssessment =
                     serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                 Ok(Some(assessment))
@@ -1353,6 +1363,44 @@ mod tests {
             .expect("legacy completeness facts should deserialize");
         assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
         assert!(quality.metrics.assessed_dimensions().is_empty());
+    }
+
+    /// A canonical quality object that lost its `confidence` still holds its
+    /// metrics. The flat legacy reader dropped every one of them without an
+    /// error; they are kept, and the missing provenance stays unknown.
+    #[test]
+    fn a_canonical_quality_without_confidence_keeps_its_metrics() {
+        let mut document = current_document();
+        document["quality"] = json!({
+            "metrics": {
+                "completeness": {
+                    "missing_values_ratio": 0.0,
+                    "complete_records_ratio": 100.0,
+                    "null_columns": []
+                }
+            }
+        });
+
+        let report: ProfileReport = serde_json::from_value(document).unwrap();
+
+        let quality = report.quality.expect("the assessment survives");
+        let completeness = quality
+            .metrics
+            .completeness
+            .as_ref()
+            .expect("the metrics survive");
+        assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
+        assert!(!matches!(quality.confidence, MetricConfidence::Exact));
+    }
+
+    /// A `confidence` with no `metrics` is a malformed canonical object, not
+    /// an empty legacy one.
+    #[test]
+    fn a_canonical_quality_without_metrics_is_malformed() {
+        let mut document = current_document();
+        document["quality"] = json!({ "confidence": "Exact" });
+
+        assert!(serde_json::from_value::<ProfileReport>(document).is_err());
     }
 
     fn current_document() -> serde_json::Value {
