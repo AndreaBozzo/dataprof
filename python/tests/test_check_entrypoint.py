@@ -322,14 +322,17 @@ def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_
 def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     # Deep enough that json.loads raises RecursionError (a RuntimeError), which
-    # the pre-fix except clause let escape as a traceback with exit 1.
-    path.write_text("[" * 50000 + "]" * 50000, encoding="utf-8")
+    # the pre-fix except clause let escape as a traceback with exit 1. From 3.14
+    # the C decoder's limit is the thread's stack, not sys.getrecursionlimit():
+    # an 8 MB stack held 20000 and 50000 levels on CI, so stay far beyond it.
+    depth = 1_000_000
+    path.write_text("[" * depth + "]" * depth, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 3, result.stderr
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert error["path"] == str(path)
-    assert error["message"]
+    assert f"policy file {path} is nested too deeply: " in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
 
