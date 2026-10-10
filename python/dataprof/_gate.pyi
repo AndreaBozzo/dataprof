@@ -75,7 +75,6 @@ class _Policy:
         require_metrics: Sequence[str] | None,
         scope: str,
     ) -> None: ...
-    # `ProfileReport` is deliberately not named here: the stub for it and the
-    # runtime class are distinct symbols to a checker, so importing it would
-    # reject `_report.py` passing its own `self`.
-    def evaluate(self, report: Any) -> QualityGateResult: ...
+    # Takes the report's runtime object, or `None` for a report restored
+    # from a flat summary, which the gate refuses.
+    def evaluate(self, native: Any) -> QualityGateResult: ...

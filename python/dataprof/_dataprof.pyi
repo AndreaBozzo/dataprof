@@ -404,6 +404,18 @@ class ProfileReport:
     def metric_semantics(self) -> dict[str, str] | None: ...
     @staticmethod
     def from_json(text: str) -> ProfileReport: ...
+    def quality_gate_json(
+        self,
+        *,
+        min_quality_score: float | None = ...,
+        min_dimension_scores: list[tuple[str, float]] = ...,
+        max_null_percentage: list[tuple[str, float]] = ...,
+        max_null_percentage_any: float | None = ...,
+        max_duplicate_rows: int | None = ...,
+        require_quality: bool = ...,
+        require_dimensions: list[str] = ...,
+        scope: str = ...,
+    ) -> str: ...
     def summary_json(self) -> str: ...
     def to_json(self) -> str: ...
 

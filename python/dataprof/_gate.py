@@ -1,9 +1,10 @@
 """Declarative quality gates over a :class:`~dataprof.ProfileReport`.
 
-This mirrors ``dataprof_runtime::quality_gate`` in Rust. Both layers evaluate
-the same requirements in the same order and produce the same document; the
-shared fixture in ``tests/fixtures/quality_gate_parity.json`` asserts it from
-both sides, so changing one implementation alone fails that layer's test.
+The gate is evaluated by ``dataprof_runtime::quality_gate`` in Rust. This
+module validates the keywords, names their errors the way Python callers expect,
+and turns the Rust result document into the classes below. The shared fixture in
+``tests/fixtures/quality_gate_parity.json`` asserts that document from both
+languages.
 
 Nothing here exits the process, prints, or mutates the report: what to do with
 a failing gate is the caller's decision.
@@ -17,10 +18,9 @@ from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any
 
 from ._report_schema import _QUALITY_DIMENSIONS
-from ._rounding import _r2
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
-    from ._report import ProfileReport
+    from ._dataprof import ProfileReport as _RustProfileReport
 
 #: Scores and null percentages live on a 0..=100 scale, and so do the
 #: thresholds compared against them.
@@ -28,31 +28,6 @@ _PERCENTAGE_MAX = 100.0
 
 #: What the requirements in a policy are statements about.
 _SCOPES = ("full_source", "observed")
-
-#: The component labels each dimension is built from. Uniqueness is the one
-#: dimension with two, and they can differ in provenance: a full-stream row
-#: tracker counts duplicates over every row while the key scan reads the
-#: retained sample.
-_DIMENSION_COMPONENTS: dict[str, tuple[str, ...]] = {
-    "completeness": ("completeness",),
-    "consistency": ("consistency",),
-    "uniqueness": ("key_uniqueness", "duplicate_rows"),
-    "accuracy": ("accuracy",),
-    "timeliness": ("timeliness",),
-    "validity": ("validity",),
-    "precision": ("precision",),
-}
-
-
-def _complete() -> dict[str, str]:
-    """A fresh dict each time: a shared constant would alias into every
-    check, where a caller reading ``check.evidence`` could mutate it.
-    """
-    return {"coverage": "complete"}
-
-
-def _incomplete(gap: str) -> dict[str, str]:
-    return {"coverage": "incomplete", "reason": gap}
 
 
 @_dataclass(frozen=True)
@@ -217,9 +192,16 @@ def _percentage(code: str, subject: str | None, value: _Any) -> float:
     return number
 
 
+#: The largest count the Rust gate accepts (`usize` on the 64-bit wheels).
+_COUNT_MAX = (1 << 64) - 1
+
+
 def _count(code: str, value: _Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{code} must be a non-negative whole number, got {value!r}")
+    """Accept a whole-number limit, refusing one the Rust gate cannot take
+    with ``ValueError`` rather than the ``OverflowError`` its conversion raises.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _COUNT_MAX:
+        raise ValueError(f"{code} must be a whole number between 0 and {_COUNT_MAX}, got {value!r}")
     return value
 
 
@@ -301,492 +283,71 @@ class _Policy:
 
     # -- evaluation ---------------------------------------------------------
 
-    def evaluate(self, report: ProfileReport) -> QualityGateResult:
-        scan = _scan_evidence(report)
-        checks: list[QualityCheck] = []
-
-        if self.require_quality:
-            checks.append(self._require_metric(report, None))
-        for dimension in _QUALITY_DIMENSIONS:
-            if dimension in self.require_dimensions:
-                checks.append(self._require_metric(report, dimension))
-
-        if self.min_quality_score is not None:
-            checks.append(self._quality_score(report, scan, self.min_quality_score))
-        for dimension in _QUALITY_DIMENSIONS:
-            minimum = self.min_dimension_scores.get(dimension)
-            if minimum is not None:
-                checks.append(self._dimension_score(report, scan, dimension, minimum))
-
-        checks.extend(self._null_percentages(report, scan))
-
-        if self.max_duplicate_rows is not None:
-            checks.append(self._duplicate_rows(report, scan, self.max_duplicate_rows))
-
-        if any(check.is_violation for check in checks):
-            verdict = "fail"
-        elif any(check.status == "not_evaluated" for check in checks):
-            verdict = "inconclusive"
-        else:
-            verdict = "pass"
-        return QualityGateResult(
-            verdict=verdict, scope=self.scope, evidence=scan, checks=tuple(checks)
-        )
-
-    def _decide_aggregate(self, evidence: dict[str, _Any], satisfied: bool) -> str:
-        """Decide a comparison whose observed value is an average or a ratio.
-
-        Such a value, computed over part of a source, bounds nothing about the
-        rest of it, so under ``full_source`` scope incomplete evidence leaves
-        the requirement unevaluated in both directions.
-        """
-        if self.scope == "full_source" and evidence["coverage"] == "incomplete":
-            return "not_evaluated"
-        return "passed" if satisfied else "failed"
-
-    def _require_metric(self, report: ProfileReport, dimension: str | None) -> QualityCheck:
-        # Availability is a property of the report, not of how much of the
-        # source it covers: a sampled run still either analyzed the metric or
-        # did not. So this check never consults evidence.
-        quality = report.quality
-        if quality is None:
-            analyzed = False
-        elif dimension is None:
-            analyzed = True
-        else:
-            analyzed = quality.dimension_scores().get(dimension) is not None
-        if dimension is None:
-            message = (
-                "quality was analyzed" if analyzed else "the report carries no quality assessment"
+    def evaluate(self, native: _RustProfileReport | None) -> QualityGateResult:
+        """Evaluate against a report's runtime object, ``None`` for a report
+        restored from a flat summary."""
+        if native is None:
+            # A flat summary (`to_dict()` output, or a file saved before 0.12)
+            # is not a runtime report, and the gate evaluates runtime reports
+            # only. Its missing provenance cannot be recovered by converting it.
+            raise ValueError(
+                "check() needs a report profiled by dataprof or loaded from the "
+                "JSON that save() and to_json() write; this one was loaded from a "
+                "flat to_dict() summary, which does not record the provenance the "
+                "gate decides on. Profile the source again, or load its saved JSON."
             )
-        else:
-            message = (
-                "the required dimension was assessed"
-                if analyzed
-                else "the required dimension was not assessed"
-            )
-        return QualityCheck(
-            code="require_metric",
-            dimension=dimension,
-            expected={"comparison": "analyzed"},
-            scope=self.scope,
-            evidence=_complete(),
-            status="passed" if analyzed else "failed",
-            message=message,
-        )
-
-    def _quality_score(
-        self, report: ProfileReport, scan: dict[str, _Any], minimum: float
-    ) -> QualityCheck:
-        evidence = _weaker(scan, _quality_evidence(report, None))
-        expected = {"comparison": "at_least", "value": _r2(minimum)}
-        quality = report.quality
-        if quality is None:
-            return _unavailable_quality(
-                report,
-                code="min_quality_score",
-                expected=expected,
+        document = _json.loads(
+            native.quality_gate_json(
+                min_quality_score=self.min_quality_score,
+                min_dimension_scores=list(self.min_dimension_scores.items()),
+                max_null_percentage=list(self.max_null_percentage.items()),
+                max_null_percentage_any=self.max_null_percentage_any,
+                max_duplicate_rows=self.max_duplicate_rows,
+                require_quality=self.require_quality,
+                require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,
-                evidence=evidence,
             )
-        score = quality.overall_quality_score()
-        if score is None:
-            return QualityCheck(
-                code="min_quality_score",
-                expected=expected,
-                scope=self.scope,
-                evidence=evidence,
-                status="not_evaluated",
-                reason={"reason": "not_assessed"},
-                message=(
-                    "no quality dimension had anything to assess, so there is no overall score"
-                ),
-            )
-        bounds = _check_bounds(report, None)
-        status, bounds, message = self._decide_score(
-            evidence, score, minimum, bounds, "the overall quality score"
         )
-        return QualityCheck(
-            code="min_quality_score",
-            expected=expected,
-            observed=_r2(score),
-            scope=self.scope,
-            evidence=evidence,
-            bounds=bounds,
-            status=status,
-            reason=_evidence_reason(status, evidence),
-            message=message,
-        )
-
-    def _dimension_score(
-        self, report: ProfileReport, scan: dict[str, _Any], dimension: str, minimum: float
-    ) -> QualityCheck:
-        evidence = _weaker(scan, _quality_evidence(report, dimension))
-        expected = {"comparison": "at_least", "value": _r2(minimum)}
-        quality = report.quality
-        if quality is None:
-            return _unavailable_quality(
-                report,
-                code="min_dimension_score",
-                expected=expected,
-                scope=self.scope,
-                evidence=evidence,
-                dimension=dimension,
-            )
-        score = quality.dimension_scores().get(dimension)
-        if score is None:
-            return QualityCheck(
-                code="min_dimension_score",
-                dimension=dimension,
-                expected=expected,
-                scope=self.scope,
-                evidence=evidence,
-                status="not_evaluated",
-                reason={"reason": "not_assessed"},
-                message="this dimension had nothing to assess in this run",
-            )
-        bounds = _check_bounds(report, dimension)
-        status, bounds, message = self._decide_score(
-            evidence, score, minimum, bounds, "this dimension's score"
-        )
-        return QualityCheck(
-            code="min_dimension_score",
-            dimension=dimension,
-            expected=expected,
-            observed=_r2(score),
-            scope=self.scope,
-            evidence=evidence,
-            bounds=bounds,
-            status=status,
-            reason=_evidence_reason(status, evidence),
-            message=message,
-        )
-
-    def _decide_score(
-        self,
-        evidence: dict[str, _Any],
-        score: float,
-        minimum: float,
-        bounds: dict[str, _Any] | None,
-        subject: str,
-    ) -> tuple[str, dict[str, _Any] | None, str]:
-        """Decide a minimum on a score, on its whole-source interval when the
-        only gap in the evidence is the quality sample and the report bounds
-        the score. The interval settles the requirement when it lies wholly on
-        one side of the minimum; a minimum inside it is left unevaluated.
-
-        Returns the status, the interval the check records, and its message.
-        """
-        sampled = evidence.get("reason") == "quality_sampled"
-        if bounds is not None and self.scope == "full_source" and sampled:
-            if bounds["lower"] >= minimum:
-                status = "passed"
-            elif bounds["upper"] < minimum:
-                status = "failed"
-            else:
-                status = "not_evaluated"
-            recorded = {
-                "lower": _r2(bounds["lower"]),
-                "upper": _r2(bounds["upper"]),
-                "confidence_level": bounds["confidence_level"],
-            }
-            return status, recorded, _bounded_message(status, subject)
-        status = self._decide_aggregate(evidence, score >= minimum)
-        return status, None, _aggregate_message(status, subject)
-
-    def _null_percentages(self, report: ProfileReport, scan: dict[str, _Any]) -> list[QualityCheck]:
-        """One check per named column in column-name order, then one per
-        remaining profiled column when a wildcard limit is set.
-
-        The order is fixed by the data rather than by how the policy was
-        written, so a policy read out of a JSON object still evaluates
-        identically on both layers.
-        """
-        # First wins on a duplicate name, matching the Rust evaluator's
-        # `find`. A dict comprehension would keep the last one instead.
-        profiles: dict[str, _Any] = {}
-        for profile in report.profiles:
-            profiles.setdefault(profile.name, profile)
-        checks = [
-            self._null_percentage(column, profiles.get(column), scan, limit)
-            for column, limit in sorted(self.max_null_percentage.items())
-        ]
-        if self.max_null_percentage_any is not None:
-            checks.extend(
-                self._null_percentage(profile.name, profile, scan, self.max_null_percentage_any)
-                for profile in report.profiles
-                if profile.name not in self.max_null_percentage
-            )
-        return checks
-
-    def _null_percentage(
-        self, column: str, profile: _Any, scan: dict[str, _Any], limit: float
-    ) -> QualityCheck:
-        # Null counts accumulate over every scanned row rather than over the
-        # retained quality sample, so only the scan's own gap applies here.
-        expected = {"comparison": "at_most", "value": _r2(limit)}
-        if profile is None:
-            return QualityCheck(
-                code="max_null_percentage",
-                column=column,
-                expected=expected,
-                scope=self.scope,
-                evidence=scan,
-                status="not_evaluated",
-                reason={"reason": "column_not_profiled"},
-                message="this column has no profile in the report",
-            )
-        percentage = profile.null_percentage
-        if percentage is None:
-            # No value was read for the column, so "what share of its values
-            # are null" has no answer. Zero rows is not zero percent.
-            return QualityCheck(
-                code="max_null_percentage",
-                column=column,
-                expected=expected,
-                scope=self.scope,
-                evidence=scan,
-                status="not_evaluated",
-                reason={"reason": "not_assessed"},
-                message="no values were read for this column",
-            )
-        status = self._decide_aggregate(scan, percentage <= limit)
-        messages = {
-            "passed": "this column's null percentage is within the allowance",
-            "failed": "this column's null percentage is above the allowance",
-            "not_evaluated": (
-                "the scan does not cover the whole source, and a null percentage over "
-                "part of it bounds nothing about the rest"
-            ),
-        }
-        return QualityCheck(
-            code="max_null_percentage",
-            column=column,
-            expected=expected,
-            observed=_r2(percentage),
-            scope=self.scope,
-            evidence=scan,
-            status=status,
-            reason=_evidence_reason(status, scan),
-            message=messages[status],
-        )
-
-    def _duplicate_rows(
-        self, report: ProfileReport, scan: dict[str, _Any], limit: int
-    ) -> QualityCheck:
-        """A duplicate count is the one requirement here that an incomplete
-        scan can still settle in one direction: rows already witnessed as
-        duplicates do not stop being duplicates when more rows are read, so an
-        exact count above the allowance is a conclusive failure. A count at or
-        below it is not a pass. An estimated count witnesses nothing.
-        """
-        evidence = _weaker(scan, _quality_evidence(report, component="duplicate_rows"))
-        expected = {"comparison": "at_most", "value": limit}
-        quality = report.quality
-        if quality is None:
-            return _unavailable_quality(
-                report,
-                code="max_duplicate_rows",
-                expected=expected,
-                scope=self.scope,
-                evidence=evidence,
-                dimension="uniqueness",
-            )
-        uniqueness = quality.uniqueness
-        if not uniqueness or not uniqueness.get("rows_checked"):
-            return QualityCheck(
-                code="max_duplicate_rows",
-                dimension="uniqueness",
-                expected=expected,
-                scope=self.scope,
-                evidence=evidence,
-                status="not_evaluated",
-                reason={"reason": "not_assessed"},
-                message="no rows were scanned for duplicates in this run",
-            )
-        observed = int(uniqueness["duplicate_rows"])
-        estimated = bool(uniqueness.get("duplicate_rows_approximate"))
-        exceeded = observed > limit
-        incomplete = evidence["coverage"] == "incomplete"
-        if self.scope == "full_source" and incomplete:
-            # A witnessed violation is a decision, whatever the scan missed.
-            status = "failed" if exceeded and not estimated else "not_evaluated"
-        else:
-            status = "failed" if exceeded else "passed"
-        if status == "passed":
-            message = "the duplicate-row count is within the allowance"
-        elif status == "failed":
-            message = (
-                "the estimated duplicate-row count is above the allowance"
-                if estimated
-                else "duplicate rows were observed above the allowance"
-            )
-        elif estimated:
-            # Every row may have been read: the gap is the estimate (#819).
-            message = (
-                "the duplicate-row count is an estimate, which can neither witness "
-                "duplicates above the allowance nor rule them out"
-            )
-        else:
-            message = (
-                "no duplicate above the allowance was observed, and the rows that were "
-                "not read may hold more"
-            )
-        return QualityCheck(
-            code="max_duplicate_rows",
-            dimension="uniqueness",
-            expected=expected,
-            observed=observed,
-            scope=self.scope,
-            evidence=evidence,
-            status=status,
-            reason=_evidence_reason(status, evidence),
-            message=message,
-        )
+        return _result_from_document(document)
 
 
-def _aggregate_message(status: str, subject: str) -> str:
-    if status == "passed":
-        return f"{subject} meets the required minimum"
-    if status == "failed":
-        return f"{subject} is below the required minimum"
-    return f"{subject} was computed over part of the source, which bounds nothing about the rest"
+#: Keys of a Rust check document that map to a field of their own; every
+#: other key belongs to the flattened not-evaluated reason.
+_CHECK_FIELDS = (
+    "code",
+    "column",
+    "dimension",
+    "expected",
+    "observed",
+    "scope",
+    "evidence",
+    "bounds",
+    "status",
+    "message",
+)
 
 
-def _bounded_message(status: str, subject: str) -> str:
-    if status == "passed":
-        return (
-            f"{subject} was computed over a sample, and its whole-source interval meets the "
-            "required minimum"
-        )
-    if status == "failed":
-        return (
-            f"{subject} was computed over a sample, and its whole-source interval is below the "
-            "required minimum"
-        )
-    return (
-        f"{subject} was computed over a sample, and the required minimum lies within its "
-        "whole-source interval"
-    )
-
-
-def _check_bounds(report: ProfileReport, dimension: str | None) -> dict[str, _Any] | None:
-    """The interval a score check decides on, from the report's bounds: the
-    overall score's when ``dimension`` is ``None``, else that dimension's.
-    """
-    bounds = report.quality_score_bounds
-    if bounds is None:
-        return None
-    if dimension is None:
-        interval = bounds.get("overall_score")
-    else:
-        interval = (bounds.get("dimension_scores") or {}).get(dimension)
-    if interval is None:
-        return None
-    return {
-        "lower": interval["lower"],
-        "upper": interval["upper"],
-        "confidence_level": bounds["confidence_level"],
-    }
-
-
-def _evidence_reason(status: str, evidence: dict[str, _Any]) -> dict[str, _Any] | None:
-    """The unevaluated-reason payload for a check blocked by its evidence."""
-    if status != "not_evaluated":
-        return None
-    return {"reason": "evidence_incomplete", "gap": evidence["reason"]}
-
-
-def _unavailable_quality(
-    report: ProfileReport,
-    *,
-    code: str,
-    expected: dict[str, _Any],
-    scope: str,
-    evidence: dict[str, _Any],
-    dimension: str | None = None,
-) -> QualityCheck:
-    """A check that had no quality assessment to read, naming the reason the
-    report recorded. Without that, "you did not ask for this" and "this broke"
-    reach a gate as the same absence.
-    """
-    messages = {
-        "not_requested": "quality metrics were not requested for this run",
-        "no_data": "quality was requested but no sample was available to measure",
-        "withheld_by_projection": (
-            "quality was withheld: the requested dimensions measure whole rows and "
-            "only some columns were profiled"
-        ),
-        "failed": "the quality computation failed",
-    }
-    status = report.quality_status
+def _check_from_document(document: dict[str, _Any]) -> QualityCheck:
+    reason = {key: value for key, value in document.items() if key not in _CHECK_FIELDS}
     return QualityCheck(
-        code=code,
-        dimension=dimension,
-        expected=expected,
-        scope=scope,
-        evidence=evidence,
-        status="not_evaluated",
-        reason={"reason": "quality_unavailable", "quality_status": status},
-        message=messages.get(status, "the report carries no quality assessment"),
+        code=document["code"],
+        column=document.get("column"),
+        dimension=document.get("dimension"),
+        expected=document["expected"],
+        observed=document.get("observed"),
+        scope=document["scope"],
+        evidence=document["evidence"],
+        bounds=document.get("bounds"),
+        status=document["status"],
+        reason=reason or None,
+        message=document["message"],
     )
 
 
-def _weaker(left: dict[str, _Any], right: dict[str, _Any]) -> dict[str, _Any]:
-    """The weaker of two evidence statements: a number is only as complete as
-    the least complete input behind it. The left-hand gap wins a tie, so the
-    scan's gap is named ahead of the quality sample's.
-    """
-    return right if left["coverage"] == "complete" else left
-
-
-def _scan_evidence(report: ProfileReport) -> dict[str, _Any]:
-    """How much of the source the scan itself covered.
-
-    Truncation is named ahead of sampling and sampling ahead of skipped
-    records, so the gap reported is the largest one.
-    """
-    if not report.source_exhausted or report.truncation_reason is not None:
-        return _incomplete("truncated")
-    if report.sampling_applied:
-        return _incomplete("sampled")
-    if report.error_count:
-        return _incomplete("records_skipped")
-    return _complete()
-
-
-def _quality_evidence(
-    report: ProfileReport,
-    dimension: str | None = None,
-    *,
-    component: str | None = None,
-) -> dict[str, _Any]:
-    """Whether the number a check reads came from every scanned row or from a
-    retained sample of them, resolved per component.
-    """
-    if report.quality is None:
-        # No assessment to read; the check that called this reports the
-        # absence itself, and there is no number for evidence to describe.
-        return _complete()
-    sampled = report.quality_sampled_dimensions
-    if sampled is None:
-        # A report loaded from a document written before dataprof recorded
-        # this does not say how its quality numbers were obtained. Unknown
-        # coverage is not full coverage.
-        return _incomplete("coverage_unrecorded")
-    if component is not None:
-        return _incomplete("quality_sampled") if component in sampled else _complete()
-    if dimension is None:
-        # The overall score is a weighted average over the *assessed*
-        # dimensions, so a sampled dimension the weights exclude does not reach
-        # it. Reporting the aggregate as sampled because of one would withhold
-        # a verdict the number does not depend on.
-        contributing = {
-            label
-            for assessed in report.quality.assessed_dimensions()
-            for label in _DIMENSION_COMPONENTS[assessed]
-        }
-        matched = any(label in sampled for label in contributing)
-    else:
-        matched = any(label in sampled for label in _DIMENSION_COMPONENTS[dimension])
-    return _incomplete("quality_sampled") if matched else _complete()
+def _result_from_document(document: dict[str, _Any]) -> QualityGateResult:
+    return QualityGateResult(
+        verdict=document["verdict"],
+        scope=document["scope"],
+        evidence=document["evidence"],
+        checks=tuple(_check_from_document(check) for check in document["checks"]),
+    )

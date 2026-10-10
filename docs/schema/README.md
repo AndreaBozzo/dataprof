@@ -36,7 +36,8 @@ flat summary stays flat when resaved: it never recorded report identity, full
 source metadata or quality confidence, so manufacturing those fields would
 misrepresent the original run. Missing provenance markers stay missing; the
 resave does add `schema_version`, because it is written by a v1 build. Rust's `ProfileReport` reader reads the canonical shape; the flat
-compatibility loader remains a Python API.
+compatibility loader remains a Python API. `check()` refuses a loaded flat summary,
+because the gate runs on Rust's report.
 
 This preserves the published v1 validation contract instead of silently
 narrowing it. New profiles save only the canonical shape. Consumers of the old

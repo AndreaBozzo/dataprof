@@ -924,6 +924,11 @@ bad extract. A threshold must be a real number: text is refused even when it
 spells one (`"90"`), and so is a number too large for a float. Numpy scalars,
 `Decimal` and `Fraction` are accepted.
 
+The gate is evaluated in Rust, the same code a Rust caller uses. It reads a
+profiled report or one loaded from the JSON `save()` and `to_json()` write. A
+report loaded from a flat `to_dict()` summary raises `ValueError`: the summary
+does not record the provenance the gate decides on.
+
 **The verdict has three values, not two.**
 
 | `result.verdict` | Meaning |

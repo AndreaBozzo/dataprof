@@ -620,7 +620,9 @@ class ProfileReport:
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
                 outside 0-100, an unknown dimension name, or no requirement at
-                all. A misconfigured gate is not a failing dataset.
+                all. A misconfigured gate is not a failing dataset. Also raised
+                for a report loaded from a flat ``to_dict()`` summary, which
+                the Rust gate cannot read.
         """
         return _Policy(
             min_quality_score=min_quality_score,
@@ -629,7 +631,7 @@ class ProfileReport:
             max_duplicate_rows=max_duplicate_rows,
             require_metrics=require_metrics,
             scope=scope,
-        ).evaluate(self)
+        ).evaluate(self._native_report)
 
     def findings(
         self,

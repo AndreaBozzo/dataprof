@@ -2,11 +2,13 @@
 
 The cross-language contract lives in ``test_quality_gate_parity.py``; this file
 covers what only the Python surface can be asked — keyword validation, the
-result object's accessors, and a report rebuilt from a saved document.
+result object's accessors, routing to the Rust gate, and a report rebuilt from
+a saved document.
 """
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
@@ -31,6 +33,22 @@ def report(tmp_path: Path):
     path = tmp_path / "orders.csv"
     path.write_text(CSV, encoding="utf-8")
     return dp.profile_file(path)
+
+
+_DIMENSIONS = (
+    "completeness",
+    "consistency",
+    "uniqueness",
+    "accuracy",
+    "timeliness",
+    "validity",
+    "precision",
+)
+
+
+def _canonical(report) -> dict[str, Any]:
+    """The report's canonical document, the layout `save()` writes."""
+    return json.loads(report.to_json())
 
 
 def _check(result, code: str, **match):
@@ -169,10 +187,10 @@ def test_require_metrics_accepts_a_dimension(report):
     assert check.message == "the required dimension was not assessed"
 
 
-def test_a_saved_report_gates_the_same_way(report, tmp_path: Path):
+def test_a_saved_report_gates_the_same_way(report):
     """A report reloaded from its own document must reach the same verdict;
     otherwise a baseline saved yesterday cannot be gated today."""
-    reloaded = dp.ProfileReport.from_dict(report.to_dict())
+    reloaded = dp.ProfileReport.from_dict(_canonical(report))
     policy: dict[str, Any] = {
         "min_quality_score": 90,
         "max_null_percentage": {"customer_id": 10, "*": 20},
@@ -181,13 +199,57 @@ def test_a_saved_report_gates_the_same_way(report, tmp_path: Path):
     assert reloaded.check(**policy).to_dict() == report.check(**policy).to_dict()
 
 
+def test_a_flat_summary_is_refused(report):
+    """A `to_dict()` summary is not a runtime report, and the gate evaluates
+    runtime reports only. Refusing names the fix instead of guessing at the
+    provenance the summary does not carry."""
+    flat = dp.ProfileReport.from_dict(report.to_dict())
+
+    with pytest.raises(ValueError, match=r"flat to_dict\(\) summary"):
+        flat.check(min_quality_score=90)
+
+
+def test_check_is_evaluated_by_the_runtime_gate(report):
+    """`check()` hands the policy to the Rust gate and only converts its
+    document; nothing is decided in Python."""
+    native = report._native_report
+    calls: list[dict[str, Any]] = []
+
+    class Recorder:
+        def quality_gate_json(self, **policy: Any) -> str:
+            calls.append(policy)
+            return native.quality_gate_json(**policy)
+
+    report._native_report = Recorder()
+    try:
+        result = report.check(max_null_percentage={"customer_id": 10, "*": 20})
+    finally:
+        report._native_report = native
+
+    assert calls == [
+        {
+            "min_quality_score": None,
+            "min_dimension_scores": [],
+            "max_null_percentage": [("customer_id", 10.0)],
+            "max_null_percentage_any": 20.0,
+            "max_duplicate_rows": None,
+            "require_quality": False,
+            "require_dimensions": [],
+            "scope": "full_source",
+        }
+    ]
+    expected = report.check(max_null_percentage={"customer_id": 10, "*": 20})
+    assert result.to_dict() == expected.to_dict()
+
+
 def test_a_document_without_recorded_coverage_is_not_read_as_a_full_scan(report):
     """A report saved before dataprof recorded how its quality numbers were
     obtained does not say whether they cover every scanned row. Unknown
     coverage is not full coverage, so a full-source policy cannot pass on it.
     """
-    document = report.to_dict()
-    assert document["quality"].pop("sampled_dimensions") == []
+    document = _canonical(report)
+    # Pre-0.10 documents carried the metrics flat, with no confidence.
+    document["quality"] = document["quality"]["metrics"]
     legacy = dp.ProfileReport.from_dict(document)
 
     assert legacy.quality_sampled_dimensions is None
@@ -208,12 +270,21 @@ def test_a_zero_weighted_sampled_dimension_does_not_taint_the_overall_score(repo
     dimension the weights exclude cannot move it. Withholding the aggregate
     because of one would refuse a verdict the number does not depend on.
     """
-    document = report.to_dict()
-    document["quality"]["sampled_dimensions"] = ["consistency"]
-    # `assessed_dimensions` is the weighted contributing set, and consistency
-    # is not in it once its weight is zero.
-    document["quality"]["assessed_dimensions"] = ["completeness"]
+    document = _canonical(report)
+    document["quality"]["confidence"] = {
+        "Mixed": {
+            "exact_dimensions": ["completeness"],
+            "sampled_dimensions": ["consistency"],
+            "sample_size": report.rows,
+        }
+    }
+    # Only completeness is weighted, so consistency does not contribute.
+    weights = dict.fromkeys(_DIMENSIONS, 0.0)
+    weights["completeness"] = 1.0
+    document["quality"]["metrics"]["score_weights"] = weights
     loaded = dp.ProfileReport.from_dict(document)
+    assert loaded.quality is not None
+    assert loaded.quality.assessed_dimensions() == ["completeness"]
 
     result = loaded.check(min_quality_score=1, min_dimension_scores={"consistency": 1})
     assert _check(result, "min_quality_score").evidence == {"coverage": "complete"}
@@ -306,17 +377,18 @@ def test_score_bounds_are_a_copy(tmp_path: Path):
 
 
 def test_a_duplicate_column_name_resolves_to_the_first_profile(report):
-    """Both layers read the first profile of a repeated name.
+    """The gate reads the first profile of a repeated name.
 
     Most input paths reject duplicate column names outright, but a report
-    rebuilt from a document can carry them, and the two evaluators picking
-    different profiles would be a silent cross-language disagreement.
+    rebuilt from a document can carry them, and reading a different profile
+    than the rest of the report would be a silent disagreement.
     """
-    document = report.to_dict()
-    first, second = dict(document["columns"][0]), dict(document["columns"][0])
-    first["null_count"], first["null_percentage"] = 0, 0.0
-    second["null_count"], second["null_percentage"] = second["total_count"], 100.0
-    document["columns"] = [first, second, *document["columns"][1:]]
+    document = _canonical(report)
+    columns = document["column_profiles"]
+    first, second = dict(columns[0]), dict(columns[0])
+    first["null_count"] = 0
+    second["null_count"] = second["total_count"]
+    document["column_profiles"] = [first, second, *columns[1:]]
 
     result = dp.ProfileReport.from_dict(document).check(max_null_percentage={first["name"]: 50})
     assert _check(result, "max_null_percentage", column=first["name"]).observed == 0.0
@@ -329,12 +401,26 @@ def test_a_boolean_is_not_a_percentage(report):
         report.check(min_quality_score=True)
 
 
+def test_a_duplicate_limit_past_the_native_range_is_a_policy_error(report):
+    """The Rust gate takes the limit as a 64-bit count; a larger one is a
+    configuration mistake, reported as one rather than as `OverflowError`."""
+    assert report.check(max_duplicate_rows=(1 << 64) - 1).verdict == "pass"
+    with pytest.raises(ValueError, match="max_duplicate_rows"):
+        report.check(max_duplicate_rows=1 << 64)
+
+
 def test_an_estimated_duplicate_count_names_the_estimate_as_the_gap(report):
     """Past a million distinct rows the count is estimated although every row
     was read, so the message must not claim rows went unread (#819)."""
-    document = report.to_dict()
-    document["quality"]["uniqueness"]["duplicate_rows_approximate"] = True
-    document["quality"]["sampled_dimensions"] = ["duplicate_rows"]
+    document = _canonical(report)
+    document["quality"]["metrics"]["uniqueness"]["duplicate_rows_approximate"] = True
+    document["quality"]["confidence"] = {
+        "Mixed": {
+            "exact_dimensions": ["completeness", "consistency", "accuracy"],
+            "sampled_dimensions": ["duplicate_rows"],
+            "sample_size": report.rows,
+        }
+    }
     estimated = dp.ProfileReport.from_dict(document)
 
     result = estimated.check(max_duplicate_rows=0)
