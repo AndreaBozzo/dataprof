@@ -288,13 +288,14 @@ def test_canonical_quality_without_confidence_keeps_its_metrics(tmp_path):
     source.write_text("a,b\n1,x\n2,\n3,z\n", encoding="utf-8")
     report = dataprof.profile(source)
     document = json.loads(report.to_json())
+    intact = dataprof.ProfileReport.from_dict(json.loads(report.to_json()))
     del document["quality"]["confidence"]
 
     restored = dataprof.ProfileReport.from_dict(document)
 
-    assert restored.quality_score == report.quality_score
-    assert restored.quality is not None
-    assert restored.quality.completeness == report.quality.completeness
+    assert restored.quality_score == intact.quality_score
+    assert restored.quality is not None and intact.quality is not None
+    assert restored.quality.completeness == intact.quality.completeness
     assert restored.quality_sampled_dimensions is None
     check = restored.check(min_quality_score=1).checks[0]
     assert check.evidence == {"coverage": "incomplete", "reason": "coverage_unrecorded"}
