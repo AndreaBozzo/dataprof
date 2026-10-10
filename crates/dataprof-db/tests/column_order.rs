@@ -220,3 +220,95 @@ async fn sqlite_absolute_url_opens_existing_database() {
 
     connector.disconnect().await.unwrap();
 }
+
+#[tokio::test]
+async fn sqlite_absolute_url_with_default_config_opens_existing_database() {
+    let (_dir, db_path) = fixture(1).await;
+
+    let path = db_path.replace('\\', "/");
+    let url = if cfg!(windows) {
+        format!("sqlite:///{}", path)
+    } else {
+        format!("sqlite://{}", path)
+    };
+
+    let mut connector = create_connector(DatabaseConfig {
+        connection_string: url,
+        ..Default::default()
+    })
+    .unwrap();
+
+    connector.connect().await.unwrap();
+
+    let columns = connector.profile_query("SELECT * FROM t").await.unwrap();
+    assert_eq!(names(&columns), DECLARED_ORDER);
+    assert_eq!(columns.row_count(), 1);
+
+    connector.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn sqlite_relative_url_opens_existing_database() {
+    let cwd = std::env::current_dir().unwrap();
+    let dir = tempfile::tempdir_in(&cwd).unwrap();
+    let db_path = dir.path().join("relative.db");
+    std::fs::File::create(&db_path).unwrap();
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}", db_path.display()))
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE relative_marker (id INTEGER)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO relative_marker (id) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let relative_path = db_path.strip_prefix(&cwd).unwrap();
+    let relative_path = relative_path.to_string_lossy().replace('\\', "/");
+
+    let mut connector = create_connector(DatabaseConfig {
+        connection_string: format!("sqlite://{relative_path}"),
+        ..Default::default()
+    })
+    .unwrap();
+
+    connector.connect().await.unwrap();
+
+    let columns = connector
+        .profile_query("SELECT * FROM relative_marker")
+        .await
+        .unwrap();
+    assert_eq!(names(&columns), ["id"]);
+
+    connector.disconnect().await.unwrap();
+    drop(connector);
+    std::fs::remove_file(&db_path).unwrap();
+}
+
+#[tokio::test]
+async fn sqlite_explicit_memory_url_connects() {
+    let mut connector = create_connector(DatabaseConfig {
+        connection_string: "sqlite::memory:".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+
+    connector.connect().await.unwrap();
+    connector.disconnect().await.unwrap();
+}
+
+#[test]
+fn sqlite_url_with_credentials_is_rejected() {
+    let result = create_connector(DatabaseConfig {
+        connection_string: "sqlite://user:password@server/database.db".to_string(),
+        ..Default::default()
+    });
+
+    assert!(result.is_err(), "SQLite URLs must not accept credentials");
+}

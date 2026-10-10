@@ -42,6 +42,16 @@ impl SqliteConnector {
             });
         }
 
+        if connection_info.scheme == "sqlite"
+            && (connection_info.username.is_some()
+                || connection_info.password.is_some()
+                || connection_info.port.is_some())
+        {
+            return Err(DataProfilerError::DatabaseConfigError {
+                message: "SQLite URLs do not support credentials or ports".to_string(),
+            });
+        }
+
         Ok(Self {
             config,
             connection_info,
