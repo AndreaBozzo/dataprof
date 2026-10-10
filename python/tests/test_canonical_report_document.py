@@ -278,3 +278,23 @@ def test_additive_canonical_key_does_not_reroute_a_flat_summary(key):
     restored = dataprof.ProfileReport.from_dict(summary)
     assert [column.name for column in restored.profiles] == ["x"]
     assert restored.to_dict() == {k: v for k, v in summary.items() if k != key}
+
+
+def test_canonical_quality_without_confidence_keeps_its_metrics(tmp_path):
+    """A saved assessment that lost its `confidence` still holds its metrics
+    and scores. Reading it as a flat legacy object dropped them all without an
+    error; they survive, and the gate treats the coverage as unrecorded."""
+    source = tmp_path / "input.csv"
+    source.write_text("a,b\n1,x\n2,\n3,z\n", encoding="utf-8")
+    report = dataprof.profile(source)
+    document = json.loads(report.to_json())
+    del document["quality"]["confidence"]
+
+    restored = dataprof.ProfileReport.from_dict(document)
+
+    assert restored.quality_score == report.quality_score
+    assert restored.quality is not None
+    assert restored.quality.completeness == report.quality.completeness
+    assert restored.quality_sampled_dimensions is None
+    check = restored.check(min_quality_score=1).checks[0]
+    assert check.evidence == {"coverage": "incomplete", "reason": "coverage_unrecorded"}
