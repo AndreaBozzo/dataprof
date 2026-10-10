@@ -425,8 +425,48 @@ def test_duplicate_policy_keys_cannot_silently_relax_a_gate(
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert "duplicate policy key" in error["message"]
+    assert str(path) in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_is_reported_clearly(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert f"policy file {path} is not UTF-8: " in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} is not UTF-8: " in result.stderr
+
+
+def test_non_object_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_array.json"
+    path.write_text("[]", encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} must contain a JSON object of check() keywords" in result.stderr
+
+
+def test_unknown_policy_keys_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_unknown.json"
+    path.write_text('{"typo": 90}', encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} has unknown policy keys: typo" in result.stderr
 
 
 def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Path):
@@ -452,16 +492,25 @@ def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_
 def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     # Deep enough that json.loads raises RecursionError (a RuntimeError), which
-    # the pre-fix except clause let escape as a traceback with exit 1.
-    path.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    # the pre-fix except clause let escape as a traceback with exit 1. From 3.14
+    # the C decoder's limit is the thread's stack, not sys.getrecursionlimit():
+    # an 8 MB stack held 20000 and 50000 levels on CI, so stay far beyond it.
+    depth = 1_000_000
+    path.write_text("[" * depth + "]" * depth, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 3, result.stderr
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert error["path"] == str(path)
-    assert error["message"]
+    assert f"policy file {path} is nested too deeply: " in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+    text_result = run_check(source, "--policy", path)
+    assert text_result.returncode == 3, text_result.stderr
+    assert text_result.stdout == ""
+    assert f"policy file {path} is nested too deeply: " in text_result.stderr
+    assert "Traceback" not in text_result.stderr
 
 
 @pytest.mark.parametrize("flag", ["--engine", "--format"])
