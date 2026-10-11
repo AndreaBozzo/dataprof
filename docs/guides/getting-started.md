@@ -208,7 +208,10 @@ be inferred confidently, such as mixed-format strings.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated
-- `temporal_violations` -- ordering inconsistencies in time series
+- `temporal_violations` -- rows where an end date precedes its start date.
+  Columns pair by a word of their names: `start` with `end`, `created` with
+  `updated`, `begin_date` with `end_date`, `from_date` with `to_date`
+  (`start_date` pairs with `end_date` or `endDate`, not with `send_date`)
 
 ### Validity
 
