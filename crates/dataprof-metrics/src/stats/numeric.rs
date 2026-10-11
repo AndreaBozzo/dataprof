@@ -53,7 +53,7 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let (sample_data, is_approximate) = if numbers.len() > SAMPLE_THRESHOLD {
         (reservoir_sample(&numbers, SAMPLE_THRESHOLD), Some(true))
     } else {
-        (numbers.clone(), None)
+        (numbers.clone(), Some(false))
     };
 
     // Statistics requiring sorted/complete data
@@ -66,9 +66,19 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let coefficient_of_variation =
         std_dev.and_then(|value| calculate_coefficient_of_variation(value, mean));
 
-    // Advanced metrics
-    let skewness = std_dev.and_then(|value| calculate_skewness(&sample_data, mean, value));
-    let kurtosis = std_dev.and_then(|value| calculate_kurtosis(&sample_data, mean, value));
+    // Shape estimators use moments from the same population. If a reservoir
+    // was needed, its mean and sample deviation belong with its higher moments.
+    let shape_base = if is_approximate == Some(true) {
+        compute_stats_auto(&sample_data)
+    } else {
+        base
+    };
+    let shape_mean = shape_base.mean();
+    let shape_std_dev = shape_base.sample_std_dev();
+    let skewness =
+        std_dev.and_then(|_| calculate_skewness(&sample_data, shape_mean, shape_std_dev));
+    let kurtosis =
+        std_dev.and_then(|_| calculate_kurtosis(&sample_data, shape_mean, shape_std_dev));
 
     // Per-column outlier count using the same Tukey IQR rule as the global
     // accuracy.outlier_ratio dimension (k = 1.5). Returns `None` for tiny
@@ -217,9 +227,9 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
 
 /// Calculate coefficient of variation (CV)
 pub fn calculate_coefficient_of_variation(std_dev: f64, mean: f64) -> Option<f64> {
-    // A near-zero mean would divide by zero, and an infinite one would divide
-    // any spread down to 0.0. A non-finite spread fails the result check.
-    if !mean.is_finite() || mean.abs() < 0.001 {
+    // Reject a mean indistinguishable from zero relative to the spread. This
+    // condition is invariant under a change of measurement units.
+    if !mean.is_finite() || !std_dev.is_finite() || mean.abs() <= f64::EPSILON * std_dev.abs() {
         None
     } else {
         let value = (std_dev / mean.abs()) * 100.0;
@@ -227,12 +237,16 @@ pub fn calculate_coefficient_of_variation(std_dev: f64, mean: f64) -> Option<f64
     }
 }
 
-/// Calculate skewness (Pearson's moment coefficient)
+/// Adjusted Fisher-Pearson sample skewness, as in pandas `Series.skew`.
+/// `std_dev` must be the sample standard deviation of `data`.
 pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
     // An infinite std_dev would standardize every value to 0.0; a non-finite
     // mean fails the result check below.
-    if data.len() < 3 || !std_dev.is_finite() || std_dev < 1e-10 {
+    if data.len() < 3 || !mean.is_finite() || !std_dev.is_finite() || std_dev < 0.0 {
         return None;
+    }
+    if std_dev == 0.0 {
+        return Some(0.0);
     }
 
     let n = data.len() as f64;
@@ -244,15 +258,19 @@ pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         })
         .sum();
 
-    let value = sum_cubed / n;
+    let value = n / ((n - 1.0) * (n - 2.0)) * sum_cubed;
     value.is_finite().then_some(value)
 }
 
-/// Calculate kurtosis (excess kurtosis)
+/// Adjusted Fisher sample excess kurtosis, as in pandas `Series.kurt`.
+/// `std_dev` must be the sample standard deviation of `data`.
 pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
     // Same guards as `calculate_skewness`.
-    if data.len() < 4 || !std_dev.is_finite() || std_dev < 1e-10 {
+    if data.len() < 4 || !mean.is_finite() || !std_dev.is_finite() || std_dev < 0.0 {
         return None;
+    }
+    if std_dev == 0.0 {
+        return Some(0.0);
     }
 
     let n = data.len() as f64;
@@ -265,8 +283,8 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         })
         .sum();
 
-    // Excess kurtosis (subtract 3 for normal distribution)
-    let value = (sum_fourth / n) - 3.0;
+    let value = n * (n + 1.0) / ((n - 1.0) * (n - 2.0) * (n - 3.0)) * sum_fourth
+        - 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
     value.is_finite().then_some(value)
 }
 
@@ -296,6 +314,30 @@ fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampled_shape_moments_use_the_same_retained_population() {
+        let values: Vec<f64> = (0..50_000).map(|i| ((i * 7919) % 50_000) as f64).collect();
+        let sample = reservoir_sample(&values, SAMPLE_THRESHOLD);
+        let n = sample.len() as f64;
+        let mean = sample.iter().sum::<f64>() / n;
+        let deviation = (sample.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        let skew = n / ((n - 1.0) * (n - 2.0))
+            * sample
+                .iter()
+                .map(|x| ((x - mean) / deviation).powi(3))
+                .sum::<f64>();
+        let kurt = n * (n + 1.0) / ((n - 1.0) * (n - 2.0) * (n - 3.0))
+            * sample
+                .iter()
+                .map(|x| ((x - mean) / deviation).powi(4))
+                .sum::<f64>()
+            - 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
+        let stats =
+            compute_numeric_stats(&values.iter().map(ToString::to_string).collect::<Vec<_>>());
+        assert!((stats.skewness.unwrap() - skew).abs() < 1e-9);
+        assert!((stats.kurtosis.unwrap() - kurt).abs() < 1e-9);
+    }
 
     #[test]
     fn sampled_statistics_are_the_same_on_every_run() {

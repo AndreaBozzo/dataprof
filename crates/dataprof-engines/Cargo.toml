@@ -41,5 +41,6 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+arrow = { workspace = true }
 bytes = { workspace = true }
 tempfile = { workspace = true }

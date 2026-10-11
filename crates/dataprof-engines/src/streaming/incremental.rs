@@ -111,18 +111,24 @@ impl IncrementalProfiler {
 
         let file_size_bytes = reader.file_size();
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
-
-        // Estimate total rows for progress tracking
-        let estimated_total_rows = reader.estimate_csv_record_count(self.csv_config.as_ref())?;
         let source_has_header = self
             .csv_config
             .as_ref()
             .is_none_or(|config| config.has_header);
-        let estimated_data_rows = if source_has_header {
-            estimated_total_rows.saturating_sub(1)
-        } else {
-            estimated_total_rows
-        };
+
+        // Only preflight the full source when a consumer needs its row count.
+        // Plain row/byte caps retain their bounded profiling read.
+        let estimated_data_rows =
+            if self.stop_condition.needs_row_count() || self.progress_sink.is_active() {
+                let total = reader.estimate_csv_record_count(self.csv_config.as_ref())?;
+                Some(if source_has_header {
+                    total.saturating_sub(1)
+                } else {
+                    total
+                })
+            } else {
+                None
+            };
 
         // Calculate optimal chunk size based on memory limit and file size
         let chunk_size_bytes = self.calculate_optimal_chunk_size(file_size_bytes);
@@ -135,11 +141,13 @@ impl IncrementalProfiler {
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
 
         // Initialize stop condition evaluator
-        let mut stop_eval = StopEvaluator::new(self.stop_condition.clone())
-            .with_estimated_total(estimated_data_rows as u64);
+        let mut stop_eval = StopEvaluator::new(self.stop_condition.clone());
+        if let Some(total) = estimated_data_rows {
+            stop_eval.set_estimated_total(total as u64);
+        }
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
 
-        progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
+        progress_tracker.emit_started(estimated_data_rows, Some(file_size_bytes));
 
         // Built before the first read: an unusable strategy must fail before
         // the source is touched, not after a partial profile exists.
@@ -154,7 +162,6 @@ impl IncrementalProfiler {
         // the quote check at the end only needs to scan from here.
         let mut last_chunk_offset = 0u64;
         let mut source_exhausted = true;
-        let mut schema_stopped = false;
 
         // Extract the max_rows limit (if any) for per-row stop checking
         let row_limit = Self::extract_max_rows(&self.stop_condition);
@@ -319,11 +326,7 @@ impl IncrementalProfiler {
             offset += actual_bytes as u64;
 
             // Update progress
-            progress_tracker.emit_chunk(
-                records.len(),
-                actual_bytes as u64,
-                Some(estimated_data_rows),
-            );
+            progress_tracker.emit_chunk(records.len(), actual_bytes as u64, estimated_data_rows);
 
             // Check memory pressure and reduce if needed
             if column_stats.is_memory_pressure() {
@@ -344,22 +347,15 @@ impl IncrementalProfiler {
             // from a bounded one, which is what this metadata exists to answer.
             let reached_eof = offset >= file_size_bytes;
 
+            // Schema stability is a leaf of the composed stop condition.
+            if let Some(ref mut tracker) = schema_tracker {
+                let fingerprint = column_stats.column_type_fingerprint();
+                tracker.update(fingerprint, records.len() as u64);
+                stop_eval.set_schema_stable_rows(tracker.consecutive_stable_rows());
+            }
             if stop_eval.update(records.len() as u64, actual_bytes as u64, memory_fraction) {
                 source_exhausted = reached_eof;
                 break;
-            }
-
-            // Check schema stability (separate from main evaluator)
-            if let Some(ref mut tracker) = schema_tracker {
-                let fingerprint = column_stats.column_type_fingerprint();
-                if tracker.update(fingerprint, records.len() as u64) {
-                    // The tracker reports the reason; `stop_eval` keeps its
-                    // accumulated row and byte counters, which the report still
-                    // needs for `bytes_consumed`.
-                    schema_stopped = true;
-                    source_exhausted = reached_eof;
-                    break;
-                }
             }
 
             // Break if we've consumed the entire file
@@ -455,12 +451,8 @@ impl IncrementalProfiler {
         // Apply the truncation reason — but only when something was actually
         // left unread. A condition satisfied by the last chunk of a fully read
         // file is not a truncation.
-        if !source_exhausted {
-            if let Some(reason) = stop_eval.truncation_reason() {
-                execution = execution.with_truncation(reason);
-            } else if schema_stopped && let Some(ref tracker) = schema_tracker {
-                execution = execution.with_truncation(tracker.truncation_reason());
-            }
+        if !source_exhausted && let Some(reason) = stop_eval.truncation_reason() {
+            execution = execution.with_truncation(reason);
         }
 
         // Sampling is reported against the rows the sampler actually saw, so

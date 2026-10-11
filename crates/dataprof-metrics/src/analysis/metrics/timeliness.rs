@@ -9,7 +9,7 @@ use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::stats::datetime::resolve_slash_order;
 use crate::types::ColumnProfile;
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Days, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
 
 /// What may follow a one-word role inside a single word of a name: an
@@ -193,7 +193,13 @@ impl<'a> TimelinessCalculator<'a> {
         let mut checked = 0;
         let mut invalid_dates = 0;
 
-        let threshold_year = self.reference_date.year() - self.thresholds.max_data_age_years as i32;
+        // The Gregorian mean year keeps fractional policies meaningful. Values
+        // are dates, so a fractional day cannot separate two adjacent dates.
+        let age_days = (self.thresholds.max_data_age_years * 365.2425).floor() as u64;
+        let threshold_date = self
+            .reference_date
+            .checked_sub_days(Days::new(age_days))
+            .unwrap_or(NaiveDate::MIN);
 
         for column_name in temporal_columns {
             let Some(column_data) = data.get(column_name) else {
@@ -215,9 +221,7 @@ impl<'a> TimelinessCalculator<'a> {
                     if date > self.reference_date {
                         future_count += 1;
                     }
-                    // Staleness stays at year granularity because its threshold
-                    // is expressed in whole years.
-                    if date.year() < threshold_year {
+                    if date < threshold_date {
                         stale_dates += 1;
                     }
                 } else {
@@ -624,8 +628,8 @@ mod tests {
         let metrics = metrics_for(&config(), &data, &["event_date"]);
 
         assert_eq!(
-            metrics.stale_data_ratio, 50.0,
-            "two of four values fall before the cutoff, on the 0-100 scale"
+            metrics.stale_data_ratio, 75.0,
+            "three of four values fall before the whole-date cutoff"
         );
     }
 
@@ -641,6 +645,18 @@ mod tests {
             "expected two of three stale, got {}",
             metrics.stale_data_ratio
         );
+    }
+
+    #[test]
+    fn fractional_years_change_the_whole_date_cutoff() {
+        let data = column("event_date", &["2024-01-01", "2024-06-15", "2026-06-15"]);
+        let mut thresholds = config();
+        thresholds.max_data_age_years = 2.0;
+        let whole = metrics_for(&thresholds, &data, &["event_date"]);
+        thresholds.max_data_age_years = 2.5;
+        let fractional = metrics_for(&thresholds, &data, &["event_date"]);
+        assert!((whole.stale_data_ratio - 100.0 / 3.0).abs() < 1e-12);
+        assert_eq!(fractional.stale_data_ratio, 0.0);
     }
 
     #[test]

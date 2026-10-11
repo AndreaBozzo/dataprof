@@ -65,7 +65,8 @@ pub struct IsoQualityConfig {
     pub outlier_iqr_multiplier: f64,
     /// Minimum samples required for outlier detection (default: 4).
     pub outlier_min_samples: usize,
-    /// Maximum age in years for data to be considered fresh (default: 5 years).
+    /// Maximum age for fresh data (default: 5 years of 365.2425 days each).
+    /// Fractional years are retained; the cutoff is rounded to a whole date.
     pub max_data_age_years: f64,
     /// Dataprof-defined weights for the overall quality score.
     #[serde(default)]

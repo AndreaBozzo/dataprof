@@ -93,6 +93,26 @@ versions still load.
 
 ## Numeric equality contract
 
+`skewness` uses adjusted Fisher-Pearson sample skewness and requires at least
+three finite numeric values. `kurtosis` uses adjusted Fisher sample excess
+kurtosis and requires at least four. These match pandas
+[`Series.skew`](https://pandas.pydata.org/docs/reference/api/pandas.Series.skew.html)
+and [`Series.kurt`](https://pandas.pydata.org/docs/reference/api/pandas.Series.kurt.html).
+A constant column reports zero once the minimum count is met. When a reservoir
+is used, its mean, sample standard deviation and higher moments all describe
+that same retained sample. `is_approximate: false` records exact numeric
+statistics; `true` records sampling, and absence means the approximation status
+was not analyzed or is missing from an older report.
+
+The coefficient of variation is `100 * std_dev / abs(mean)`. Its zero-mean
+guard is relative to the spread (`abs(mean) <= f64::EPSILON * abs(std_dev)`),
+so changing measurement units does not make the statistic disappear.
+
+Timeliness compares whole dates against the freshness cutoff. A configured
+`max_data_age_years` uses the Gregorian mean year of 365.2425 days, including
+fractional years; the age budget is rounded down to whole days before it is
+subtracted from the reference date. A date equal to the cutoff remains fresh.
+
 For numeric columns, `mean` is always a finite number, including when the sum
 of the input values overflows `f64`: the mean of finite values lies between
 their minimum and maximum. `std_dev` and `variance` remain required fields in the

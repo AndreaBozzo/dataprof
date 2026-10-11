@@ -451,6 +451,10 @@ print(problematic.select(["name", "null_percentage", "unique_count"]))
 
 ### Profile NumPy feature matrices via pandas
 
+Skewness and excess kurtosis use the adjusted sample estimators from pandas.
+They require at least three and four numeric values respectively; a constant
+column reports zero. The skewness threshold below uses that convention.
+
 ```python
 import numpy as np
 import pandas as pd

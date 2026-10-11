@@ -18,12 +18,14 @@ pub enum StopCondition {
     ///
     /// The CSV streaming engines, file and async, size each read to the
     /// budget that remains, so they stop at the end of the first record at or
-    /// past the limit: `bytes_consumed` counts every source byte read,
+    /// past the limit: `bytes_consumed` counts bytes read by the profiling pass,
     /// including the header, and exceeds the value by less than one record.
-    /// The async JSON reader still evaluates it after whole chunks.
+    /// Fraction stops or progress can require a separate CSV row-count scan
+    /// before this budget takes effect. The async JSON reader still evaluates
+    /// it after whole chunks.
     MaxBytes(u64),
     /// Stop when column types have not changed for approximately N rows
-    /// (accumulated across chunks).
+    /// after the initial schema baseline (accumulated across chunks).
     SchemaStable {
         /// Approximate number of rows with no type changes before stopping.
         /// Rows are accumulated per-chunk, so the actual count depends on
@@ -32,7 +34,8 @@ pub enum StopCondition {
     },
     /// Stop when `rows_processed / estimated_total >= threshold`.
     ///
-    /// Only meaningful when an estimated total row count is available.
+    /// This is the fraction of the estimated row count read, rather than a
+    /// statistical confidence level. Only meaningful when an estimate exists.
     /// When no estimate exists, this condition is inert.
     ConfidenceThreshold(f64),
     /// Stop when memory usage exceeds this fraction of the configured limit.
@@ -60,7 +63,8 @@ impl StopCondition {
         ])
     }
 
-    /// Preset for quality sampling: stop after 50K rows, 50 MB, or 95% confidence.
+    /// Preset for quality sampling: stop after 50K rows, 50 MB, or 95% of the
+    /// estimated row count.
     pub fn quality_sample() -> Self {
         StopCondition::Any(vec![
             StopCondition::MaxRows(50_000),
@@ -146,6 +150,17 @@ impl StopCondition {
             _ => false,
         }
     }
+
+    /// Whether any leaf needs a total row count to evaluate its read fraction.
+    pub fn needs_row_count(&self) -> bool {
+        match self {
+            StopCondition::ConfidenceThreshold(_) => true,
+            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
+                conditions.iter().any(StopCondition::needs_row_count)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Runtime evaluator that checks a [`StopCondition`] against accumulated counters.
@@ -157,6 +172,7 @@ pub struct StopEvaluator {
     rows_processed: u64,
     bytes_consumed: u64,
     estimated_total_rows: Option<u64>,
+    schema_stable_rows: Option<u64>,
     triggered_reason: Option<TruncationReason>,
 }
 
@@ -168,6 +184,7 @@ impl StopEvaluator {
             rows_processed: 0,
             bytes_consumed: 0,
             estimated_total_rows: None,
+            schema_stable_rows: None,
             triggered_reason: None,
         }
     }
@@ -196,6 +213,17 @@ impl StopEvaluator {
         self
     }
 
+    /// Refresh the total estimate when a streaming source reveals its density.
+    pub fn set_estimated_total(&mut self, rows: u64) {
+        self.estimated_total_rows = Some(rows);
+    }
+
+    /// Provide the stable-row count measured by the engine's schema tracker.
+    /// Each schema-stability leaf keeps its own threshold during evaluation.
+    pub fn set_schema_stable_rows(&mut self, rows: u64) {
+        self.schema_stable_rows = Some(rows);
+    }
+
     /// Update counters and evaluate the stop condition.
     ///
     /// Returns `true` when profiling should stop.
@@ -217,6 +245,7 @@ impl StopEvaluator {
             self.bytes_consumed,
             memory_fraction,
             self.estimated_total_rows,
+            self.schema_stable_rows,
         );
 
         if reason.is_some() {
@@ -256,6 +285,7 @@ fn evaluate(
     bytes: u64,
     memory_fraction: f64,
     estimated_total: Option<u64>,
+    schema_stable_rows: Option<u64>,
 ) -> Option<TruncationReason> {
     match condition {
         StopCondition::MaxRows(limit) => {
@@ -272,12 +302,16 @@ fn evaluate(
                 None
             }
         }
-        StopCondition::SchemaStable { .. } => {
-            // SchemaStable requires column type tracking which is handled
-            // at the engine level via `SchemaStabilityTracker`. The evaluator
-            // alone cannot detect schema changes.
-            // See: IncrementalProfiler and AsyncStreamingProfiler integration.
-            None
+        StopCondition::SchemaStable {
+            consecutive_stable_rows,
+        } => {
+            if schema_stable_rows.is_some_and(|rows| rows >= *consecutive_stable_rows) {
+                Some(TruncationReason::StopCondition(format!(
+                    "schema_stable({consecutive_stable_rows})"
+                )))
+            } else {
+                None
+            }
         }
         StopCondition::ConfidenceThreshold(threshold) => {
             if let Some(total) = estimated_total
@@ -302,7 +336,14 @@ fn evaluate(
         }
         StopCondition::Any(conditions) => {
             for c in conditions {
-                if let Some(reason) = evaluate(c, rows, bytes, memory_fraction, estimated_total) {
+                if let Some(reason) = evaluate(
+                    c,
+                    rows,
+                    bytes,
+                    memory_fraction,
+                    estimated_total,
+                    schema_stable_rows,
+                ) {
                     return Some(reason);
                 }
             }
@@ -315,7 +356,14 @@ fn evaluate(
             // All must have triggered — collect reasons, return first
             let mut first_reason = None;
             for c in conditions {
-                let reason = evaluate(c, rows, bytes, memory_fraction, estimated_total)?;
+                let reason = evaluate(
+                    c,
+                    rows,
+                    bytes,
+                    memory_fraction,
+                    estimated_total,
+                    schema_stable_rows,
+                )?;
                 if first_reason.is_none() {
                     first_reason = Some(reason);
                 }
@@ -373,11 +421,19 @@ impl SchemaStabilityTracker {
                 self.consecutive_stable += chunk_rows;
             }
             _ => {
-                self.consecutive_stable = chunk_rows;
+                // The first observation establishes a baseline. A changed
+                // fingerprint also establishes a new baseline; neither proves
+                // that the schema stayed unchanged throughout that chunk.
+                self.consecutive_stable = 0;
                 self.last_fingerprint = Some(fingerprint);
             }
         }
         self.consecutive_stable >= self.threshold
+    }
+
+    /// Rows observed in unchanged chunks after the latest schema baseline.
+    pub fn consecutive_stable_rows(&self) -> u64 {
+        self.consecutive_stable
     }
 
     /// The truncation reason when schema stability is reached.
@@ -643,9 +699,10 @@ mod tests {
         let mut tracker = SchemaStabilityTracker::from_condition(&condition).unwrap();
 
         let fp: u64 = 0xABCD;
+        assert!(!tracker.update(fp, 1)); // baseline
         assert!(!tracker.update(fp, 1)); // consecutive = 1
         assert!(!tracker.update(fp, 1)); // consecutive = 2
-        assert!(tracker.update(fp, 1)); // consecutive = 3 -> triggers
+        assert!(tracker.update(fp, 1)); // consecutive = 3
     }
 
     #[test]
@@ -658,12 +715,13 @@ mod tests {
         let fp1: u64 = 0x1111;
         let fp2: u64 = 0x2222;
 
+        assert!(!tracker.update(fp1, 1)); // baseline
         assert!(!tracker.update(fp1, 1)); // consecutive = 1
-        assert!(!tracker.update(fp1, 1)); // consecutive = 2
         // Schema changes - counter resets
+        assert!(!tracker.update(fp2, 1)); // new baseline
         assert!(!tracker.update(fp2, 1)); // consecutive = 1
         assert!(!tracker.update(fp2, 1)); // consecutive = 2
-        assert!(tracker.update(fp2, 1)); // consecutive = 3 -> triggers
+        assert!(tracker.update(fp2, 1)); // consecutive = 3
     }
 
     #[test]

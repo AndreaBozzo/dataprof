@@ -215,29 +215,15 @@ impl MemoryMappedCsvReader {
         }
     }
 
-    /// Estimate the number of logical CSV records in the file by sampling.
-    ///
-    /// The sample uses [`Self::read_csv_chunk`], so quoted multiline fields,
-    /// CR/LF/CRLF terminators, delimiters, and blank-record handling match the
-    /// records that incremental profiling will actually consume.
+    /// Count logical CSV records, including the header, with a full scan.
+    /// This shares the record parser with partial counting and avoids prefix bias.
     pub fn estimate_csv_record_count(&self, csv_config: Option<&CsvParserConfig>) -> Result<usize> {
-        const SAMPLE_SIZE: usize = 64 * 1024;
-
-        if self.mmap.is_empty() {
-            return Ok(0);
-        }
-
-        let (_, records, sampled_bytes) = self.read_csv_chunk(0, SAMPLE_SIZE, false, csv_config)?;
-        if sampled_bytes == 0 || records.is_empty() {
-            return Ok(0);
-        }
-        if sampled_bytes == self.mmap.len() {
-            return Ok(records.len());
-        }
-
-        let estimated_records =
-            (self.file_size as u128 * records.len() as u128) / sampled_bytes as u128;
-        Ok(estimated_records.min(usize::MAX as u128) as usize)
+        let delimiter = csv_config
+            .and_then(|config| config.delimiter)
+            .unwrap_or(b',');
+        let quote = csv_config.map_or(b'"', |config| config.quote_char);
+        let count = crate::row_count::csv_record_count(&self.mmap[..], delimiter, quote)?;
+        Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 }
 

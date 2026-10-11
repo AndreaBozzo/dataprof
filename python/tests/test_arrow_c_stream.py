@@ -116,7 +116,15 @@ def test_producer_failure_does_not_return_partial_report():
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"engine": "streaming"}, {"chunk_size": 10}, {"metrics": ["bogus"]}, {"locale": "bogus"}],
+    [
+        {"engine": "streaming"},
+        {"chunk_size": 10},
+        {"metrics": ["bogus"]},
+        {"locale": "bogus"},
+        {"stop_condition": dataprof.StopCondition.schema_stable(1)},
+        {"sampling": dataprof.SamplingStrategy.random(1)},
+        {"max_rows": 1, "stop_condition": dataprof.StopCondition.max_rows(1)},
+    ],
 )
 def test_invalid_controls_fail_before_export(kwargs):
     source = StreamProducer(_batches()[0].schema, [])

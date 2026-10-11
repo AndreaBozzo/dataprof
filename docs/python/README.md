@@ -147,6 +147,25 @@ the CSV, JSON, Parquet and Arrow paths use. The tokens are empty or whitespace,
 Note that a `dict` is *not* round-tripped through pandas, so an integer column
 containing a null stays `integer` rather than being widened to `float`.
 
+Dicts, row lists, pandas, polars and Arrow inputs apply `StopCondition.max_rows`
+and row-only `|`/`&` compositions. They accept `StopCondition.never()` and
+`SamplingStrategy.none()` as no-ops. Other stop conditions and sampling strategies
+raise `ValueError` because those routes cannot apply them. `max_rows` and
+`stop_condition` remain mutually exclusive.
+
+`StopCondition.confidence_threshold(f)` means the fraction of the estimated
+record count read. CSV files and materialized async CSV buffers use an exact
+logical-record count from a bounded-memory scan before profiling. This preflight
+also supplies progress percentages; scans without fraction stops or progress
+skip it. The preflight reads the whole CSV before a profiling row or byte cap
+takes effect; `bytes_consumed` describes the profiling pass, excluding this
+preflight. A true async stream with a size hint estimates its total from complete
+records and bytes
+already read, excluding CSV header bytes; changing row widths can bias that
+estimate. For a true stream without a size hint the condition is inert. Schema
+stability starts after the first chunk establishes a baseline, and each leaf in an `|`/`&` tree
+retains its own threshold.
+
 **Column order** follows the source on every input and transport: the CSV
 header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
 JSON/JSONL the field order of the first record, with fields that only appear in
@@ -1240,6 +1259,11 @@ result = dp.quick_row_count("data.parquet")
 print(f"{result.count} rows ({'exact' if result.exact else 'estimated'})")
 print(f"Method: {result.method}, took {result.count_time_ms}ms")
 ```
+
+CSV counts scan every logical record, including quoted multiline fields, and
+return `exact=True`, method `full_scan`, and no relative-error estimate. This
+costs a complete read even for large CSV files. Parquet uses footer metadata;
+large JSONL files retain their sampled density estimate.
 
 ## Async API
 
