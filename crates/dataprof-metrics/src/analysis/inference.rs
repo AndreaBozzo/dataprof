@@ -151,7 +151,12 @@ pub fn infer_type(data: &[String]) -> DataType {
 ///
 /// Deliberately narrower than [`is_date_token`]: this set decides the *type*, so
 /// widening it changes which columns are dates.
-pub(crate) fn is_inferred_date_token(value: &str) -> bool {
+///
+/// The streaming engines type their columns from sampled strings and call this
+/// directly; the buffered paths reach it through [`infer_type`]. Both decide
+/// "is this a date" on the same set, so a file cannot be a date column through
+/// one engine and a text column through the other.
+pub fn is_inferred_date_token(value: &str) -> bool {
     DATE_REGEXES.iter().any(|regex| regex.is_match(value))
 }
 
@@ -783,6 +788,68 @@ mod tests {
         // Validate that all hardcoded regex patterns compile successfully
         // This test will fail at initialization if any pattern is invalid
         assert_eq!(DATE_REGEXES.len(), 8);
+    }
+
+    #[test]
+    fn test_is_inferred_date_token() {
+        // Test various date formats
+        assert!(is_inferred_date_token("2024-01-15"));
+        assert!(is_inferred_date_token("15/01/2024"));
+        assert!(is_inferred_date_token("15-01-2024"));
+        assert!(is_inferred_date_token("2024/01/15"));
+        assert!(is_inferred_date_token("15.01.2024"));
+        assert!(is_inferred_date_token("2024-01-15T10:30:00"));
+
+        // Test non-dates
+        assert!(!is_inferred_date_token("not a date"));
+        assert!(!is_inferred_date_token("12345"));
+        assert!(!is_inferred_date_token("user@example.com"));
+    }
+
+    /// The streaming engines type their columns through `is_inferred_date_token`
+    /// and the buffered ones through `infer_type`. Both read the same set, so
+    /// the forms one accepts are exactly the forms the other accepts.
+    #[test]
+    fn inferred_date_token_accepts_offsets_and_rejects_what_chrono_cannot_parse() {
+        for value in [
+            // Forms the streaming engines' old private list missed, so a column
+            // of them used to be a date through the buffered engines and text
+            // through streaming.
+            "2024-01-15T10:30:00Z",
+            "2024-01-15T10:30:00+02:00",
+            "2024-01-15T10:30:00.500-05:00",
+            "2024-01-15 10:30:00",
+            "15/01/2024 10:30:00",
+            // Forms both lists always shared.
+            "2024-01-15",
+            "15.01.2024",
+        ] {
+            assert!(
+                is_inferred_date_token(value),
+                "{value:?} should be an inferred date"
+            );
+        }
+
+        for value in [
+            // The old list's ISO datetime pattern was unanchored, so it typed
+            // these as dates and then failed to parse a single one of them.
+            "2024-01-15T10:",
+            "2024-01-15T10:30",
+            "2024-01-15T10:30:00 (UTC)",
+            // The ISO 8601 basic offset, which chrono's RFC 3339 parser rejects.
+            "2024-01-15T10:30:00+0200",
+            // Offsets chrono rejects as out of range. A grammar that took these
+            // would type the column `Date` and then fail to parse a value of it.
+            "2024-01-15T10:30:00+24:00",
+            "2024-01-15T10:30:00+99:99",
+            "2024-01-15T10:30:00-00:60",
+            "not a date",
+        ] {
+            assert!(
+                !is_inferred_date_token(value),
+                "{value:?} should not be an inferred date"
+            );
+        }
     }
 
     /// Every date pattern dataprof recognizes, paired with an example of it.
