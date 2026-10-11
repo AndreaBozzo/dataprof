@@ -3,9 +3,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
-    QualityScores, ScoreInterval, SemanticHintKind, TextLengthUnit, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, PatternMatchCount,
+    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
+    QualityPolicy, QualityScores, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1181,6 +1182,22 @@ impl PyProfileReport {
                 "null_tokens",
                 match tokens {
                     NullTokenSet::CommonMarkers => "common_markers",
+                },
+            )?;
+        }
+        if let Some(count) = semantics.pattern_match_count {
+            dict.set_item(
+                "pattern_match_count",
+                match count {
+                    PatternMatchCount::Validated => "validated",
+                },
+            )?;
+        }
+        if let Some(estimator) = semantics.shape_moments {
+            dict.set_item(
+                "shape_moments",
+                match estimator {
+                    ShapeMomentEstimator::AdjustedSample => "adjusted_sample",
                 },
             )?;
         }

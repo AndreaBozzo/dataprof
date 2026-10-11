@@ -634,3 +634,28 @@ vocabulary reads back as unknown and Python's `compare()` reports
 records the same value. The field is additive and not `required`, so stored v1
 reports remain valid; an explicit `null` is malformed, as for
 `text_length_unit`.
+
+## v1 additive change: `metric_semantics.pattern_match_count` and `shape_moments`
+
+`metric_semantics` gains two definitions:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `pattern_match_count` | `"validated"` | what every pattern's `match_count` and `match_percentage` count |
+| `shape_moments` | `"adjusted_sample"` | the estimator behind `skewness` and `kurtosis` |
+
+Under `validated` a pattern match is a value that passes the pattern's regular
+expression and, where the pattern has one, its semantic validator (checksum,
+range or calendar check). Through 0.12 every regular expression match counted,
+so random 16-digit ids were 100% `Credit Card`.
+
+Under `adjusted_sample` skewness is the adjusted Fisher-Pearson sample skewness,
+from three values, and kurtosis the adjusted Fisher sample excess kurtosis, from
+four, as pandas computes them. Through 0.12 both divided population moments by
+the sample standard deviation.
+
+A report that records neither reads back with both unknown, and Python's
+`compare()` reports `comparable: None` against a current report. Every engine
+and input path records the same values. The fields are additive and not
+`required`, so stored v1 reports remain valid; an explicit `null` is malformed,
+as for `text_length_unit`.

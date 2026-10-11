@@ -147,6 +147,8 @@ parquet = { workspace = true }
 sqlx = { workspace = true, features = ["sqlite"] }
 proptest = { workspace = true }
 criterion = { workspace = true }
+csv = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 predicates = { workspace = true }

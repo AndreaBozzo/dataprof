@@ -17,7 +17,7 @@ struct PatternDef {
     /// Per-pattern minimum match percentage to report (replaces uniform 5% threshold).
     min_threshold: f64,
     /// Optional semantic validator run on regex-matched values.
-    /// When present, the validator pass rate feeds into the confidence formula.
+    /// A regex match counts only when this validator accepts the value.
     validator: Option<fn(&str) -> bool>,
 }
 
@@ -65,7 +65,9 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Phone (IT)",
-            regex: Regex::new(r"^(?:\+39|0039)[-.\s]?(?:0[0-9]{1,3}|3[0-9]{2})[-.\s]?[0-9]{5,8}$")
+            // The domestic form needs a space or hyphen after the prefix: a
+            // dot there would claim decimals such as `310.123456`.
+            regex: Regex::new(r"^(?:(?:\+39|0039)[-.\s]?(?:0[0-9]{1,3}|3[0-9]{2})[-.\s]?|(?:0[0-9]{1,3}|3[0-9]{2})[-\s])[0-9]{5,8}$")
                 .expect("BUG: Invalid regex for Phone (IT)"),
             category: PatternCategory::Contact,
             specificity: 70,
@@ -85,7 +87,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "UUID",
-            regex: Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+            regex: Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
                 .expect("BUG: Invalid regex for UUID"),
             category: PatternCategory::Identifier,
             specificity: 85,
@@ -127,7 +129,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Geographic Coordinates",
-            regex: Regex::new(r"^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)$")
+            regex: Regex::new(r"^[-+]?([1-8]?[0-9]\.[0-9]+|90\.0+),\s*[-+]?(180\.0+|(?:1[0-7][0-9]|[1-9]?[0-9])\.[0-9]+)$")
                 .expect("BUG: Invalid regex for Geographic Coordinates"),
             category: PatternCategory::Geographic,
             specificity: 75,
@@ -137,13 +139,13 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "IBAN",
-            regex: Regex::new(r"^[A-Z]{2}\d{2}[A-Z0-9]{1,30}$")
+            regex: Regex::new(r"^[A-Za-z]{2}[0-9]{2}(?:\s*[A-Za-z0-9]){1,30}$")
                 .expect("BUG: Invalid regex for IBAN"),
             category: PatternCategory::Financial,
             specificity: 90,
             locale: None,
             min_threshold: 5.0,
-            validator: Some(validators::validate_iban),
+            validator: Some(validate_printed_iban),
         },
         PatternDef {
             name: "Codice Fiscale (IT)",
@@ -340,7 +342,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         // ---- Date patterns (unified from DATE_PATTERN_REGEXES) ----
         PatternDef {
             name: "Date (ISO)",
-            regex: Regex::new(r"^\d{4}-\d{2}-\d{2}$")
+            regex: Regex::new(crate::analysis::inference::DATE_ISO_PATTERN)
                 .expect("BUG: Invalid regex for Date (ISO)"),
             category: PatternCategory::Other,
             specificity: 50,
@@ -349,9 +351,9 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
             validator: None,
         },
         PatternDef {
-            name: "Date (EU slash)",
-            regex: Regex::new(r"^\d{2}/\d{2}/\d{4}$")
-                .expect("BUG: Invalid regex for Date (EU slash)"),
+            name: "Date (slash)",
+            regex: Regex::new(crate::analysis::inference::DATE_SLASH_PATTERN)
+                .expect("BUG: Invalid regex for Date (slash)"),
             category: PatternCategory::Other,
             specificity: 50,
             locale: None,
@@ -360,7 +362,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Date (EU dash)",
-            regex: Regex::new(r"^\d{2}-\d{2}-\d{4}$")
+            regex: Regex::new(crate::analysis::inference::DATE_DASH_PATTERN)
                 .expect("BUG: Invalid regex for Date (EU dash)"),
             category: PatternCategory::Other,
             specificity: 50,
@@ -370,7 +372,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Date (YYYY/MM/DD)",
-            regex: Regex::new(r"^\d{4}/\d{2}/\d{2}$")
+            regex: Regex::new(crate::analysis::inference::DATE_YEAR_SLASH_PATTERN)
                 .expect("BUG: Invalid regex for Date (YYYY/MM/DD)"),
             category: PatternCategory::Other,
             specificity: 50,
@@ -380,7 +382,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Date (EU dot)",
-            regex: Regex::new(r"^\d{2}\.\d{2}\.\d{4}$")
+            regex: Regex::new(crate::analysis::inference::DATE_DOT_PATTERN)
                 .expect("BUG: Invalid regex for Date (EU dot)"),
             category: PatternCategory::Other,
             specificity: 50,
@@ -390,13 +392,13 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "DateTime (ISO)",
-            regex: Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:")
+            regex: Regex::new(crate::analysis::inference::ISO_DATETIME_PATTERN)
                 .expect("BUG: Invalid regex for DateTime (ISO)"),
             category: PatternCategory::Other,
             specificity: 55,
             locale: None,
             min_threshold: 5.0,
-            validator: None,
+            validator: Some(validate_iso_datetime),
         },
     ]
 });
@@ -416,21 +418,25 @@ struct PatternMatch<'a> {
     match_percentage: f64,
     /// Per-row match bitmap for overlap computation.
     matched_rows: Vec<bool>,
-    /// Fraction of regex-matched values that also pass the semantic validator.
-    /// 1.0 when no validator is defined.
-    validator_pass_rate: f64,
 }
 
-/// Compute confidence score from pattern specificity, match rate, and validator pass rate.
+/// Compute confidence from structural specificity and the validated match share.
 ///
-/// Formula: `clamp((specificity / 100) × clamp(match_percentage / 50, 0.0, 1.0) × validator_pass_rate, 0.0, 1.0)`
-///
-/// The validator_pass_rate penalizes patterns where the regex matches but the values
-/// fail semantic validation (e.g. 11-digit numbers that aren't valid P.IVA).
-fn compute_confidence(specificity: u8, match_percentage: f64, validator_pass_rate: f64) -> f64 {
+/// Formula: `clamp((specificity / 100) × clamp(match_percentage / 50, 0.0, 1.0), 0.0, 1.0)`.
+/// Validation is already reflected in match_percentage and is not applied twice.
+fn compute_confidence(specificity: u8, match_percentage: f64) -> f64 {
     let base = specificity as f64 / 100.0;
     let match_factor = (match_percentage / 50.0).clamp(0.0, 1.0);
-    (base * match_factor * validator_pass_rate).clamp(0.0, 1.0)
+    (base * match_factor).clamp(0.0, 1.0)
+}
+
+fn validate_printed_iban(value: &str) -> bool {
+    let normalized: String = value.chars().filter(|c| !c.is_whitespace()).collect();
+    validators::validate_iban(&normalized.to_ascii_uppercase())
+}
+
+fn validate_iso_datetime(value: &str) -> bool {
+    crate::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal)
 }
 
 /// List supported pattern detectors in detector order.
@@ -465,203 +471,130 @@ pub fn list_patterns(locale: Option<Locale>) -> Vec<PatternMetadata> {
 /// * `data` - Slice of string values to analyze. Null-like tokens are skipped,
 ///   so match percentages are shares of the values, as on the streaming engines,
 ///   whose samples never hold a null.
-/// * `locale` - Optional locale (e.g. [`Locale::It`]). When set, locale-matching
-///   patterns receive a confidence boost and non-matching locale patterns are
-///   suppressed. Without a locale, locale-specific candidates remain available
-///   as evidence but receive a confidence penalty, with a further penalty for
-///   ambiguous matches shared by patterns from different locales.
+/// * `locale` - Optional locale (e.g. [`Locale::It`]). When set, other locales'
+///   patterns are never evaluated, so they cannot suppress this locale's own
+///   patterns, which receive a confidence boost. Without a locale, patterns of
+///   different locales in the same category never suppress each other: a
+///   five-digit column is reported as every postcode it could be, each with a
+///   confidence penalty divided among the locales matching the same rows.
 ///
 /// # Returns
 /// Vector of detected patterns sorted by confidence descending, after overlap
-/// suppression and locale filtering.
+/// suppression among eligible patterns. Counts and percentages include only
+/// values accepted by the semantic validator, when one exists.
 pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> {
     let non_empty: Vec<&str> = data
         .iter()
         .map(|s| s.trim())
         .filter(|s| !is_null_like_token(s))
         .collect();
-
     if non_empty.is_empty() {
         return Vec::new();
     }
-
     let n = non_empty.len();
-    let num_patterns = PATTERN_DEFS.len();
-
-    // Phase 1: Single-pass RegexSet pre-filter + per-row bitmaps
-    //
-    // For each value, `REGEX_SET.matches()` returns all pattern indices that
-    // match in a single pass, avoiding redundant regex evaluation. We build
-    // per-pattern match bitmaps from these results.
-    let mut match_bitmaps: Vec<Vec<bool>> = vec![vec![false; n]; num_patterns];
-
-    for (row_idx, value) in non_empty.iter().enumerate() {
-        let matches = REGEX_SET.matches(value);
-        for pat_idx in matches.iter() {
-            match_bitmaps[pat_idx][row_idx] = true;
-        }
-    }
-
-    let mut candidates: Vec<PatternMatch<'_>> = Vec::new();
-
-    for (pat_idx, def) in PATTERN_DEFS.iter().enumerate() {
-        let matched_rows = &match_bitmaps[pat_idx];
-        let match_count = matched_rows.iter().filter(|&&m| m).count();
-        let match_percentage = (match_count as f64 / n as f64) * 100.0;
-
-        // Apply per-pattern threshold (replaces uniform >5% check)
-        if match_percentage > def.min_threshold {
-            // Run semantic validator on regex-matched values (if defined)
-            let validator_pass_rate = match def.validator {
-                Some(validate) => {
-                    if match_count == 0 {
-                        1.0
-                    } else {
-                        let passed = non_empty
-                            .iter()
-                            .zip(matched_rows.iter())
-                            .filter(|&(s, matched)| *matched && validate(s))
-                            .count();
-                        passed as f64 / match_count as f64
-                    }
-                }
-                None => 1.0,
-            };
-
-            // A semantic validator rejecting every regex match means this is
-            // not evidence for the pattern. Exclude it before overlap
-            // suppression so it cannot hide another, genuinely valid pattern.
-            if validator_pass_rate > 0.0 {
-                candidates.push(PatternMatch {
-                    def,
-                    match_count,
-                    match_percentage,
-                    matched_rows: std::mem::take(&mut match_bitmaps[pat_idx]),
-                    validator_pass_rate,
-                });
+    // Filter locale eligibility before validation and overlap suppression.
+    let eligible: Vec<bool> = PATTERN_DEFS
+        .iter()
+        .map(|def| locale.is_none() || def.locale.is_none() || def.locale == locale)
+        .collect();
+    let mut bitmaps: Vec<Vec<bool>> = eligible
+        .iter()
+        .map(|&allowed| if allowed { vec![false; n] } else { Vec::new() })
+        .collect();
+    for (row, value) in non_empty.iter().enumerate() {
+        for index in REGEX_SET.matches(value).iter() {
+            let def = &PATTERN_DEFS[index];
+            if eligible[index] && def.validator.is_none_or(|validate| validate(value)) {
+                bitmaps[index][row] = true;
             }
         }
     }
-
-    // Phase 2: Specificity-based overlap suppression
-    // When a more-specific pattern explains >=80% of a less-specific pattern's
-    // matches, the less-specific one is noise and gets suppressed.
-    // Equal-specificity patterns are never suppressed (resolved by locale in Phase 4).
-    let mut suppressed = vec![false; candidates.len()];
-
-    // Sort indices by specificity descending for pairwise comparison
-    let mut indices: Vec<usize> = (0..candidates.len()).collect();
-    indices.sort_by(|&a, &b| {
-        candidates[b]
-            .def
-            .specificity
-            .cmp(&candidates[a].def.specificity)
-    });
-
-    for i in 0..indices.len() {
-        if suppressed[indices[i]] {
+    let mut candidates = Vec::new();
+    for (index, def) in PATTERN_DEFS.iter().enumerate() {
+        if !eligible[index] {
             continue;
         }
-        let a_idx = indices[i];
-        let a_spec = candidates[a_idx].def.specificity;
-
-        for &b_idx in &indices[(i + 1)..] {
-            if suppressed[b_idx] {
+        let count = bitmaps[index].iter().filter(|&&matched| matched).count();
+        let percentage = count as f64 / n as f64 * 100.0;
+        if percentage > def.min_threshold {
+            candidates.push(PatternMatch {
+                def,
+                match_count: count,
+                match_percentage: percentage,
+                matched_rows: std::mem::take(&mut bitmaps[index]),
+            });
+        }
+    }
+    let mut suppressed = vec![false; candidates.len()];
+    let mut indices: Vec<usize> = (0..candidates.len()).collect();
+    indices.sort_by_key(|&i| std::cmp::Reverse(candidates[i].def.specificity));
+    for (position, &a) in indices.iter().enumerate() {
+        if suppressed[a] {
+            continue;
+        }
+        for &b in &indices[position + 1..] {
+            if suppressed[b] || candidates[a].def.specificity <= candidates[b].def.specificity {
                 continue;
             }
-            let b_spec = candidates[b_idx].def.specificity;
-
-            // Only suppress when specificity strictly differs
-            if a_spec <= b_spec {
+            // An unspecified locale cannot disambiguate another locale's
+            // interpretation of the same category, such as five-digit postcodes.
+            if locale.is_none()
+                && candidates[a].def.locale.is_some()
+                && candidates[b].def.locale.is_some()
+                && candidates[a].def.locale != candidates[b].def.locale
+                && candidates[a].def.category == candidates[b].def.category
+            {
                 continue;
             }
-
-            let b_count = candidates[b_idx].match_count;
-            if b_count == 0 {
-                continue;
-            }
-
-            // Count how many of B's matches are also matched by A
-            let overlap_count = candidates[a_idx]
+            let overlap = candidates[a]
                 .matched_rows
                 .iter()
-                .zip(candidates[b_idx].matched_rows.iter())
+                .zip(&candidates[b].matched_rows)
                 .filter(|&(a, b)| *a && *b)
                 .count();
-
-            let overlap_ratio = overlap_count as f64 / b_count as f64;
-            if overlap_ratio >= 0.80 {
-                suppressed[b_idx] = true;
+            // Positive per-pattern thresholds guarantee a nonzero denominator.
+            if overlap as f64 / candidates[b].match_count as f64 >= 0.8 {
+                suppressed[b] = true;
             }
         }
     }
-
-    // Phase 3: Build results with locale-adjusted confidence.
-    //
-    // Locale-specific patterns without an explicit locale are useful evidence,
-    // but not strong enough by themselves to become an asserted semantic type.
-    // Identical row matches from multiple locales (for example CAP and ZIP on
-    // five-digit order IDs) are especially ambiguous and are penalized once per
-    // competing locale.
-    let mut results: Vec<Pattern> = candidates
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !suppressed[*i])
-        .filter_map(|(candidate_idx, pm)| {
-            let mut confidence = compute_confidence(
-                pm.def.specificity,
-                pm.match_percentage,
-                pm.validator_pass_rate,
-            );
-
-            if let Some(configured_locale) = locale {
-                match pm.def.locale {
-                    Some(pattern_locale) if pattern_locale == configured_locale => {
-                        confidence = (confidence * 1.2).min(1.0);
-                        if pm.match_percentage >= 80.0 && pm.validator_pass_rate >= 0.8 {
-                            confidence = confidence.max(0.5);
-                        }
-                    }
-                    Some(_) => return None,
-                    None => {}
-                }
-            } else if pm.def.locale.is_some() {
-                let distinct_matching_locales = candidates
-                    .iter()
-                    .enumerate()
-                    .filter(|(other_idx, other)| {
-                        !suppressed[*other_idx]
-                            && (candidate_idx == *other_idx
-                                || (other.def.locale != pm.def.locale
-                                    && other.def.locale.is_some()
-                                    && other.def.category == pm.def.category
-                                    && other.matched_rows == pm.matched_rows))
-                    })
-                    .filter_map(|(_, other)| other.def.locale)
-                    .collect::<std::collections::HashSet<_>>()
-                    .len()
-                    .max(1);
-
-                confidence *= 0.75 / distinct_matching_locales as f64;
+    let mut results = Vec::new();
+    for (index, pm) in candidates.iter().enumerate() {
+        if suppressed[index] {
+            continue;
+        }
+        let mut confidence = compute_confidence(pm.def.specificity, pm.match_percentage);
+        if locale.is_some() && pm.def.locale == locale {
+            confidence = (confidence * 1.2).min(1.0);
+            if pm.match_percentage >= 80.0 {
+                confidence = confidence.max(0.5);
             }
-
-            Some(Pattern {
-                name: pm.def.name.to_string(),
-                regex: pm.def.regex.as_str().to_string(),
-                match_count: pm.match_count,
-                match_percentage: pm.match_percentage,
-                category: pm.def.category.clone(),
-                confidence,
-            })
-        })
-        .collect();
-
-    results.sort_by(|a, b| {
-        b.confidence
-            .partial_cmp(&a.confidence)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
+        } else if locale.is_none() && pm.def.locale.is_some() {
+            let locales = candidates
+                .iter()
+                .enumerate()
+                .filter(|(other_index, other)| {
+                    !suppressed[*other_index]
+                        && other.def.locale.is_some()
+                        && other.def.category == pm.def.category
+                        && other.matched_rows == pm.matched_rows
+                })
+                .filter_map(|(_, other)| other.def.locale)
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            // This unsuppressed candidate itself supplies at least one locale.
+            confidence *= 0.75 / locales as f64;
+        }
+        results.push(Pattern {
+            name: pm.def.name.into(),
+            regex: pm.def.regex.as_str().into(),
+            match_count: pm.match_count,
+            match_percentage: pm.match_percentage,
+            category: pm.def.category.clone(),
+            confidence,
+        });
+    }
+    results.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
     results
 }
 
@@ -1007,22 +940,22 @@ mod tests {
     #[test]
     fn test_piva_below_threshold() {
         // P.IVA threshold is 25%. 4 out of 20 = 20% — should NOT be detected.
-        let mut data: Vec<String> = (0..4).map(|i| format!("{:011}", i)).collect();
+        let mut data = vec!["12345678903".to_string(); 4];
         for _ in 0..16 {
             data.push("random text".to_string());
         }
-        let patterns = detect_patterns(&data, None);
+        let patterns = detect_patterns(&data, Some(Locale::It));
         assert!(!patterns.iter().any(|p| p.name == "P.IVA (IT)"));
     }
 
     #[test]
     fn test_piva_above_threshold() {
         // 6 out of 20 = 30% — above 25% threshold
-        let mut data: Vec<String> = (0..6).map(|i| format!("{:011}", i)).collect();
+        let mut data = vec!["12345678903".to_string(); 6];
         for _ in 0..14 {
             data.push("random text".to_string());
         }
-        let patterns = detect_patterns(&data, None);
+        let patterns = detect_patterns(&data, Some(Locale::It));
         assert!(patterns.iter().any(|p| p.name == "P.IVA (IT)"));
     }
 
@@ -1238,7 +1171,7 @@ mod tests {
     #[test]
     fn test_validator_cap_filters_out_of_range() {
         // All match ^\d{5}$ but some are outside CAP range (00010-98168)
-        // This tests that the validator pass rate reduces confidence.
+        // Rejected values do not contribute to the validated match share.
         let valid_caps = vec![
             "00118".to_string(), // Roma
             "20121".to_string(), // Milano

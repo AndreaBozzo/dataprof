@@ -189,7 +189,11 @@ class TestToLlmContext:
         sensitive pattern. The pair distinguishes redaction from over-redaction.
         """
         path = tmp_path / "cards.csv"
-        rows = ["card,qty"] + [f"411111111111{1000 + i},{i}" for i in range(10)]
+        # Luhn-valid, so the values pass the card validator, not only its regex.
+        cards = [4111111111111004, 4111111111111012, 4111111111111020, 4111111111111038]
+        cards += [4111111111111046, 4111111111111053, 4111111111111061, 4111111111111079]
+        cards += [4111111111111087, 4111111111111095]
+        rows = ["card,qty"] + [f"{card},{i}" for i, card in enumerate(cards)]
         path.write_text("\n".join(rows) + "\n", encoding="utf-8")
         return str(path)
 
@@ -204,8 +208,8 @@ class TestToLlmContext:
         assert report["card"].patterns is None  # detection skipped, not "no match"
 
         out = report.to_llm_context(include_samples=True)
-        assert "4111111111111000" not in out
-        assert "4111111111111009" not in out
+        assert "4111111111111004" not in out
+        assert "4111111111111095" not in out
 
     def test_include_samples_withholds_extremes_when_reload_lacks_evidence(self, cards, tmp_path):
         """A payload saved without pattern evidence redacts once reloaded."""
@@ -216,7 +220,7 @@ class TestToLlmContext:
         assert reloaded["card"].patterns is None  # the key was never written
 
         out = reloaded.to_llm_context(include_samples=True)
-        assert "4111111111111000" not in out
+        assert "4111111111111004" not in out
 
     def test_reload_preserves_pattern_evidence(self, cards, tmp_path):
         """`save()`/`load()` round-trips the evidence, so redaction is unchanged.
@@ -233,7 +237,7 @@ class TestToLlmContext:
         assert reloaded["qty"].patterns == []  # scanned, clean, and still provably so
 
         out = reloaded.to_llm_context(include_samples=True)
-        assert "4111111111111000" not in out  # still redacted
+        assert "4111111111111004" not in out  # still redacted
         assert "qty: integer [0" in out  # still exposed
 
     def test_scanned_column_without_matches_still_shows_extremes(self, tmp_path):

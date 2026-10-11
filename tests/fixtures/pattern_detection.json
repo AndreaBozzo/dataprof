@@ -1,0 +1,42 @@
+{
+  "configured_locale": [
+    {"locale":"de","values":["10115","80331","20095"],"expected":{"German PLZ":3},"absent":["CAP (IT)","ZIP Code (US)","French Code Postal"]},
+    {"locale":"fr","values":["10115","80331","20095"],"expected":{"French Code Postal":3},"absent":["CAP (IT)","ZIP Code (US)","German PLZ"]},
+    {"locale":"it","values":["10115","80331","20095"],"expected":{"CAP (IT)":3},"absent":["German PLZ","ZIP Code (US)","French Code Postal"]}
+  ],
+  "postcode_ambiguity": [
+    {"values":["10115","80331","20095"],"expected":{"CAP (IT)":3,"ZIP Code (US)":3,"German PLZ":3,"French Code Postal":3},"confidence":{"CAP (IT)":0.065625,"ZIP Code (US)":0.065625,"German PLZ":0.05625,"French Code Postal":0.05625},"sensitive":false}
+  ],
+  "uuid_case": [
+    {"values":["550e8400-e29b-41d4-a716-446655440000","550E8400-E29B-41D4-A716-446655440000"],"expected":{"UUID":2},"sensitive":false}
+  ],
+  "validated_counts": [
+    {"values":["4111111111111111","4111111111111111","4111111111111111","4111111111111111","4111111111111112","4111111111111112"],"expected":{"Credit Card":4},"confidence":{"Credit Card":0.6},"sensitive":true},
+    {"values":["GB82WEST12345698765432","DE89370400440532013001"],"expected":{"IBAN":1},"confidence":{"IBAN":0.9},"sensitive":true},
+    {"locale":"it","values":["12345678903","12345678903","12345678903","12345678901"],"expected":{"P.IVA (IT)":3},"sensitive":false},
+    {"locale":"it","values":["12345678903","12345678901","12345678901","12345678901"],"expected":{},"absent":["P.IVA (IT)"]},
+    {"values":["::1","::::","::::"],"expected":{"IPv6":1}},
+    {"locale":"us","values":["123-45-6789","000-45-6789","000-45-6789"],"expected":{"SSN (US)":1},"sensitive":true}
+  ],
+  "printed_iban": [
+    {"values":["GB82 WEST 1234 5698 7654 32","gb82west12345698765432","DE89\t3704 0044 0532 0130 00"],"expected":{"IBAN":3},"sensitive":true}
+  ],
+  "domestic_phone": [
+    {"locale":"it","values":["333 1234567","02 12345678","+39 333 1234567","0039 02 12345678","3331234567","0212345678"],"expected":{"Phone (IT)":4},"sensitive":true}
+  ],
+  "decimals_are_not_phones": [
+    {"locale":"it","values":["310.123456","311.131375","01.12345","02.12346"],"expected":{},"absent":["Phone (IT)"],"sensitive":false},
+    {"values":["310.123456","311.131375","01.12345","02.12346"],"expected":{},"absent":["Phone (IT)"],"sensitive":false}
+  ],
+  "coordinate_decimal_points": [
+    {"values":["45.4642,9.1900","-90.0,+180.0","0.0,0.0","10,50","10.5,50","100.0,20.0","45.0,181.0"],"expected":{"Geographic Coordinates":3}},
+    {"values":["10,50","20,75","54,10"],"expected":{},"absent":["Geographic Coordinates"]}
+  ],
+  "complete_iso_datetime": [
+    {"values":["2024-01-15T10:30:00","2024-01-15T10:30:00Z","2024-01-15T10:30:00z","2024-01-15T10:30:00.123","2024-01-15T10:30:00.123Z","2024-01-15T10:30:00+02:00","2024-01-15T10:30:00-05:30","2024-01-15T10:","2024-01-15T10:30","2024-01-15T10:30:00junk","2024-01-15T10:30:00+24:00","2024-02-30T10:30:00Z","2024-01-15T25:30:00Z"],"expected":{"DateTime (ISO)":7}}
+  ],
+  "slash_date_label": [
+    {"values":["01/14/2024","02/15/2024","03/16/2024"],"expected":{"Date (slash)":3},"absent":["Date (EU slash)"]},
+    {"values":["14/01/2024","15/02/2024","16/03/2024"],"expected":{"Date (slash)":3},"absent":["Date (EU slash)"]}
+  ]
+}

@@ -161,6 +161,8 @@ def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
 _METRIC_SEMANTICS = {
     "text_length_unit": ("unicode_scalar",),
     "null_tokens": ("common_markers",),
+    "pattern_match_count": ("validated",),
+    "shape_moments": ("adjusted_sample",),
 }
 
 

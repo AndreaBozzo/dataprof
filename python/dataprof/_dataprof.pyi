@@ -126,7 +126,7 @@ class ProgressEvent:
 # --- Data types ---
 
 class Pattern:
-    """Detected pattern statistics."""
+    """Detected pattern statistics, counting only semantically validated matches."""
 
     name: str
     regex: str

@@ -902,6 +902,14 @@
           "$ref": "#/$defs/NullTokenSet",
           "description": "The text values counted as null, which every `null_count` and every\ncompleteness figure depend on.\n\nAbsent means not recorded: the release that wrote the report counted\nonly empty, `null` and `nan`, or recorded nothing at all."
         },
+        "pattern_match_count": {
+          "$ref": "#/$defs/PatternMatchCount",
+          "description": "What every pattern's `match_count` and `match_percentage` count.\n\nAbsent means not recorded: through 0.12 they counted every regular\nexpression match, validated or not."
+        },
+        "shape_moments": {
+          "$ref": "#/$defs/ShapeMomentEstimator",
+          "description": "The estimator behind every column's `skewness` and `kurtosis`.\n\nAbsent means not recorded: through 0.12 both used a form that matches\nneither the population nor the adjusted estimators."
+        },
         "text_length_unit": {
           "$ref": "#/$defs/TextLengthUnit",
           "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
@@ -1081,13 +1089,13 @@
           "type": "number"
         },
         "match_count": {
-          "description": "Number of values matching this pattern",
+          "description": "Number of analyzed non-null values passing the regex and semantic validator.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         },
         "match_percentage": {
-          "description": "Percentage of non-null values matching (0.0--100.0)",
+          "description": "Percentage of analyzed non-null values passing validation (0.0--100.0).",
           "format": "double",
           "type": "number"
         },
@@ -1146,6 +1154,16 @@
         {
           "const": "other",
           "description": "Uncategorized patterns.",
+          "type": "string"
+        }
+      ]
+    },
+    "PatternMatchCount": {
+      "description": "What a pattern's `match_count` counts, as recorded in a report's metric\nsemantics.\n\nOnly the current definition has a value. Through 0.12 the count was every\nvalue the regular expression matched, whether or not the pattern's validator\naccepted it, and those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "validated",
+          "description": "Values that pass the regular expression and, where the pattern has\none, its semantic validator.",
           "type": "string"
         }
       ]
@@ -2447,6 +2465,16 @@
         {
           "const": "temporal",
           "description": "A [`SemanticHints::temporal_columns`] entry.",
+          "type": "string"
+        }
+      ]
+    },
+    "ShapeMomentEstimator": {
+      "description": "The estimator behind `skewness` and `kurtosis`, as recorded in a report's\nmetric semantics.\n\nOnly the current estimator has a value. Through 0.12 both divided\npopulation moments by the sample standard deviation, a form matching\nneither the population nor the adjusted estimators, and those releases\nrecorded no definition.",
+      "oneOf": [
+        {
+          "const": "adjusted_sample",
+          "description": "Adjusted Fisher-Pearson sample skewness from three values and adjusted\nFisher sample excess kurtosis from four, as pandas computes them.",
           "type": "string"
         }
       ]

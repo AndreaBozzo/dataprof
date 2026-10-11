@@ -294,7 +294,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records no `null_tokens`: it counted only empty, `null` and `nan` as missing |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -496,14 +496,16 @@ rather than of the value, and is reported at the source level instead.
 
 ## `Pattern`
 
-Represents a statistical pattern match (regex) found in a column.
+Represents a pattern found in a column. Matches pass both the regular expression
+and the semantic validator, when the detector has one. The counts and percentages
+describe the analyzed non-null values, which may be a sample of the column.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `name` | `str` | Name of the pattern (e.g. `"email"`, `"url"`) |
+| `name` | `str` | Name of the pattern (e.g. `"Email"`, `"URL"`) |
 | `regex` | `str` | Regular expression used for matching |
-| `match_count` | `int` | Number of rows matching the pattern |
-| `match_percentage` | `float` | Percentage of non-null rows matching (0.0--100.0) |
+| `match_count` | `int` | Number of analyzed non-null values passing validation |
+| `match_percentage` | `float` | Percentage of analyzed non-null values passing validation (0.0--100.0) |
 
 ## Configuration
 

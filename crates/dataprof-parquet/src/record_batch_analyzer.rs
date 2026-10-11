@@ -564,17 +564,17 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: String) {
+    fn offer_sample(&mut self, value: &str) {
         if !is_null_like_token(value.trim()) {
             let matches_date = self.should_track_date_matches()
-                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal);
+                && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Temporal);
             if matches_date {
                 self.date_matched_values += 1;
             }
             if self.positive_hint || self.temporal_hint {
                 self.hint_checked_values += 1;
                 if self.positive_hint
-                    && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Positive)
+                    && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Positive)
                 {
                     self.positive_matched_values += 1;
                 }
@@ -832,7 +832,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(value);
                 }
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -851,7 +851,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(value_f64);
                 }
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -864,7 +864,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -877,7 +877,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -890,7 +890,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -903,7 +903,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -916,7 +916,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -929,7 +929,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -942,7 +942,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -955,7 +955,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -979,7 +979,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
         Ok(())
@@ -1000,7 +1000,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
         Ok(())
@@ -1017,7 +1017,7 @@ impl ColumnAnalyzer {
                 }
                 let value_str = if value { "True" } else { "False" };
                 self.cardinality.insert(value_str);
-                self.offer_sample(value_str.to_string());
+                self.offer_sample(value_str);
             }
         }
         Ok(())
@@ -1031,7 +1031,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(days as f64);
                 let date_str = formatter.value(index).to_string();
                 self.cardinality.insert(&date_str);
-                self.offer_sample(date_str);
+                self.offer_sample(&date_str);
             }
         }
         Ok(())
@@ -1045,7 +1045,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(millis as f64);
                 let datetime_str = formatter.value(index).to_string();
                 self.cardinality.insert(&datetime_str);
-                self.offer_sample(datetime_str);
+                self.offer_sample(&datetime_str);
             }
         }
         Ok(())
@@ -1066,7 +1066,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1079,7 +1079,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1092,7 +1092,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1105,7 +1105,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         }
@@ -1136,7 +1136,7 @@ impl ColumnAnalyzer {
                 key.clear();
                 write!(key, "{}", formatter.value(index))?;
                 self.cardinality.insert(&key);
-                self.offer_sample(format!("<binary:{len} bytes>"));
+                self.offer_sample(&format!("<binary:{len} bytes>"));
             }
         }
         Ok(())
@@ -1159,7 +1159,7 @@ impl ColumnAnalyzer {
         // most 76 digits, far inside the f64 range.
         self.update_numeric_stats(value);
         self.cardinality.insert(&rendered);
-        self.offer_sample(rendered);
+        self.offer_sample(&rendered);
         Ok(())
     }
 
@@ -1194,7 +1194,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1207,7 +1207,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1220,7 +1220,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1233,7 +1233,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         }
@@ -1248,7 +1248,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = formatter.value(index).to_string();
                         self.update_text_stats(&value_str);
-                        self.offer_sample(value_str.clone());
+                        self.offer_sample(&value_str);
                         self.cardinality.insert_owned(value_str);
                     }
                 }
