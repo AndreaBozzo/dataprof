@@ -12,6 +12,8 @@ use dataprof_runtime::{
 mod encoding;
 mod memmap_reader;
 mod quote_state;
+#[doc(hidden)]
+pub mod row_count;
 
 pub use encoding::{EncodingDiagnostic, diagnose_non_utf8};
 pub use memmap_reader::MemoryMappedCsvReader;

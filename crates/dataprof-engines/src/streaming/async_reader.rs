@@ -257,7 +257,38 @@ impl AsyncStreamingProfiler {
         }
 
         let start = std::time::Instant::now();
-        let reader = source.into_async_read().await?;
+        let needs_total = self.stop_condition.needs_row_count() || self.progress_sink.is_active();
+        let materialized = if format == FileFormat::Csv && needs_total {
+            source.take_bytes()
+        } else {
+            Err(source)
+        };
+        let (reader, exact_total_rows) = match materialized {
+            Ok(data) => {
+                let delimiter = self.csv_delimiter;
+                let (data, count) = tokio::task::spawn_blocking(move || {
+                    let delimiter = match delimiter {
+                        Some(delimiter) => delimiter,
+                        None => dataprof_csv::detect_delimiter(std::io::Cursor::new(&data))
+                            .map_err(DataProfilerError::io_error)?,
+                    };
+                    let count = Some(
+                        dataprof_csv::row_count::csv_record_count(&data[..], delimiter, b'"')?
+                            .saturating_sub(1),
+                    );
+                    Ok::<_, DataProfilerError>((data, count))
+                })
+                .await
+                .map_err(|error| DataProfilerError::StreamingError {
+                    message: format!("Row counter task failed: {error}"),
+                    suggestion: "Retry profiling the source".into(),
+                })??;
+                let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>> =
+                    Box::pin(std::io::Cursor::new(data));
+                (reader, count)
+            }
+            Err(source) => (source.into_async_read().await?, None),
+        };
 
         let bytes_per_chunk = self.bytes_per_chunk();
         let (tx, rx) = mpsc::channel::<ParsedChunk>(self.channel_capacity);
@@ -292,7 +323,9 @@ impl AsyncStreamingProfiler {
         });
 
         // Process chunks on the current task
-        let process_result = self.process_chunks(rx, source_info.size_hint).await;
+        let process_result = self
+            .process_chunks(rx, source_info.size_hint, exact_total_rows)
+            .await;
 
         // If processing failed, prefer the reader's error when it also failed:
         // a strict-mode malformed record aborts the reader before any data
@@ -1028,6 +1061,7 @@ impl AsyncStreamingProfiler {
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
+        exact_total_rows: Option<u64>,
     ) -> Result<
         (
             Vec<String>,
@@ -1049,7 +1083,7 @@ impl AsyncStreamingProfiler {
         let mut total_bytes: u64 = 0;
 
         // Initialize stop condition evaluator
-        let estimated_total = size_hint.map(|total| total / 50); // ~50 bytes per row
+        let mut estimated_total = exact_total_rows;
         let mut stop_eval = StopEvaluator::new(self.stop_condition.clone());
         if let Some(est) = estimated_total {
             stop_eval = stop_eval.with_estimated_total(est);
@@ -1101,12 +1135,8 @@ impl AsyncStreamingProfiler {
         // same header-only CSV invariant as the file-based engines.
         column_stats.init_columns(&headers);
 
-        // Estimate total rows for progress (if we know the total size)
-        let estimated_total_rows = size_hint.map(|total| {
-            (total as usize) / 50 // rough estimate: ~50 bytes per row
-        });
-
-        progress_tracker.emit_started(estimated_total_rows, size_hint);
+        let header_bytes = total_bytes;
+        progress_tracker.emit_started(estimated_total.map(|rows| rows as usize), size_hint);
         progress_tracker.emit_schema(headers.clone());
 
         // A row cap is a hard ceiling on what the caller authorized us to
@@ -1205,6 +1235,25 @@ impl AsyncStreamingProfiler {
             };
             let reached_eof = size_hint.is_some_and(|size| total_bytes >= size);
 
+            if exact_total_rows.is_none()
+                && let Some(size) = size_hint
+            {
+                estimated_total = dataprof_csv::row_count::observed_total_rows(
+                    size.saturating_sub(header_bytes),
+                    total_bytes.saturating_sub(header_bytes),
+                    total_rows as u64,
+                );
+                if let Some(rows) = estimated_total {
+                    stop_eval.set_estimated_total(rows);
+                }
+            }
+
+            // Schema stability is a leaf of the composed stop condition.
+            if let Some(ref mut tracker) = schema_tracker {
+                let fingerprint = column_stats.column_type_fingerprint();
+                tracker.update(fingerprint, chunk_rows as u64);
+                stop_eval.set_schema_stable_rows(tracker.consecutive_stable_rows());
+            }
             if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
                 if !reached_eof {
                     truncation_reason = stop_eval.truncation_reason();
@@ -1213,20 +1262,12 @@ impl AsyncStreamingProfiler {
                 break;
             }
 
-            // Check schema stability
-            if let Some(ref mut tracker) = schema_tracker {
-                let fingerprint = column_stats.column_type_fingerprint();
-                if tracker.update(fingerprint, chunk_rows as u64) {
-                    if !reached_eof {
-                        truncation_reason = Some(tracker.truncation_reason());
-                    }
-                    drop(rx);
-                    break;
-                }
-            }
-
             // Update progress
-            progress_tracker.emit_chunk(chunk_rows, chunk_bytes, estimated_total_rows);
+            progress_tracker.emit_chunk(
+                chunk_rows,
+                chunk_bytes,
+                estimated_total.map(|rows| rows as usize),
+            );
         }
 
         // A fixed-size sample is only final once reading stops, so it is folded

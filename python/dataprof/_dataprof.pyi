@@ -84,6 +84,7 @@ class SamplingStrategy:
 class StopCondition:
     """Composable stop condition for early termination."""
 
+    def _memory_row_limit(self) -> int | None: ...
     @staticmethod
     def max_rows(n: int) -> StopCondition: ...
     @staticmethod

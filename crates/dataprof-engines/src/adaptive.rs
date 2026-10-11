@@ -1,5 +1,36 @@
 use std::path::Path;
 
+fn can_retry_with_another_parser(error: &DataProfilerError) -> bool {
+    use std::error::Error;
+
+    if !matches!(
+        error,
+        DataProfilerError::CsvParsingError { .. } | DataProfilerError::ArrowError { .. }
+    ) {
+        return false;
+    }
+    // Both CSV parsers expose UTF-8 failures in their diagnostic text.
+    if error.to_string().to_ascii_lowercase().contains("utf-8") {
+        return false;
+    }
+    let mut cause = error.source();
+    while let Some(current) = cause {
+        if current.downcast_ref::<std::io::Error>().is_some() {
+            return false;
+        }
+        if let Some(csv_error) = current.downcast_ref::<csv::Error>()
+            && matches!(
+                csv_error.kind(),
+                csv::ErrorKind::Io(_) | csv::ErrorKind::Utf8 { .. }
+            )
+        {
+            return false;
+        }
+        cause = current.source();
+    }
+    true
+}
+
 #[cfg(feature = "parquet")]
 use dataprof_core::AnalysisOptions;
 use dataprof_core::execution::{RecoveryEvent, RecoveryKind};
@@ -152,14 +183,10 @@ impl AdaptiveProfiler {
         match result {
             Ok(report) => Ok(report),
             Err(primary_err) => {
-                // Duplicate column names are a deterministic property of the file;
-                // no engine can resolve them, so surface the clear, categorized
-                // error instead of burying it under "All engines failed".
-                if matches!(
-                    primary_err,
-                    DataProfilerError::DuplicateColumnName { .. }
-                        | DataProfilerError::InvalidConfiguration { .. }
-                ) {
+                // Only parser-specific failures can benefit from a different
+                // engine. Source, configuration and encoding failures keep
+                // their original cause and do not read the input twice.
+                if !can_retry_with_another_parser(&primary_err) {
                     return Err(primary_err);
                 }
                 // Likewise when the caller asked for strict CSV parsing: they
@@ -477,7 +504,7 @@ mod tests {
         let error = profiler
             .analyze_csv_with_runner(InternalEngineType::Incremental, |_| {
                 attempts += 1;
-                Err(DataProfilerError::streaming_error(&format!(
+                Err(DataProfilerError::arrow_error(&format!(
                     "failure {attempts}"
                 )))
             })
@@ -486,6 +513,52 @@ mod tests {
         assert!(matches!(&error, DataProfilerError::AllEnginesFailed { .. }));
         assert!(error.to_string().contains("failure 1"));
         assert!(error.to_string().contains("failure 2"));
+    }
+
+    #[test]
+    fn source_failures_never_retry_another_engine() {
+        let factories: [fn() -> DataProfilerError; 7] = [
+            || {
+                DataProfilerError::io_error(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))
+            },
+            || DataProfilerError::FileNotFound {
+                path: "missing.csv".into(),
+            },
+            || DataProfilerError::EncodingError {
+                path: "data.csv".into(),
+                detail: "invalid UTF-8".into(),
+                guess: "latin-1".into(),
+            },
+            || DataProfilerError::arrow_error("invalid UTF-8 data"),
+            || {
+                DataProfilerError::arrow_with_source(
+                    "source failed",
+                    std::io::Error::other("read failed"),
+                )
+            },
+            || DataProfilerError::streaming_error("worker failed"),
+            || DataProfilerError::from(csv::Error::from(std::io::Error::other("read failed"))),
+        ];
+        let mut wrong = Vec::new();
+        for make_error in factories {
+            let expected = make_error().to_string();
+            let mut attempts = 0;
+            let returned = AdaptiveProfiler::new()
+                .analyze_csv_with_runner(InternalEngineType::Incremental, |_| {
+                    attempts += 1;
+                    Err(make_error())
+                })
+                .unwrap_err();
+            if attempts != 1 || returned.to_string() != expected {
+                wrong.push(format!(
+                    "{expected}: {attempts} attempts, returned {returned}"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
   "columns": {
     "amount": {
       "coefficient_of_variation": 42.8,
-      "kurtosis": -1.2976,
+      "kurtosis": -1.2,
       "max": 5.9382,
       "mean": 3.4691,
       "median": 3.4691,
@@ -25,7 +25,7 @@
     },
     "score": {
       "coefficient_of_variation": 18.76,
-      "kurtosis": -1.3775,
+      "kurtosis": -1.2969,
       "max": 17.407,
       "mean": 13.5367,
       "median": 13.7035,
@@ -37,7 +37,7 @@
         "q2": 13.7,
         "q3": 16.17
       },
-      "skewness": 0.0834,
+      "skewness": 0.0906,
       "std_dev": 2.5394,
       "variance": 6.4484
     }

@@ -25,6 +25,16 @@ impl PyStopCondition {
 
 #[pymethods]
 impl PyStopCondition {
+    /// Internal adapter for routes that can enforce a row cap only.
+    fn _memory_row_limit(&self) -> PyResult<Option<u64>> {
+        if !self.inner.is_row_limit_only() {
+            return Err(PyValueError::new_err(
+                "In-memory sources support only row-limit stop conditions. Use a file or async stream for other stop conditions.",
+            ));
+        }
+        Ok(self.inner.max_rows())
+    }
+
     /// Stop after processing this many rows.
     #[staticmethod]
     fn max_rows(n: u64) -> PyResult<Self> {
@@ -108,7 +118,7 @@ impl PyStopCondition {
         }
     }
 
-    /// Preset: stop after 50K rows, 50MB, or 95% confidence.
+    /// Preset: stop after 50K rows, 50MB, or 95% of the estimated row count.
     #[staticmethod]
     fn quality_sample() -> Self {
         Self {

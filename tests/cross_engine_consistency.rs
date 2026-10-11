@@ -606,7 +606,8 @@ fn test_small_data_not_flagged_approximate() {
         panic!("age should be numeric");
     };
     assert_eq!(
-        n.is_approximate, None,
+        n.is_approximate,
+        Some(false),
         "full-coverage stats are not approximate"
     );
     assert_eq!(n.min, 20.0);

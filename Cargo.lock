@@ -851,6 +851,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "bytes",
+ "chrono",
  "criterion",
  "dataprof-core",
  "dataprof-csv",

@@ -899,13 +899,17 @@ mod tests {
     /// `start_date`/`end_date` columns of `rows` rows, where every
     /// `inverted_every`-th row ends before it starts.
     fn date_pairs(rows: usize, inverted_every: usize) -> (Vec<String>, Vec<String>) {
+        use chrono::Datelike;
+        // Keep this ordering fixture fresh, so staleness cannot flatten its
+        // score interval as the calendar advances.
+        let year = chrono::Utc::now().year() - 1;
         (0..rows)
             .map(|row| {
-                let start = format!("2021-03-{:02}", 2 + row % 27);
+                let start = format!("{year}-03-{:02}", 2 + row % 27);
                 let end = if row % inverted_every == 0 {
-                    "2021-03-01".to_string()
+                    format!("{year}-03-01")
                 } else {
-                    format!("2021-04-{:02}", 1 + row % 28)
+                    format!("{year}-04-{:02}", 1 + row % 28)
                 };
                 (start, end)
             })

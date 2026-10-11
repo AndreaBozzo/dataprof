@@ -31,9 +31,8 @@ impl EncodingDiagnostic {
     }
 }
 
-/// How many leading bytes [`diagnose_non_utf8`] inspects. Large enough to locate
-/// the offending byte in the common case, bounded so the error path never reads
-/// an entire large file.
+/// Prefix budget for [`diagnose_non_utf8`]. Up to three additional bytes finish
+/// a UTF-8 sequence crossing its boundary, keeping the error path bounded.
 const ENCODING_SNIFF_LIMIT: usize = 1 << 20; // 1 MiB
 
 /// Inspect a file that failed UTF-8 decoding and guess its encoding.
@@ -48,11 +47,12 @@ pub fn diagnose_non_utf8(path: &Path) -> Option<EncodingDiagnostic> {
     // decode-audit: unknown — this runs only to enrich an error the caller
     // already has. If the file cannot be reopened/read for sniffing, returning
     // None keeps that original engine error, so the failure is surfaced, not lost.
-    let file = std::fs::File::open(path).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
     let mut sample = Vec::new();
     // decode-audit: unknown — as above; a read failure abandons the guess and
     // preserves the caller's original error rather than swallowing it.
-    file.take(ENCODING_SNIFF_LIMIT as u64)
+    file.by_ref()
+        .take(ENCODING_SNIFF_LIMIT as u64)
         .read_to_end(&mut sample)
         .ok()?;
 
@@ -71,6 +71,25 @@ pub fn diagnose_non_utf8(path: &Path) -> Option<EncodingDiagnostic> {
 
     // A valid-UTF-8 prefix means the fault, if any, is beyond the sample — do not
     // claim an encoding problem we cannot see.
+    // A capped prefix can split a valid four-byte UTF-8 sequence. Read at most
+    // three more bytes before deciding whether that sequence is invalid; at
+    // EOF an incomplete sequence is a real encoding error.
+    if sample.len() == ENCODING_SNIFF_LIMIT
+        && let Err(err) = std::str::from_utf8(&sample)
+        && err.error_len().is_none()
+    {
+        let sequence_start = err.valid_up_to();
+        // An incomplete UTF-8 error always starts at a valid leading byte.
+        let sequence_length = match sample[sequence_start] {
+            0xF0..=0xF4 => 4,
+            0xE0..=0xEF => 3,
+            _ => 2,
+        };
+        let remaining = sequence_length - (sample.len() - sequence_start);
+        // decode-audit: unknown — an unsuccessful lookahead preserves the
+        // original engine error, just like an unsuccessful prefix read.
+        file.take(remaining as u64).read_to_end(&mut sample).ok()?;
+    }
     let first_invalid_byte = match std::str::from_utf8(&sample) {
         Ok(_) => return None,
         Err(err) => Some(err.valid_up_to()),
