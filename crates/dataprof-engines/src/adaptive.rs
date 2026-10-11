@@ -561,6 +561,61 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn actual_arrow_csv_read_failure_preserves_io_cause_without_retry() {
+        use arrow::csv::ReaderBuilder;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::error::Error;
+        use std::sync::Arc;
+
+        struct FailedRead;
+        impl std::io::Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))
+            }
+        }
+
+        // The profiler uses ReaderBuilder with an explicit schema, not
+        // Format::infer_schema's string-only map_csv_error path in Arrow 60.
+        let make_error = || {
+            let schema = Arc::new(Schema::new(vec![Field::new("value", DataType::Utf8, true)]));
+            let error = ReaderBuilder::new(schema)
+                .with_header(true)
+                .build(FailedRead)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap_err();
+            assert!(matches!(error, arrow::error::ArrowError::IoError(..)));
+            DataProfilerError::arrow_with_source(error.to_string(), error)
+        };
+        let expected = make_error().to_string();
+        let mut attempts = 0;
+        let returned = AdaptiveProfiler::new()
+            .analyze_csv_with_runner(InternalEngineType::Arrow, |_| {
+                attempts += 1;
+                Err(make_error())
+            })
+            .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert_eq!(returned.to_string(), expected);
+        assert_eq!(
+            returned
+                .source()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied,
+        );
+    }
+
     #[test]
     fn test_select_engine_few_columns() {
         let profiler = AdaptiveProfiler::new();

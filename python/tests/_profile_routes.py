@@ -51,6 +51,17 @@ def _routes(tmp_path: Path, **kwargs: Any) -> dict[str, Route]:
 
         return run_profile(pa.table({NAME: pa.array(values, pa.string())}))
 
+    def arrow_stream(label: str, values: list[str]) -> Any:
+        import pyarrow as pa
+
+        return run_profile(pa.table({NAME: pa.array(values, pa.string())}).to_reader())
+
+    def duckdb(label: str, values: list[str]) -> Any:
+        import duckdb
+        import pyarrow as pa
+
+        return run_profile(duckdb.from_arrow(pa.table({NAME: pa.array(values, pa.string())})))
+
     def pandas(label: str, values: list[str]) -> Any:
         import pandas as pd
 
@@ -73,8 +84,11 @@ def _routes(tmp_path: Path, **kwargs: Any) -> dict[str, Route]:
     # An optional library drops only its own routes; skipping inside a route
     # would skip the whole test and every route it had not reached yet.
     optional = {"parquet": ("pyarrow", parquet_file), "arrow": ("pyarrow", arrow)}
+    optional["arrow_stream"] = ("pyarrow", arrow_stream)
     optional |= {"pandas": ("pandas", pandas), "polars": ("polars", polars)}
     for label, (module, route) in optional.items():
         if importlib.util.find_spec(module) is not None:
             routes[label] = route
+    if all(importlib.util.find_spec(module) is not None for module in ("duckdb", "pyarrow")):
+        routes["duckdb"] = duckdb
     return routes

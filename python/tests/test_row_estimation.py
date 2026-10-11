@@ -57,3 +57,25 @@ def test_confidence_means_fraction_of_logical_records(tmp_path: Path):
             if not total // 2 <= report.rows <= total // 2 + 1024:
                 wrong.append(f"[{route}] {case}: {report.rows}, expected half of {total}")
     assert not wrong, "\n".join(wrong)
+
+
+def test_exact_async_count_marks_eof(tmp_path: Path):
+    # Python supplies the buffer length; Rust also guards the no-size-hint API.
+    from dataprof.asyncio import profile_bytes, profile_file
+
+    wrong = []
+    for case, text in {
+        "small": "value\n1\n2\n3\n",
+        "chunks": "value\n" + "123456789\n" * 2000,
+    }.items():
+        path = tmp_path / f"{case}.csv"
+        path.write_bytes(text.encode())
+        options = {"chunk_size": 4096, "stop_condition": dp.StopCondition.confidence_threshold(1.0)}
+        for route, call in {
+            "bytes": profile_bytes(text.encode(), format="csv", **options),
+            "file": profile_file(path, **options),
+        }.items():
+            report = asyncio.run(call)
+            if not report.source_exhausted or report.truncation_reason is not None:
+                wrong.append(f"[{route}] {case}: {report.to_dict()['execution']}")
+    assert not wrong, "\n".join(wrong)

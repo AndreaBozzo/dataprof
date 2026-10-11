@@ -34,7 +34,7 @@ def test_every_in_memory_route_rejects_unsupported_controls(tmp_path: Path):
             "both max_rows and stop_condition",
         ),
     ]
-    memory_routes = {"dict", "rows", "arrow", "pandas", "polars"}
+    memory_routes = {"dict", "rows", "arrow", "arrow_stream", "duckdb", "pandas", "polars"}
     wrong = []
     for case, options, expected in cases:
         for label, run in _routes(tmp_path, **options).items():

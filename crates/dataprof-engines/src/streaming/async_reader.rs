@@ -1233,7 +1233,8 @@ impl AsyncStreamingProfiler {
             } else {
                 0.0
             };
-            let reached_eof = size_hint.is_some_and(|size| total_bytes >= size);
+            let reached_eof = exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
+                || size_hint.is_some_and(|size| total_bytes >= size);
 
             if exact_total_rows.is_none()
                 && let Some(size) = size_hint

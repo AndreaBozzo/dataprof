@@ -103,3 +103,44 @@ async fn async_confidence_uses_exact_bytes_or_observed_stream_density() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+#[cfg(feature = "async-streaming")]
+#[tokio::test]
+async fn exact_async_count_marks_eof_without_a_size_hint() {
+    use dataprof::{AsyncSourceInfo, AsyncStreamingProfiler, BytesSource, FileFormat};
+    let mut wrong = Vec::new();
+    for (case, bytes) in [
+        ("small", "value\n1\n2\n3\n".to_owned()),
+        ("chunks", format!("value\n{}", "123456789\n".repeat(2000))),
+    ] {
+        for size in [None, Some(bytes.len() as u64)] {
+            let info = AsyncSourceInfo::new(case, FileFormat::Csv).size_hint(size);
+            let direct = AsyncStreamingProfiler::new()
+                .chunk_size(ChunkSize::Fixed(4096))
+                .stop_condition(StopCondition::ConfidenceThreshold(1.0))
+                .analyze_stream(BytesSource::new(
+                    bytes.clone().into_bytes().into(),
+                    info.clone(),
+                ))
+                .await
+                .unwrap();
+            let facade = Profiler::new()
+                .chunk_size(ChunkSize::Fixed(4096))
+                .stop_when(StopCondition::ConfidenceThreshold(1.0))
+                .profile_stream(BytesSource::new(bytes.clone().into_bytes().into(), info))
+                .await
+                .unwrap();
+            for (route, report) in [("direct", direct), ("facade", facade)] {
+                if !report.execution.source_exhausted
+                    || report.execution.truncation_reason.is_some()
+                {
+                    wrong.push(format!(
+                        "[{route}] {case} size={size:?}: {:?}",
+                        report.execution
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

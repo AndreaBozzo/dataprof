@@ -395,7 +395,7 @@ def profile(
         "progress_interval_ms": progress_interval_ms is not None,
     }
 
-    def _warn_if_config_ignored():
+    def _resolve_memory_controls():
         nonlocal max_rows
         if stop_condition is not None:
             if max_rows is not None:
@@ -405,6 +405,9 @@ def profile(
             raise ValueError(
                 "sampling is not applied to in-memory sources. Use a file or async stream."
             )
+
+    def _warn_if_config_ignored():
+        _resolve_memory_controls()
         ignored = [k for k, v in _file_only_kwargs.items() if v]
         if ignored:
             _warnings.warn(
@@ -587,6 +590,7 @@ def profile(
             raise ValueError(
                 f"Arrow streams cannot apply: {', '.join(unsupported)}. Use max_rows for a row cap."
             )
+        _resolve_memory_controls()
         return ProfileReport(_profile_arrow(source, name or "arrow_stream", max_rows, _df_config()))
 
     # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object
