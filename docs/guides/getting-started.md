@@ -143,9 +143,12 @@ Measures whether values conform to their expected types and formats.
 
 - `data_type_consistency` -- fraction of values matching the column's type
 - `format_violations` -- values in a column's minority date format (`15/01/2024`
-  beside `2024-01-15`, checked over each column's first 50 values, whatever the
-  column is called), in a minority decimal separator (`1,5` beside `3.5`), or
-  holding both separators (`1.234,56`, counted even when every value does)
+  beside `2024-01-15`, whatever the column is called), in a minority decimal
+  separator (`1,5` beside `3.5`), or
+  holding both separators (`1.234,56`, counted even when every value does).
+  Counted over the values `values_checked` counts: the whole column, or a
+  sample of 10,000 values of a longer column on file, Arrow and DataFrame
+  input
 - `encoding_issues` -- invalid character encoding detected
 
 For a column with an inferred type, `data_type_consistency` is the fraction of

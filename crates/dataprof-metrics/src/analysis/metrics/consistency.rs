@@ -24,6 +24,23 @@ pub(crate) struct ConsistencyMetrics {
     pub inconsistent_values: usize,
 }
 
+/// Whether `value` can match one of [`DATE_FORMAT_REGEXES`]: ten characters,
+/// with a `-` or `/` third (`DD/MM/YYYY`) or fifth (`YYYY-MM-DD`).
+///
+/// A necessary condition only, so it skips the regexes for most values of a
+/// column without changing which values match them.
+fn has_date_shape(value: &str) -> bool {
+    let mut chars = value.chars();
+    let mut shape = ['\0'; 10];
+    for slot in &mut shape {
+        match chars.next() {
+            Some(c) => *slot = c,
+            None => return false,
+        }
+    }
+    chars.next().is_none() && (matches!(shape[2], '-' | '/') || matches!(shape[4], '-' | '/'))
+}
+
 /// Calculator for consistency dimension metrics
 pub(crate) struct ConsistencyCalculator;
 
@@ -177,16 +194,17 @@ impl ConsistencyCalculator {
     /// anchored whole-value dates, so a value only counts when it is a date in
     /// a minority form. Gating on an English name skipped `data_ordine` or
     /// `bestelldatum` holding the same mixture.
+    ///
+    /// Every value is read, since the count is reported against
+    /// `values_checked` and bounded as a share of it (#873).
     fn count_mixed_date_formats(values: &[String]) -> usize {
         let mut format_counts = HashMap::new();
 
-        // Use trim() for consistent whitespace handling
-        let non_empty: Vec<&String> = values.iter().filter(|s| !s.trim().is_empty()).collect();
-
-        let sample_size = 50.min(non_empty.len());
-
-        for value in non_empty.iter().take(sample_size) {
+        for value in values {
             let trimmed = value.trim();
+            if !has_date_shape(trimmed) {
+                continue;
+            }
             for (format_name, regex) in DATE_FORMAT_REGEXES.iter() {
                 if regex.is_match(trimmed) {
                     *format_counts.entry(*format_name).or_insert(0) += 1;
@@ -597,5 +615,63 @@ mod tests {
 
         assert_eq!(metrics.values_checked, 3);
         assert_eq!(metrics.data_type_consistency, 100.0);
+    }
+
+    #[test]
+    fn mixed_date_formats_are_counted_over_every_value() {
+        let iso = |day: usize| format!("2024-03-{:02}", 1 + day % 28);
+        let slash = |day: usize| format!("{:02}/03/2024", 1 + day % 28);
+        // The minority fills the first 50 values, so a count over that prefix
+        // sees one format and reports nothing.
+        let minority_first: Vec<String> = (0..300)
+            .map(|index| if index < 50 { iso(index) } else { slash(index) })
+            .collect();
+        // One value in six in the minority form, spread through the column.
+        let spread: Vec<String> = (0..300)
+            .map(|index| {
+                if index % 6 == 0 {
+                    slash(index)
+                } else {
+                    iso(index)
+                }
+            })
+            .collect();
+
+        for (label, values) in [("minority first", minority_first), ("spread", spread)] {
+            assert_eq!(
+                ConsistencyCalculator::count_mixed_date_formats(&values),
+                50,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_date_shape_admits_every_value_a_format_pattern_matches() {
+        let values = [
+            "2024-03-15",
+            "15/03/2024",
+            "15-03-2024",
+            "2024/03/15",
+            // `\d` is any Unicode decimal digit.
+            "٢٠٢٤-٠٣-١٥",
+            " 2024-03-15 ",
+            "2024-03-150",
+            "2024.03.15",
+            "20240315",
+            "",
+        ];
+        for value in values {
+            let matched = DATE_FORMAT_REGEXES
+                .iter()
+                .any(|(_, regex)| regex.is_match(value.trim()));
+            assert!(
+                !matched || has_date_shape(value.trim()),
+                "{value:?} matches a format but fails the shape check"
+            );
+        }
+        assert!(has_date_shape("٢٠٢٤-٠٣-١٥"));
+        assert!(!has_date_shape("2024-03-150"));
+        assert!(!has_date_shape("20240315"));
     }
 }
