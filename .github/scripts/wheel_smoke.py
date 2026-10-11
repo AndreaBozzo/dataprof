@@ -156,19 +156,23 @@ def acceptance_agent_output_is_redacted(workdir: Path) -> None:
     """Agent-facing output must never echo sensitive values. Release-critical."""
     print("acceptance: agent output redaction")
     cards = workdir / "cards.csv"
-    rows = ["card"] + [f"411111111111{1000 + i}" for i in range(10)]
+    # Luhn-valid, so the values pass the card validator, not only its regex.
+    numbers = [4111111111111004, 4111111111111012, 4111111111111020, 4111111111111038]
+    numbers += [4111111111111046, 4111111111111053, 4111111111111061, 4111111111111079]
+    numbers += [4111111111111087, 4111111111111095]
+    rows = ["card"] + [str(number) for number in numbers]
     cards.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     full = dp.profile(str(cards))
     check(
-        "4111111111111000" not in full.to_llm_context(include_samples=True),
+        "4111111111111004" not in full.to_llm_context(include_samples=True),
         "detected sensitive pattern suppresses extrema",
     )
 
     # Pattern detection skipped -> sensitivity unknown -> must fail closed.
     partial = dp.profile(str(cards), metrics=["schema", "statistics"])
     check(
-        "4111111111111000" not in partial.to_llm_context(include_samples=True),
+        "4111111111111004" not in partial.to_llm_context(include_samples=True),
         "unscanned column suppresses extrema (fail closed)",
     )
 
