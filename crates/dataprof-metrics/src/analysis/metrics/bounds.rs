@@ -805,6 +805,42 @@ mod tests {
     }
 
     #[test]
+    fn mixed_date_formats_keep_the_full_source_score_within_the_bounds_of_its_samples() {
+        // One value in six is a slash date in an ISO column. The format count
+        // read only the first 50 values, so it reported a fraction of the
+        // minority, and an interval built on all checked values sat above the
+        // source score (#873).
+        let source: Vec<String> = (0..20_000)
+            .map(|index| {
+                if index % 6 == 0 {
+                    format!("{:02}/03/2024", 1 + index % 28)
+                } else {
+                    format!("2024-03-{:02}", 1 + index % 28)
+                }
+            })
+            .collect();
+        let minority = source.iter().filter(|value| value.contains('/')).count();
+        let exact = 100.0 - 100.0 * minority as f64 / source.len() as f64;
+        let profiles = vec![profile("order_date", DataType::Date, 20_000, 0)];
+        let full = HashMap::from([("order_date".to_string(), source.clone())]);
+        let scored = score(&full, &profiles, QualityDimension::Consistency);
+        assert!((scored - exact).abs() < 1e-9, "{scored} against {exact}");
+
+        for seed in 0..25 {
+            let retained =
+                HashMap::from([("order_date".to_string(), sample(&source, 2_000, seed))]);
+            let bound = interval(
+                &bounds_for(&retained, &profiles),
+                QualityDimension::Consistency,
+            );
+            assert!(
+                contains(bound, exact),
+                "seed {seed}: {exact} outside {bound:?}"
+            );
+        }
+    }
+
+    #[test]
     fn columns_count_by_their_size_in_the_source_not_in_the_sample() {
         // `dense` fills its reservoir from 20,000 values; `sparse` has 1,000
         // non-null values, all retained. The sample holds as many of each, so
