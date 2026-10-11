@@ -453,14 +453,15 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
         // `infer_type`. Without it a value that arrived padded — CSV parsing
         // does not trim by default — was a date to the buffered engines and
         // text to this one, which is the same cross-engine split the shared
-        // grammar exists to close.
+        // grammar exists to close. Over every value, as `infer_type` counts and
+        // as the shares above do: a column whose first 100 values were dates
+        // was a date here and text everywhere else (#915).
         let date_like_count = non_empty
             .iter()
-            .take(100)
             .filter(|s| looks_like_date(s.trim()))
             .count();
 
-        if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
+        if date_like_count as f64 / non_empty.len() as f64 > 0.7 {
             return DataType::Date;
         }
 
