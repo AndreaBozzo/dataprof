@@ -936,6 +936,7 @@ dependencies = [
  "csv",
  "dataprof-core",
  "dataprof-csv",
+ "dataprof-json",
  "dataprof-parquet",
  "dataprof-runtime",
  "log",

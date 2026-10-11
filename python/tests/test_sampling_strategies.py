@@ -211,4 +211,3 @@ def test_an_explicit_no_op_strategy_is_accepted_everywhere(csv_path, tmp_path):
     jsonl = tmp_path / "data.jsonl"
     jsonl.write_text("".join(f'{{"id":{i}}}\n' for i in range(50)))
     assert dp.profile(str(jsonl), sampling=S.none()).rows == 50
-
