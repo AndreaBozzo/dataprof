@@ -621,8 +621,8 @@ mod tests {
     fn mixed_date_formats_are_counted_over_every_value() {
         let iso = |day: usize| format!("2024-03-{:02}", 1 + day % 28);
         let slash = |day: usize| format!("{:02}/03/2024", 1 + day % 28);
-        // The minority comes first, then a majority it would lead within any
-        // prefix of 50 values.
+        // The minority fills the first 50 values, so a count over that prefix
+        // sees one format and reports nothing.
         let minority_first: Vec<String> = (0..300)
             .map(|index| if index < 50 { iso(index) } else { slash(index) })
             .collect();
