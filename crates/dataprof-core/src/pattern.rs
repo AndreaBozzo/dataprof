@@ -7,9 +7,9 @@ pub struct Pattern {
     pub name: String,
     /// Regex used for detection
     pub regex: String,
-    /// Number of values matching this pattern
+    /// Number of analyzed non-null values passing the regex and semantic validator.
     pub match_count: usize,
-    /// Percentage of non-null values matching (0.0--100.0)
+    /// Percentage of analyzed non-null values passing validation (0.0--100.0).
     pub match_percentage: f64,
     /// Semantic category (e.g. contact, network, financial)
     pub category: PatternCategory,

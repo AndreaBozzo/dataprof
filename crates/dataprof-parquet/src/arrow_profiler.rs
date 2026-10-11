@@ -643,7 +643,7 @@ impl ColumnAnalyzer {
         if dataprof_metrics::value_matches_hint(&value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
-        self.sample_values.offer(value);
+        self.sample_values.offer(&value);
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {

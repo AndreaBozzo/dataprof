@@ -1081,13 +1081,13 @@
           "type": "number"
         },
         "match_count": {
-          "description": "Number of values matching this pattern",
+          "description": "Number of analyzed non-null values passing the regex and semantic validator.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         },
         "match_percentage": {
-          "description": "Percentage of non-null values matching (0.0--100.0)",
+          "description": "Percentage of analyzed non-null values passing validation (0.0--100.0).",
           "format": "double",
           "type": "number"
         },

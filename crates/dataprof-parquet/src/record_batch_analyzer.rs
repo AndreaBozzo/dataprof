@@ -583,7 +583,7 @@ impl ColumnAnalyzer {
                 }
             }
         }
-        self.sample_values.offer(value);
+        self.sample_values.offer(&value);
     }
 
     /// Whether this column's text rendering is an *encoding* of its values

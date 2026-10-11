@@ -496,14 +496,16 @@ rather than of the value, and is reported at the source level instead.
 
 ## `Pattern`
 
-Represents a statistical pattern match (regex) found in a column.
+Represents a pattern found in a column. Matches pass both the regular expression
+and the semantic validator, when the detector has one. The counts and percentages
+describe the analyzed non-null values, which may be a sample of the column.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `name` | `str` | Name of the pattern (e.g. `"email"`, `"url"`) |
+| `name` | `str` | Name of the pattern (e.g. `"Email"`, `"URL"`) |
 | `regex` | `str` | Regular expression used for matching |
-| `match_count` | `int` | Number of rows matching the pattern |
-| `match_percentage` | `float` | Percentage of non-null rows matching (0.0--100.0) |
+| `match_count` | `int` | Number of analyzed non-null values passing validation |
+| `match_percentage` | `float` | Percentage of analyzed non-null values passing validation (0.0--100.0) |
 
 ## Configuration
 

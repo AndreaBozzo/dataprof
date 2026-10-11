@@ -5,6 +5,16 @@ use dataprof_core::{LexicalClass, TypeHomogeneity};
 
 use crate::types::DataType;
 
+// Date grammar shared by type inference and the date patterns in `patterns.rs`,
+// so a value is a date to both or to neither.
+pub(crate) const DATE_ISO_PATTERN: &str = r"^\d{4}-\d{2}-\d{2}$";
+pub(crate) const DATE_SLASH_PATTERN: &str = r"^\d{2}/\d{2}/\d{4}$";
+pub(crate) const DATE_DASH_PATTERN: &str = r"^\d{2}-\d{2}-\d{4}$";
+pub(crate) const DATE_YEAR_SLASH_PATTERN: &str = r"^\d{4}/\d{2}/\d{2}$";
+pub(crate) const DATE_DOT_PATTERN: &str = r"^\d{2}\.\d{2}\.\d{4}$";
+pub(crate) const ISO_DATETIME_PATTERN: &str =
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$";
+
 // Pre-compile regex patterns for better performance
 // These patterns are compiled once at startup instead of on every column analysis
 //
@@ -13,15 +23,15 @@ use crate::types::DataType;
 // See datetime.rs documentation for details on date format handling.
 static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"^\d{4}-\d{2}-\d{2}$")
+        Regex::new(DATE_ISO_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for ISO 8601 date"),
-        Regex::new(r"^\d{2}/\d{2}/\d{4}$")
+        Regex::new(DATE_SLASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD/MM/YYYY date"),
-        Regex::new(r"^\d{2}-\d{2}-\d{4}$")
+        Regex::new(DATE_DASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD-MM-YYYY date"),
-        Regex::new(r"^\d{4}/\d{2}/\d{2}$")
+        Regex::new(DATE_YEAR_SLASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for YYYY/MM/DD date"),
-        Regex::new(r"^\d{2}\.\d{2}\.\d{4}$")
+        Regex::new(DATE_DOT_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD.MM.YYYY date"),
         // RFC 3339: the `T` form with an optional fractional part and an
         // optional `Z`/`±HH:MM` offset. The offset alternatives are exactly the
@@ -33,10 +43,8 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         // column `Date` and then count every value as `invalid_date_values` —
         // the exact mismatch this pattern exists to avoid. The ISO 8601 basic
         // form (`+0200`) is absent for the same reason.
-        Regex::new(
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$",
-        )
-        .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
+        Regex::new(ISO_DATETIME_PATTERN)
+            .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
         Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
             .expect("BUG: Invalid hardcoded regex pattern for spaced ISO datetime"),
         Regex::new(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$")
