@@ -48,7 +48,6 @@ futures = "0.3.31"
 log = "0.4"
 memchr = "2.7"
 memmap2 = "0.9"
-num_cpus = "1.16"
 parquet = { version = "60.0.0", features = ["arrow"] }
 pyo3 = { version = "0.29", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
