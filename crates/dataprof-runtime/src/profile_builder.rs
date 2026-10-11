@@ -13,10 +13,9 @@ use dataprof_core::{
 };
 use dataprof_metrics::{
     analysis::inference::{
-        classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_integer_token,
-        is_null_like_token, parse_strict_boolean_token,
+        classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_inferred_date_token,
+        is_integer_token, is_null_like_token, parse_strict_boolean_token,
     },
-    analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats_with_parsed_count},
 };
@@ -458,7 +457,7 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
         // was a date here and text everywhere else (#915).
         let date_like_count = non_empty
             .iter()
-            .filter(|s| looks_like_date(s.trim()))
+            .filter(|s| is_inferred_date_token(s.trim()))
             .count();
 
         if date_like_count as f64 / non_empty.len() as f64 > 0.7 {

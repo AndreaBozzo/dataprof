@@ -598,24 +598,6 @@ pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> 
     results
 }
 
-/// Whether a string value carries one of the date forms that type a column as
-/// [`DataType::Date`](crate::types::DataType).
-///
-/// The streaming engines type their columns from sampled strings and reach this
-/// entry point; the buffered paths call
-/// [`infer_type`](crate::analysis::inference::infer_type) directly. Both now
-/// decide "is this a date" on the same set, so a file cannot be a date column
-/// through one engine and a text column through the other.
-///
-/// This used to hold its own list, which had drifted from the inference set in
-/// both directions: it lacked the two space-separated datetime forms, and its
-/// ISO datetime pattern was unanchored (`^\d{4}-\d{2}-\d{2}T\d{2}:`), so it
-/// accepted an RFC 3339 timestamp the inference set rejected — and accepted
-/// truncated values such as `2024-01-15T10:` that no parser can read.
-pub fn looks_like_date(value: &str) -> bool {
-    crate::analysis::inference::is_inferred_date_token(value)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1347,66 +1329,6 @@ mod tests {
         ];
         let patterns = detect_patterns(&data, None);
         assert!(patterns.iter().any(|p| p.name == "Date (ISO)"));
-    }
-
-    // ---- Date detection tests (looks_like_date helper) ----
-
-    #[test]
-    fn test_looks_like_date_function() {
-        // Test various date formats
-        assert!(looks_like_date("2024-01-15"));
-        assert!(looks_like_date("15/01/2024"));
-        assert!(looks_like_date("15-01-2024"));
-        assert!(looks_like_date("2024/01/15"));
-        assert!(looks_like_date("15.01.2024"));
-        assert!(looks_like_date("2024-01-15T10:30:00"));
-
-        // Test non-dates
-        assert!(!looks_like_date("not a date"));
-        assert!(!looks_like_date("12345"));
-        assert!(!looks_like_date("user@example.com"));
-    }
-
-    /// The streaming engines type their columns through `looks_like_date` and
-    /// the buffered ones through `infer_type`. Both read the same set, so the
-    /// forms one accepts are exactly the forms the other accepts.
-    #[test]
-    fn looks_like_date_matches_the_inference_grammar() {
-        for value in [
-            // Forms the old private list missed, so a column of them used to be
-            // a date through the buffered engines and text through streaming.
-            "2024-01-15T10:30:00Z",
-            "2024-01-15T10:30:00+02:00",
-            "2024-01-15T10:30:00.500-05:00",
-            "2024-01-15 10:30:00",
-            "15/01/2024 10:30:00",
-            // Forms both lists always shared.
-            "2024-01-15",
-            "15.01.2024",
-        ] {
-            assert!(looks_like_date(value), "{value:?} should look like a date");
-        }
-
-        for value in [
-            // The old list's ISO datetime pattern was unanchored, so it typed
-            // these as dates and then failed to parse a single one of them.
-            "2024-01-15T10:",
-            "2024-01-15T10:30",
-            "2024-01-15T10:30:00 (UTC)",
-            // The ISO 8601 basic offset, which chrono's RFC 3339 parser rejects.
-            "2024-01-15T10:30:00+0200",
-            // Offsets chrono rejects as out of range. A grammar that took these
-            // would type the column `Date` and then fail to parse a value of it.
-            "2024-01-15T10:30:00+24:00",
-            "2024-01-15T10:30:00+99:99",
-            "2024-01-15T10:30:00-00:60",
-            "not a date",
-        ] {
-            assert!(
-                !looks_like_date(value),
-                "{value:?} should not look like a date"
-            );
-        }
     }
 
     #[test]
