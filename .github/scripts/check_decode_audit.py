@@ -23,7 +23,6 @@ from pathlib import Path
 # becomes a silently wrong profile. Keep this list narrow and intentional.
 AUDITED_PATHS = [
     "crates/dataprof-db/src/connectors",
-    "crates/dataprof-db/src/streaming.rs",
     "crates/dataprof-db/src/lib.rs",
     "crates/dataprof-parquet/src",
     "crates/dataprof-json/src",

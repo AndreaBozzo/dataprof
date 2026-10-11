@@ -15,11 +15,11 @@ breaking public API change.
 | --- | --- |
 | Main profiler API | `Profiler`, `ProfilerConfig`, `EngineType`, `quick_quality_check`, `quick_quality_check_source` |
 | Partial file APIs | `infer_schema`, `quick_row_count`, `ColumnSchema`, `CountMethod`, `RowCountEstimate`, `SchemaResult` |
-| Error and config primitives | `DataProfilerError`, `DataprofConfig`, `DataprofConfigBuilder`, `InputValidator`, `ValidationError` |
+| Error and config primitives | `DataProfilerError`, `IsoQualityConfig`, `QualityScoreWeights`, `validate_unique_column_names` |
 | Execution controls | `ChunkSize`, `SamplingStrategy`, `StopCondition`, `StopEvaluator`, `ProgressEvent`, `ProgressSink` |
-| Core report model | `ProfileReport`, `ColumnProfile`, `ColumnStats`, `DataSource`, `FileFormat`, `DataType`, `ExecutionMetadata`, `RecoveryEvent`, `RecoveryKind`, `MetricPack`, `OutputFormat`, `Pattern`, `PatternCategory`, `QualityAssessment`, `QualityDimension`, `QualityMetrics`, `QueryEngine`, `TruncationReason` |
+| Core report model | `ProfileReport`, `ColumnProfile`, `ColumnStats`, `DataSource`, `FileFormat`, `DataType`, `ExecutionMetadata`, `RecoveryEvent`, `RecoveryKind`, `MetricPack`, `Pattern`, `PatternCategory`, `QualityAssessment`, `QualityDimension`, `QualityMetrics`, `QueryEngine`, `TruncationReason` |
 | Quality metric DTOs | `AccuracyMetrics`, `CompletenessMetrics`, `ConsistencyMetrics`, `MetricConfidence`, `TimelinessMetrics`, `UniquenessMetrics` |
-| Format entry points | `CsvParserConfig`, `CsvDiagnostics`, `analyze_csv_file`, `analyze_csv_from_reader`, `JsonFormat`, `JsonParserConfig`, `analyze_json_file`, `analyze_json_from_reader` |
+| Format entry points | `CsvParserConfig`, `analyze_csv_file`, `analyze_csv_from_reader`, `JsonFormat`, `JsonParserConfig`, `analyze_json_file`, `analyze_json_from_reader` |
 | Analysis helpers | `MetricsCalculator`, `analyze_column_fast`, `detect_patterns`, `infer_type`, `calculate_numeric_stats`, `calculate_text_stats` |
 | Quality gate | `QualityPolicy`, `GateResult`, `Check`, `CheckBounds`, `CheckCode`, `CheckStatus`, `Evidence`, `EvidenceGap`, `Expectation`, `MetricValue`, `NotEvaluated`, `PolicyError`, `PolicyScope`, `RequiredMetric`, `Verdict` |
 
@@ -31,7 +31,7 @@ implementation crates change.
 | Feature | Exports |
 | --- | --- |
 | `parquet` | `ParquetConfig`, `analyze_parquet_with_config`, `analyze_parquet_with_quality`, `is_parquet_file` |
-| `database` | `DatabaseConfig`, `DatabaseConnector`, `DatabaseCredentials`, `MySqlConnector`, `PostgresConnector`, `RetryConfig`, `SamplingConfig`, `DbSamplingStrategy`, `SqliteConnector`, `SslConfig`, `analyze_database`, `create_connector` |
+| `database` | `DatabaseConfig`, `DatabaseConnector`, `DatabaseCredentials`, `MySqlConnector`, `PostgresConnector`, `SqliteConnector`, `SslConfig`, `analyze_database`, `create_connector` |
 | `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource`, `ReqwestSource` |
 | `parquet-async` | `HttpParquetReader`, `analyze_parquet_async_http` |
 
@@ -75,7 +75,6 @@ Downstream effects to expect when upgrading:
 | --- | --- |
 | clone a `DataProfilerError` | Propagate it by value, or clone `to_string()` if only the text is needed. |
 | construct one of the six cause-carrying variants directly | Call the matching constructor instead (`invalid_config` and `invalid_config_with_source` for `InvalidConfiguration`). |
-| call `AutoRecoveryManager::attempt_recovery` | It takes the error by value now rather than by reference. |
 | call `DataProfilerError::io_error(&err)` | Pass the error by value: `map_err(DataProfilerError::io_error)`. |
 
 ## Quality Gate Compatibility

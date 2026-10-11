@@ -4,12 +4,17 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
+    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler,
     SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
     StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
+};
+
+use dataprof_json::record::{
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, malformed_array_error,
+    non_object_record_error, read_json_record, read_jsonl_line,
 };
 
 use super::async_source::AsyncDataSource;
@@ -78,151 +83,6 @@ fn peek_non_whitespace<R: std::io::BufRead>(
         }
         reader.consume(whitespace_len);
         consumed += whitespace_len;
-    }
-}
-
-/// Build a strict-mode error for a standard JSON document that is not exactly
-/// one value. Mirrors `dataprof_json::json_document_error`.
-fn json_document_error(err: serde_json::Error) -> DataProfilerError {
-    let message = format!(
-        // One source line on purpose: see dataprof_json::json_document_error.
-        "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
-    );
-    DataProfilerError::json_parsing_with_source(message, err)
-}
-
-fn malformed_json_array_error(message: &str) -> DataProfilerError {
-    // Callers hold a message, not the decoder error: nothing to retain.
-    DataProfilerError::json_parsing_error(&format!("malformed JSON array: {message}"))
-}
-
-/// One record read from a JSON or JSONL stream.
-///
-/// This mirrors `dataprof_json::JsonRecord`; the two scanners are kept
-/// byte-for-byte equivalent so a payload profiles identically whether it
-/// arrives as a file or as an async stream.
-enum JsonRecord {
-    /// A JSON object — the only value with named fields to profile as a row.
-    Object(serde_json::Map<String, serde_json::Value>),
-    /// Valid JSON that is not an object, carrying the value's kind for the
-    /// error message.
-    NonObject(&'static str),
-    /// The bytes are not valid JSON.
-    Malformed(serde_json::Error),
-}
-
-/// Parse one JSONL line as exactly one JSON value.
-///
-/// `serde_json::from_str` requires the value to fill the whole input, so a line
-/// carrying two adjacent or space-separated values is a malformed record rather
-/// than two clean ones. Mirrors `dataprof_json::read_jsonl_line`.
-fn read_jsonl_line(line: &str) -> JsonRecord {
-    match serde_json::from_str::<serde_json::Value>(line.trim()) {
-        Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
-        Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
-        Err(err) => JsonRecord::Malformed(err),
-    }
-}
-
-/// Read one JSON value and leave the reader positioned immediately after it.
-///
-/// `first` is the value's first byte, already located by
-/// [`peek_non_whitespace`] but not yet consumed.
-fn read_json_record<R: std::io::BufRead>(
-    reader: &mut R,
-    first: u8,
-) -> Result<JsonRecord, DataProfilerError> {
-    // A number is the only JSON value that is not self-delimiting: serde finds
-    // its end by peeking one byte past it and then drops that byte along with
-    // the deserializer. Inside an array that byte is the `,` or `]` the scanner
-    // needs next, so numbers are read byte-wise instead.
-    if first == b'-' || first.is_ascii_digit() {
-        let token = read_number_token(reader)?;
-        return Ok(match serde_json::from_str::<serde_json::Value>(&token) {
-            Ok(_) => JsonRecord::NonObject("number"),
-            Err(err) => JsonRecord::Malformed(err),
-        });
-    }
-
-    let mut de = serde_json::Deserializer::from_reader(reader);
-    Ok(
-        match <serde_json::Value as serde::Deserialize>::deserialize(&mut de) {
-            Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
-            Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
-            Err(err) => JsonRecord::Malformed(err),
-        },
-    )
-}
-
-/// Read the bytes that can spell a JSON number, stopping at the first byte that
-/// cannot. The token is returned unvalidated — the caller decides whether it
-/// actually parses, so `1.2.3` stays a malformed record rather than a number.
-///
-/// Leading whitespace is consumed first: the JSONL loop locates the next
-/// value's first byte without consuming what precedes it, because serde needs
-/// that whitespace to keep its line and column context.
-fn read_number_token<R: std::io::BufRead>(reader: &mut R) -> Result<String, DataProfilerError> {
-    peek_non_whitespace(reader)?;
-    let mut token = String::new();
-    loop {
-        let (consume, token_ended) = {
-            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-            if buf.is_empty() {
-                break;
-            }
-            let consume = buf
-                .iter()
-                .take_while(|byte| is_json_number_byte(**byte))
-                .count();
-            // decode-audit: impossible — every byte accepted above is ASCII.
-            token.push_str(
-                std::str::from_utf8(&buf[..consume]).expect("JSON number bytes are ASCII"),
-            );
-            (consume, consume < buf.len())
-        };
-        reader.consume(consume);
-        if token_ended {
-            break;
-        }
-    }
-    Ok(token)
-}
-
-fn is_json_number_byte(byte: u8) -> bool {
-    byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E')
-}
-
-fn json_value_kind(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
-
-/// Build a strict-mode error for valid JSON that is not a row object. This is a
-/// distinct category from a syntax failure: the document parsed, it just does
-/// not hold records. `position` is 1-based over the records scanned so far.
-fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
-    // No source: the document parsed, it simply does not hold records.
-    DataProfilerError::json_parsing_error(&format!(
-        "non-object JSON record at position {position}: \
-         expected an object with fields to profile, found {kind}"
-    ))
-}
-
-fn drain_to_end<R: std::io::BufRead>(reader: &mut R) -> Result<usize, DataProfilerError> {
-    let mut consumed = 0;
-    loop {
-        let available = reader.fill_buf().map_err(DataProfilerError::from)?.len();
-        if available == 0 {
-            return Ok(consumed);
-        }
-        reader.consume(available);
-        consumed += available;
     }
 }
 
@@ -991,7 +851,7 @@ impl AsyncStreamingProfiler {
                     bytes_in_chunk += whitespace as u64;
                     let Some(next) = next else {
                         if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_json_array_error(
+                            return Err(malformed_array_error(
                                 "unexpected end of input before closing ']'",
                             ));
                         }
@@ -1004,7 +864,7 @@ impl AsyncStreamingProfiler {
                         if next == b']' {
                             if !allow_end {
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_json_array_error(
+                                    return Err(malformed_array_error(
                                         "trailing comma before closing ']'",
                                     ));
                                 }
@@ -1020,7 +880,7 @@ impl AsyncStreamingProfiler {
 
                         if next == b',' {
                             if error_policy == JsonErrorPolicy::Strict {
-                                return Err(malformed_json_array_error(
+                                return Err(malformed_array_error(
                                     "unexpected comma where an array value was required",
                                 ));
                             }
@@ -1101,7 +961,7 @@ impl AsyncStreamingProfiler {
                             }
                             _ => {
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_json_array_error(
+                                    return Err(malformed_array_error(
                                         "expected ',' or ']' after an array value",
                                     ));
                                 }
@@ -1120,7 +980,7 @@ impl AsyncStreamingProfiler {
                     bytes_in_chunk += whitespace as u64;
                     if trailing.is_some() {
                         if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_json_array_error(
+                            return Err(malformed_array_error(
                                 "non-whitespace content follows the closing ']'",
                             ));
                         }
@@ -1280,7 +1140,7 @@ impl AsyncStreamingProfiler {
                     break;
                 }
 
-                if !sampler.accept(RowView::new(&headers, &values)) {
+                if !sampler.accept() {
                     continue;
                 }
 

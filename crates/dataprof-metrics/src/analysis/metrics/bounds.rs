@@ -621,7 +621,7 @@ mod tests {
         profiles: &[ColumnProfile],
     ) -> super::super::BifurcatedResult {
         MetricsCalculator::new()
-            .calculate_bifurcated_metrics_with_all_semantic_hints(
+            .calculate_bifurcated_metrics_with_hints(
                 data,
                 profiles,
                 None,
@@ -767,7 +767,7 @@ mod tests {
         let mut thresholds = IsoQualityConfig::default();
         thresholds.score_weights.uniqueness = 0.0;
         let result = MetricsCalculator::with_thresholds(thresholds)
-            .calculate_bifurcated_metrics_with_all_semantic_hints(
+            .calculate_bifurcated_metrics_with_hints(
                 &data,
                 &profiles,
                 None,

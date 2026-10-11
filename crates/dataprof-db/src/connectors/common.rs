@@ -136,23 +136,19 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
 /// The result comes from a single execution. Paging it as `LIMIT n OFFSET k`
 /// executions with no order of their own let pages overlap and skip rows: on
 /// PostgreSQL a sequential scan of a large table starts near where the previous
-/// one stopped (#887). The connector runs a separate `COUNT(*)` over the query
-/// beforehand, for `$total_rows`. `$batch_size` only sets how often progress is
-/// logged.
+/// one stopped (#887). `$batch_size` only sets how often progress is logged.
 #[macro_export]
 macro_rules! streaming_profile_loop {
-    ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {
-        $crate::streaming_profile_loop!($pool, $query, $batch_size, $total_rows, $db_name, [])
+    ($pool:expr, $query:expr, $batch_size:expr, $db_name:literal) => {
+        $crate::streaming_profile_loop!($pool, $query, $batch_size, $db_name, [])
     };
-    ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
+    ($pool:expr, $query:expr, $batch_size:expr, $db_name:literal,
      [$($backend_ty:ty),* $(,)?]) => {{
         use futures::TryStreamExt;
         use sqlx::{Column, Executor, Row};
         use $crate::connectors::common::build_select_query;
-        use $crate::streaming::StreamingProgress;
 
         let select_query = build_select_query($query)?;
-        let mut progress = StreamingProgress::new(Some($total_rows as u64));
         // Describe the query before fetching rows. Row metadata is unavailable
         // when the result is empty, but projection still needs the source
         // schema to validate duplicate and unknown requested names.
@@ -175,17 +171,10 @@ macro_rules! streaming_profile_loop {
         // named empty columns, and values are filed by position in query order.
         let mut columns = $crate::QueryColumns::with_names(column_names.clone(), 0);
         let mut rows = sqlx::query(&select_query).fetch($pool);
+        let mut rows_read = 0usize;
         let mut log_progress = |read: usize| {
-            progress.update(read as u64);
-            if let Some(percentage) = progress.percentage() {
-                log::info!(
-                    "{} streaming progress: {:.1}% ({}/{} rows)",
-                    $db_name,
-                    percentage,
-                    progress.processed_rows,
-                    $total_rows
-                );
-            }
+            rows_read += read;
+            log::info!("{} streaming progress: {} rows read", $db_name, rows_read);
         };
         let mut unlogged_rows = 0usize;
 
@@ -264,21 +253,6 @@ macro_rules! process_rows_to_columns {
     }};
 }
 
-/// Build a count query for a given table or query
-#[allow(dead_code)]
-pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
-    if query.trim().to_uppercase().starts_with("SELECT") {
-        let validated_query = validate_base_query(query)?;
-        Ok(format!(
-            "SELECT COUNT(*) FROM ({}) as count_subquery",
-            validated_query
-        ))
-    } else {
-        validate_sql_identifier(query)?;
-        Ok(format!("SELECT COUNT(*) FROM {}", query))
-    }
-}
-
 /// Build the statement a query or table name is profiled with.
 #[allow(dead_code)]
 pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
@@ -293,19 +267,6 @@ pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_build_count_query_table() {
-        let result = build_count_query("users").unwrap();
-        assert_eq!(result, "SELECT COUNT(*) FROM users");
-    }
-
-    #[test]
-    fn test_build_count_query_select() {
-        let result = build_count_query("SELECT * FROM users WHERE active = true").unwrap();
-        assert!(result.contains("SELECT COUNT(*) FROM"));
-        assert!(result.contains("count_subquery"));
-    }
 
     #[test]
     fn test_build_select_query() {

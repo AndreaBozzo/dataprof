@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use dataprof::{
     ChunkSize, CsvParserConfig, DataSource, DataType, EngineType, FileFormat, JsonFormat,
-    JsonParserConfig, LexicalClass, Locale, MetricPack, OutputFormat, Profiler, ProfilerConfig,
-    ProgressSink, QualityDimension, SamplingStrategy, StopCondition, TypeHomogeneity,
-    analyze_column, analyze_column_fast, analyze_structure, calculate_numeric_stats,
-    calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, lexical_class,
+    JsonParserConfig, LexicalClass, Locale, MetricPack, Profiler, ProfilerConfig, ProgressSink,
+    QualityDimension, SamplingStrategy, StopCondition, TypeHomogeneity, analyze_column,
+    analyze_column_fast, analyze_structure, calculate_numeric_stats, calculate_text_stats,
+    classify_lexical_forms, detect_patterns, infer_type, lexical_class,
 };
 
 #[test]
@@ -35,7 +35,6 @@ fn stable_facade_builder_surface_compiles() {
 
     assert!(source.is_file());
     assert_eq!(FileFormat::Csv.to_string(), "csv");
-    assert!(matches!(OutputFormat::Json, OutputFormat::Json));
 }
 
 #[test]

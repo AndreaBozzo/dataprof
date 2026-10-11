@@ -55,15 +55,7 @@ def _strategies():
     return [
         ("random", lambda: S.random(10), 10),
         ("reservoir", lambda: S.reservoir(10), 10),
-        ("stratified", lambda: S.stratified(["group"], 2), GROUPS * 2),
-        ("progressive", lambda: S.progressive(5, 0.95, 10), 10),
         ("systematic", lambda: S.systematic(10), 10),
-        ("importance", lambda: S.importance("weight", 8.0), 20),
-        (
-            "multi_stage",
-            lambda: S.multi_stage([S.systematic(2), S.reservoir(10)]),
-            10,
-        ),
     ]
 
 
@@ -149,50 +141,6 @@ def test_statistics_cover_only_the_final_sample(csv_path):
         assert report[name].total_count == 10, name
 
 
-# --- Redefined strategies ---------------------------------------------------
-
-
-def test_importance_filters_on_the_named_column(csv_path):
-    # weight cycles 0..9; only the 9s clear a threshold of 9.
-    report = dp.profile(csv_path, sampling=S.importance("weight", 9.0))
-    assert report.rows == 10
-    assert report["weight"].max == 9
-
-
-def test_importance_requires_a_column_name():
-    # The pre-0.10 signature took only a threshold. Calling it that way must
-    # fail loudly rather than silently weighing some default column.
-    with pytest.raises(TypeError):
-        S.importance(0.5)  # ty: ignore[invalid-argument-type, missing-argument]
-
-
-def test_importance_on_an_unknown_column_samples_nothing(csv_path):
-    # A row whose weight cannot be read has no stated importance. The scan still
-    # succeeds and reports an empty sample rather than inventing one.
-    report = dp.profile(csv_path, sampling=S.importance("absent", 0.0))
-    assert report.rows == 0
-
-
-def test_progressive_stops_early_on_low_variance_data(tmp_path):
-    # A constant column reaches any precision target immediately, so the
-    # strategy must stop at initial_size instead of running to max_size.
-    target = tmp_path / "constant.csv"
-    target.write_text("value\n" + "42\n" * 5_000)
-
-    report = dp.profile(str(target), sampling=S.progressive(10, 0.95, 4_000))
-    assert report.rows == 10
-
-
-def test_progressive_grows_when_the_data_is_volatile(tmp_path):
-    # Wide spread: precision arrives slowly, so the sample runs to the cap.
-    target = tmp_path / "volatile.csv"
-    rows = "\n".join(str((i * 7919) % 100_000) for i in range(20_000))
-    target.write_text("value\n" + rows + "\n")
-
-    report = dp.profile(str(target), sampling=S.progressive(10, 0.999, 500))
-    assert report.rows == 500
-
-
 # --- Composed with a row cap ------------------------------------------------
 
 
@@ -263,18 +211,3 @@ def test_an_explicit_no_op_strategy_is_accepted_everywhere(csv_path, tmp_path):
     jsonl = tmp_path / "data.jsonl"
     jsonl.write_text("".join(f'{{"id":{i}}}\n' for i in range(50)))
     assert dp.profile(str(jsonl), sampling=S.none()).rows == 50
-
-
-# --- Compositions that have no meaning must be refused ----------------------
-
-
-def test_two_fixed_size_stages_are_refused(csv_path):
-    with pytest.raises(ValueError) as excinfo:
-        dp.profile(csv_path, sampling=S.multi_stage([S.reservoir(10), S.random(5)]))
-    assert "at most one fixed-size stage" in str(excinfo.value)
-
-
-def test_a_filter_after_the_sample_is_refused(csv_path):
-    with pytest.raises(ValueError) as excinfo:
-        dp.profile(csv_path, sampling=S.multi_stage([S.reservoir(10), S.systematic(2)]))
-    assert "must be the last stage" in str(excinfo.value)

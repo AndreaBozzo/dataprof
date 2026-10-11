@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use dataprof_core::{
     AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    Locale, MetricPack, PeakMemorySampler, ProgressSink, QualityDimension, RowSampler, RowView,
+    Locale, MetricPack, PeakMemorySampler, ProgressSink, QualityDimension, RowSampler,
     SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
 };
 use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
@@ -254,9 +254,7 @@ impl IncrementalProfiler {
                     let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
                     values.resize(header_names.len(), String::new());
 
-                    // Sampling decides on the aligned row, so a strategy keyed on
-                    // a column reads the same value the profile will.
-                    if !sampler.accept(RowView::new(&header_names, &values)) {
+                    if !sampler.accept() {
                         continue;
                     }
 

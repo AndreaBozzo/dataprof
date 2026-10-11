@@ -121,16 +121,14 @@ if let Some(quality) = &report.quality {
 
 ```rust
 use dataprof::{DatabaseConfig, analyze_database};
-use dataprof::{RetryConfig, SslConfig};
+use dataprof::SslConfig;
 
 let config = DatabaseConfig {
     connection_string: "postgres://user:pass@localhost/mydb".to_string(),
     batch_size: 10000,
     max_connections: Some(5),
     connection_timeout: Some(std::time::Duration::from_secs(30)),
-    retry_config: Some(RetryConfig::default()),
     ssl_config: Some(SslConfig::default()),
-    sampling_config: None,
     load_credentials_from_env: true,
 };
 
@@ -182,52 +180,17 @@ Examples:
 | `batch_size` | `usize` | `10000` | Rows read between progress log lines |
 | `max_connections` | `Option<u32>` | `Some(10)` | Connection pool size |
 | `connection_timeout` | `Option<Duration>` | `Some(30s)` | Connection timeout |
-| `retry_config` | `Option<RetryConfig>` | `Some(default)` | Retry with exponential backoff |
-| `sampling_config` | `Option<SamplingConfig>` | `None` | Sampling strategy for large tables |
 | `ssl_config` | `Option<SslConfig>` | `Some(default)` | SSL/TLS encryption settings |
 | `load_credentials_from_env` | `bool` | `true` | Load credentials from environment variables |
 
 ## Large Results
 
-dataprof evaluates the query twice: once to count its rows, then once to fetch its result, reading the rows as the driver returns them:
+dataprof evaluates the query once and reads the rows as the driver returns them:
 
-1. Counts the rows with `SELECT COUNT(*) FROM (<query>)`, for progress logging
-2. Fetches the result in one execution, logging progress every `batch_size` rows
-3. Profiles the collected columns
+1. Fetches the result in one execution, logging the rows read every `batch_size` rows
+2. Profiles the collected columns
 
-Plan for both evaluations when the query is expensive. The count only feeds the progress percentages, so if the data changes between the two, the logged total can differ from the rows profiled. The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or configure [sampling](#sampling).
-
-## Sampling
-
-For very large tables, configure sampling to analyze a representative subset:
-
-```rust
-use dataprof::SamplingConfig;
-
-// Quick random sample
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::quick_sample(10000)),
-    ..Default::default()
-};
-
-// Representative stratified sample
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::representative_sample(
-        25000,
-        Some("category".to_string()),
-    )),
-    ..Default::default()
-};
-
-// Temporal sample for time-series data
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::temporal_sample(
-        50000,
-        "created_at".to_string(),
-    )),
-    ..Default::default()
-};
-```
+The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or add a `LIMIT` or a sampling clause your database supports (`TABLESAMPLE` on PostgreSQL) to the query.
 
 ## Security
 

@@ -1,8 +1,6 @@
 use anyhow::Result;
-use dataprof_core::MemoryTracker;
 use memmap2::Mmap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Cursor};
 use std::path::Path;
 
 use crate::CsvParserConfig;
@@ -11,16 +9,10 @@ use crate::CsvParserConfig;
 pub struct MemoryMappedCsvReader {
     mmap: Mmap,
     file_size: u64,
-    memory_tracker: MemoryTracker,
-    resource_id: String,
 }
 
 impl MemoryMappedCsvReader {
     pub fn new(path: &Path) -> Result<Self> {
-        Self::new_with_tracker(path, MemoryTracker::default())
-    }
-
-    pub fn new_with_tracker(path: &Path, memory_tracker: MemoryTracker) -> Result<Self> {
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
 
@@ -29,51 +21,12 @@ impl MemoryMappedCsvReader {
         #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
-        let resource_id = format!("mmap_{}", path.display());
-
-        memory_tracker.track_allocation(resource_id.clone(), file_size as usize, "memory_map");
-
-        Ok(Self {
-            mmap,
-            file_size,
-            memory_tracker,
-            resource_id,
-        })
+        Ok(Self { mmap, file_size })
     }
 
     /// Get file size in bytes.
     pub fn file_size(&self) -> u64 {
         self.file_size
-    }
-
-    /// Read a chunk of the file starting at the given byte offset.
-    ///
-    /// Returns `(lines, actual_bytes_consumed)` where `actual_bytes_consumed`
-    /// accounts for line-boundary trimming and may be less than `chunk_size`.
-    pub fn read_chunk(&self, offset: u64, chunk_size: usize) -> Result<(Vec<String>, usize)> {
-        let start = offset as usize;
-        let end = std::cmp::min(start + chunk_size, self.mmap.len());
-
-        if start >= self.mmap.len() {
-            return Ok((Vec::new(), 0));
-        }
-
-        let chunk_data = &self.mmap[start..end];
-
-        let at_eof = end == self.mmap.len();
-        let starts_mid_line = start > 0 && self.mmap[start - 1] != b'\n';
-        let (adjusted_chunk, bytes_consumed) =
-            self.find_line_boundary(chunk_data, starts_mid_line, at_eof);
-
-        let cursor = Cursor::new(adjusted_chunk);
-        let reader = BufReader::new(cursor);
-
-        let mut lines = Vec::new();
-        for line in reader.lines() {
-            lines.push(line?);
-        }
-
-        Ok((lines, bytes_consumed))
     }
 
     /// Parse CSV records from memory-mapped data in chunks.
@@ -262,57 +215,6 @@ impl MemoryMappedCsvReader {
         }
     }
 
-    /// Find the next line boundary to avoid cutting CSV records in half.
-    ///
-    /// When `at_eof` is true, any trailing data after the last newline is
-    /// included because there is no subsequent chunk that will pick it up.
-    ///
-    /// Returns `(data_slice, bytes_consumed)` where `bytes_consumed` is the
-    /// number of bytes from the original chunk that were consumed (including
-    /// any skipped partial-line prefix), so the caller can correctly advance
-    /// the file offset.
-    fn find_line_boundary<'a>(
-        &self,
-        chunk: &'a [u8],
-        skip_first_partial: bool,
-        at_eof: bool,
-    ) -> (&'a [u8], usize) {
-        if chunk.is_empty() {
-            return (chunk, 0);
-        }
-
-        let mut start_pos = 0;
-
-        if skip_first_partial {
-            if let Some(first_newline) = chunk.iter().position(|&b| b == b'\n') {
-                start_pos = first_newline + 1;
-            } else {
-                return (&chunk[chunk.len()..], chunk.len());
-            }
-        }
-
-        let mut end_pos = chunk.len();
-
-        if !at_eof {
-            if let Some(last_newline) = chunk[start_pos..].iter().rposition(|&b| b == b'\n') {
-                end_pos = start_pos + last_newline + 1;
-            } else if start_pos > 0 {
-                return (&chunk[chunk.len()..], start_pos);
-            }
-        }
-
-        (&chunk[start_pos..end_pos], end_pos)
-    }
-
-    /// Estimate the number of logical CSV records using the default parser
-    /// configuration.
-    ///
-    /// Retained as the backwards-compatible form of
-    /// [`Self::estimate_csv_record_count`].
-    pub fn estimate_row_count(&self) -> Result<usize> {
-        self.estimate_csv_record_count(None)
-    }
-
     /// Estimate the number of logical CSV records in the file by sampling.
     ///
     /// The sample uses [`Self::read_csv_chunk`], so quoted multiline fields,
@@ -336,22 +238,6 @@ impl MemoryMappedCsvReader {
         let estimated_records =
             (self.file_size as u128 * records.len() as u128) / sampled_bytes as u128;
         Ok(estimated_records.min(usize::MAX as u128) as usize)
-    }
-
-    /// Check for memory leaks in the memory tracker.
-    pub fn check_memory_leaks(&self) -> String {
-        self.memory_tracker.report_leaks()
-    }
-
-    /// Get memory usage statistics.
-    pub fn get_memory_stats(&self) -> (usize, usize, usize) {
-        self.memory_tracker.get_memory_stats()
-    }
-}
-
-impl Drop for MemoryMappedCsvReader {
-    fn drop(&mut self) {
-        self.memory_tracker.track_deallocation(&self.resource_id);
     }
 }
 
@@ -400,7 +286,7 @@ mod tests {
         temp_file.flush()?;
 
         let reader = MemoryMappedCsvReader::new(temp_file.path())?;
-        let estimated = reader.estimate_row_count()?;
+        let estimated = reader.estimate_csv_record_count(None)?;
 
         assert!(estimated > 90 && estimated < 120);
 

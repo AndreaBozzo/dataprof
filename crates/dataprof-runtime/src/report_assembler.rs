@@ -331,7 +331,7 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
-        match calculator.calculate_bifurcated_metrics_with_all_semantic_hints(
+        match calculator.calculate_bifurcated_metrics_with_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
@@ -360,7 +360,7 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
-        match calculator.calculate_comprehensive_metrics_with_all_semantic_hints(
+        match calculator.calculate_comprehensive_metrics_with_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),

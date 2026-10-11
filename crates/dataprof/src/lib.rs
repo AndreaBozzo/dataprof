@@ -24,19 +24,16 @@ pub use profiler::{
 
 pub use dataprof_core::{
     AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
-    CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
-    DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
-    InputValidator, IsoQualityConfig, LexicalClass, Locale, MetricPack, NULL_MARKERS, NullTokenSet,
-    NumericStats, OutputFormat, ParquetMetadata, Pattern, PatternCategory, ProgressEvent,
-    ProgressSink, QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RecoveryEvent,
-    RecoveryKind, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, SlashDateOrder, StopCondition, StopEvaluator,
-    StructureColumnSummary, StructureReport, TextLengthUnit, TextStats, TruncationReason,
-    TypeHomogeneity, ValidationError, validate_unique_column_names,
+    CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DateTimeStats,
+    ExecutionMetadata, FileFormat, FrequencyItem, IsoQualityConfig, LexicalClass, Locale,
+    MetricPack, NULL_MARKERS, NullTokenSet, NumericStats, ParquetMetadata, Pattern,
+    PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights, Quartiles,
+    QueryEngine, RecoveryEvent, RecoveryKind, RowCountEstimate, SamplingStrategy, SchemaResult,
+    SemanticHintBinding, SemanticHintKind, SemanticHints, SlashDateOrder, StopCondition,
+    StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit, TextStats,
+    TruncationReason, TypeHomogeneity, validate_unique_column_names,
 };
-pub use dataprof_csv::{
-    CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
-};
+pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{
     JsonErrorPolicy, JsonFormat, JsonParserConfig, analyze_json_file,
     analyze_json_file_with_options, analyze_json_from_reader,
@@ -83,6 +80,5 @@ pub use dataprof_partial::{
 #[cfg(feature = "database")]
 pub use dataprof_db::{
     DatabaseConfig, DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector,
-    RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
-    SslConfig, analyze_database, analyze_database_with_options, create_connector,
+    SqliteConnector, SslConfig, analyze_database, analyze_database_with_options, create_connector,
 };
