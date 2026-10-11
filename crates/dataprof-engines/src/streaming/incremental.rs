@@ -254,8 +254,6 @@ impl IncrementalProfiler {
                     let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
                     values.resize(header_names.len(), String::new());
 
-                    // Sampling decides on the aligned row, so a strategy keyed on
-                    // a column reads the same value the profile will.
                     if !sampler.accept() {
                         continue;
                     }
