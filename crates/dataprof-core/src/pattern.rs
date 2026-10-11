@@ -16,3 +16,19 @@ pub struct Pattern {
     /// Detection confidence score (0.0--1.0), derived from pattern specificity and match rate
     pub confidence: f64,
 }
+
+/// What a pattern's `match_count` counts, as recorded in a report's metric
+/// semantics.
+///
+/// Only the current definition has a value. Through 0.12 the count was every
+/// value the regular expression matched, whether or not the pattern's validator
+/// accepted it, and those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PatternMatchCount {
+    /// Values that pass the regular expression and, where the pattern has
+    /// one, its semantic validator.
+    Validated,
+}

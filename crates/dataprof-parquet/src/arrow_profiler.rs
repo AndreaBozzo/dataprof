@@ -639,11 +639,11 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: String) {
-        if dataprof_metrics::value_matches_hint(&value, dataprof_core::SemanticHintKind::Temporal) {
+    fn offer_sample(&mut self, value: &str) {
+        if dataprof_metrics::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
-        self.sample_values.offer(&value);
+        self.sample_values.offer(value);
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
@@ -685,7 +685,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value);
 
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
     }

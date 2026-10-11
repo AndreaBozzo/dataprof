@@ -8,7 +8,12 @@ import pytest
 from jsonschema import Draft202012Validator
 
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
-CURRENT = {"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}
+CURRENT = {
+    "text_length_unit": "unicode_scalar",
+    "null_tokens": "common_markers",
+    "pattern_match_count": "validated",
+    "shape_moments": "adjusted_sample",
+}
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
 
@@ -93,6 +98,22 @@ def test_a_report_without_the_null_vocabulary_is_not_comparable():
     assert current.compare(release_0_12)["metric_semantics"]["comparable"] is None
 
 
+def test_a_report_without_the_pattern_and_moment_definitions_is_not_comparable():
+    """Through 0.12 pattern counts took every regex match and the shape moments
+    used another estimator, so a report recording only the older definitions
+    cannot read a pattern or skewness change as data.
+    """
+    current = dataprof.profile(CITIES)
+    document = current.to_dict()
+    document["metric_semantics"] = {
+        "text_length_unit": "unicode_scalar",
+        "null_tokens": "common_markers",
+    }
+    older = dataprof.ProfileReport.from_dict(document)
+    assert older.compare(current)["metric_semantics"]["comparable"] is None
+    assert current.compare(older)["metric_semantics"]["comparable"] is None
+
+
 def test_the_canonical_fixture_without_semantics_resaves_byte_identical(tmp_path):
     fixture = FIXTURES / "canonical_report.json"
     report = dataprof.ProfileReport.load(fixture)
@@ -122,6 +143,10 @@ def _through_both_readers(value):
         {"text_length_unit": None},
         {"null_tokens": "empty_null_nan"},
         {"null_tokens": None},
+        {"pattern_match_count": "regex"},
+        {"pattern_match_count": None},
+        {"shape_moments": "population"},
+        {"shape_moments": None},
     ],
     ids=[
         "null",
@@ -131,6 +156,10 @@ def _through_both_readers(value):
         "null-unit",
         "unknown-null-tokens",
         "null-null-tokens",
+        "unknown-pattern-count",
+        "null-pattern-count",
+        "unknown-shape-moments",
+        "null-shape-moments",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -157,8 +186,14 @@ def test_both_readers_agree_on_accepted_semantics(value):
 @pytest.mark.parametrize("dialect", ["summary", "canonical"])
 @pytest.mark.parametrize(
     "value",
-    [None, {"text_length_unit": None}, {"null_tokens": None}],
-    ids=["null", "null-unit", "null-null-tokens"],
+    [
+        None,
+        {"text_length_unit": None},
+        {"null_tokens": None},
+        {"pattern_match_count": None},
+        {"shape_moments": None},
+    ],
+    ids=["null", "null-unit", "null-null-tokens", "null-pattern-count", "null-shape-moments"],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):
     report = dataprof.profile(CITIES)

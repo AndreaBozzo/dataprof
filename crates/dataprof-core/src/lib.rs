@@ -37,10 +37,10 @@ pub use partial::{
     ColumnSchema, CountMethod, RowCountEstimate, SchemaResult, StructureColumnSummary,
     StructureReport,
 };
-pub use pattern::Pattern;
+pub use pattern::{Pattern, PatternMatchCount};
 pub use profile::{
     BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, FrequencyItem, NumericStats,
-    Quartiles, SlashDateOrder, TextStats,
+    Quartiles, ShapeMomentEstimator, SlashDateOrder, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};

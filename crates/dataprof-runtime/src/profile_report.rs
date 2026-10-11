@@ -1,6 +1,6 @@
 use dataprof_core::{
-    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, QualityScoreWeights,
-    SemanticHintBinding, TextLengthUnit,
+    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, PatternMatchCount,
+    QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -100,6 +100,28 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "NullTokenSet")]
     pub null_tokens: Option<NullTokenSet>,
+    /// What every pattern's `match_count` and `match_percentage` count.
+    ///
+    /// Absent means not recorded: through 0.12 they counted every regular
+    /// expression match, validated or not.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "PatternMatchCount")]
+    pub pattern_match_count: Option<PatternMatchCount>,
+    /// The estimator behind every column's `skewness` and `kurtosis`.
+    ///
+    /// Absent means not recorded: through 0.12 both used a form that matches
+    /// neither the population nor the adjusted estimators.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "ShapeMomentEstimator")]
+    pub shape_moments: Option<ShapeMomentEstimator>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -118,6 +140,8 @@ impl MetricSemantics {
         Self {
             text_length_unit: Some(TextLengthUnit::UnicodeScalar),
             null_tokens: Some(NullTokenSet::CommonMarkers),
+            pattern_match_count: Some(PatternMatchCount::Validated),
+            shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
         }
     }
 }
@@ -1094,6 +1118,8 @@ mod tests {
         let recorded = json!({
             "text_length_unit": "unicode_scalar",
             "null_tokens": "common_markers",
+            "pattern_match_count": "validated",
+            "shape_moments": "adjusted_sample",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1119,6 +1145,10 @@ mod tests {
             json!({"text_length_unit": null}),
             json!({"null_tokens": "empty_null_nan"}),
             json!({"null_tokens": null}),
+            json!({"pattern_match_count": "regex"}),
+            json!({"pattern_match_count": null}),
+            json!({"shape_moments": "population"}),
+            json!({"shape_moments": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

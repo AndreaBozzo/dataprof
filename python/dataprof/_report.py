@@ -239,11 +239,13 @@ class ProfileReport:
         """How this report's measurements were defined.
 
         A dict of named definitions, currently
-        ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}``.
+        ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers",
+        "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}``.
         ``schema_version`` says whether a document validates, not whether two
         reports measured the same way: text lengths counted UTF-8 bytes through
-        0.11, and only empty, ``null`` and ``nan`` were nulls through 0.12, with
-        no change to the document's shape.
+        0.11; through 0.12 only empty, ``null`` and ``nan`` were nulls, pattern
+        counts took every regex match, and skewness and kurtosis used another
+        estimator, all with no change to the document's shape.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded this, whose definitions are unknown rather than the current
