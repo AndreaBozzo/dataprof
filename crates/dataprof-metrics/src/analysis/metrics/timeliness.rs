@@ -3,7 +3,7 @@
 //! Measures the currentness and temporal validity of data.
 //! Key metrics: future dates, stale data ratio, temporal violations.
 
-use super::utils::extract_date;
+use super::utils::{extract_date, identifier_words};
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
@@ -11,6 +11,54 @@ use crate::stats::datetime::resolve_slash_order;
 use crate::types::ColumnProfile;
 use chrono::{Datelike, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
+
+/// What may follow a one-word role inside a single word of a name: an
+/// inflection (`starts_at`, `ended_at`) or the date word an all-lowercase name
+/// runs into it, as PostgreSQL folds `StartDate` to `startdate`.
+const ROLE_WORD_ENDINGS: [&str; 9] = [
+    "s",
+    "ed",
+    "ing",
+    "date",
+    "time",
+    "timestamp",
+    "at",
+    "on",
+    "ts",
+];
+
+/// Whether `name` holds `role` as words of its own, never inside a longer word
+/// (#882): `end` is in `end_date` and `endDate`, not in `send_date` or
+/// `weekend_date`; `to_date` is in `valid_to_date`, not in `photo_date`.
+///
+/// A one-word role also matches a word that starts with it and continues with
+/// one of [`ROLE_WORD_ENDINGS`]. Each such word contains the role, so the
+/// endings keep pairs the substring match it replaces found, and add none. A
+/// role of several words is matched across a camelCase name too, which the
+/// substring match could not do: `fromDate` holds `from_date`.
+fn holds_role(name: &str, role: &str) -> bool {
+    let words = identifier_words(name);
+    let role_words = identifier_words(role);
+    if let [role] = role_words.as_slice() {
+        return words.iter().any(|word| {
+            word.get(..role.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(role))
+                && word.get(role.len()..).is_some_and(|rest| {
+                    rest.is_empty()
+                        || ROLE_WORD_ENDINGS
+                            .iter()
+                            .any(|ending| rest.eq_ignore_ascii_case(ending))
+                })
+        });
+    }
+    !role_words.is_empty()
+        && words.windows(role_words.len()).any(|window| {
+            window
+                .iter()
+                .zip(&role_words)
+                .all(|(word, role_word)| word.eq_ignore_ascii_case(role_word))
+        })
+}
 
 /// Timeliness metrics container
 #[derive(Debug)]
@@ -229,8 +277,7 @@ impl<'a> TimelinessCalculator<'a> {
             // a later name that fills the same role and does have values.
             let resolve = |role: &str| {
                 temporal_columns.iter().find_map(|name| {
-                    name.to_lowercase()
-                        .contains(role)
+                    holds_role(name, role)
                         .then(|| data.get(name).map(|values| (name.as_str(), values)))
                         .flatten()
                 })
@@ -765,5 +812,46 @@ mod tests {
 
         assert_eq!(metrics.temporal_pairs_checked, 1);
         assert_eq!(metrics.temporal_violations, 1);
+    }
+
+    #[test]
+    fn a_role_matches_words_of_the_name_not_parts_of_a_word() {
+        let holds = [
+            ("start_date", "start"),
+            ("startDate", "start"),
+            ("StartDate", "start"),
+            ("startdate", "start"),
+            ("starts_at", "start"),
+            ("started_at", "start"),
+            ("ends_at", "end"),
+            ("ended_at", "end"),
+            ("ENDDATE", "end"),
+            ("createdAt", "created"),
+            ("record_created_at", "created_at"),
+            ("valid_to_date", "to_date"),
+            ("orderStartDate", "start_date"),
+        ];
+        let misses = [
+            ("send_date", "end"),
+            ("weekend_date", "end"),
+            ("vendor_date", "end"),
+            ("endorsed_date", "end"),
+            ("restart_date", "start"),
+            ("photo_date", "to_date"),
+            ("startup_date", "start"),
+            ("start_time", "start_date"),
+        ];
+        let wrong: Vec<_> = holds
+            .iter()
+            .filter(|(name, role)| !holds_role(name, role))
+            .map(|(name, role)| format!("{name} should hold {role}"))
+            .chain(
+                misses
+                    .iter()
+                    .filter(|(name, role)| holds_role(name, role))
+                    .map(|(name, role)| format!("{name} should not hold {role}")),
+            )
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }
