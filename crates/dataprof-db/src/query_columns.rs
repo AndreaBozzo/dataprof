@@ -117,21 +117,6 @@ impl QueryColumns {
     pub fn into_map(self) -> HashMap<String, Vec<String>> {
         self.columns.into_iter().collect()
     }
-
-    /// Append a batch's values to the matching columns.
-    ///
-    /// Columns are matched by name so a driver that reorders between batches
-    /// cannot interleave data; a column seen for the first time in a later batch
-    /// is appended at the end, the same first-seen rule the JSON path uses for
-    /// fields that only appear in later records.
-    fn extend_from(&mut self, batch: QueryColumns) {
-        for (name, data) in batch.columns {
-            match self.columns.iter_mut().find(|(column, _)| *column == name) {
-                Some((_, existing)) => existing.extend(data),
-                None => self.columns.push((name, data)),
-            }
-        }
-    }
 }
 
 impl Index<&str> for QueryColumns {
@@ -160,32 +145,9 @@ impl IntoIterator for QueryColumns {
     }
 }
 
-/// Merge batches of a streamed query into one result.
-///
-/// The first batch fixes the column order; later batches append to it.
-pub fn merge_column_batches(batches: Vec<QueryColumns>) -> QueryColumns {
-    let mut merged = QueryColumns::new();
-    for batch in batches {
-        merged.extend_from(batch);
-    }
-    merged
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn columns(pairs: &[(&str, &[&str])]) -> QueryColumns {
-        pairs
-            .iter()
-            .map(|(name, data)| {
-                (
-                    (*name).to_string(),
-                    data.iter().map(|v| (*v).to_string()).collect(),
-                )
-            })
-            .collect()
-    }
 
     #[test]
     fn names_come_back_in_the_order_they_went_in() {
@@ -209,38 +171,5 @@ mod tests {
         assert_eq!(result["b"], vec!["b1", "b2"]);
         assert_eq!(result["a"], vec!["a1", "a2"]);
         assert_eq!(result.row_count(), 2);
-    }
-
-    #[test]
-    fn merging_keeps_the_first_batch_order() {
-        let merged = merge_column_batches(vec![
-            columns(&[("id", &["1"]), ("cap", &["20121"])]),
-            columns(&[("id", &["2"]), ("cap", &["00184"])]),
-        ]);
-
-        assert_eq!(merged.names().collect::<Vec<_>>(), ["id", "cap"]);
-        assert_eq!(merged["id"], vec!["1", "2"]);
-        assert_eq!(merged["cap"], vec!["20121", "00184"]);
-    }
-
-    #[test]
-    fn merging_matches_columns_by_name_not_position() {
-        // A driver that hands back a later batch in another order must not have
-        // its values interleaved into the wrong column.
-        let merged = merge_column_batches(vec![
-            columns(&[("id", &["1"]), ("cap", &["20121"])]),
-            columns(&[("cap", &["00184"]), ("id", &["2"])]),
-        ]);
-
-        assert_eq!(merged.names().collect::<Vec<_>>(), ["id", "cap"]);
-        assert_eq!(merged["id"], vec!["1", "2"]);
-        assert_eq!(merged["cap"], vec!["20121", "00184"]);
-    }
-
-    #[test]
-    fn merging_nothing_yields_nothing() {
-        let merged = merge_column_batches(Vec::new());
-        assert!(merged.is_empty());
-        assert_eq!(merged.row_count(), 0);
     }
 }

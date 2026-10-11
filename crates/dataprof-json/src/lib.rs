@@ -33,7 +33,7 @@ use std::path::Path;
 pub use dataprof_core::JsonErrorPolicy;
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    QualityDimension, SemanticHints, TruncationReason, Utf8BomReader,
+    TruncationReason, Utf8BomReader,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -949,31 +949,14 @@ pub fn analyze_json_from_reader<R: BufRead>(
     ),
     DataProfilerError,
 > {
-    analyze_json_from_reader_with_hints(reader, config, &SemanticHints::default())
-}
-
-pub fn analyze_json_from_reader_with_hints<R: BufRead>(
-    reader: R,
-    config: &JsonParserConfig,
-    semantic_hints: &SemanticHints,
-) -> Result<
-    (
-        Vec<ColumnProfile>,
-        StreamingColumnCollection,
-        usize,
-        usize,
-        FileFormat,
-    ),
-    DataProfilerError,
-> {
-    let options = AnalysisOptions::default().with_semantic_hints(semantic_hints.clone());
+    let options = AnalysisOptions::default();
     let (profiles, stats, rows_read, malformed_lines, format, _truncated) =
         analyze_json_from_reader_full(reader, config, &options)?;
     Ok((profiles, stats, rows_read, malformed_lines, format))
 }
 
-/// As [`analyze_json_from_reader_with_hints`], but also reports whether the scan
-/// stopped early. Kept private so the public tuple stays stable.
+/// As [`analyze_json_from_reader`], but with the caller's analysis options, and
+/// also reports whether the scan stopped early. Kept private so the public tuple stays stable.
 #[allow(clippy::type_complexity)]
 fn analyze_json_from_reader_full<R: BufRead>(
     reader: R,
@@ -1070,33 +1053,7 @@ pub fn analyze_json_file(
     file_path: &Path,
     config: &JsonParserConfig,
 ) -> Result<ProfileReport, DataProfilerError> {
-    analyze_json_file_with_dimensions(file_path, config, None)
-}
-
-/// Like [`analyze_json_file`] but only computes the requested quality dimensions.
-pub fn analyze_json_file_with_dimensions(
-    file_path: &Path,
-    config: &JsonParserConfig,
-    quality_dimensions: Option<&[QualityDimension]>,
-) -> Result<ProfileReport, DataProfilerError> {
-    analyze_json_file_with_dimensions_and_hints(
-        file_path,
-        config,
-        quality_dimensions,
-        &SemanticHints::default(),
-    )
-}
-
-pub fn analyze_json_file_with_dimensions_and_hints(
-    file_path: &Path,
-    config: &JsonParserConfig,
-    quality_dimensions: Option<&[QualityDimension]>,
-    semantic_hints: &SemanticHints,
-) -> Result<ProfileReport, DataProfilerError> {
-    let options = AnalysisOptions::default()
-        .with_quality_dimensions(quality_dimensions.map(<[_]>::to_vec))
-        .with_semantic_hints(semantic_hints.clone());
-    analyze_json_file_with_options(file_path, config, &options)
+    analyze_json_file_with_options(file_path, config, &AnalysisOptions::default())
 }
 
 /// Analyze a JSON or JSONL file, honouring the caller's full analysis selection.

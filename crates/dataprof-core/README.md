@@ -3,14 +3,14 @@
 Shared data model and configuration types for the `dataprof` workspace.
 
 This crate owns format-independent contracts: profile and schema types, execution
-metadata, errors, configuration, sampling and stop conditions, semantic hints,
-source descriptions, validation, progress, and memory tracking. Parsing,
+metadata, errors, quality configuration, sampling and stop conditions, semantic
+hints, source descriptions, column-name validation, and progress. Parsing,
 statistical analysis, report assembly, and engine orchestration belong to their
 specialized crates.
 
 ## Public surface
 
-Common entry points include `DataprofConfig`, `DataProfilerError`,
+Common entry points include `IsoQualityConfig`, `DataProfilerError`,
 `ExecutionMetadata`, `ColumnProfile`, `SamplingStrategy`, `StopCondition`,
 `SemanticHints`, and `DataSource`.
 

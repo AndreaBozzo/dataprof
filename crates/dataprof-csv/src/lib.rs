@@ -3,23 +3,19 @@ use std::io::Read;
 use std::path::Path;
 
 use dataprof_core::{
-    ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints, TruncationReason,
+    ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 
+mod encoding;
 mod memmap_reader;
 mod quote_state;
-mod robust_csv;
 
+pub use encoding::{EncodingDiagnostic, diagnose_non_utf8};
 pub use memmap_reader::MemoryMappedCsvReader;
 pub use quote_state::{QuoteOutcome, QuoteTrackingReader, unterminated_quote_error};
-pub use robust_csv::{
-    CsvDiagnostics, CsvParseOutput, EncodingDiagnostic, RobustCsvParser, RobustParseResult,
-    diagnose_non_utf8,
-};
 
 /// Configuration for CSV parsing and analysis.
 ///
@@ -231,31 +227,8 @@ pub fn analyze_csv_from_reader<R: Read>(
     ),
     DataProfilerError,
 > {
-    analyze_csv_from_reader_with_hints(reader, config, &SemanticHints::default())
-}
-
-/// Analyze CSV data from any `Read` source while applying semantic hints.
-pub fn analyze_csv_from_reader_with_hints<R: Read>(
-    reader: R,
-    config: &CsvParserConfig,
-    semantic_hints: &SemanticHints,
-) -> Result<
-    (
-        Vec<ColumnProfile>,
-        StreamingColumnCollection,
-        usize,
-        Vec<String>,
-    ),
-    DataProfilerError,
-> {
-    let scan = scan_csv(reader, config, semantic_hints)?;
-    let profiles = profile_builder::profiles_from_streaming_with_hints(
-        &scan.column_stats,
-        false,
-        false,
-        None,
-        semantic_hints,
-    );
+    let scan = scan_csv(reader, config)?;
+    let profiles = profile_builder::profiles_from_streaming(&scan.column_stats, false, false, None);
 
     Ok((
         profiles,
@@ -277,11 +250,7 @@ struct CsvScan {
     truncation: Option<TruncationReason>,
 }
 
-fn scan_csv<R: Read>(
-    reader: R,
-    config: &CsvParserConfig,
-    semantic_hints: &SemanticHints,
-) -> Result<CsvScan, DataProfilerError> {
+fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, DataProfilerError> {
     let mut csv_builder = ReaderBuilder::new();
     csv_builder.has_headers(config.has_header);
     csv_builder.flexible(config.flexible);
@@ -324,7 +293,7 @@ fn scan_csv<R: Read>(
             .collect()
     };
 
-    let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
+    let mut column_stats = StreamingColumnCollection::new();
     // A header declares the columns even when no data records follow it.
     column_stats.init_columns(&header_names);
     let mut rows_read = 0;
@@ -377,29 +346,6 @@ pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
 ) -> Result<ProfileReport, DataProfilerError> {
-    analyze_csv_file_with_dimensions(file_path, config, None)
-}
-
-/// Like [`analyze_csv_file`] but only computes the requested quality dimensions.
-pub fn analyze_csv_file_with_dimensions(
-    file_path: &Path,
-    config: &CsvParserConfig,
-    quality_dimensions: Option<&[QualityDimension]>,
-) -> Result<ProfileReport, DataProfilerError> {
-    analyze_csv_file_with_dimensions_and_hints(
-        file_path,
-        config,
-        quality_dimensions,
-        &SemanticHints::default(),
-    )
-}
-
-pub fn analyze_csv_file_with_dimensions_and_hints(
-    file_path: &Path,
-    config: &CsvParserConfig,
-    quality_dimensions: Option<&[QualityDimension]>,
-    semantic_hints: &SemanticHints,
-) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     dataprof_core::binary_input::reject_binary_input(file_path)?;
     let start = std::time::Instant::now();
@@ -407,15 +353,10 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let scan = scan_csv(buf_reader, config, semantic_hints)?;
+    let scan = scan_csv(buf_reader, config)?;
     let column_stats = &scan.column_stats;
-    let column_profiles = profile_builder::profiles_from_streaming_with_hints(
-        column_stats,
-        false,
-        false,
-        None,
-        semantic_hints,
-    );
+    let column_profiles =
+        profile_builder::profiles_from_streaming(column_stats, false, false, None);
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -436,17 +377,12 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
         execution = execution.with_truncation(reason);
     }
 
-    let mut assembler = ReportAssembler::new(file_source, execution)
+    Ok(ReportAssembler::new(file_source, execution)
         .columns(column_profiles)
         .with_quality_data(sample_columns)
         .with_row_duplicates(column_stats.row_duplicate_summary())
         .with_row_completeness(column_stats.row_completeness_summary())
-        .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-        .with_semantic_hints(semantic_hints.clone());
-    if let Some(dimensions) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dimensions.to_vec());
-    }
-    Ok(assembler.build())
+        .build())
 }
 
 fn map_io_error(file_path: &Path, error: std::io::Error) -> DataProfilerError {

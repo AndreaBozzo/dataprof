@@ -85,7 +85,7 @@ async fn progress_is_logged_for_the_rows_after_the_last_full_interval() {
         .collect();
     assert_eq!(
         progress.last().map(String::as_str),
-        Some("SQLite streaming progress: 100.0% (7/7 rows)"),
+        Some("SQLite streaming progress: 7 rows read"),
         "progress lines: {progress:?}"
     );
 }

@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
+    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler,
     SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
     StreamSourceSystem, TruncationReason,
 };
@@ -1280,7 +1280,7 @@ impl AsyncStreamingProfiler {
                     break;
                 }
 
-                if !sampler.accept(RowView::new(&headers, &values)) {
+                if !sampler.accept() {
                     continue;
                 }
 

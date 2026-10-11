@@ -86,14 +86,10 @@ not stable codes. The last retry in a successful result succeeded; preceding
 retries may have failed and led to further events. Row-level error and ragged-row
 counts retain their existing meaning and are not incremented for failed attempts.
 
-Python exposes the same history through `report.recovery_events`. The standalone
-Rust `dataprof_csv::RobustCsvParser` does not produce a `ProfileReport`; its
-`parse_csv()` and `parse_csv_with_recovery()` methods return `CsvParseOutput`
-with `headers`, `records`, and `recovery_events`. This includes the ordinary
-strict-to-flexible retry and the outer auto-recovery strategies. Callers building
-their own report should transfer this history to its execution metadata.
-The existing encoding-recovery placeholder only retries flexible parsing; its
-history therefore records `flexible`, without claiming an encoding conversion.
+Python exposes the same history through `report.recovery_events`. No current
+engine records `csv_auto_recovery`: it came from the standalone CSV recovery
+parser, removed before 1.0, and stays in the schema so reports written by earlier
+versions still load.
 
 ## Numeric equality contract
 

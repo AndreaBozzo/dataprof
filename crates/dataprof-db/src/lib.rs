@@ -1,7 +1,7 @@
 //! Database connectivity module for dataprof.
 //!
 //! This crate owns the database profiling surface, including connection
-//! handling, secure configuration helpers, sampling, streaming, and the
+//! handling, secure configuration helpers, streaming, and the
 //! feature-gated sqlx-based connectors.
 
 pub(crate) use dataprof_core::DataProfilerError;
@@ -14,16 +14,11 @@ use dataprof_runtime::{ProfileReport, ReportAssembler, RowCompletenessTracker};
 pub mod connection;
 pub mod connectors;
 pub mod query_columns;
-pub mod retry;
-pub mod sampling;
 pub mod security;
-pub mod streaming;
 
 pub use connection::*;
 pub use connectors::*;
 pub use query_columns::QueryColumns;
-pub use retry::*;
-pub use sampling::*;
 pub use security::*;
 
 /// Database configuration for connection strings and settings
@@ -33,8 +28,6 @@ pub struct DatabaseConfig {
     pub batch_size: usize,
     pub max_connections: Option<u32>,
     pub connection_timeout: Option<std::time::Duration>,
-    pub retry_config: Option<RetryConfig>,
-    pub sampling_config: Option<SamplingConfig>,
     pub ssl_config: Option<SslConfig>,
     pub load_credentials_from_env: bool,
 }
@@ -46,8 +39,6 @@ impl Default for DatabaseConfig {
             batch_size: 10000,
             max_connections: Some(10),
             connection_timeout: Some(std::time::Duration::from_secs(30)),
-            retry_config: Some(RetryConfig::default()),
-            sampling_config: None,
             ssl_config: Some(SslConfig::default()),
             load_credentials_from_env: true,
         }
@@ -214,47 +205,11 @@ pub async fn analyze_database_with_options(
 
     let start = std::time::Instant::now();
 
-    let (actual_query, is_table) = if query.trim().to_uppercase().starts_with("SELECT") {
-        let validated_query = security::validate_base_query(query)?;
-        (validated_query, false)
+    let final_query = if query.trim().to_uppercase().starts_with("SELECT") {
+        security::validate_base_query(query)?
     } else {
         security::validate_sql_identifier(query)?;
-        (format!("SELECT * FROM {}", query), true)
-    };
-
-    let total_rows = if is_table {
-        // decode-audit: unknown — a failed COUNT means "row count unknown", not
-        // "zero rows". 0 disables sampling below, so log the failure instead of
-        // silently pretending the table is empty.
-        match connector.count_table_rows(query).await {
-            Ok(count) => count,
-            Err(e) => {
-                log::warn!(
-                    "count_table_rows failed for '{}': {}; row count unknown, sampling disabled",
-                    query,
-                    e
-                );
-                0
-            }
-        }
-    } else {
-        0
-    };
-
-    let (final_query, sample_info) = if let Some(sampling_config) = &config.sampling_config {
-        if total_rows > sampling_config.sample_size as u64 {
-            let sampled_query = sampling_config.generate_sample_query(&actual_query, total_rows)?;
-            let info = SampleInfo::new(
-                total_rows,
-                sampling_config.sample_size.min(total_rows as usize) as u64,
-                sampling_config.strategy.clone(),
-            );
-            (sampled_query, Some(info))
-        } else {
-            (actual_query, None)
-        }
-    } else {
-        (actual_query, None)
+        format!("SELECT * FROM {}", query)
     };
 
     let mut columns = connector
@@ -266,15 +221,8 @@ pub async fn analyze_database_with_options(
     let query_engine = detect_query_engine(&config.connection_string);
 
     if columns.is_empty() {
-        let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis())
+        let exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis())
             .with_engine(query_engine.to_string());
-        if let Some(ref info) = sample_info
-            && info.sampling_ratio < 1.0
-        {
-            exec = exec
-                .with_sampling(info.sampling_ratio)
-                .with_source_exhausted(false);
-        }
         return Ok(ReportAssembler::new(
             DataSource::Query {
                 engine: query_engine.clone(),
@@ -318,16 +266,10 @@ pub async fn analyze_database_with_options(
     let row_completeness = completeness.summary();
 
     let scan_time_ms = start.elapsed().as_millis();
-    let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
     let num_columns = column_profiles.len();
 
-    let mut execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms)
+    let execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms)
         .with_engine(query_engine.to_string());
-    if sampling_ratio < 1.0 {
-        execution = execution
-            .with_sampling(sampling_ratio)
-            .with_source_exhausted(false);
-    }
 
     Ok(ReportAssembler::new(
         DataSource::Query {

@@ -3,7 +3,7 @@
 #[cfg(not(feature = "mysql"))]
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "mysql")]
-use super::common::{build_count_query, not_connected_error};
+use super::common::not_connected_error;
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "mysql")]
 use crate::security::validate_sql_identifier;
@@ -135,19 +135,10 @@ impl DatabaseConnector for MySqlConnector {
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let count_query = build_count_query(query)?;
-            let total_rows: i64 = sqlx::query_scalar(&count_query)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| {
-                    DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
-                })?;
-
             streaming_profile_loop!(
                 pool,
                 query,
                 batch_size,
-                total_rows,
                 "MySQL",
                 [
                     u64,

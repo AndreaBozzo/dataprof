@@ -38,44 +38,9 @@ fn strategies() -> Vec<(&'static str, SamplingStrategy, usize)> {
         ),
         ("reservoir", SamplingStrategy::Reservoir { size: 10 }, 10),
         (
-            "stratified",
-            SamplingStrategy::Stratified {
-                key_columns: vec!["group".into()],
-                samples_per_stratum: 2,
-            },
-            GROUPS * 2, // 2 rows from each of the 5 groups
-        ),
-        (
-            "progressive",
-            SamplingStrategy::Progressive {
-                initial_size: 5,
-                confidence_level: 0.95,
-                max_size: 10,
-            },
-            10, // grows to the cap on this spread of values
-        ),
-        (
             "systematic",
             SamplingStrategy::Systematic { interval: 10 },
             10,
-        ),
-        (
-            "importance",
-            SamplingStrategy::Importance {
-                weight_column: "weight".into(),
-                weight_threshold: 8.0,
-            },
-            20, // weights cycle 0..9, so 8 and 9 qualify
-        ),
-        (
-            "multi_stage",
-            SamplingStrategy::MultiStage {
-                stages: vec![
-                    SamplingStrategy::Systematic { interval: 2 },
-                    SamplingStrategy::Reservoir { size: 10 },
-                ],
-            },
-            10, // the filter halves the rows, the reservoir bounds the sample
         ),
     ]
 }
@@ -286,36 +251,6 @@ fn a_row_cap_below_a_fixed_size_sample_wins() {
 }
 
 // ---------------------------------------------------------------------------
-// Stratum identity
-// ---------------------------------------------------------------------------
-
-#[test]
-fn strata_are_not_merged_by_values_containing_the_separator() {
-    // ("a|b", "c") and ("a", "b|c") join to the same string under a naive
-    // separator, which would merge two strata and apply one cap to both.
-    let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
-    writeln!(file, "left,right,value").unwrap();
-    for i in 0..10 {
-        writeln!(file, "a|b,c,{i}").unwrap();
-        writeln!(file, "a,b|c,{i}").unwrap();
-    }
-    file.flush().unwrap();
-
-    let report = Profiler::new()
-        .sampling(SamplingStrategy::Stratified {
-            key_columns: vec!["left".into(), "right".into()],
-            samples_per_stratum: 3,
-        })
-        .analyze_file(file.path())
-        .unwrap();
-
-    assert_eq!(
-        report.execution.rows_processed, 6,
-        "two distinct strata, three rows each"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Paths that cannot sample must say so
 // ---------------------------------------------------------------------------
 
@@ -355,46 +290,6 @@ fn the_json_parser_rejects_sampling() {
 }
 
 // ---------------------------------------------------------------------------
-// Strategies that cannot be composed must be refused before reading
-// ---------------------------------------------------------------------------
-
-#[test]
-fn a_multi_stage_with_two_fixed_size_stages_is_refused() {
-    let csv = write_csv();
-    let error = Profiler::new()
-        .sampling(SamplingStrategy::MultiStage {
-            stages: vec![
-                SamplingStrategy::Reservoir { size: 10 },
-                SamplingStrategy::Random { size: 5 },
-            ],
-        })
-        .analyze_file(csv.path())
-        .expect_err("two fixed-size stages have no combined meaning");
-    assert!(
-        error.to_string().contains("at most one fixed-size stage"),
-        "unexpected error: {error}"
-    );
-}
-
-#[test]
-fn a_multi_stage_with_a_filter_after_the_sample_is_refused() {
-    let csv = write_csv();
-    let error = Profiler::new()
-        .sampling(SamplingStrategy::MultiStage {
-            stages: vec![
-                SamplingStrategy::Reservoir { size: 10 },
-                SamplingStrategy::Systematic { interval: 2 },
-            ],
-        })
-        .analyze_file(csv.path())
-        .expect_err("a filter after the reservoir has nothing to filter");
-    assert!(
-        error.to_string().contains("must be the last stage"),
-        "unexpected error: {error}"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Async byte streams
 // ---------------------------------------------------------------------------
 
@@ -402,7 +297,7 @@ fn a_multi_stage_with_a_filter_after_the_sample_is_refused() {
 mod async_sampling {
     use super::{GROUPS, ROWS, assert_sampled, strategies};
 
-    use dataprof::{AsyncSourceInfo, BytesSource, FileFormat, Profiler, SamplingStrategy};
+    use dataprof::{AsyncSourceInfo, BytesSource, FileFormat, Profiler};
 
     fn csv_bytes() -> Vec<u8> {
         let mut data = String::from("group,weight,value\n");
@@ -457,20 +352,5 @@ mod async_sampling {
                 "{name}: file and stream disagree on the sample size"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn an_unusable_strategy_fails_before_the_stream_is_read() {
-        let error = Profiler::new()
-            .sampling(SamplingStrategy::MultiStage {
-                stages: vec![
-                    SamplingStrategy::Reservoir { size: 10 },
-                    SamplingStrategy::Random { size: 5 },
-                ],
-            })
-            .profile_stream(source())
-            .await
-            .expect_err("two fixed-size stages have no combined meaning");
-        assert!(error.to_string().contains("at most one fixed-size stage"));
     }
 }
