@@ -28,6 +28,11 @@
     {"locale":"it","values":["310.123456","311.131375","01.12345","02.12346"],"expected":{},"absent":["Phone (IT)"],"sensitive":false},
     {"values":["310.123456","311.131375","01.12345","02.12346"],"expected":{},"absent":["Phone (IT)"],"sensitive":false}
   ],
+  "us_phone_separators": [
+    {"values":["301.4567891","302.5802458","457.2345678","212555.0123","1.2125550123","-2125550123"],"expected":{},"absent":["Phone (US)"],"sensitive":false},
+    {"locale":"us","values":["301.4567891","302.5802458","457.2345678","212555.0123","1.2125550123","-2125550123"],"expected":{},"absent":["Phone (US)"],"sensitive":false},
+    {"values":["212.555.0123","(212) 555-0123","2125550123","(212)555-0123","1.212.555.0123","+1 212 555 0123"],"expected":{"Phone (US)":6},"sensitive":true}
+  ],
   "coordinate_decimal_points": [
     {"values":["45.4642,9.1900","-90.0,+180.0","0.0,0.0","10,50","10.5,50","100.0,20.0","45.0,181.0"],"expected":{"Geographic Coordinates":3}},
     {"values":["10,50","20,75","54,10"],"expected":{},"absent":["Geographic Coordinates"]}

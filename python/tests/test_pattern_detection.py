@@ -102,6 +102,10 @@ def test_decimal_numbers_are_not_domestic_italian_phones(tmp_path):
     check("decimals_are_not_phones", tmp_path)
 
 
+def test_us_phones_need_separators_between_every_group_or_none(tmp_path):
+    check("us_phone_separators", tmp_path)
+
+
 def test_coordinates_require_decimal_points_in_both_components(tmp_path):
     check("coordinate_decimal_points", tmp_path)
 

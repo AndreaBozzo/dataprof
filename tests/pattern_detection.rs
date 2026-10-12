@@ -125,6 +125,10 @@ fn decimal_numbers_are_not_domestic_italian_phones() {
     check("decimals_are_not_phones");
 }
 #[test]
+fn us_phones_need_separators_between_every_group_or_none() {
+    check("us_phone_separators");
+}
+#[test]
 fn coordinates_require_decimal_points_in_both_components() {
     check("coordinate_decimal_points");
 }

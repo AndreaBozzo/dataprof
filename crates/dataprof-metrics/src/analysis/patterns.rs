@@ -55,7 +55,11 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "Phone (US)",
-            regex: Regex::new(r"^\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}$")
+            // Separators come between every group or not at all: a single dot
+            // would claim decimals such as `301.4567891` or `212555.0123`, and
+            // a dot after the country code `1.2125550123`. A parenthesised
+            // area code is unambiguous and may stand alone.
+            regex: Regex::new(r"^(?:(?:\+?1[-.\s]?)?(?:\([0-9]{3}\)[-.\s]?[0-9]{3}[-.\s]?|[0-9]{3}[-.\s][0-9]{3}[-.\s])[0-9]{4}|(?:\+?1[-\s]?)?[0-9]{10})$")
                 .expect("BUG: Invalid regex for Phone (US)"),
             category: PatternCategory::Contact,
             specificity: 70,
@@ -679,6 +683,44 @@ mod tests {
                 .find(|pattern| pattern.name == "Phone (US)");
             let confidence = phone.map_or(0.0, |pattern| pattern.confidence);
             assert!(confidence < 0.5, "{label}: Phone (US) at {confidence}");
+        }
+    }
+
+    /// #923: each separator was optional on its own, so one dot was enough
+    /// and float columns were reported as phone numbers.
+    #[test]
+    fn us_phone_separators_are_all_or_nothing() {
+        let phone = &PATTERN_DEFS
+            .iter()
+            .find(|def| def.name == "Phone (US)")
+            .expect("Phone (US) is defined")
+            .regex;
+        for valid in [
+            "212.555.0123",
+            "(212) 555-0123",
+            "(212)555-0123",
+            "(212) 5550123",
+            "212 555 0123",
+            "2125550123",
+            "12125550123",
+            "+1 2125550123",
+            "1.212.555.0123",
+            "+1 (212) 555-0123",
+        ] {
+            assert!(phone.is_match(valid), "{valid}");
+        }
+        for invalid in [
+            "301.4567891",
+            "212555.0123",
+            "1.2125550123",
+            "-2125550123",
+            ".2125550123",
+            "+2125550123",
+            "212-5550123",
+            "(2125550123",
+            "212)5550123",
+        ] {
+            assert!(!phone.is_match(invalid), "{invalid}");
         }
     }
 
