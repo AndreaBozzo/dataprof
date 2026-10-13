@@ -254,8 +254,17 @@ fn observe_batch_rows(
         .map(|column| match column.data_type() {
             ArrowDataType::Null => Ok(FieldText::Null),
             data_type if data_type.is_nested() => {
-                RowConverter::new(vec![SortField::new(data_type.clone())])
-                    .and_then(|converter| converter.convert_columns(std::slice::from_ref(column)))
+                // The row format takes a dictionary only of flat values, so a
+                // dictionary of nested values is encoded through its values.
+                let values = match data_type {
+                    ArrowDataType::Dictionary(_, values) => arrow::compute::cast(column, values),
+                    _ => Ok(column.clone()),
+                };
+                values
+                    .and_then(|values| {
+                        RowConverter::new(vec![SortField::new(values.data_type().clone())])?
+                            .convert_columns(&[values])
+                    })
                     .map(FieldText::Rows)
             }
             _ => ArrayFormatter::try_new(column.as_ref(), &options).map(FieldText::Display),
@@ -263,13 +272,22 @@ fn observe_batch_rows(
         .collect::<std::result::Result<_, _>>()
         .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
 
+    // Logical nulls, not the validity buffer: a dictionary key that points at
+    // a null value is null too, and must render empty like a null key rather
+    // than as the row encoding of a null.
+    let nulls: Vec<_> = batch
+        .columns()
+        .iter()
+        .map(|column| column.logical_nulls())
+        .collect();
+
     let mut value_buffer = String::new();
     for row_index in 0..batch.num_rows() {
         let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
-        for (column, field) in batch.columns().iter().zip(&fields) {
+        for (field, nulls) in fields.iter().zip(&nulls) {
             value_buffer.clear();
-            if !column.is_null(row_index) {
+            if !nulls.as_ref().is_some_and(|nulls| nulls.is_null(row_index)) {
                 match field {
                     FieldText::Null => {}
                     FieldText::Display(formatter) => {
@@ -1910,5 +1928,32 @@ mod tests {
         );
         assert_eq!(observable(view), expected);
         assert_eq!(observable(large_view), expected);
+    }
+
+    #[test]
+    fn a_dictionary_key_to_a_null_value_signs_like_a_null_key() {
+        // #767 review: a nested dictionary cell is null when its key is null
+        // and when its key points at a null value. Both must sign as an
+        // empty field, or two null cells differ and a duplicate is missed.
+        use arrow::array::{DictionaryArray, Int32Array, ListBuilder, StringBuilder};
+
+        let mut lists = ListBuilder::new(StringBuilder::new());
+        lists.values().append_value("a");
+        lists.append(true);
+        lists.append(false);
+        let values = Arc::new(lists.finish());
+        let keys = Int32Array::from(vec![None, Some(1), Some(0)]);
+        let tags = DictionaryArray::try_new(keys, values).unwrap();
+        let ids = Int64Array::from(vec![1, 1, 2]);
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, false),
+            Field::new("tags", tags.data_type().clone(), true),
+        ]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(ids), Arc::new(tags)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let rows = analyzer.row_duplicate_summary().expect("rows assessed");
+        assert_eq!(rows.duplicate_rows, 1);
     }
 }
