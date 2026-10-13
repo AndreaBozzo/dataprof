@@ -13,8 +13,8 @@ use dataprof_runtime::{
 };
 
 use dataprof_json::record::{
-    JsonRecord, drain_to_end, json_document_error, json_value_kind, malformed_array_error,
-    non_object_record_error, read_json_record, read_jsonl_line,
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
+    malformed_array_error, non_object_record_error, read_json_record, read_jsonl_line,
 };
 
 use super::async_source::AsyncDataSource;
@@ -674,18 +674,7 @@ impl AsyncStreamingProfiler {
                 .map(|col| {
                     // decode-audit: no-data — a key absent from this object is
                     // a missing field, and "" is the profiler's textual null.
-                    obj.get(col)
-                        .map(|v| match v {
-                            Value::Null => String::new(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Number(n) => n.to_string(),
-                            Value::String(s) => s.to_string(),
-                            // decode-audit: impossible — re-serializing an
-                            // in-memory Value cannot fail; panic beats a fake null.
-                            _ => serde_json::to_string(v)
-                                .expect("re-serializing a parsed JSON value cannot fail"),
-                        })
-                        .unwrap_or_default()
+                    obj.get(col).map(json_value_text).unwrap_or_default()
                 })
                 .collect();
             (row, containers)

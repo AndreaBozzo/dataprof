@@ -107,6 +107,65 @@ pub(crate) fn skip_ascii_whitespace<R: BufRead>(reader: &mut R) -> Result<(), Da
     }
 }
 
+/// The text a JSON value is profiled as: scalars as themselves, `null` as the
+/// empty string, and an array or object as compact JSON with every object's
+/// keys sorted.
+///
+/// The sort makes the text canonical. With `preserve_order` an object keeps
+/// its source key order, so `{"x":1,"y":2}` and `{"y":2,"x":1}` would render
+/// differently and two equal rows would not count as duplicates (#767). Keys
+/// sort by code point, as Python's `json.dumps(..., sort_keys=True)` does for
+/// in-memory inputs.
+pub fn json_value_text(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(boolean) => boolean.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(string) => string.to_string(),
+        Value::Array(_) | Value::Object(_) => {
+            let mut text = String::new();
+            write_canonical_json(value, &mut text);
+            text
+        }
+    }
+}
+
+fn write_canonical_json(value: &Value, out: &mut String) {
+    match value {
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical_json(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(fields) => {
+            let mut entries: Vec<_> = fields.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            out.push('{');
+            for (index, (key, field)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&scalar_json(key));
+                out.push(':');
+                write_canonical_json(field, out);
+            }
+            out.push('}');
+        }
+        scalar => out.push_str(&scalar_json(scalar)),
+    }
+}
+
+fn scalar_json<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    // decode-audit: impossible — serializing an in-memory string or scalar
+    // Value cannot fail; a panic here beats folding "" (= null) into stats.
+    serde_json::to_string(value).expect("re-serializing a parsed JSON value cannot fail")
+}
+
 pub fn json_value_kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
