@@ -141,6 +141,18 @@ pub enum DataProfilerError {
         suggestion: String,
     },
 
+    /// A remote object changed between the ranged reads of one profile, so
+    /// the bytes read do not all come from one version of it (#865). Built
+    /// with [`DataProfilerError::source_changed`].
+    #[error("Source changed during the read: {path}: {detail}\n{suggestion}")]
+    #[non_exhaustive]
+    SourceChanged {
+        path: String,
+        /// What showed the change, e.g. the server answering 412 to `If-Match`.
+        detail: String,
+        suggestion: String,
+    },
+
     #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
     #[non_exhaustive]
     JsonParsingError {
@@ -352,6 +364,16 @@ impl DataProfilerError {
         }
     }
 
+    /// The object at `path` changed while it was being read; `detail` says
+    /// how that showed.
+    pub fn source_changed(path: &str, detail: impl Into<String>) -> Self {
+        DataProfilerError::SourceChanged {
+            path: path.to_string(),
+            detail: detail.into(),
+            suggestion: "Profile it again once writes to it have finished, or profile a copy that is not being rewritten.".to_string(),
+        }
+    }
+
     /// Create unsupported format error with format detection
     pub fn unsupported_format(extension: &str) -> Self {
         DataProfilerError::UnsupportedFormat {
@@ -557,6 +579,7 @@ impl DataProfilerError {
             | DataProfilerError::InvalidConfiguration { suggestion, .. }
             | DataProfilerError::InvalidSemanticHint { suggestion, .. }
             | DataProfilerError::BinaryInput { suggestion, .. }
+            | DataProfilerError::SourceChanged { suggestion, .. }
             | DataProfilerError::DatabaseConnectionError { suggestion, .. } => {
                 Some(suggestion.clone())
             }
@@ -592,6 +615,7 @@ impl DataProfilerError {
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
             DataProfilerError::EncodingError { .. } => "encoding",
             DataProfilerError::BinaryInput { .. } => "binary_input",
+            DataProfilerError::SourceChanged { .. } => "source_changed",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
             DataProfilerError::InvalidSemanticHint { .. } => "semantic_hint",
             DataProfilerError::StreamingError { .. } => "streaming",
