@@ -148,8 +148,8 @@ impl MetricsCalculator {
     }
 
     /// Explicit temporal hints plus columns the profiler itself inferred as dates.
-    /// Hint order wins for ambiguous start/end role matching; inferred columns
-    /// are appended in stable profile order and duplicates are removed.
+    /// Hints come first; inferred columns are appended in stable profile order
+    /// and duplicates are removed.
     fn effective_temporal_columns(
         column_profiles: &[ColumnProfile],
         semantic_hints: &SemanticHints,
