@@ -88,23 +88,93 @@ _DEFAULT_SCORE_WEIGHTS = {
 }
 
 
-def _column_accessor(document: dict[str, Any]) -> _MappingAccessor:
+def _read_field(
+    document: dict[str, Any],
+    key: str,
+    path: str,
+    expected: str,
+    accepts: Any,
+    default: Any,
+) -> Any:
+    """Read one field as the committed schema types it (#763).
+
+    Only a missing key takes `default`, the documented compatibility value. A
+    value of the wrong type is refused with the field's path: read as the
+    default it would become a believable flag, count, "not analyzed" or
+    "analyzed, nothing found" that the writer never recorded.
+    """
+    if key not in document:
+        return default
+    value = document[key]
+    if not accepts(value):
+        raise ValueError(f"from_dict(): {path!r} must be {expected}, got {value!r}.")
+    return value
+
+
+def _is_bool(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_finite_number(value: Any) -> bool:
+    # bool before int: bool is an int subclass, and True == 1.
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _is_list_of_mappings(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(entry, dict) for entry in value)
+
+
+def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     values = dict(document)
-    stats = document.get("stats")
+    # `null` is the schema's "not analyzed", the same answer as a missing key.
+    stats = _read_field(
+        document,
+        "stats",
+        f"{path}.stats",
+        "a mapping or null",
+        lambda value: value is None or isinstance(value, dict),
+        None,
+    )
     # The shared accessor declares its persisted location. There is no second
     # stat-attribute list to drift, and unknown keys cannot override core fields.
     for name, field in vars(ColumnProfile).items():
         if isinstance(field, _Field) and field._document_section == "stats":
-            values[name] = stats.get(name) if isinstance(stats, dict) else None
+            values[name] = stats.get(name) if stats is not None else None
     values["type_homogeneity"] = _homogeneity_counts(document.get("type_homogeneity"))
-    patterns = document.get("patterns")
+    patterns = _read_field(
+        document,
+        "patterns",
+        f"{path}.patterns",
+        "a list of mappings or null",
+        lambda value: value is None or _is_list_of_mappings(value),
+        None,
+    )
     values["patterns"] = (
         [
-            _MappingAccessor({**p, "confidence": p.get("confidence", 0.0)})
-            for p in patterns
-            if isinstance(p, dict)
+            _MappingAccessor(
+                {
+                    **p,
+                    "confidence": _read_field(
+                        p,
+                        "confidence",
+                        f"{path}.patterns[{index}].confidence",
+                        "a finite number",
+                        _is_finite_number,
+                        0.0,
+                    ),
+                }
+            )
+            for index, p in enumerate(patterns)
         ]
-        if isinstance(patterns, list)
+        if patterns is not None
         else None
     )
     return _MappingAccessor(values)
@@ -113,11 +183,29 @@ def _column_accessor(document: dict[str, Any]) -> _MappingAccessor:
 def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     values = dict(document)
     values["overall_quality_score"] = document.get("overall_score")
-    values["low_sample_warning"] = bool(document.get("low_sample_warning", False))
-    values["assessed_dimensions"] = document.get("assessed_dimensions") or []
-    scores = document.get("dimension_scores")
-    values["dimension_scores"] = (
-        scores if isinstance(scores, dict) else dict.fromkeys(_QUALITY_DIMENSIONS)
+    values["low_sample_warning"] = _read_field(
+        document,
+        "low_sample_warning",
+        "quality.low_sample_warning",
+        "a boolean",
+        _is_bool,
+        False,
+    )
+    values["assessed_dimensions"] = _read_field(
+        document,
+        "assessed_dimensions",
+        "quality.assessed_dimensions",
+        "a list",
+        lambda value: isinstance(value, list),
+        [],
+    )
+    values["dimension_scores"] = _read_field(
+        document,
+        "dimension_scores",
+        "quality.dimension_scores",
+        "a mapping",
+        lambda value: isinstance(value, dict),
+        dict.fromkeys(_QUALITY_DIMENSIONS),
     )
     values["score_weights"] = _read_score_weights(document)
     return _MappingAccessor(values)
@@ -199,24 +287,66 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["source_type"] = document.get("source_type")
     # Only these additive fields have legacy defaults. Unknown measurements
     # stay absent; in particular an unknown history is not an empty history.
-    values["ragged_row_count"] = execution.get("ragged_row_count") or 0
+    values["ragged_row_count"] = _read_field(
+        execution,
+        "ragged_row_count",
+        "execution.ragged_row_count",
+        "a non-negative integer",
+        _is_count,
+        0,
+    )
     # Absent means a pre-0.10 document, written before versioning. Callers
     # that must not read a defaulted field as a measurement branch on it.
     values["schema_version"] = document.get("schema_version", 0)
-    values["sampling_applied"] = bool(execution.get("sampling_applied", False))
-    bindings = document.get("semantic_hint_bindings")
-    values["semantic_hint_bindings"] = list(bindings) if isinstance(bindings, list) else []
-    values["metric_semantics"] = _read_metric_semantics(document)
-    quality = document.get("quality")
-    values["quality"] = _quality_accessor(quality) if isinstance(quality, dict) else None
-    values["quality_score"] = quality.get("overall_score") if isinstance(quality, dict) else None
-    values["quality_sampled_dimensions"] = (
-        quality.get("sampled_dimensions") if isinstance(quality, dict) else None
+    values["sampling_applied"] = _read_field(
+        execution,
+        "sampling_applied",
+        "execution.sampling_applied",
+        "a boolean",
+        _is_bool,
+        False,
     )
-    bounds = quality.get("score_bounds") if isinstance(quality, dict) else None
-    values["quality_score_bounds"] = bounds if isinstance(bounds, dict) else None
+    values["semantic_hint_bindings"] = list(
+        _read_field(
+            document,
+            "semantic_hint_bindings",
+            "semantic_hint_bindings",
+            "a list of mappings",
+            _is_list_of_mappings,
+            [],
+        )
+    )
+    values["metric_semantics"] = _read_metric_semantics(document)
+    quality = _read_field(
+        document,
+        "quality",
+        "quality",
+        "a mapping or null",
+        lambda value: value is None or isinstance(value, dict),
+        None,
+    )
+    values["quality"] = _quality_accessor(quality) if quality is not None else None
+    values["quality_score"] = quality.get("overall_score") if quality is not None else None
+    values["quality_sampled_dimensions"] = (
+        quality.get("sampled_dimensions") if quality is not None else None
+    )
+    values["quality_score_bounds"] = (
+        _read_field(
+            quality,
+            "score_bounds",
+            "quality.score_bounds",
+            "a mapping or null",
+            lambda value: value is None or isinstance(value, dict),
+            None,
+        )
+        if quality is not None
+        else None
+    )
     values["quality_status"], values["quality_error"] = _read_quality_status(
         document.get("quality_status", _MISSING), values["quality"] is not None
     )
-    values["column_profiles"] = [_column_accessor(c) for c in document.get("columns", [])]
+    values["column_profiles"] = [
+        _column_accessor(column, f"columns[{index}]")
+        for index, column in enumerate(document.get("columns", []))
+    ]
     return _ReportView(_MappingAccessor(values))
