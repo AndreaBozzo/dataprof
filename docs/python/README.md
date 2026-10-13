@@ -1284,6 +1284,11 @@ report = await profile_bytes(csv_bytes, format="csv")
 report = await profile_url("https://example.com/data.parquet")
 ```
 
+Remote Parquet is read with several ranged requests, all tied to the `ETag`
+the server sent first. If the object is replaced while it is being read,
+`profile_url` raises `OSError` naming the URL instead of profiling a mix of the
+two versions. A server that sends no `ETag` leaves nothing to check against.
+
 Async byte streams use the incremental engine; `engine="columnar"` is rejected.
 Local async Parquet profiling honors `max_rows` and row-limit stop conditions,
 and rejects stop conditions or sampling strategies the Parquet reader cannot

@@ -17,11 +17,74 @@ use crate::{
 
 /// An asynchronous reader that fetches byte ranges from an HTTP server
 /// using HTTP Range requests. Designed specifically for remote Parquet parsing.
+///
+/// Every ranged read is tied to the version of the object the size came from
+/// (#865). The `ETag` of the HEAD response, or of the size probe, is pinned:
+/// each range is requested with `If-Match` on it, and each `206` answer's
+/// `ETag` is compared with it, because some servers ignore `If-Match` on GET.
+/// Either check failing makes the read fail with
+/// [`DataProfilerError::SourceChanged`] instead of decoding a footer from one
+/// version and pages from another. A server that sends no `ETag` leaves
+/// nothing to pin, and is read as before.
 #[derive(Clone)]
 pub struct HttpParquetReader {
     client: Client,
     url: String,
     content_length: usize,
+    etag: Option<String>,
+}
+
+/// The object's size and validator, from the same response.
+struct ObjectVersion {
+    content_length: usize,
+    etag: Option<String>,
+}
+
+/// The object changed between two ranged reads. Carried out of
+/// [`AsyncFileReader::get_bytes`] as a `ParquetError::External`, and turned
+/// into [`DataProfilerError::SourceChanged`] by [`read_error`].
+#[derive(Debug)]
+struct ObjectChanged {
+    detail: String,
+}
+
+impl std::fmt::Display for ObjectChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for ObjectChanged {}
+
+fn object_changed(detail: String) -> parquet::errors::ParquetError {
+    parquet::errors::ParquetError::External(Box::new(ObjectChanged { detail }))
+}
+
+// decode-audit: no-data — an absent or non-text `ETag` is no validator; the
+// read is then unpinned, as it is for a server that sends none.
+fn etag_from_headers(headers: &header::HeaderMap) -> Option<String> {
+    headers.get(header::ETAG)?.to_str().ok().map(str::to_string)
+}
+
+/// Whether two entity tags name the same version under the weak comparison
+/// of RFC 9110 §8.8.3.2: equal opaque tags, with or without the `W/` prefix.
+fn same_version(pinned: &str, current: &str) -> bool {
+    let opaque = |tag: &str| tag.strip_prefix("W/").unwrap_or(tag).to_string();
+    opaque(pinned) == opaque(current)
+}
+
+/// A failed Parquet read, as the profiling error for `url`: a change of the
+/// object becomes [`DataProfilerError::SourceChanged`], anything else a
+/// Parquet error with `context`.
+fn read_error(url: &str, context: &str, error: parquet::errors::ParquetError) -> DataProfilerError {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(current) = cause {
+        if let Some(changed) = current.downcast_ref::<ObjectChanged>() {
+            return DataProfilerError::source_changed(url, changed.detail.clone());
+        }
+        cause = current.source();
+    }
+    DataProfilerError::parquet_with_source(format!("{context}: {error}"), error)
 }
 
 impl HttpParquetReader {
@@ -39,24 +102,31 @@ impl HttpParquetReader {
                 )
             })?;
 
-        let content_length = Self::discover_content_length(&client, url).await?;
+        let ObjectVersion {
+            content_length,
+            etag,
+        } = Self::discover_content_length(&client, url).await?;
 
         Ok(Self {
             client,
             url: url.to_string(),
             content_length,
+            etag,
         })
     }
 
     async fn discover_content_length(
         client: &Client,
         url: &str,
-    ) -> Result<usize, DataProfilerError> {
+    ) -> Result<ObjectVersion, DataProfilerError> {
         let (head_failure, head_transport_error) = match client.head(url).send().await {
             Ok(head_res) if head_res.status().is_success() => {
                 if let Some(content_length) = Self::content_length_from_headers(head_res.headers())
                 {
-                    return Ok(content_length);
+                    return Ok(ObjectVersion {
+                        content_length,
+                        etag: etag_from_headers(head_res.headers()),
+                    });
                 }
                 (
                     "Server did not provide Content-Length header on HEAD".to_string(),
@@ -114,7 +184,7 @@ impl HttpParquetReader {
     async fn probe_content_length_with_range(
         client: &Client,
         url: &str,
-    ) -> Result<usize, ProbeFailure> {
+    ) -> Result<ObjectVersion, ProbeFailure> {
         let response = client
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0")
@@ -139,11 +209,16 @@ impl HttpParquetReader {
             }));
         }
 
-        Self::content_length_from_content_range(response.headers()).ok_or_else(|| {
-            ProbeFailure::protocol(
-                "server answered the size probe with 206 but no parseable Content-Range total. Download the file and profile the local copy instead."
-                    .to_string(),
-            )
+        let content_length = Self::content_length_from_content_range(response.headers())
+            .ok_or_else(|| {
+                ProbeFailure::protocol(
+                    "server answered the size probe with 206 but no parseable Content-Range total. Download the file and profile the local copy instead."
+                        .to_string(),
+                )
+            })?;
+        Ok(ObjectVersion {
+            content_length,
+            etag: etag_from_headers(response.headers()),
         })
     }
 }
@@ -189,22 +264,32 @@ impl AsyncFileReader for HttpParquetReader {
             if range.start >= range.end {
                 return Ok(Bytes::new());
             }
-            let req = self
-                .client
-                .get(&self.url)
-                .header(
-                    reqwest::header::RANGE,
-                    format!("bytes={}-{}", range.start, range.end - 1),
-                )
-                .build()
-                .map_err(|e| {
-                    parquet::errors::ParquetError::General(format!("invalid request: {}", e))
-                })?;
+            let mut req = self.client.get(&self.url).header(
+                reqwest::header::RANGE,
+                format!("bytes={}-{}", range.start, range.end - 1),
+            );
+            // `If-Match` compares strongly, so a weak tag never satisfies it
+            // (RFC 9110 §13.1.1); it is still compared on the answer below.
+            let if_match = self.etag.as_deref().filter(|tag| !tag.starts_with("W/"));
+            if let Some(etag) = if_match {
+                req = req.header(header::IF_MATCH, etag);
+            }
+            let req = req.build().map_err(|e| {
+                parquet::errors::ParquetError::General(format!("invalid request: {}", e))
+            })?;
 
             let res = self.client.execute(req).await.map_err(|e| {
                 parquet::errors::ParquetError::General(format!("network err: {}", e))
             })?;
 
+            // A 412 says the object changed only when `If-Match` was sent.
+            if let Some(etag) = if_match
+                && res.status() == reqwest::StatusCode::PRECONDITION_FAILED
+            {
+                return Err(object_changed(format!(
+                    "the server answered 412 Precondition Failed to If-Match {etag}"
+                )));
+            }
             if res.status() != reqwest::StatusCode::PARTIAL_CONTENT {
                 if res.status() == reqwest::StatusCode::OK {
                     return Err(parquet::errors::ParquetError::General(
@@ -214,6 +299,15 @@ impl AsyncFileReader for HttpParquetReader {
                 return Err(parquet::errors::ParquetError::General(format!(
                     "Expected 206 Partial Content, got {}",
                     res.status()
+                )));
+            }
+
+            if let (Some(pinned), Some(current)) =
+                (self.etag.as_deref(), etag_from_headers(res.headers()))
+                && !same_version(pinned, &current)
+            {
+                return Err(object_changed(format!(
+                    "its ETag changed from {pinned} to {current} between ranged reads"
                 )));
             }
 
@@ -310,12 +404,7 @@ pub async fn analyze_parquet_async_http_with_options(
 
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
-        .map_err(|e| {
-            DataProfilerError::parquet_with_source(
-                format!("Failed to create Parquet stream builder: {}", e),
-                e,
-            )
-        })?;
+        .map_err(|e| read_error(url, "Failed to create Parquet stream builder", e))?;
 
     let parquet_meta = builder.metadata().clone();
     let file_metadata = parquet_meta.file_metadata();
@@ -360,12 +449,8 @@ pub async fn analyze_parquet_async_http_with_options(
     analyzer.initialize_schema(arrow_schema.as_ref())?;
 
     while let Some(batch_result) = stream.next().await {
-        let batch = batch_result.map_err(|e| {
-            DataProfilerError::parquet_with_source(
-                format!("Failed to read Parquet async batch: {}", e),
-                e,
-            )
-        })?;
+        let batch =
+            batch_result.map_err(|e| read_error(url, "Failed to read Parquet async batch", e))?;
         analyzer.process_batch(&batch)?;
     }
 
