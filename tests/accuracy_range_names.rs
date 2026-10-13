@@ -6,6 +6,10 @@
 //! 0% accuracy and could fail a quality gate. The rules live in the shared
 //! metrics crate, so every engine and input format has to agree.
 //!
+//! A rule also applies only where the name pins its unit (#880): `rate` is
+//! not a percentage (`sample_rate`, `heart_rate`), and an `age` counted in
+//! days or milliseconds is not held to 0 to 150 years.
+//!
 //! `python/tests/test_accuracy_range_names.py` is the Python twin.
 
 use std::io::Write;
@@ -13,9 +17,10 @@ use std::io::Write;
 use dataprof::{CsvParserConfig, EngineType, ProfileReport, Profiler, analyze_csv_file};
 use tempfile::NamedTempFile;
 
-/// Names holding a rule word only inside a longer word, each with clean values
-/// that the rule it used to match would reject.
-const NOT_RULE_NAMES: [(&str, [i64; 4]); 7] = [
+/// Names holding a rule word only inside a longer word, or a rule word whose
+/// unit another word overrides, each with clean values that the rule it used
+/// to match would reject.
+const NOT_RULE_NAMES: [(&str, [i64; 4]); 12] = [
     ("average_price", [200, 250, 300, 180]),
     ("mileage", [120000, 85000, 43000, 99000]),
     ("page_views", [310, 1200, 450, 980]),
@@ -23,13 +28,20 @@ const NOT_RULE_NAMES: [(&str, [i64; 4]); 7] = [
     ("generated_tokens", [512, 1024, 2048, 700]),
     ("discount", [-5, -10, -2, -1]),
     ("account_number", [-5, 10, 20, 30]),
+    ("sample_rate", [44100, 48000, 88200, 96000]),
+    ("heart_rate", [72, 130, 155, 64]),
+    ("frame_rate", [24, 30, 60, 120]),
+    ("account_age_days", [30, 400, 1200, 90]),
+    ("session_age_ms", [500, 2000, 3500, 1200]),
 ];
 
 /// Names whose words carry a rule, each with values that break it.
-const RULE_NAMES: [(&str, [i64; 4]); 6] = [
+const RULE_NAMES: [(&str, [i64; 4]); 8] = [
     ("age", [30, 200, 45, 300]),
     ("customer_age", [30, 200, 45, 300]),
-    ("conversion_rate", [12, 250, 40, 180]),
+    ("account_age_years", [30, 200, 45, 300]),
+    ("discount_percent", [12, 250, 40, 180]),
+    ("conversion_rate_pct", [12, 250, 40, 180]),
     ("item_count", [3, -1, 5, -2]),
     ("birth_year", [1985, 1850, 1990, 2500]),
     ("customerAge", [30, 200, 45, 300]),

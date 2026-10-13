@@ -197,9 +197,12 @@ Measures whether values fall within expected ranges.
 
 - `outlier_ratio` -- fraction of values outside the interquartile range
 - `range_violations` -- values outside the range a word of the column name
-  implies: `age` 0 to 150, `percent`, `percentage`, `rate` or `rates` 0 to 100,
+  implies: `age` 0 to 150, `percent`, `percentage` or `pct` 0 to 100,
   `count` or `counts` not negative, `year` 1900 to 2100 (`customer_age`
-  matches, `average_price` does not)
+  matches, `average_price` does not). A rule applies only where the name pins
+  its unit: `age` is not held to years beside a smaller unit
+  (`account_age_days`), and a `rate` is not taken for a percentage
+  (`sample_rate`, `heart_rate`)
 - `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
 
 ### Timeliness
