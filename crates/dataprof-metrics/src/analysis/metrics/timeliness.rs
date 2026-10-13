@@ -27,7 +27,18 @@ const ROLE_WORD_ENDINGS: [&str; 9] = [
     "ts",
 ];
 
-/// Whether `name` holds `role` as words of its own, never inside a longer word
+/// Whether `name` holds `role`, by the rules of [`words_beside_role`].
+#[cfg(test)]
+fn holds_role(name: &str, role: &str) -> bool {
+    words_beside_role(name, role).is_some()
+}
+
+/// The words of `name` left once the words holding `role` are taken out, in
+/// lower case, or `None` when `name` does not hold `role`: `trip` for
+/// `trip_start` and for `tripEndDate` under `end_date`. They are what ties a
+/// start column to its end column (#913).
+///
+/// A name holds `role` as words of its own, never inside a longer word
 /// (#882): `end` is in `end_date` and `endDate`, not in `send_date` or
 /// `weekend_date`; `to_date` is in `valid_to_date`, not in `photo_date`.
 ///
@@ -36,16 +47,6 @@ const ROLE_WORD_ENDINGS: [&str; 9] = [
 /// endings keep pairs the substring match it replaces found, and add none. A
 /// role of several words is matched across a camelCase name too, which the
 /// substring match could not do: `fromDate` holds `from_date`.
-#[cfg(test)]
-fn holds_role(name: &str, role: &str) -> bool {
-    words_beside_role(name, role).is_some()
-}
-
-/// The words of `name` left once the words holding `role` are taken out, in
-/// lower case, or `None` when `name` does not hold `role` as [`holds_role`]
-/// reads it: `trip` for `trip_start` and for `tripEndDate` under `end_date`.
-///
-/// They are what ties a start column to its end column (#913).
 fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
     let words = identifier_words(name);
     let role_words = identifier_words(role);
