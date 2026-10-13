@@ -43,6 +43,19 @@ def _pattern_entry(document: dict[str, Any], value: Any) -> None:
     document["columns"][1]["patterns"] = [value]
 
 
+def _pattern_confidence(document: dict[str, Any], value: Any) -> None:
+    document["columns"][1]["patterns"] = [
+        {
+            "name": "Word",
+            "regex": "^[A-Za-z]+$",
+            "match_count": 4,
+            "match_percentage": 100.0,
+            "category": "text",
+            "confidence": value,
+        }
+    ]
+
+
 def _no_quality_status(document: dict[str, Any], value: Any) -> None:
     del document["quality_status"]
     document["quality"] = value
@@ -53,6 +66,11 @@ MALFORMED = [
     ("columns[0].stats", _set("columns", 0, "stats"), [[1], "x", 1]),
     ("columns[1].patterns", _pattern_entry, [1, "x", None]),
     ("columns[1].patterns", _set("columns", 1, "patterns"), ["x", {}]),
+    (
+        "columns[1].patterns[0].confidence",
+        _pattern_confidence,
+        ["x", None, True, float("nan")],
+    ),
     ("quality.low_sample_warning", _set("quality", "low_sample_warning"), ["false", 0, None]),
     ("quality.assessed_dimensions", _set("quality", "assessed_dimensions"), [None, {}, "x"]),
     ("quality.dimension_scores", _set("quality", "dimension_scores"), [[1], None, "x"]),

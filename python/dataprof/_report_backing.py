@@ -119,6 +119,15 @@ def _is_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _is_finite_number(value: Any) -> bool:
+    # bool before int: bool is an int subclass, and True == 1.
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
 def _is_list_of_mappings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(entry, dict) for entry in value)
 
@@ -149,7 +158,22 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
         None,
     )
     values["patterns"] = (
-        [_MappingAccessor({**p, "confidence": p.get("confidence", 0.0)}) for p in patterns]
+        [
+            _MappingAccessor(
+                {
+                    **p,
+                    "confidence": _read_field(
+                        p,
+                        "confidence",
+                        f"{path}.patterns[{index}].confidence",
+                        "a finite number",
+                        _is_finite_number,
+                        0.0,
+                    ),
+                }
+            )
+            for index, p in enumerate(patterns)
+        ]
         if patterns is not None
         else None
     )
