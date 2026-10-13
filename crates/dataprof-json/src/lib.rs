@@ -42,8 +42,9 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 use record::{
-    JsonRecord, drain_to_end, json_document_error, json_value_kind, malformed_array_error,
-    non_object_record_error, read_json_record, read_jsonl_line, skip_ascii_whitespace,
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
+    malformed_array_error, non_object_record_error, read_json_record, read_jsonl_line,
+    skip_ascii_whitespace,
 };
 use serde_json::Value;
 
@@ -678,21 +679,6 @@ fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, 
     }
 }
 
-/// Convert a JSON [`Value`] to a flat string for column storage.
-fn json_value_to_string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::Bool(boolean) => boolean.to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(string) => string.to_string(),
-        // decode-audit: impossible — serializing an in-memory Value back to a
-        // string cannot fail; a panic here beats folding "" (= null) into stats.
-        Value::Array(_) | Value::Object(_) => {
-            serde_json::to_string(value).expect("re-serializing a parsed JSON value cannot fail")
-        }
-    }
-}
-
 /// Feed a JSON object's fields into a [`StreamingColumnCollection`].
 ///
 /// Columns are registered in the order the fields appear in each record, so the
@@ -725,9 +711,7 @@ fn feed_json_object(
         .map(|column| {
             // decode-audit: no-data — a key absent from this object is a
             // missing field, and "" is the profiler's textual null.
-            obj.get(column)
-                .map(json_value_to_string)
-                .unwrap_or_default()
+            obj.get(column).map(json_value_text).unwrap_or_default()
         })
         .collect();
 
