@@ -36,11 +36,21 @@ const ROLE_WORD_ENDINGS: [&str; 9] = [
 /// endings keep pairs the substring match it replaces found, and add none. A
 /// role of several words is matched across a camelCase name too, which the
 /// substring match could not do: `fromDate` holds `from_date`.
+#[cfg(test)]
 fn holds_role(name: &str, role: &str) -> bool {
+    words_beside_role(name, role).is_some()
+}
+
+/// The words of `name` left once the words holding `role` are taken out, in
+/// lower case, or `None` when `name` does not hold `role` as [`holds_role`]
+/// reads it: `trip` for `trip_start` and for `tripEndDate` under `end_date`.
+///
+/// They are what ties a start column to its end column (#913).
+fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
     let words = identifier_words(name);
     let role_words = identifier_words(role);
-    if let [role] = role_words.as_slice() {
-        return words.iter().any(|word| {
+    let first = if let [role] = role_words.as_slice() {
+        words.iter().position(|word| {
             word.get(..role.len())
                 .is_some_and(|head| head.eq_ignore_ascii_case(role))
                 && word.get(role.len()..).is_some_and(|rest| {
@@ -49,15 +59,26 @@ fn holds_role(name: &str, role: &str) -> bool {
                             .iter()
                             .any(|ending| rest.eq_ignore_ascii_case(ending))
                 })
-        });
-    }
-    !role_words.is_empty()
-        && words.windows(role_words.len()).any(|window| {
+        })?
+    } else if role_words.is_empty() {
+        return None;
+    } else {
+        words.windows(role_words.len()).position(|window| {
             window
                 .iter()
                 .zip(&role_words)
                 .all(|(word, role_word)| word.eq_ignore_ascii_case(role_word))
-        })
+        })?
+    };
+    let role_span = first..first + role_words.len();
+    Some(
+        words
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !role_span.contains(index))
+            .map(|(_, word)| word.to_ascii_lowercase())
+            .collect(),
+    )
 }
 
 /// Timeliness metrics container
@@ -239,22 +260,19 @@ impl<'a> TimelinessCalculator<'a> {
         }
     }
 
-    /// Count temporal ordering violations (e.g., end_date < start_date). The
-    /// pair count is the denominator that makes the violation count
-    /// interpretable; it is not bounded by the number of date-typed values.
+    /// The start/end column pairs to compare, like start_date/end_date or
+    /// created_at/updated_at, in the order `temporal_columns` lists the starts.
     ///
-    /// Only column pairs whose values [line up by row](rows_line_up) are
-    /// compared. Comparing the others would pair a start date from one row
-    /// with an end date from another and count violations nobody made.
-    fn count_temporal_violations(
+    /// A start column pairs with the end column that shares the rest of its
+    /// name: `trip_start` with `trip_end`, `billing_start` with `billing_end`
+    /// (#913). A start that fits several ends, or an end that fits several
+    /// starts, is left unpaired rather than guessed. Names that share nothing
+    /// still pair when they are the only start and the only end, as
+    /// `created_at`/`last_updated_at` are.
+    fn column_pairs<'d>(
         data: &HashMap<String, Vec<String>>,
-        temporal_columns: &[String],
-        column_profiles: &[ColumnProfile],
-    ) -> Result<TemporalOrdering, DataProfilerError> {
-        let mut violations = 0;
-        let mut pairs_checked = 0;
-
-        // Look for column pairs like start_date/end_date, created_at/updated_at
+        temporal_columns: &'d [String],
+    ) -> Vec<(&'d str, &'d str)> {
         let temporal_pairs = [
             ("start_date", "end_date"),
             ("start", "end"),
@@ -269,38 +287,71 @@ impl<'a> TimelinessCalculator<'a> {
         // two columns are compared once per matching pattern, and every pair and
         // every violation is counted as many times as patterns happened to hit.
         let mut evaluated: HashSet<(&str, &str)> = HashSet::new();
+        let mut pairs = Vec::new();
+
+        for (start_col, end_col) in &temporal_pairs {
+            // Walk `temporal_columns`, not `data`: the HashMap's iteration order
+            // is randomized. A name the caller listed but the data does not
+            // carry fills no role, so it cannot hide one that has values.
+            let holders = |role: &str| -> Vec<(&'d str, Vec<String>)> {
+                temporal_columns
+                    .iter()
+                    .filter(|name| data.contains_key(*name))
+                    .filter_map(|name| Some((name.as_str(), words_beside_role(name, role)?)))
+                    .collect()
+            };
+            let starts = holders(start_col);
+            let ends = holders(end_col);
+            let lone = starts.len() == 1 && ends.len() == 1;
+
+            for (start_name, start_rest) in &starts {
+                // A column cannot be both ends of the same comparison: "start"
+                // and "end" both match a lone `start_end_date`, which would
+                // compare it with itself and report a clean pair that was
+                // never checked.
+                let mut fitting = ends
+                    .iter()
+                    .filter(|(end_name, end_rest)| {
+                        end_name != start_name && (lone || end_rest == start_rest)
+                    })
+                    .map(|(end_name, _)| *end_name);
+                let (Some(end_name), None) = (fitting.next(), fitting.next()) else {
+                    continue;
+                };
+                let rivals = starts
+                    .iter()
+                    .filter(|(name, rest)| *name != end_name && rest == start_rest)
+                    .count();
+                if rivals == 1 && evaluated.insert((*start_name, end_name)) {
+                    pairs.push((*start_name, end_name));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Count temporal ordering violations (e.g., end_date < start_date). The
+    /// pair count is the denominator that makes the violation count
+    /// interpretable; it is not bounded by the number of date-typed values.
+    ///
+    /// Only column pairs whose values [line up by row](rows_line_up) are
+    /// compared. Comparing the others would pair a start date from one row
+    /// with an end date from another and count violations nobody made.
+    fn count_temporal_violations(
+        data: &HashMap<String, Vec<String>>,
+        temporal_columns: &[String],
+        column_profiles: &[ColumnProfile],
+    ) -> Result<TemporalOrdering, DataProfilerError> {
+        let mut violations = 0;
+        let mut pairs_checked = 0;
         let mut compared = Vec::new();
         let profile = |name: &str| column_profiles.iter().find(|profile| profile.name == name);
 
-        for (start_col, end_col) in &temporal_pairs {
-            // Resolve ambiguous role matches in the order supplied by the user.
-            // Iterating `data` here would make the selected pair depend on the
-            // randomized iteration order of its HashMap.
-            // `find_map`, not `find(..).and_then(..)`: a name the caller listed
-            // but the data does not carry must not end the search, or it hides
-            // a later name that fills the same role and does have values.
-            let resolve = |role: &str| {
-                temporal_columns.iter().find_map(|name| {
-                    holds_role(name, role)
-                        .then(|| data.get(name).map(|values| (name.as_str(), values)))
-                        .flatten()
-                })
-            };
-            let start_match = resolve(start_col);
-            let end_match = resolve(end_col);
-
-            let (Some((start_name, start_values)), Some((end_name, end_values))) =
-                (start_match, end_match)
+        for (start_name, end_name) in Self::column_pairs(data, temporal_columns) {
+            let (Some(start_values), Some(end_values)) = (data.get(start_name), data.get(end_name))
             else {
                 continue;
             };
-
-            // A column cannot be both ends of the same comparison: "start" and
-            // "end" both match a lone `start_end_date`, which would compare it
-            // with itself and report a clean pair that was never checked.
-            if start_name == end_name || !evaluated.insert((start_name, end_name)) {
-                continue;
-            }
             let (Some(start_profile), Some(end_profile)) = (profile(start_name), profile(end_name))
             else {
                 continue;
@@ -464,7 +515,9 @@ mod tests {
     }
 
     #[test]
-    fn temporal_ordering_uses_explicit_column_order_for_ambiguous_roles() {
+    fn ambiguous_roles_form_no_pair_in_either_column_order() {
+        // #913: two starts and one end that names neither. The first start
+        // listed used to win, so the result followed the column order.
         let data = HashMap::from([
             ("primary_start".to_string(), vec!["2024-01-01".to_string()]),
             (
@@ -473,32 +526,73 @@ mod tests {
             ),
             ("end".to_string(), vec!["2024-01-02".to_string()]),
         ]);
-        let config = IsoQualityConfig::default();
-        let calculator = TimelinessCalculator::new(&config);
 
-        let primary_first = calculator
-            .calculate_whole(
-                &data,
-                &[
-                    "primary_start".to_string(),
-                    "secondary_start".to_string(),
-                    "end".to_string(),
-                ],
-            )
-            .expect("primary-first timeliness metrics");
-        assert_eq!(primary_first.temporal_violations, 0);
+        for order in [
+            ["primary_start", "secondary_start", "end"],
+            ["secondary_start", "primary_start", "end"],
+        ] {
+            let metrics = metrics_for(&config(), &data, &order);
+            assert_eq!(metrics.temporal_pairs_checked, 0, "{order:?}");
+            assert_eq!(metrics.temporal_violations, 0, "{order:?}");
+            assert!(metrics.compared_pairs.is_empty(), "{order:?}");
+        }
+    }
 
-        let secondary_first = calculator
-            .calculate_whole(
-                &data,
-                &[
-                    "secondary_start".to_string(),
-                    "primary_start".to_string(),
-                    "end".to_string(),
+    #[test]
+    fn each_start_pairs_with_the_end_that_shares_its_prefix() {
+        // #913: `billing_start` used to be compared with `trip_end`, the first
+        // end listed, and the billing pair was never checked.
+        let dates = |values: [&str; 3]| values.map(str::to_string).to_vec();
+        let data = HashMap::from([
+            (
+                "billing_start".to_string(),
+                dates(["2024-06-01", "2024-07-01", "2024-08-01"]),
+            ),
+            (
+                "trip_start".to_string(),
+                dates(["2024-01-01", "2024-02-01", "2024-03-01"]),
+            ),
+            (
+                "trip_end".to_string(),
+                dates(["2024-01-05", "2024-02-05", "2024-03-05"]),
+            ),
+            (
+                "billing_end".to_string(),
+                dates(["2024-06-30", "2024-07-31", "2024-08-31"]),
+            ),
+        ]);
+
+        for order in [
+            ["billing_start", "trip_start", "trip_end", "billing_end"],
+            ["trip_start", "trip_end", "billing_start", "billing_end"],
+        ] {
+            let metrics = metrics_for(&config(), &data, &order);
+            assert_eq!(metrics.temporal_pairs_checked, 6, "{order:?}");
+            assert_eq!(metrics.temporal_violations, 0, "{order:?}");
+            let mut pairs = metrics.compared_pairs.clone();
+            pairs.sort();
+            assert_eq!(
+                pairs,
+                [
+                    ("billing_start".to_string(), "billing_end".to_string()),
+                    ("trip_start".to_string(), "trip_end".to_string()),
                 ],
-            )
-            .expect("secondary-first timeliness metrics");
-        assert_eq!(secondary_first.temporal_violations, 1);
+                "{order:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_start_with_two_fitting_ends_is_left_unpaired() {
+        let data = HashMap::from([
+            ("trip_start".to_string(), vec!["2024-01-05".to_string()]),
+            ("trip_end".to_string(), vec!["2024-01-01".to_string()]),
+            ("tripEnd".to_string(), vec!["2024-01-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["trip_start", "trip_end", "tripEnd"]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 0);
+        assert_eq!(metrics.temporal_violations, 0);
     }
 
     // ---------------------------------------------------------------- #378
