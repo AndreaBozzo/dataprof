@@ -247,9 +247,10 @@ impl crate::DecodeStructured for sqlx::mysql::MySqlRow {
         if self.column(index).type_info().name() != "JSON" {
             return None;
         }
-        // MySQL validates a JSON value on write, stores numbers as 64-bit
-        // integers or doubles and caps nesting at 100, all inside what
-        // serde_json reads. Should a value still fail, keep its text.
+        // MySQL validates a JSON value on write, keeps every number within
+        // `f64` range (a DECIMAL has at most 65 digits) and caps nesting at
+        // 100, all inside what serde_json reads. Should a value still fail,
+        // keep its text.
         Some(match self.try_get::<sqlx::types::JsonValue, _>(index) {
             Ok(value) => super::common::json_structured_value(&value),
             Err(_) => {
