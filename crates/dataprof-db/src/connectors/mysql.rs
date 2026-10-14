@@ -234,3 +234,32 @@ impl DatabaseConnector for MySqlConnector {
         Err(feature_not_enabled_error("MySQL", "mysql"))
     }
 }
+
+/// MySQL `JSON` through serde_json. MySQL has no array type.
+///
+/// Matched by the column's type name: sqlx would also decode text and blob
+/// columns as JSON, and those already took an earlier arm or stay unsupported.
+#[cfg(feature = "mysql")]
+impl crate::DecodeStructured for sqlx::mysql::MySqlRow {
+    fn decode_structured(&self, index: usize) -> Option<crate::StructuredValue> {
+        use sqlx::{Column, Row, TypeInfo};
+
+        if self.column(index).type_info().name() != "JSON" {
+            return None;
+        }
+        // MySQL validates a JSON value on write, keeps every number within
+        // `f64` range (a DECIMAL has at most 65 digits) and caps nesting at
+        // 100, all inside what serde_json reads. Should a value still fail,
+        // keep its text.
+        Some(match self.try_get::<sqlx::types::JsonValue, _>(index) {
+            Ok(value) => super::common::json_structured_value(&value),
+            Err(_) => {
+                // Fails only on NULL, which the `Option<String>` arm took first.
+                let raw = self.try_get_raw(index).expect("a decoded column index");
+                let text = <&str as sqlx::Decode<sqlx::MySql>>::decode(raw)
+                    .expect("a non-null JSON value is text");
+                super::common::raw_json_structured_value(text)
+            }
+        })
+    }
+}

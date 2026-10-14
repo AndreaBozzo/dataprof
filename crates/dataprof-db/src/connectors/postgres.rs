@@ -223,6 +223,62 @@ impl DatabaseConnector for PostgresConnector {
     }
 }
 
+/// JSON and JSONB through serde_json, and arrays of any element type.
+///
+/// An array renders as its binary wire encoding in hex, which is canonical: two
+/// equal arrays of one column encode alike, so duplicate rows still compare by
+/// value. Nothing reads the text otherwise. Every non-null value of an array
+/// column is an array, so the column is reported as nested, counts only, and
+/// its values are withheld from every value-level check. Rendering it as JSON
+/// instead would need a decode per element type, and an element type without
+/// one would fall back to null, the failure this decoder exists to remove.
+///
+/// A JSON document serde_json cannot hold keeps the database's own text, see
+/// [`raw_json_structured_value`](super::common::raw_json_structured_value).
+#[cfg(feature = "postgres")]
+impl crate::DecodeStructured for sqlx::postgres::PgRow {
+    fn decode_structured(&self, index: usize) -> Option<crate::StructuredValue> {
+        use sqlx::postgres::{PgTypeKind, PgValueFormat};
+        use sqlx::{Column, Row, TypeInfo};
+        use std::fmt::Write;
+
+        let column_type = self.column(index).type_info();
+        let is_jsonb = column_type.name() == "JSONB";
+        let is_json = is_jsonb || column_type.name() == "JSON";
+        if !is_json && !matches!(column_type.kind(), PgTypeKind::Array(_)) {
+            return None;
+        }
+        if is_json && let Ok(value) = self.try_get::<sqlx::types::JsonValue, _>(index) {
+            return Some(super::common::json_structured_value(&value));
+        }
+
+        // Both calls fail only on NULL, and the `Option<String>` arm took
+        // every NULL first.
+        let raw = self.try_get_raw(index).expect("a decoded column index");
+        let mut bytes = raw.as_bytes().expect("a non-null value has bytes");
+        if is_json {
+            // Binary `jsonb` is a format version byte, then the document text.
+            if is_jsonb && raw.format() == PgValueFormat::Binary {
+                bytes = &bytes[1..];
+            }
+            return Some(super::common::raw_json_structured_value(
+                &String::from_utf8_lossy(bytes),
+            ));
+        }
+
+        let mut text = String::with_capacity(2 + 2 * bytes.len());
+        text.push_str("\\x");
+        for byte in bytes {
+            // Writing to a String cannot fail.
+            let _ = write!(text, "{byte:02x}");
+        }
+        Some(crate::StructuredValue {
+            text,
+            container: true,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

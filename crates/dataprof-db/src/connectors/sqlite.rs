@@ -222,3 +222,12 @@ impl DatabaseConnector for SqliteConnector {
         Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 }
+
+/// SQLite has no JSON or array type: JSON is stored as TEXT, and the `String`
+/// arm decodes it as text.
+#[cfg(feature = "sqlite")]
+impl crate::DecodeStructured for sqlx::sqlite::SqliteRow {
+    fn decode_structured(&self, _index: usize) -> Option<crate::StructuredValue> {
+        None
+    }
+}
