@@ -9,7 +9,10 @@ use dataprof_core::{
     AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, QualityDimension, QueryEngine,
 };
 use dataprof_metrics::analyze_column_with_analysis_options;
-use dataprof_runtime::{ProfileReport, ReportAssembler, RowCompletenessTracker};
+use dataprof_runtime::{
+    ProfileReport, ReportAssembler, RowCompletenessTracker, RowSignature, RowUniquenessTracker,
+    mark_container_columns,
+};
 
 pub mod connection;
 pub mod connectors;
@@ -253,10 +256,16 @@ pub async fn analyze_database_with_options(
     // `columns` keeps the query's column order, so the report reports columns in
     // the order they were selected — the same source-order contract CSV, Parquet
     // and JSON honour.
-    let column_profiles: Vec<_> = columns
-        .iter()
-        .map(|(name, data)| analyze_column_with_analysis_options(name, data, options))
-        .collect();
+    // A JSON or array column whose values are all containers is reported as
+    // nested, counts only, as Parquet, Arrow and the JSON readers report the
+    // same data (#766).
+    let column_profiles = mark_container_columns(
+        columns
+            .iter()
+            .map(|(name, data)| analyze_column_with_analysis_options(name, data, options))
+            .collect(),
+        &columns.container_counts(),
+    );
 
     // The query result is row-aligned and holds every value, so complete
     // records can be counted directly rather than bounded from null totals.
@@ -264,6 +273,21 @@ pub async fn analyze_database_with_options(
     let aligned: Vec<&[String]> = columns.values().map(|data| data.as_slice()).collect();
     completeness.observe_aligned_columns(&aligned, actual_rows_processed);
     let row_completeness = completeness.summary();
+
+    // Duplicate rows over whole rows, through the signature the file engines
+    // and in-memory inputs use. The sample scan the assembler would fall back
+    // to cannot run here once a column is nested: its values are withheld
+    // from value-level checks, and the columns no longer line up.
+    let mut uniqueness = RowUniquenessTracker::default();
+    if !aligned.is_empty() {
+        for row_index in 0..actual_rows_processed {
+            let mut signature = RowSignature::default();
+            for cells in &aligned {
+                signature.push_field(&cells[row_index]);
+            }
+            uniqueness.observe(signature.finish());
+        }
+    }
 
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
@@ -285,6 +309,7 @@ pub async fn analyze_database_with_options(
     // presentation, so dropping the order here costs nothing.
     .with_quality_data(columns.into_map())
     .with_row_completeness(row_completeness)
+    .with_row_duplicates(uniqueness.summary())
     .with_analysis_options(options)
     .build())
 }

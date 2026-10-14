@@ -59,6 +59,11 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// same profile. Rendering the offset would buy fidelity in the raw sample
 /// values and nothing in the numbers.
 ///
+/// The last arm is [`DecodeStructured`]: JSON and array types, which each
+/// backend decodes its own way (#766). It yields the only values that can be
+/// containers, so the macro evaluates to the text and whether the value was a
+/// container: `(Option<String>, bool)`.
+///
 /// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
 /// binary column type rather than a decode arm.
 #[macro_export]
@@ -69,8 +74,9 @@ macro_rules! db_column_to_string {
     ($row:expr, $index:expr, [$($backend_ty:ty),* $(,)?]) => {{
         let row = $row;
         let index = $index;
+        let mut container = false;
 
-        if let Ok(v) = row.try_get::<Option<String>, _>(index) {
+        let text = if let Ok(v) = row.try_get::<Option<String>, _>(index) {
             v
         } else if let Ok(v) = row.try_get::<Option<i64>, _>(index) {
             v.map(|x| x.to_string())
@@ -113,10 +119,63 @@ macro_rules! db_column_to_string {
             v.map(|x| x.format("%H:%M:%S%.f").to_string())
         } else if let Ok(v) = row.try_get::<Option<::sqlx::types::Uuid>, _>(index) {
             v.map(|x| x.to_string())
+        } else if let Some(value) = $crate::DecodeStructured::decode_structured(row, index) {
+            container = value.container;
+            Some(value.text)
         } else {
             None
-        }
+        };
+        (text, container)
     }};
+}
+
+/// A value of a JSON or array column, rendered for the profiler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructuredValue {
+    /// The text the profiler ingests. Empty for a JSON `null`, which then
+    /// counts as missing, as it does in the JSON readers.
+    pub text: String,
+    /// Whether the value was an object or an array. A column whose non-null
+    /// values all are is reported as nested.
+    pub container: bool,
+}
+
+/// Decode the structured types of one backend: JSON, JSONB and arrays.
+///
+/// Neither decodes as `String` through sqlx, so before this every such value
+/// fell past the whole chain and was recorded as SQL NULL (#766). Called for
+/// non-null values only: the `Option<String>` arm has already taken every NULL.
+/// `None` means the column is of none of these types.
+pub trait DecodeStructured {
+    fn decode_structured(&self, index: usize) -> Option<StructuredValue>;
+}
+
+/// Render a decoded JSON value the way the JSON readers render it.
+///
+/// Objects get their keys sorted, so two equal documents render alike however
+/// the database ordered them: PostgreSQL `json` and MySQL keep the source order,
+/// and duplicate-row detection compares this text (#767). A scalar renders as
+/// itself and is profiled as a scalar, so a `jsonb` column of numbers is typed
+/// from its values, as a JSONL field of numbers is.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub fn json_structured_value(value: &::sqlx::types::JsonValue) -> StructuredValue {
+    StructuredValue {
+        text: dataprof_json::record::json_value_text(value),
+        container: value.is_array() || value.is_object(),
+    }
+}
+
+/// A JSON document serde_json could not decode, kept as the database's text.
+///
+/// The database accepted it, so it is a value, not a missing one: PostgreSQL
+/// takes numbers beyond `f64` (`1e400`) and nesting deeper than serde_json's
+/// recursion limit. Its keys stay in the database's order, which costs
+/// duplicate detection on that value only; reading it as null would lose it.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub fn raw_json_structured_value(text: &str) -> StructuredValue {
+    let text = text.trim().to_string();
+    let container = text.starts_with(['{', '[']);
+    StructuredValue { text, container }
 }
 
 /// Render a naive datetime in the ISO form dataprof's date grammar accepts.
@@ -184,12 +243,12 @@ macro_rules! streaming_profile_loop {
             }
         })? {
             for i in 0..column_names.len() {
-                let value: Option<String> =
+                let (value, container) =
                     $crate::db_column_to_string!(&row, i, [$($backend_ty),*]);
                 // decode-audit: no-data — None is SQL NULL (or a type
                 // db_column_to_string documents as unsupported); "" is
                 // the profiler's textual null.
-                columns.push_value(i, value.unwrap_or_default());
+                columns.push_decoded(i, value.unwrap_or_default(), container);
             }
 
             unlogged_rows += 1;
@@ -237,12 +296,12 @@ macro_rules! process_rows_to_columns {
 
                     for row in &$rows {
                         for i in 0..columns.len() {
-                            let value: Option<String> =
+                            let (value, container) =
                                 $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
                             // decode-audit: no-data — None is SQL NULL (or a type
                             // db_column_to_string documents as unsupported); "" is
                             // the profiler's textual null.
-                            result.push_value(i, value.unwrap_or_default());
+                            result.push_decoded(i, value.unwrap_or_default(), container);
                         }
                     }
 

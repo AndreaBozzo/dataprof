@@ -18,6 +18,9 @@ use std::ops::Index;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryColumns {
     columns: Vec<(String, Vec<String>)>,
+    /// Per column, by position, how many values were a JSON object or array or
+    /// a SQL array. Always as long as `columns`.
+    containers: Vec<usize>,
 }
 
 impl QueryColumns {
@@ -36,12 +39,10 @@ impl QueryColumns {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Self {
-            columns: names
-                .into_iter()
-                .map(|name| (name.into(), Vec::with_capacity(row_capacity)))
-                .collect(),
-        }
+        names
+            .into_iter()
+            .map(|name| (name.into(), Vec::with_capacity(row_capacity)))
+            .collect()
     }
 
     /// Append a value to the column at `index`.
@@ -50,9 +51,27 @@ impl QueryColumns {
     /// they built the result from, so there is no in-range/out-of-range decision
     /// for them to get wrong.
     pub fn push_value(&mut self, index: usize, value: String) {
+        self.push_decoded(index, value, false);
+    }
+
+    /// Append a value to the column at `index`, recording whether it was a
+    /// container: a JSON object or array, or a SQL array.
+    pub fn push_decoded(&mut self, index: usize, value: String, container: bool) {
         if let Some((_, data)) = self.columns.get_mut(index) {
             data.push(value);
+            self.containers[index] += usize::from(container);
         }
+    }
+
+    /// Per column name, how many of its values were containers. Columns with
+    /// none are left out.
+    pub fn container_counts(&self) -> HashMap<String, usize> {
+        self.columns
+            .iter()
+            .zip(&self.containers)
+            .filter(|(_, count)| **count > 0)
+            .map(|((name, _), count)| (name.clone(), *count))
+            .collect()
     }
 
     /// Number of columns.
@@ -106,8 +125,13 @@ impl QueryColumns {
             .iter()
             .map(String::as_str)
             .collect::<std::collections::HashSet<_>>();
-        self.columns
-            .retain(|(name, _)| names.contains(name.as_str()));
+        let (columns, containers) = std::mem::take(&mut self.columns)
+            .into_iter()
+            .zip(std::mem::take(&mut self.containers))
+            .filter(|((name, _), _)| names.contains(name.as_str()))
+            .unzip();
+        self.columns = columns;
+        self.containers = containers;
     }
 
     /// Drop the order and hand back a plain map.
@@ -130,8 +154,11 @@ impl Index<&str> for QueryColumns {
 
 impl FromIterator<(String, Vec<String>)> for QueryColumns {
     fn from_iter<I: IntoIterator<Item = (String, Vec<String>)>>(iter: I) -> Self {
+        let columns: Vec<_> = iter.into_iter().collect();
+        let containers = vec![0; columns.len()];
         Self {
-            columns: iter.into_iter().collect(),
+            columns,
+            containers,
         }
     }
 }

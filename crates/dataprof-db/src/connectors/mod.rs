@@ -11,6 +11,7 @@ mod common;
 // has to be reachable from the crate root even though `common` stays private.
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 pub use common::render_naive_datetime;
+pub use common::{DecodeStructured, StructuredValue};
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;

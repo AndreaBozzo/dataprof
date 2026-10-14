@@ -13,15 +13,18 @@ readme = "README.md"
 default = []
 # `sqlx/bigdecimal` rides with the two backends that have a decimal type.
 # SQLite has none, so a sqlite-only build does not pay for it. `futures`
-# reads the row stream a profiled query is executed through.
-postgres = ["dep:sqlx", "dep:futures", "sqlx/postgres", "sqlx/bigdecimal"]
-mysql = ["dep:sqlx", "dep:futures", "sqlx/mysql", "sqlx/bigdecimal"]
+# reads the row stream a profiled query is executed through. `sqlx/json` and
+# `dataprof-json` decode and render JSON columns, which SQLite does not have
+# either: it stores JSON as TEXT.
+postgres = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "sqlx/postgres", "sqlx/bigdecimal", "sqlx/json"]
+mysql = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "sqlx/mysql", "sqlx/bigdecimal", "sqlx/json"]
 sqlite = ["dep:sqlx", "dep:futures", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
 [dependencies]
 async-trait = { workspace = true }
 dataprof-core = { workspace = true }
+dataprof-json = { workspace = true, optional = true }
 dataprof-metrics = { workspace = true }
 dataprof-runtime = { workspace = true }
 futures = { workspace = true, optional = true }
