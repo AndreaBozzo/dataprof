@@ -12,20 +12,14 @@ use crate::types::ColumnProfile;
 use chrono::{Days, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
 
-/// What may follow a one-word role inside a single word of a name: an
-/// inflection (`starts_at`, `ended_at`) or the date word an all-lowercase name
-/// runs into it, as PostgreSQL folds `StartDate` to `startdate`.
-const ROLE_WORD_ENDINGS: [&str; 9] = [
-    "s",
-    "ed",
-    "ing",
-    "date",
-    "time",
-    "timestamp",
-    "at",
-    "on",
-    "ts",
-];
+/// What may follow a one-word role inside a single word of a name, besides
+/// one of [`DATE_WORDS`]: an inflection (`starts_at`, `ended_at`). The date
+/// word is there because an all-lowercase name runs it into the role, as
+/// PostgreSQL folds `StartDate` to `startdate`.
+const ROLE_INFLECTIONS: [&str; 3] = ["s", "ed", "ing"];
+
+/// Words that say a column holds a date rather than which date it holds.
+const DATE_WORDS: [&str; 6] = ["date", "time", "timestamp", "at", "on", "ts"];
 
 /// Whether `name` holds `role`, by the rules of [`words_beside_role`].
 #[cfg(test)]
@@ -38,15 +32,19 @@ fn holds_role(name: &str, role: &str) -> bool {
 /// `trip_start` and for `tripEndDate` under `end_date`. They are what ties a
 /// start column to its end column (#913).
 ///
+/// Trailing [`DATE_WORDS`] are dropped from them, so `trip_start_date` and
+/// `trip_end` both leave `trip` under `start`/`end`, as do `tripStartDate`
+/// and `trip_enddate`, where the date word ran into the role (#941).
+///
 /// A name holds `role` as words of its own, never inside a longer word
 /// (#882): `end` is in `end_date` and `endDate`, not in `send_date` or
 /// `weekend_date`; `to_date` is in `valid_to_date`, not in `photo_date`.
 ///
 /// A one-word role also matches a word that starts with it and continues with
-/// one of [`ROLE_WORD_ENDINGS`]. Each such word contains the role, so the
-/// endings keep pairs the substring match it replaces found, and add none. A
-/// role of several words is matched across a camelCase name too, which the
-/// substring match could not do: `fromDate` holds `from_date`.
+/// one of [`ROLE_INFLECTIONS`] or [`DATE_WORDS`]. Each such word contains the
+/// role, so the endings keep pairs the substring match it replaces found, and
+/// add none. A role of several words is matched across a camelCase name too,
+/// which the substring match could not do: `fromDate` holds `from_date`.
 fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
     let words = identifier_words(name);
     let role_words = identifier_words(role);
@@ -56,8 +54,9 @@ fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
                 .is_some_and(|head| head.eq_ignore_ascii_case(role))
                 && word.get(role.len()..).is_some_and(|rest| {
                     rest.is_empty()
-                        || ROLE_WORD_ENDINGS
+                        || ROLE_INFLECTIONS
                             .iter()
+                            .chain(&DATE_WORDS)
                             .any(|ending| rest.eq_ignore_ascii_case(ending))
                 })
         })?
@@ -72,14 +71,19 @@ fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
         })?
     };
     let role_span = first..first + role_words.len();
-    Some(
-        words
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !role_span.contains(index))
-            .map(|(_, word)| word.to_ascii_lowercase())
-            .collect(),
-    )
+    let mut rest: Vec<String> = words
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !role_span.contains(index))
+        .map(|(_, word)| word.to_ascii_lowercase())
+        .collect();
+    while rest
+        .last()
+        .is_some_and(|word| DATE_WORDS.contains(&word.as_str()))
+    {
+        rest.pop();
+    }
+    Some(rest)
 }
 
 /// Timeliness metrics container
@@ -593,6 +597,71 @@ mod tests {
         let metrics = metrics_for(&config(), &data, &["trip_start", "trip_end", "tripEnd"]);
 
         assert_eq!(metrics.temporal_pairs_checked, 0);
+        assert_eq!(metrics.temporal_violations, 0);
+    }
+
+    #[test]
+    fn a_trailing_date_word_does_not_keep_a_pair_apart() {
+        // #941: the date word was one of the words compared, so with a second
+        // pair present `trip_start_date` fit no end and was never checked.
+        for [start, end] in [
+            ["trip_start_date", "trip_end"],
+            ["order_start_time", "order_end_date"],
+            ["tripStartDate", "trip_enddate"],
+        ] {
+            let data = HashMap::from([
+                (start.to_string(), vec!["2024-01-05".to_string()]),
+                (end.to_string(), vec!["2024-01-01".to_string()]),
+                ("billing_start".to_string(), vec!["2024-06-01".to_string()]),
+                ("billing_end".to_string(), vec!["2024-06-30".to_string()]),
+            ]);
+            for order in [
+                [start, end, "billing_start", "billing_end"],
+                ["billing_end", "billing_start", end, start],
+            ] {
+                let metrics = metrics_for(&config(), &data, &order);
+                assert_eq!(metrics.temporal_pairs_checked, 2, "{order:?}");
+                assert_eq!(metrics.temporal_violations, 1, "{order:?}");
+                let mut pairs = metrics.compared_pairs.clone();
+                pairs.sort();
+                let mut expected = vec![
+                    (start.to_string(), end.to_string()),
+                    ("billing_start".to_string(), "billing_end".to_string()),
+                ];
+                expected.sort();
+                assert_eq!(pairs, expected, "{order:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn starts_that_differ_only_in_a_date_word_are_ambiguous() {
+        let data = HashMap::from([
+            ("trip_start".to_string(), vec!["2024-01-05".to_string()]),
+            (
+                "trip_start_date".to_string(),
+                vec!["2024-01-05".to_string()],
+            ),
+            ("trip_end".to_string(), vec!["2024-01-01".to_string()]),
+            ("billing_start".to_string(), vec!["2024-06-01".to_string()]),
+            ("billing_end".to_string(), vec!["2024-06-30".to_string()]),
+        ]);
+        let metrics = metrics_for(
+            &config(),
+            &data,
+            &[
+                "trip_start",
+                "trip_start_date",
+                "trip_end",
+                "billing_start",
+                "billing_end",
+            ],
+        );
+
+        assert_eq!(
+            metrics.compared_pairs,
+            [("billing_start".to_string(), "billing_end".to_string())]
+        );
         assert_eq!(metrics.temporal_violations, 0);
     }
 
