@@ -165,17 +165,68 @@ pub fn json_structured_value(value: &::sqlx::types::JsonValue) -> StructuredValu
     }
 }
 
-/// A JSON document serde_json could not decode, kept as the database's text.
+/// A JSON document serde_json could not decode into a value, kept as the
+/// database's text.
 ///
 /// The database accepted it, so it is a value, not a missing one: PostgreSQL
 /// takes numbers beyond `f64` (`1e400`) and nesting deeper than serde_json's
-/// recursion limit. Its keys stay in the database's order, which costs
-/// duplicate detection on that value only; reading it as null would lose it.
+/// recursion limit. The text is still made canonical, with sorted keys and no
+/// whitespace between tokens, so key order does not split duplicate rows here
+/// either. Only nesting past the recursion limit keeps the text as stored.
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 pub fn raw_json_structured_value(text: &str) -> StructuredValue {
-    let text = text.trim().to_string();
+    let text = text.trim();
+    let mut canonical = String::with_capacity(text.len());
+    let text = match write_canonical_raw_json(text, &mut canonical) {
+        Ok(()) => canonical,
+        Err(_) => text.to_string(),
+    };
     let container = text.starts_with(['{', '[']);
     StructuredValue { text, container }
+}
+
+/// Write `text` with every object's keys sorted, as
+/// [`json_value_text`](dataprof_json::record::json_value_text) does, without
+/// converting any number. Containers are split into raw members, which serde_json
+/// only checks for syntax, so a number beyond `f64` keeps its digits.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+fn write_canonical_raw_json(text: &str, out: &mut String) -> Result<(), serde_json::Error> {
+    use serde_json::value::RawValue;
+    use std::collections::BTreeMap;
+
+    match text.as_bytes().first() {
+        Some(b'{') => {
+            // A later duplicate key wins, as when serde_json builds a value.
+            let fields: BTreeMap<String, &RawValue> = serde_json::from_str(text)?;
+            out.push('{');
+            for (index, (key, field)) in fields.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(&key)?);
+                out.push(':');
+                write_canonical_raw_json(field.get().trim(), out)?;
+            }
+            out.push('}');
+        }
+        Some(b'[') => {
+            let items: Vec<&RawValue> = serde_json::from_str(text)?;
+            out.push('[');
+            for (index, item) in items.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical_raw_json(item.get().trim(), out)?;
+            }
+            out.push(']');
+        }
+        // One spelling per string: `"\u0041"` and `"A"` are the same value.
+        Some(b'"') => out.push_str(&serde_json::to_string(&serde_json::from_str::<String>(
+            text,
+        )?)?),
+        _ => out.push_str(text),
+    }
+    Ok(())
 }
 
 /// Render a naive datetime in the ISO form dataprof's date grammar accepts.

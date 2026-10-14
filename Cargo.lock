@@ -922,6 +922,7 @@ dependencies = [
  "log",
  "regex",
  "serde",
+ "serde_json",
  "sqlx",
  "tempfile",
  "tokio",

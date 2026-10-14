@@ -195,10 +195,11 @@ mod postgres {
         let Some(url) = url().await else {
             return;
         };
+        // `n` fixes the row order, which `VALUES` alone does not promise.
         let query = r#"SELECT id, j FROM (VALUES
-            (1, '{"x":1,"y":[{"q":1,"p":2}]}'::json),
-            (1, '{"y":[{"p":2,"q":1}],"x":1}'::json),
-            (1, '{"x":2}'::json)) AS t(id, j)"#;
+            (1, 1, '{"x":1,"y":[{"q":1,"p":2}]}'::json),
+            (2, 1, '{"y":[{"p":2,"q":1}],"x":1}'::json),
+            (3, 1, '{"x":2}'::json)) AS t(n, id, j) ORDER BY n"#;
 
         let mut wrong = Vec::new();
         for (path, columns) in both_paths(&url, query).await {
@@ -216,37 +217,50 @@ mod postgres {
     }
 
     /// PostgreSQL accepts numbers serde_json cannot hold. Such a document keeps
-    /// the database's text instead of falling back to null.
+    /// the database's digits instead of falling back to null, and its keys are
+    /// still sorted: the two rows differ only in key order, whitespace and
+    /// string escapes, so they are duplicates.
     #[tokio::test]
     async fn documents_serde_json_cannot_hold_keep_their_text() {
         let Some(url) = url().await else {
             return;
         };
         let query = r#"SELECT j, b, s FROM (VALUES
-            ('{"a": 1e400}'::json, '[1e400]'::jsonb, '1e400'::jsonb)) AS t(j, b, s)"#;
+            (1, '{"a": 1e400, "b": [2, {"d": "A", "c": 0}]}'::json, '[1e400]'::jsonb,
+             '1e400'::jsonb),
+            (2, '{"b":[2,{"c":0,"d":"\u0041"}],"a":1e400}'::json, '[1e400]'::jsonb,
+             '1e400'::jsonb)) AS t(n, j, b, s) ORDER BY n"#;
 
-        // `json` keeps the input text; `jsonb` stores an exact numeric and
-        // prints every digit.
+        // `json` keeps the input text, here made canonical; `jsonb` stores an
+        // exact numeric and prints every digit.
         let digits = format!("1{}", "0".repeat(400));
         let expected = [
-            r#"{"a": 1e400}"#.to_string(),
+            r#"{"a":1e400,"b":[2,{"c":0,"d":"A"}]}"#.to_string(),
             format!("[{digits}]"),
             digits.clone(),
         ];
 
         let mut wrong = Vec::new();
         for (path, columns) in both_paths(&url, query).await {
-            let texts = [&columns["j"][0], &columns["b"][0], &columns["s"][0]];
-            if texts != expected.each_ref() {
-                wrong.push(format!("{path}: {texts:?}"));
+            for row in 0..2 {
+                let texts = [&columns["j"][row], &columns["b"][row], &columns["s"][row]];
+                if texts != expected.each_ref() {
+                    wrong.push(format!("{path} row {row}: {texts:?}"));
+                }
             }
             let counts = columns.container_counts();
-            if counts.get("j") != Some(&1)
-                || counts.get("b") != Some(&1)
+            if counts.get("j") != Some(&2)
+                || counts.get("b") != Some(&2)
                 || counts.contains_key("s")
             {
                 wrong.push(format!("{path}: containers {counts:?}"));
             }
+        }
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(1) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 1"
+            ));
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
