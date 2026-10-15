@@ -7,8 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, NumericAccumulator, RowCompletenessSummary, RowDuplicateSummary,
-    value_matches_hint,
+    CardinalityEstimator, NumericAccumulator, ParsedNumber, RowCompletenessSummary,
+    RowDuplicateSummary, value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -304,15 +304,10 @@ impl StreamingStatistics {
             self.date_match_count += 1;
         }
 
-        if let Some(number) = value
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|num| num.is_finite())
-        {
-            self.welford.update(number);
-            self.min = self.min.min(number);
-            self.max = self.max.max(number);
+        if let Some(number) = ParsedNumber::parse(value) {
+            self.welford.update_number(number);
+            self.min = self.min.min(number.to_f64());
+            self.max = self.max.max(number.to_f64());
         }
     }
 

@@ -127,6 +127,13 @@ outside them. This distinction survives report save/load and applies to the
 Python summary as well. A document that omits any of the three keys is
 malformed and fails to load; it is not read as `null`.
 
+Integers of 2^53 or more in magnitude, up to the 64-bit range, are not exact as
+`f64`. `variance`, `std_dev`, `skewness` and `kurtosis` are computed from the
+exact integers on every input path, so epoch nanoseconds a few units apart keep
+their spread (#877). `mean` sums the exact integers in a compensated `f64`
+sum. `min`, `max`, `median`, quartiles, `mode` and `outlier_count` are taken
+from the nearest `f64` of each value.
+
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
 `to_json()`, and JSON `save()` output. JSON persistence now uses the same document

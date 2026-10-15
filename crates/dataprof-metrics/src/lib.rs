@@ -19,6 +19,6 @@ pub use quality::{
 };
 pub use stats::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, NumericAccumulator,
-    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
+    ParsedNumber, calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
     spill_largest_exact_sets,
 };

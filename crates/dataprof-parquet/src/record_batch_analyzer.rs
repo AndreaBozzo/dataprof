@@ -8,7 +8,9 @@ use dataprof_core::{
     ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
+use dataprof_metrics::{
+    CardinalityEstimator, NumericAccumulator, ParsedNumber, spill_largest_exact_sets,
+};
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
@@ -916,8 +918,7 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_integer(value);
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(&value.to_string());
             }
@@ -968,8 +969,7 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_unsigned(value);
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(&value.to_string());
             }
@@ -1030,8 +1030,8 @@ impl ColumnAnalyzer {
                 // fed so numeric stats never fall back to the sample.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
                 self.offer_sample(value);
@@ -1051,8 +1051,8 @@ impl ColumnAnalyzer {
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
                 self.offer_sample(value);
@@ -1205,14 +1205,16 @@ impl ColumnAnalyzer {
     /// Arrow's own rendering applies the scale, negative scales included, so
     /// each value is read through it: the number parsed from it is correctly
     /// rounded, and the text it leaves for samples and distinct counts is the
-    /// one a CSV of the same data holds.
+    /// one a CSV of the same data holds. A scale-0 decimal beyond 2^53, such
+    /// as a `decimal(20, 0)` column of 64-bit ids or epoch nanoseconds, keeps
+    /// its exact integer for the spread, as an `Int64` column does (#877).
     fn process_decimal_value(&mut self, rendered: String) -> Result<()> {
-        let value: f64 = rendered.parse().map_err(|error| {
-            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number: {error}")
-        })?;
         // Every decimal Arrow stores is finite in f64: `decimal256` holds at
         // most 76 digits, far inside the f64 range.
-        self.update_numeric_stats(value);
+        let number = ParsedNumber::parse(&rendered).ok_or_else(|| {
+            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number")
+        })?;
+        self.numeric.update_number(number);
         self.cardinality.insert(&rendered);
         self.offer_sample(&rendered);
         Ok(())
@@ -1246,7 +1248,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1259,7 +1261,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1272,7 +1274,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1285,7 +1287,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
