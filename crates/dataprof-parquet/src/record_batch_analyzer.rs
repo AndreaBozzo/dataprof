@@ -1205,14 +1205,16 @@ impl ColumnAnalyzer {
     /// Arrow's own rendering applies the scale, negative scales included, so
     /// each value is read through it: the number parsed from it is correctly
     /// rounded, and the text it leaves for samples and distinct counts is the
-    /// one a CSV of the same data holds.
+    /// one a CSV of the same data holds. A scale-0 decimal beyond 2^53, such
+    /// as a `decimal(20, 0)` column of 64-bit ids or epoch nanoseconds, keeps
+    /// its exact integer for the spread, as an `Int64` column does (#877).
     fn process_decimal_value(&mut self, rendered: String) -> Result<()> {
-        let value: f64 = rendered.parse().map_err(|error| {
-            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number: {error}")
-        })?;
         // Every decimal Arrow stores is finite in f64: `decimal256` holds at
         // most 76 digits, far inside the f64 range.
-        self.update_numeric_stats(value);
+        let number = ParsedNumber::parse(&rendered).ok_or_else(|| {
+            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number")
+        })?;
+        self.numeric.update_number(number);
         self.cardinality.insert(&rendered);
         self.offer_sample(&rendered);
         Ok(())

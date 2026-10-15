@@ -137,3 +137,16 @@ def test_jsonl(tmp_path: Path):
     records = [dict(zip(COLUMNS, row, strict=True)) for row in zip(*COLUMNS.values(), strict=True)]
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     _assert_spread_kept(dp.profile(str(path)), "jsonl")
+
+
+def test_pyarrow_scale_zero_decimals():
+    pa = pytest.importorskip("pyarrow")
+    from decimal import Decimal
+
+    table = pa.table(
+        {
+            name: pa.array([Decimal(v) for v in values], pa.decimal128(20, 0))
+            for name, values in COLUMNS.items()
+        }
+    )
+    _assert_spread_kept(dp.profile(table), "pyarrow decimal128(20, 0)")

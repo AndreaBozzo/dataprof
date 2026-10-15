@@ -221,3 +221,59 @@ fn every_path_keeps_the_spread_of_large_integers() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// A scale-0 decimal column, as Spark and database exports store 64-bit ids
+/// and `uint64` values, holds the same integers.
+#[cfg(feature = "parquet")]
+#[test]
+fn a_scale_zero_decimal_column_keeps_the_spread_of_large_integers() {
+    use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Decimal128Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+
+    let decimal = |index: usize| -> ArrayRef {
+        let values = ROWS.map(|row| row[index].parse::<i128>().unwrap());
+        Arc::new(
+            Decimal128Array::from(values.to_vec())
+                .with_precision_and_scale(20, 0)
+                .unwrap(),
+        )
+    };
+    let schema = Arc::new(Schema::new(
+        COLUMNS
+            .iter()
+            .map(|name| Field::new(*name, DataType::Decimal128(20, 0), false))
+            .collect::<Vec<_>>(),
+    ));
+    let batch =
+        RecordBatch::try_new(schema.clone(), (0..COLUMNS.len()).map(decimal).collect()).unwrap();
+    let file = NamedTempFile::with_suffix(".parquet").unwrap();
+    let mut writer = ArrowWriter::try_new(file.reopen().unwrap(), schema, None).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+
+    let columns = Profiler::new()
+        .analyze_file(file.path())
+        .expect("decimal parquet")
+        .column_profiles;
+    let mut wrong = Vec::new();
+    for (wide, twin, _) in PAIRS {
+        let (wide_spread, twin_spread) = (
+            spread(&columns, wide).unwrap(),
+            spread(&columns, twin).unwrap(),
+        );
+        if !wide_spread
+            .into_iter()
+            .zip(twin_spread)
+            .all(|(got, expected)| close(got, expected))
+        {
+            wrong.push(format!(
+                "{wide}: {wide_spread:?}, {twin} reports {twin_spread:?}"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

@@ -360,6 +360,7 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 /// kept exact, so a text path accumulates it as an Arrow `Int64` column does
 /// (#877). Everything else, integers beyond 64 bits included, is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum ParsedNumber {
     Float(f64),
     Integer(i128),
