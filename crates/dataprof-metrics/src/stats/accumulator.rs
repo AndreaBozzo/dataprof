@@ -33,6 +33,12 @@
 /// running mean is no fallback: its `value - running_mean` overflows once the
 /// two sit near opposite ends of the range, and turns the mean into NaN.
 ///
+/// M2 overflows the same way where the variance fits: `[1e154, -1e154]`
+/// repeated has a sample variance of about 1e308, and M2, that times n - 1,
+/// does not fit (#805). It is rescaled by the same factor once it would
+/// overflow, so `null` is reported only for a spread whose variance itself
+/// exceeds `f64`.
+///
 /// [`merge`](Self::merge) combines accumulators computed over disjoint parts of
 /// a column, so chunked, batched and SIMD-lane accumulation report what a
 /// single pass would.
@@ -48,8 +54,10 @@ pub struct NumericAccumulator {
     /// Welford's running mean of the shifted values, the reference point for
     /// `m2`. Not overflow-proof, so the reported mean comes from `sum` instead.
     running_mean: f64,
-    /// Welford's sum of squared deviations from the running mean.
+    /// Welford's sum of squared deviations from the running mean, multiplied
+    /// by [`OVERFLOW_SCALE`] once `m2_scaled` is set.
     m2: f64,
+    m2_scaled: bool,
     /// Running sum, with `compensation` carrying the bits it rounded away. Both
     /// are multiplied by [`OVERFLOW_SCALE`] once `scaled` is set.
     sum: f64,
@@ -94,6 +102,7 @@ impl NumericAccumulator {
             shift_low: 0.0,
             running_mean: 0.0,
             m2: 0.0,
+            m2_scaled: false,
             sum: 0.0,
             compensation: 0.0,
             scaled: false,
@@ -160,7 +169,10 @@ impl NumericAccumulator {
         let shifted = (high - self.shift) - (self.shift_low - low);
         let delta = shifted - self.running_mean;
         self.running_mean += delta / self.count as f64;
-        self.m2 += delta * (shifted - self.running_mean);
+        let deviation = shifted - self.running_mean;
+        self.add_to_m2(0.0, false, delta * deviation, || {
+            (delta * OVERFLOW_SCALE) * deviation
+        });
 
         self.add_to_sum(high, low, false);
 
@@ -173,8 +185,8 @@ impl NumericAccumulator {
     /// Used by the SIMD accumulation in [`crate::acceleration::simd`], which
     /// runs these same recurrences over four lanes at once and then merges the
     /// lanes back together. Nothing else should reach past [`Self::update`].
-    /// Lane sums are never scaled: the SIMD path falls back to scalar
-    /// accumulation when a lane sum overflows.
+    /// Lane sums and M2 are never scaled: the SIMD path falls back to scalar
+    /// accumulation when either overflows in a lane.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_lane_state(
         count: u64,
@@ -192,6 +204,7 @@ impl NumericAccumulator {
             shift_low: 0.0,
             running_mean,
             m2,
+            m2_scaled: false,
             sum,
             compensation,
             scaled: false,
@@ -227,6 +240,49 @@ impl NumericAccumulator {
         self.compensation += err + compensation * OVERFLOW_SCALE;
     }
 
+    /// Add `m2 + increment`, the `m2` expressed at `OVERFLOW_SCALE` when
+    /// `scaled`, to M2, rescaling M2 first if the addition would overflow it.
+    /// `scaled_increment` is the increment computed at `OVERFLOW_SCALE`: the
+    /// unscaled product can overflow where the scaled one fits.
+    ///
+    /// An increment that still overflows at the reduced scale exceeds
+    /// `f64::MAX * 2^64`, so the variance it belongs to cannot be finite for
+    /// fewer than 2^64 values, and reporting it as overflowed is correct.
+    #[inline]
+    fn add_to_m2(
+        &mut self,
+        m2: f64,
+        scaled: bool,
+        increment: f64,
+        scaled_increment: impl FnOnce() -> f64,
+    ) {
+        if !self.m2_scaled && !scaled {
+            // Associated as before the rescaling existed, so a spread that fits
+            // reports the same bits.
+            let total = self.m2 + (m2 + increment);
+            if total.is_finite() {
+                self.m2 = total;
+                return;
+            }
+        }
+        if !self.m2_scaled {
+            self.m2 *= OVERFLOW_SCALE;
+            self.m2_scaled = true;
+        }
+        let m2 = if scaled { m2 } else { m2 * OVERFLOW_SCALE };
+        self.m2 += m2 + scaled_increment();
+    }
+
+    /// M2 divided by `denominator`, back at its true scale.
+    fn m2_over(&self, denominator: f64) -> f64 {
+        let quotient = self.m2 / denominator;
+        if self.m2_scaled {
+            quotient / OVERFLOW_SCALE
+        } else {
+            quotient
+        }
+    }
+
     fn rescale_sum(&mut self) {
         debug_assert!(!self.scaled, "the running sum is rescaled at most once");
         self.sum *= OVERFLOW_SCALE;
@@ -252,7 +308,10 @@ impl NumericAccumulator {
         let shift_gap = (other.shift - self.shift) - (self.shift_low - other.shift_low);
         let delta = shift_gap + (other.running_mean - self.running_mean);
         self.running_mean += delta * (b / combined);
-        self.m2 += other.m2 + delta * delta * (a * b / combined);
+        let weight = a * b / combined;
+        self.add_to_m2(other.m2, other.m2_scaled, delta * delta * weight, || {
+            (delta * OVERFLOW_SCALE) * delta * weight
+        });
         self.count += other.count;
 
         self.add_to_sum(other.sum, other.compensation, other.scaled);
@@ -302,7 +361,7 @@ impl NumericAccumulator {
         if self.count < 2 {
             return 0.0;
         }
-        let variance = self.m2 / (self.count - 1) as f64;
+        let variance = self.m2_over((self.count - 1) as f64);
         if variance.is_nan() {
             variance
         } else {
@@ -320,7 +379,7 @@ impl NumericAccumulator {
         if self.count < 2 {
             return 0.0;
         }
-        let variance = self.m2 / self.count as f64;
+        let variance = self.m2_over(self.count as f64);
         if variance.is_nan() {
             variance
         } else {
@@ -598,6 +657,36 @@ mod tests {
         assert!(!accumulator.sample_variance().is_finite());
         assert!(!accumulator.sample_std_dev().is_finite());
         assert!(!accumulator.population_variance().is_finite());
+    }
+
+    /// `1e154` and `-1e154` in alternating blocks of four, 104 values: the
+    /// sample variance, 1.04e310 / 103, fits in `f64`; M2, the same times 103,
+    /// does not, and neither does an increment (2e308). Both used to turn the
+    /// variance into `null` (#805). Blocks of four flip every SIMD lane too, so
+    /// a lane M2 overflows as well as the merge of the lanes.
+    #[test]
+    fn variance_fits_where_its_sum_of_squares_does_not() {
+        let values: Vec<f64> = (0..104)
+            .map(|i| if (i / 4) % 2 == 0 { 1e154 } else { -1e154 })
+            .collect();
+        // 1.04e310 / 103, the sample variance by exact arithmetic.
+        let exact = 1.009_708_737_864_077_7e308;
+        let single = accumulate(&values);
+        let mut merged = accumulate(&values[..37]);
+        merged.merge(&accumulate(&values[37..]));
+        let simd = crate::acceleration::simd::compute_stats_simd(&values);
+        for (path, accumulator) in [("single", single), ("merged", merged), ("simd", simd)] {
+            let variance = accumulator.sample_variance();
+            assert!(
+                (variance - exact).abs() <= exact * 1e-14,
+                "{path}: variance {variance}, exact {exact}"
+            );
+            assert!(accumulator.population_variance().is_finite(), "{path}");
+        }
+
+        // Ten times the spread is a variance of about 1e310: still overflowed.
+        let wider: Vec<f64> = values.iter().map(|value| value * 10.0).collect();
+        assert!(!accumulate(&wider).sample_variance().is_finite());
     }
 
     /// Exact sample variance of integers, from integer sums: the reference a
