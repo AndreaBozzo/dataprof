@@ -8,7 +8,9 @@ use dataprof_core::{
     ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
+use dataprof_metrics::{
+    CardinalityEstimator, NumericAccumulator, ParsedNumber, spill_largest_exact_sets,
+};
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
@@ -916,8 +918,7 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_integer(value);
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(&value.to_string());
             }
@@ -968,8 +969,7 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_unsigned(value);
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(&value.to_string());
             }
@@ -1030,8 +1030,8 @@ impl ColumnAnalyzer {
                 // fed so numeric stats never fall back to the sample.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
                 self.offer_sample(value);
@@ -1051,8 +1051,8 @@ impl ColumnAnalyzer {
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
                 self.offer_sample(value);

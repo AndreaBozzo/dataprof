@@ -9,7 +9,7 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator};
+use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, ParsedNumber};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
     StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
@@ -679,8 +679,8 @@ impl ColumnAnalyzer {
                 // infinities, and overflowing literals are excluded here.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.numeric.update(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
 
                 self.cardinality.insert(value);

@@ -16,6 +16,11 @@
 ///   `value - shift`, where `shift` is the first value seen: for values within
 ///   a factor of two of it the subtraction is exact (Sterbenz), and the
 ///   recurrence then works at the scale of the spread.
+///   A 64-bit integer beyond 2^53 is rounded by `as f64` before any of this,
+///   so [`update_integer`](Self::update_integer) takes it exactly, split into
+///   its nearest `f64` and the exact remainder, and the shift is kept in the
+///   same two parts. Epoch nanoseconds near 1.76e18 sit 256 apart as `f64`,
+///   and three of them six apart reported a variance of 0.0 (#877).
 /// - **A compensated (Knuth two-sum) running sum** gives a mean that survives
 ///   cancellation. Welford's running mean rounds `[1e16, 1.0, -1e16]` to 0.0
 ///   because the unit contribution disappears into the intermediate mean; the
@@ -37,6 +42,9 @@ pub struct NumericAccumulator {
     /// The first value accumulated. Welford's recurrence runs on values minus
     /// this shift.
     shift: f64,
+    /// The exact remainder of a first value given to
+    /// [`update_integer`](Self::update_integer) beyond `shift`; zero otherwise.
+    shift_low: f64,
     /// Welford's running mean of the shifted values, the reference point for
     /// `m2`. Not overflow-proof, so the reported mean comes from `sum` instead.
     running_mean: f64,
@@ -65,6 +73,9 @@ impl Default for NumericAccumulator {
 /// values at `f64::MAX` still fits.
 const OVERFLOW_SCALE: f64 = 1.0 / 18_446_744_073_709_551_616.0;
 
+/// Every integer of at most this magnitude, 2^53, is exact as an `f64`.
+const EXACT_F64_INTEGER: u128 = 1 << 53;
+
 /// Knuth's two-sum: the rounded sum of `a + b` and the exact rounding error,
 /// with no branch and no wider type. `err` is exact whenever `a + b` is finite.
 #[inline]
@@ -80,6 +91,7 @@ impl NumericAccumulator {
         Self {
             count: 0,
             shift: 0.0,
+            shift_low: 0.0,
             running_mean: 0.0,
             m2: 0.0,
             sum: 0.0,
@@ -95,20 +107,65 @@ impl NumericAccumulator {
     #[inline]
     pub fn update(&mut self, value: f64) {
         debug_assert!(value.is_finite());
+        self.push(value, 0.0);
+    }
+
+    /// Fold in an integer without rounding it to `f64` first. Min, max and the
+    /// mean are still the nearest `f64`; the variance is that of the exact
+    /// values. Within ±2^53 this is [`update`](Self::update), bit for bit.
+    #[inline]
+    pub fn update_integer(&mut self, value: i64) {
+        self.update_wide_integer(i128::from(value));
+    }
+
+    /// [`update_integer`](Self::update_integer) for an unsigned 64-bit value.
+    #[inline]
+    pub fn update_unsigned(&mut self, value: u64) {
+        self.update_wide_integer(i128::from(value));
+    }
+
+    /// Fold in a parsed text value. See [`ParsedNumber`].
+    #[inline]
+    pub fn update_number(&mut self, number: ParsedNumber) {
+        match number {
+            ParsedNumber::Float(value) => self.update(value),
+            ParsedNumber::Integer(value) => self.update_wide_integer(value),
+        }
+    }
+
+    /// Callers pass a value in `i64::MIN..=u64::MAX`, where the nearest `f64`
+    /// converts back to `i128` exactly and the remainder, below 2^11, is exact
+    /// as an `f64` too.
+    fn update_wide_integer(&mut self, value: i128) {
+        if value.unsigned_abs() <= EXACT_F64_INTEGER {
+            self.update(value as f64);
+            return;
+        }
+        let high = value as f64;
+        let low = (value - high as i128) as f64;
+        self.push(high, low);
+    }
+
+    /// Fold in the value `high + low`, where `high` is its nearest `f64` and
+    /// `low` the exact remainder (zero for an `f64` input).
+    #[inline]
+    fn push(&mut self, high: f64, low: f64) {
         self.count += 1;
         if self.count == 1 {
-            self.shift = value;
+            self.shift = high;
+            self.shift_low = low;
         }
 
-        let shifted = value - self.shift;
+        // With both remainders zero this is `high - shift`, bit for bit.
+        let shifted = (high - self.shift) - (self.shift_low - low);
         let delta = shifted - self.running_mean;
         self.running_mean += delta / self.count as f64;
         self.m2 += delta * (shifted - self.running_mean);
 
-        self.add_to_sum(value, 0.0, false);
+        self.add_to_sum(high, low, false);
 
-        self.min = self.min.min(value);
-        self.max = self.max.max(value);
+        self.min = self.min.min(high);
+        self.max = self.max.max(high);
     }
 
     /// Rebuild an accumulator from state computed elsewhere.
@@ -132,6 +189,7 @@ impl NumericAccumulator {
         Self {
             count,
             shift,
+            shift_low: 0.0,
             running_mean,
             m2,
             sum,
@@ -191,7 +249,8 @@ impl NumericAccumulator {
         // either unshifted mean would round it at the scale of the offset.
         let (a, b) = (self.count as f64, other.count as f64);
         let combined = a + b;
-        let delta = (other.shift - self.shift) + (other.running_mean - self.running_mean);
+        let shift_gap = (other.shift - self.shift) - (self.shift_low - other.shift_low);
+        let delta = shift_gap + (other.running_mean - self.running_mean);
         self.running_mean += delta * (b / combined);
         self.m2 += other.m2 + delta * delta * (a * b / combined);
         self.count += other.count;
@@ -285,6 +344,53 @@ impl FromIterator<f64> for NumericAccumulator {
     }
 }
 
+impl FromIterator<ParsedNumber> for NumericAccumulator {
+    fn from_iter<I: IntoIterator<Item = ParsedNumber>>(values: I) -> Self {
+        let mut accumulator = Self::new();
+        for value in values {
+            accumulator.update_number(value);
+        }
+        accumulator
+    }
+}
+
+/// A finite number read from a text cell.
+///
+/// An integer literal of 2^53 or more in magnitude, within the 64-bit range, is
+/// kept exact, so a text path accumulates it as an Arrow `Int64` column does
+/// (#877). Everything else, integers beyond 64 bits included, is its `f64`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParsedNumber {
+    Float(f64),
+    Integer(i128),
+}
+
+impl ParsedNumber {
+    /// The number `text` holds, or `None` when it holds none or a non-finite
+    /// one. Accepts exactly what `text.trim().parse::<f64>()` accepts.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        // decode-audit: no-data — a cell that does not parse is a non-numeric
+        // value, excluded from numeric stats by design.
+        let value = text.parse::<f64>().ok().filter(|value| value.is_finite())?;
+        if value.abs() >= EXACT_F64_INTEGER as f64
+            && let Ok(integer) = text.parse::<i128>()
+            && (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(&integer)
+        {
+            return Some(Self::Integer(integer));
+        }
+        Some(Self::Float(value))
+    }
+
+    /// The nearest `f64`.
+    pub fn to_f64(self) -> f64 {
+        match self {
+            Self::Float(value) => value,
+            Self::Integer(value) => value as f64,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +419,90 @@ mod tests {
         // Sample variance of the classic 8-value set is 32/7.
         assert!((accumulator.sample_variance() - 32.0 / 7.0).abs() < 1e-12);
         assert!((accumulator.population_variance() - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn integers_within_2_53_accumulate_as_their_f64() {
+        let values = [
+            -(1_i64 << 53),
+            -7,
+            0,
+            1,
+            42,
+            1_000_000_007,
+            (1_i64 << 53) - 1,
+            1 << 53,
+        ];
+        let mut integers = NumericAccumulator::new();
+        for value in values {
+            integers.update_integer(value);
+        }
+        let floats = accumulate(&values.map(|value| value as f64));
+        assert_eq!(integers, floats);
+    }
+
+    #[test]
+    fn integers_beyond_2_53_keep_their_spread_through_a_merge() {
+        // #877: 256 apart as `f64`, so their variance used to be 0.0.
+        let values: [i64; 4] = [
+            1_759_700_000_123_456_789,
+            1_759_700_000_123_456_791,
+            1_759_700_000_123_456_795,
+            1_759_700_000_123_456_800,
+        ];
+        let (mut left, mut right, mut whole) = (
+            NumericAccumulator::new(),
+            NumericAccumulator::new(),
+            NumericAccumulator::new(),
+        );
+        for (index, value) in values.into_iter().enumerate() {
+            whole.update_integer(value);
+            if index < 2 { &mut left } else { &mut right }.update_integer(value);
+        }
+        left.merge(&right);
+        for accumulator in [whole, left] {
+            assert!((accumulator.sample_variance() - 283.0 / 12.0).abs() < 1e-12);
+            assert_eq!(
+                accumulator.max(),
+                Some(1_759_700_000_123_456_800_i64 as f64)
+            );
+        }
+
+        let mut unsigned = NumericAccumulator::new();
+        for value in [u64::MAX - 15, u64::MAX - 10, u64::MAX - 5, u64::MAX] {
+            unsigned.update_unsigned(value);
+        }
+        assert!((unsigned.sample_variance() - 125.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parsed_numbers_keep_only_wide_64_bit_integer_literals_exact() {
+        assert_eq!(
+            ParsedNumber::parse(" +9007199254740993 "),
+            Some(ParsedNumber::Integer(9_007_199_254_740_993))
+        );
+        assert_eq!(
+            ParsedNumber::parse("18446744073709551615"),
+            Some(ParsedNumber::Integer(i128::from(u64::MAX)))
+        );
+        assert_eq!(
+            ParsedNumber::parse("-9223372036854775808"),
+            Some(ParsedNumber::Integer(i128::from(i64::MIN)))
+        );
+        // Exact as `f64` already, or not an integer literal, or beyond 64 bits.
+        assert_eq!(ParsedNumber::parse("42"), Some(ParsedNumber::Float(42.0)));
+        assert_eq!(ParsedNumber::parse("1e20"), Some(ParsedNumber::Float(1e20)));
+        assert_eq!(
+            ParsedNumber::parse("9007199254740993.0"),
+            Some(ParsedNumber::Float(9_007_199_254_740_992.0))
+        );
+        assert_eq!(
+            ParsedNumber::parse("18446744073709551616"),
+            Some(ParsedNumber::Float(18_446_744_073_709_551_616.0))
+        );
+        for text in ["", "N/A", "inf", "NaN", "1e400"] {
+            assert_eq!(ParsedNumber::parse(text), None, "{text:?}");
+        }
     }
 
     #[test]
