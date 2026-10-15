@@ -3,6 +3,10 @@
 
 use std::collections::HashSet;
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use dataprof::{EngineType, Profiler};
 
 use dataprof_core::{ColumnProfile, DataProfilerError, JsonErrorPolicy};
 use dataprof_csv::{CsvParserConfig, analyze_csv_from_reader, detect_delimiter};
@@ -135,6 +139,84 @@ pub fn json(data: &[u8]) {
                 }
                 _ => panic!("JSON scanner and profiler disagree on parse success"),
             }
+        }
+    }
+}
+
+/// A CSV file the engines can open by path, removed when dropped. The engines
+/// take a path, not a reader (#884 would add one), so each input is written
+/// out; at 4 KiB that costs little.
+struct ScratchCsv(PathBuf);
+
+impl ScratchCsv {
+    fn new(data: &[u8]) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "dataprof-fuzz-parity-{}-{}.csv",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, data).expect("write the scratch CSV");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchCsv {
+    fn drop(&mut self) {
+        // Cleanup only: a file left behind changes no verdict.
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Profile the bytes as a CSV file with the standard parser and with every
+/// engine a caller can select, and require the same answer from all of them
+/// (#961).
+///
+/// The output contract promises identical serialized column profiles for the
+/// same data whichever engine read it, so a success must serialize the same
+/// `column_profiles` document everywhere, and bytes one route refuses must be
+/// refused by all of them. Execution provenance is not compared.
+pub fn parity(data: &[u8]) {
+    if data.len() > MAX_INPUT_BYTES {
+        return;
+    }
+    let file = ScratchCsv::new(data);
+    let columns = |report: dataprof::ProfileReport| {
+        serde_json::to_value(&report.column_profiles).expect("serialize column profiles")
+    };
+    let mut outcomes = vec![(
+        "standard",
+        dataprof::analyze_csv_file(file.path(), &dataprof::CsvParserConfig::default()).map(columns),
+    )];
+    for (label, engine) in [
+        ("auto", EngineType::Auto),
+        ("incremental", EngineType::Incremental),
+        ("columnar", EngineType::Columnar),
+    ] {
+        let outcome = Profiler::new()
+            .engine(engine)
+            .analyze_file(file.path())
+            .map(columns);
+        outcomes.push((label, outcome));
+    }
+
+    let (first_label, first) = &outcomes[0];
+    for (label, outcome) in &outcomes[1..] {
+        match (first, outcome) {
+            (Ok(expected), Ok(actual)) => assert_eq!(
+                actual, expected,
+                "{label} and {first_label} serialize different column profiles"
+            ),
+            (Err(expected), Err(actual)) => {
+                check_error(expected);
+                check_error(actual);
+            }
+            (Ok(_), Err(error)) => panic!("{label} refused what {first_label} accepted: {error}"),
+            (Err(error), Ok(_)) => panic!("{label} accepted what {first_label} refused: {error}"),
         }
     }
 }

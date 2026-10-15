@@ -37,6 +37,11 @@ fn json_corpus() {
 }
 
 #[test]
+fn parity_corpus() {
+    replay("parity", dataprof_fuzz::parity);
+}
+
+#[test]
 fn report_corpus() {
     replay("report", dataprof_fuzz::report);
 }

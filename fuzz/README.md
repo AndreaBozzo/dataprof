@@ -33,6 +33,7 @@ against every allocation or hang.
 | `csv` | Delimiter detection and reader profiling; header/headerless, strict/flexible, detected/explicit delimiter. Successful results have unique ordered names, bounded row counts, coherent null/distinct counts, and serializable columns. Invalid UTF-8 and duplicate headers must return typed errors; ragged rows fail strictly or follow documented padding/truncation. |
 | `json` | JSON document, JSONL, and format sniffing, under strict and skip policies. Scanner and profiler agree on success, ordered columns, rows, skipped records, and format. Empty objects count as records. Strict success has no skipped records. |
 | `report` | Rust `ProfileReport` deserialization, including legacy and current versions. Accepted reports reserialize to valid JSON and reload with their version, quality status, and whole emitted document unchanged. Missing, null, and empty values in the emitted document are compared distinctly. A recorded row selection of zero rows stays distinct from no selection, read through the legacy `scan_info` alias so a legacy document is compared against its canonical re-emission; absent and explicit null are one case there, because the field cannot tell them apart. Rejected outright: non-JSON input, future versions, an explicit null `quality_status`, and a status contradicting the presence of the assessment it describes. |
+| `parity` | The output contract across CSV routes (#961). The bytes are written to a scratch `.csv` file and profiled by `analyze_csv_file` and by the facade `Profiler` with the `Auto`, `Incremental` and `Columnar` engines. Every success must serialize the same `column_profiles` document; bytes one route refuses must be refused by all, with typed errors. Execution provenance is not compared. Seeds start from the CSV seeds. |
 
 Parser errors are valid outcomes, not crashes. Panics and invariant violations
 are never caught or turned into defaults. Report deserialization uses its
@@ -40,8 +41,10 @@ existing `serde_json::Error` boundary. The report target covers the Rust report
 dialect; the separate Python report dialect remains covered by Python tests.
 
 Facade format dispatch is deferred: that surface also accepts encoded Parquet,
-where a tiny compressed input need not imply bounded decoded allocations.
-These initial targets accept only local bytes and use no database or network.
+where a tiny compressed input need not imply bounded decoded allocations. The
+`parity` target uses the facade with its `parquet` feature off, on files named
+`.csv`, so it reaches the CSV engines only. The targets accept only local bytes
+and use no database or network.
 
 ## Pinned libFuzzer invocation
 
@@ -62,7 +65,7 @@ CARGO_NET_OFFLINE=true cargo +nightly-2026-09-01 fuzz run csv --features fuzzing
 git diff --exit-code -- fuzz/Cargo.lock
 ```
 
-Substitute `json` or `report` in all corpus/target locations to run the
+Substitute `json`, `report` or `parity` in all corpus/target locations to run the
 other targets. AddressSanitizer, debug assertions and overflow checks are
 enabled by cargo-fuzz's defaults. For a deterministic sanitizer replay, replace
 `-max_total_time=300` with `-runs=0` (initial corpus only). A fixed seed makes
@@ -79,7 +82,7 @@ and [CLI source for the pinned version](https://github.com/rust-fuzz/cargo-fuzz/
 ## CI and retained failures
 
 `.github/workflows/fuzz.yml` runs stable replay on Linux and Windows, and builds
-all three sanitizer targets to replay their seeds on Linux for relevant PRs and
+all four sanitizer targets to replay their seeds on Linux for relevant PRs and
 pushes. Weekly and manual runs mutate each corpus for five minutes. Each job
 has a wall-clock timeout and uploads its crash artifacts and evolved corpus
 for 14 days, even after a failure. Corpus growth is kept in ignored
