@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [csv, json, report]
+        target: [csv, json, report, parity]
     env:
       FUZZ_TARGET: ${{ matrix.target }}
       EVENT_NAME: ${{ github.event_name }}

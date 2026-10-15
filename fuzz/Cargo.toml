@@ -16,6 +16,9 @@ cargo-fuzz = true
 fuzzing = ["dep:libfuzzer-sys"]
 
 [dependencies]
+# The facade, for the engines a user selects. `arrow` is the columnar CSV
+# engine; Parquet stays out, as the other targets keep it out.
+dataprof = { path = "..", default-features = false, features = ["arrow"] }
 dataprof-core = { path = "../crates/dataprof-core" }
 dataprof-csv = { path = "../crates/dataprof-csv" }
 dataprof-json = { path = "../crates/dataprof-json" }
@@ -34,6 +37,14 @@ required-features = ["fuzzing"]
 [[bin]]
 name = "json"
 path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "parity"
+path = "fuzz_targets/parity.rs"
 test = false
 doc = false
 bench = false
