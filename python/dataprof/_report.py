@@ -572,6 +572,7 @@ class ProfileReport:
     def check(
         self,
         *,
+        min_rows: int | None = None,
         min_quality_score: float | None = None,
         min_dimension_scores: _Mapping[str, float] | None = None,
         max_null_percentage: _Mapping[str, float] | float | None = None,
@@ -601,6 +602,12 @@ class ProfileReport:
         unanswerable gate never reads as a green one.
 
         Args:
+            min_rows: Floor for the number of rows the scan read, so an empty
+                or truncated extract fails instead of passing every other
+                check. A scan that read this many rows passes even when it
+                stopped early; one that read fewer fails, unless it stopped
+                early under ``"full_source"`` scope, which leaves the check
+                unevaluated.
             min_quality_score: Floor for the overall score, 0-100.
             min_dimension_scores: Floor per ISO 25012 dimension, 0-100.
             max_null_percentage: Ceiling for a column's null percentage,
@@ -627,6 +634,7 @@ class ProfileReport:
                 the Rust gate cannot read.
         """
         return _Policy(
+            min_rows=min_rows,
             min_quality_score=min_quality_score,
             min_dimension_scores=min_dimension_scores,
             max_null_percentage=max_null_percentage,

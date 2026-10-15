@@ -1253,6 +1253,7 @@ impl PyProfileReport {
     /// so an error here means the two layers disagree on a policy rule.
     #[pyo3(signature = (
         *,
+        min_rows = None,
         min_quality_score = None,
         min_dimension_scores = Vec::new(),
         max_null_percentage = Vec::new(),
@@ -1265,6 +1266,7 @@ impl PyProfileReport {
     #[allow(clippy::too_many_arguments)]
     fn quality_gate_json(
         &self,
+        min_rows: Option<usize>,
         min_quality_score: Option<f64>,
         min_dimension_scores: Vec<(String, f64)>,
         max_null_percentage: Vec<(String, f64)>,
@@ -1277,6 +1279,9 @@ impl PyProfileReport {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
         let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
         let mut policy = QualityPolicy::new().scope(scope.parse().map_err(value_error)?);
+        if let Some(min) = min_rows {
+            policy = policy.min_rows(min);
+        }
         if let Some(min) = min_quality_score {
             policy = policy.min_quality_score(min);
         }

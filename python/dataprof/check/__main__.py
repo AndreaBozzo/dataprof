@@ -17,6 +17,7 @@ from dataprof._gate import _Policy, _PolicyFieldError
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
 _POLICY_DEFAULTS: dict[str, Any] = {
+    "min_rows": None,
     "min_quality_score": None,
     "min_dimension_scores": None,
     "max_null_percentage": None,
@@ -170,6 +171,11 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--version",
         action="version",
         version=f"dataprof {dataprof.__version__}",
+    )
+    parser.add_argument(
+        "--min-rows",
+        type=int,
+        help="minimum number of rows the scan must read",
     )
     parser.add_argument(
         "--min-quality",

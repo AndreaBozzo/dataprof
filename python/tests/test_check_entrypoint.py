@@ -273,6 +273,7 @@ def test_capped_input_respects_evidence_scope(source: Path, scope: str, code: in
 
 def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path):
     policy = {
+        "min_rows": 1,
         "min_quality_score": 0,
         "min_dimension_scores": {"completeness": 0},
         "max_null_percentage": {"*": 100, "amount": 50},
@@ -285,6 +286,24 @@ def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path)
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == dp.profile_file(source).check(**policy).to_dict()
+
+
+@pytest.mark.parametrize(
+    "flags,code",
+    [
+        (("--min-rows", "3"), 0),
+        (("--min-rows", "4"), 1),
+        # A capped scan short of the minimum may be short only because of the cap.
+        (("--min-rows", "2", "--max-rows", "1"), 2),
+        (("--min-rows", "2", "--max-rows", "1", "--scope", "observed"), 1),
+    ],
+    ids=["enough", "too-few", "capped-full-source", "capped-observed"],
+)
+def test_min_rows_flag(source: Path, flags: tuple[str, ...], code: int):
+    result = run_check(source, *flags, "--json")
+    assert result.returncode == code, result.stderr
+    (check,) = json.loads(result.stdout)["checks"]
+    assert check["code"] == "min_rows"
 
 
 def test_flags_replace_matching_policy_keys(source: Path, tmp_path: Path):
