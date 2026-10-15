@@ -12,20 +12,14 @@ use crate::types::ColumnProfile;
 use chrono::{Days, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
 
-/// What may follow a one-word role inside a single word of a name: an
-/// inflection (`starts_at`, `ended_at`) or the date word an all-lowercase name
-/// runs into it, as PostgreSQL folds `StartDate` to `startdate`.
-const ROLE_WORD_ENDINGS: [&str; 9] = [
-    "s",
-    "ed",
-    "ing",
-    "date",
-    "time",
-    "timestamp",
-    "at",
-    "on",
-    "ts",
-];
+/// What may follow a one-word role inside a single word of a name, besides
+/// one of [`DATE_WORDS`]: an inflection (`starts_at`, `ended_at`). The date
+/// word is there because an all-lowercase name runs it into the role, as
+/// PostgreSQL folds `StartDate` to `startdate`.
+const ROLE_INFLECTIONS: [&str; 3] = ["s", "ed", "ing"];
+
+/// Words that say a column holds a date rather than which date it holds.
+const DATE_WORDS: [&str; 6] = ["date", "time", "timestamp", "at", "on", "ts"];
 
 /// Whether `name` holds `role`, by the rules of [`words_beside_role`].
 #[cfg(test)]
@@ -43,10 +37,10 @@ fn holds_role(name: &str, role: &str) -> bool {
 /// `weekend_date`; `to_date` is in `valid_to_date`, not in `photo_date`.
 ///
 /// A one-word role also matches a word that starts with it and continues with
-/// one of [`ROLE_WORD_ENDINGS`]. Each such word contains the role, so the
-/// endings keep pairs the substring match it replaces found, and add none. A
-/// role of several words is matched across a camelCase name too, which the
-/// substring match could not do: `fromDate` holds `from_date`.
+/// one of [`ROLE_INFLECTIONS`] or [`DATE_WORDS`]. Each such word contains the
+/// role, so the endings keep pairs the substring match it replaces found, and
+/// add none. A role of several words is matched across a camelCase name too,
+/// which the substring match could not do: `fromDate` holds `from_date`.
 fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
     let words = identifier_words(name);
     let role_words = identifier_words(role);
@@ -56,8 +50,9 @@ fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
                 .is_some_and(|head| head.eq_ignore_ascii_case(role))
                 && word.get(role.len()..).is_some_and(|rest| {
                     rest.is_empty()
-                        || ROLE_WORD_ENDINGS
+                        || ROLE_INFLECTIONS
                             .iter()
+                            .chain(&DATE_WORDS)
                             .any(|ending| rest.eq_ignore_ascii_case(ending))
                 })
         })?
@@ -80,6 +75,17 @@ fn words_beside_role(name: &str, role: &str) -> Option<Vec<String>> {
             .map(|(_, word)| word.to_ascii_lowercase())
             .collect(),
     )
+}
+
+/// `rest` without its trailing [`DATE_WORDS`]: `trip` for what
+/// `trip_start_date` leaves under `start`, the same as `trip_end` leaves
+/// under `end` (#941).
+fn without_date_words(rest: &[String]) -> &[String] {
+    let kept = rest
+        .iter()
+        .rposition(|word| !DATE_WORDS.contains(&word.as_str()))
+        .map_or(0, |last| last + 1);
+    &rest[..kept]
 }
 
 /// Timeliness metrics container
@@ -266,9 +272,15 @@ impl<'a> TimelinessCalculator<'a> {
     ///
     /// A start column pairs with the end column that shares the rest of its
     /// name: `trip_start` with `trip_end`, `billing_start` with `billing_end`
-    /// (#913). A start that fits several ends, or an end that fits several
-    /// starts, is left unpaired rather than guessed. Names that share nothing
-    /// still pair when they are the only start and the only end, as
+    /// (#913). A start that fits no end that way falls back to the rest without
+    /// a trailing date word, so `trip_start_date` pairs with `trip_end` (#941),
+    /// but only with an end no start fits by its whole rest: `start_time`
+    /// keeps `end_time` beside `start_date`/`end_date`, and `start` keeps `end`
+    /// beside `start_date`.
+    ///
+    /// A start that fits several ends, or an end that fits several starts, is
+    /// left unpaired rather than guessed. Names that share nothing still pair
+    /// when they are the only start and the only end, as
     /// `created_at`/`last_updated_at` are.
     fn column_pairs<'d>(
         data: &HashMap<String, Vec<String>>,
@@ -305,23 +317,51 @@ impl<'a> TimelinessCalculator<'a> {
             let ends = holders(end_col);
             let lone = starts.len() == 1 && ends.len() == 1;
 
-            for (start_name, start_rest) in &starts {
-                // A column cannot be both ends of the same comparison: "start"
-                // and "end" both match a lone `start_end_date`, which would
-                // compare it with itself and report a clean pair that was
-                // never checked.
-                let mut fitting = ends
-                    .iter()
-                    .filter(|(end_name, end_rest)| {
-                        end_name != start_name && (lone || end_rest == start_rest)
-                    })
-                    .map(|(end_name, _)| *end_name);
-                let (Some(end_name), None) = (fitting.next(), fitting.next()) else {
+            // A column cannot be both ends of the same comparison: "start" and
+            // "end" both match a lone `start_end_date`, which would compare it
+            // with itself and report a clean pair that was never checked.
+            let ends_fitting = |start_name: &str, fits: &dyn Fn(&[String]) -> bool| {
+                ends.iter()
+                    .filter(|(end_name, end_rest)| *end_name != start_name && fits(end_rest))
+                    .map(|(end_name, _)| *end_name)
+                    .collect::<Vec<_>>()
+            };
+            let whole: Vec<Vec<&str>> = starts
+                .iter()
+                .map(|(start_name, start_rest)| {
+                    ends_fitting(start_name, &|end_rest| lone || end_rest == start_rest)
+                })
+                .collect();
+            let claimed: HashSet<&str> = whole.iter().flatten().copied().collect();
+            let chosen: Vec<Option<&str>> = starts
+                .iter()
+                .zip(&whole)
+                .map(|((start_name, start_rest), whole)| {
+                    let fitting = if whole.is_empty() {
+                        let start_rest = without_date_words(start_rest);
+                        ends_fitting(start_name, &|end_rest| {
+                            without_date_words(end_rest) == start_rest
+                        })
+                        .into_iter()
+                        .filter(|end_name| !claimed.contains(end_name))
+                        .collect()
+                    } else {
+                        whole.clone()
+                    };
+                    match fitting.as_slice() {
+                        [end_name] => Some(*end_name),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            for ((start_name, _), end_name) in starts.iter().zip(&chosen) {
+                let Some(end_name) = *end_name else {
                     continue;
                 };
-                let rivals = starts
+                let rivals = chosen
                     .iter()
-                    .filter(|(name, rest)| *name != end_name && rest == start_rest)
+                    .filter(|other| **other == Some(end_name))
                     .count();
                 if rivals == 1 && evaluated.insert((*start_name, end_name)) {
                     pairs.push((*start_name, end_name));
@@ -594,6 +634,127 @@ mod tests {
 
         assert_eq!(metrics.temporal_pairs_checked, 0);
         assert_eq!(metrics.temporal_violations, 0);
+    }
+
+    #[test]
+    fn a_trailing_date_word_does_not_keep_a_pair_apart() {
+        // #941: the date word was one of the words compared, so with a second
+        // pair present `trip_start_date` fit no end and was never checked.
+        for [start, end] in [
+            ["trip_start_date", "trip_end"],
+            ["order_start_time", "order_end_date"],
+            ["tripStartDate", "trip_enddate"],
+        ] {
+            let data = HashMap::from([
+                (start.to_string(), vec!["2024-01-05".to_string()]),
+                (end.to_string(), vec!["2024-01-01".to_string()]),
+                ("billing_start".to_string(), vec!["2024-06-01".to_string()]),
+                ("billing_end".to_string(), vec!["2024-06-30".to_string()]),
+            ]);
+            for order in [
+                [start, end, "billing_start", "billing_end"],
+                ["billing_end", "billing_start", end, start],
+            ] {
+                let metrics = metrics_for(&config(), &data, &order);
+                assert_eq!(metrics.temporal_pairs_checked, 2, "{order:?}");
+                assert_eq!(metrics.temporal_violations, 1, "{order:?}");
+                let mut pairs = metrics.compared_pairs.clone();
+                pairs.sort();
+                let mut expected = vec![
+                    (start.to_string(), end.to_string()),
+                    ("billing_start".to_string(), "billing_end".to_string()),
+                ];
+                expected.sort();
+                assert_eq!(pairs, expected, "{order:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_whole_name_match_wins_over_one_without_the_date_word() {
+        // `trip_start` fits `trip_end` by its whole rest, so `trip_start_date`
+        // cannot fall back to it.
+        let data = HashMap::from([
+            ("trip_start".to_string(), vec!["2024-01-05".to_string()]),
+            (
+                "trip_start_date".to_string(),
+                vec!["2024-01-05".to_string()],
+            ),
+            ("trip_end".to_string(), vec!["2024-01-01".to_string()]),
+            ("billing_start".to_string(), vec!["2024-06-01".to_string()]),
+            ("billing_end".to_string(), vec!["2024-06-30".to_string()]),
+        ]);
+        let metrics = metrics_for(
+            &config(),
+            &data,
+            &[
+                "trip_start",
+                "trip_start_date",
+                "trip_end",
+                "billing_start",
+                "billing_end",
+            ],
+        );
+
+        assert_eq!(
+            metrics.compared_pairs,
+            [
+                ("trip_start".to_string(), "trip_end".to_string()),
+                ("billing_start".to_string(), "billing_end".to_string()),
+            ]
+        );
+        assert_eq!(metrics.temporal_violations, 1);
+    }
+
+    #[test]
+    fn a_lone_start_keeps_its_end_beside_a_start_date() {
+        let data = HashMap::from([
+            ("start".to_string(), vec!["2024-01-05".to_string()]),
+            ("start_date".to_string(), vec!["2024-01-01".to_string()]),
+            ("end".to_string(), vec!["2024-01-01".to_string()]),
+        ]);
+        for order in [
+            ["start", "start_date", "end"],
+            ["end", "start_date", "start"],
+        ] {
+            let metrics = metrics_for(&config(), &data, &order);
+            assert_eq!(
+                metrics.compared_pairs,
+                [("start".to_string(), "end".to_string())],
+                "{order:?}"
+            );
+            assert_eq!(metrics.temporal_violations, 1, "{order:?}");
+        }
+    }
+
+    #[test]
+    fn date_and_time_pairs_are_both_checked() {
+        // Without the date word all four leave nothing under `start`/`end`;
+        // the whole rest still tells the date pair from the time pair.
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["2024-01-01".to_string()]),
+            ("start_time".to_string(), vec!["2024-01-05".to_string()]),
+            ("end_date".to_string(), vec!["2024-01-05".to_string()]),
+            ("end_time".to_string(), vec!["2024-01-01".to_string()]),
+        ]);
+        for order in [
+            ["start_date", "start_time", "end_date", "end_time"],
+            ["end_time", "end_date", "start_time", "start_date"],
+        ] {
+            let metrics = metrics_for(&config(), &data, &order);
+            assert_eq!(metrics.temporal_pairs_checked, 2, "{order:?}");
+            assert_eq!(metrics.temporal_violations, 1, "{order:?}");
+            let mut pairs = metrics.compared_pairs.clone();
+            pairs.sort();
+            assert_eq!(
+                pairs,
+                [
+                    ("start_date".to_string(), "end_date".to_string()),
+                    ("start_time".to_string(), "end_time".to_string()),
+                ],
+                "{order:?}"
+            );
+        }
     }
 
     // ---------------------------------------------------------------- #378
