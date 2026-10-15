@@ -89,6 +89,35 @@ fn non_utf8_csv_reports_one_clean_encoding_diagnostic() {
     }
 }
 
+/// Fields that are invalid UTF-8 alone but join into a valid character used
+/// to pass the columnar engine's check, which `arrow-csv` makes over a batch's
+/// fields joined together, and reach the profile as invalid text (#963). Every
+/// route refuses them now, with the same encoding diagnostic.
+#[test]
+fn utf8_split_across_fields_is_an_encoding_error_on_every_engine() {
+    for bytes in [b"v\n\xCD\n\x9C\n".as_slice(), b"a,b\n\xCD,\x9C\n"] {
+        let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        file.write_all(bytes).unwrap();
+        file.flush().unwrap();
+
+        assert!(
+            dataprof::analyze_csv_file(file.path(), &dataprof::CsvParserConfig::default()).is_err(),
+            "{bytes:?}"
+        );
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let err = Profiler::new()
+                .engine(engine)
+                .analyze_file(file.path())
+                .expect_err("invalid UTF-8 must fail on every engine");
+            assert_eq!(err.category(), "encoding", "{engine:?} {bytes:?}: {err}");
+        }
+    }
+}
+
 #[test]
 fn all_engines_failed_message_is_not_doubled() {
     // The `AllEnginesFailed` variant prefixes "All engines failed: "; the wrapped
