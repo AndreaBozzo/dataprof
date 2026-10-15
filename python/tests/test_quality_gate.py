@@ -131,6 +131,10 @@ def test_result_serializes_to_json(report):
         {"require_metrics": ["not_a_dimension"]},
         {"max_duplicate_rows": -1},
         {"max_duplicate_rows": 1.5},
+        {"min_rows": -1},
+        {"min_rows": 1.5},
+        {"min_rows": True},
+        {"min_rows": "10"},
         {"min_quality_score": 90, "scope": "whatever"},
     ],
 )
@@ -149,6 +153,22 @@ def test_every_real_number_type_is_a_threshold(report):
         assert report.check(min_quality_score=value).to_dict() == (
             report.check(min_quality_score=90).to_dict()
         ), type(value)
+
+
+def test_min_rows_alone_catches_a_truncated_batch():
+    """#905: ten rows where ten thousand were expected used to pass every
+    check; `min_rows` is a requirement on its own and fails it."""
+    report = dp.profile({"order_id": [f"O{i}" for i in range(10)]})
+
+    short = report.check(min_rows=10_000)
+    assert short.verdict == "fail"
+    (check,) = short.checks
+    assert (check.code, check.observed, check.expected) == (
+        "min_rows",
+        10,
+        {"comparison": "at_least", "value": 10_000},
+    )
+    assert report.check(min_rows=10).verdict == "pass"
 
 
 def test_an_empty_policy_is_rejected(report):
@@ -228,6 +248,7 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
 
     assert calls == [
         {
+            "min_rows": None,
             "min_quality_score": None,
             "min_dimension_scores": [],
             "max_null_percentage": [("customer_id", 10.0)],

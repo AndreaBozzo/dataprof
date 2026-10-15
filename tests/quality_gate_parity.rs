@@ -92,6 +92,9 @@ fn profile(paths: &HashMap<&str, PathBuf>, options: &Value) -> ProfileReport {
 
 fn policy_from(spec: &Value) -> QualityPolicy {
     let mut policy = QualityPolicy::new();
+    if let Some(min) = spec.get("min_rows") {
+        policy = policy.min_rows(min.as_u64().expect("a whole number") as usize);
+    }
     if let Some(min) = spec.get("min_quality_score") {
         policy = policy.min_quality_score(min.as_f64().expect("a number"));
     }

@@ -394,6 +394,7 @@ class ProfileReport:
     def quality_gate_json(
         self,
         *,
+        min_rows: int | None = ...,
         min_quality_score: float | None = ...,
         min_dimension_scores: list[tuple[str, float]] = ...,
         max_null_percentage: list[tuple[str, float]] = ...,

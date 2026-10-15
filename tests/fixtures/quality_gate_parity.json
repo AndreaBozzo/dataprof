@@ -710,6 +710,176 @@
           }
         ]
       }
+    },
+    {
+      "name": "min_rows_counts_the_rows_of_a_complete_scan",
+      "why": "A fully consumed source with exactly the required number of rows meets min_rows.",
+      "options": {},
+      "policy": {
+        "min_rows": 6
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_rows",
+            "expected": {
+              "comparison": "at_least",
+              "value": 6
+            },
+            "observed": 6,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "the scan read at least the required number of rows"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_complete_scan_with_too_few_rows_fails",
+      "why": "A fully consumed source with fewer rows than required fails min_rows: no unread rows can make up the difference.",
+      "options": {},
+      "policy": {
+        "min_rows": 7
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_rows",
+            "expected": {
+              "comparison": "at_least",
+              "value": 7
+            },
+            "observed": 6,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "failed",
+            "message": "fewer rows were read than the required minimum"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rows_already_read_meet_min_rows_under_a_cap",
+      "why": "Rows already read stay read when more are read, so a capped scan that reached the minimum passes.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "min_rows": 4
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "min_rows",
+            "expected": {
+              "comparison": "at_least",
+              "value": 4
+            },
+            "observed": 4,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "the scan read at least the required number of rows"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_short_of_min_rows_is_not_decided",
+      "why": "Under full_source, a capped scan short of the minimum leaves it unevaluated: the unread rows may make up the difference.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "min_rows": 5
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "min_rows",
+            "expected": {
+              "comparison": "at_least",
+              "value": 5
+            },
+            "observed": 4,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "fewer rows were read than the required minimum, and the rows that were not read may make up the difference"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_short_of_min_rows_fails_the_observed_scope",
+      "why": "Under observed scope the requirement is about the rows read, so a capped scan short of the minimum fails.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "min_rows": 5,
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "min_rows",
+            "expected": {
+              "comparison": "at_least",
+              "value": 5
+            },
+            "observed": 4,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "failed",
+            "message": "fewer rows were read than the required minimum"
+          }
+        ]
+      }
     }
   ]
 }

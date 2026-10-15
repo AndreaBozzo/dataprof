@@ -73,6 +73,7 @@ class _Policy:
     def __init__(
         self,
         *,
+        min_rows: int | None,
         min_quality_score: float | None,
         min_dimension_scores: Mapping[str, float] | None,
         max_null_percentage: Mapping[str, float] | float | None,

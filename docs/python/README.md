@@ -925,6 +925,7 @@ if not result.passed:
 
 | Keyword | Type | Meaning |
 |---|---|---|
+| `min_rows` | `int` | Floor for the number of rows the scan read |
 | `min_quality_score` | `float` | Floor for the overall score, 0--100 |
 | `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
@@ -1019,6 +1020,13 @@ its rows), and the overall score is bounded again. A `max_duplicate_rows`
 requirement on an estimated count stays unevaluated, since the estimate can
 neither witness duplicates nor rule them out.
 
+`min_rows` reads the report's `execution.rows_processed`. Rows already read do
+not go away when more are read, so a scan that read at least `min_rows` rows
+passes even when it stopped early or sampled. One that read fewer fails when it
+covered the whole source, or under `scope="observed"`; under `"full_source"` a
+scan that stopped early leaves it `evidence_incomplete`, since the rows it did
+not read may make up the difference.
+
 A duplicate-row scan over a sample, on engines without a row tracker, has no
 bound, and a requirement that reads it stays unevaluated. Start/end date ordering is
 compared only between columns whose samples hold the same rows, so a pair
@@ -1105,6 +1113,7 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 
 ```json
 {
+  "min_rows": 1,
   "min_quality_score": 90,
   "max_null_percentage": {"customer_id": 0, "*": 20},
   "max_duplicate_rows": 0,
@@ -1118,8 +1127,8 @@ Flags replace the corresponding policy-file key in full. For example,
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
 entries; the last occurrence of a repeated mapping key wins.
-`--min-quality`, `--max-duplicate-rows`, and `--scope` cover the other policy
-keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
+`--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
+other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
 
 `--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through

@@ -239,6 +239,7 @@ class _Policy:
     def __init__(
         self,
         *,
+        min_rows: int | None,
         min_quality_score: float | None,
         min_dimension_scores: _Mapping[str, float] | None,
         max_null_percentage: _Mapping[str, float] | float | None,
@@ -252,6 +253,8 @@ class _Policy:
                 f"scope must be one of {_SCOPES}, got {scope!r}",
             )
         self.scope = scope
+
+        self.min_rows = None if min_rows is None else _count("min_rows", min_rows)
 
         self.min_quality_score = (
             None
@@ -298,7 +301,8 @@ class _Policy:
                 self.require_dimensions.add(_dimension_name(metric, setting="require_metrics"))
 
         if not (
-            self.min_quality_score is not None
+            self.min_rows is not None
+            or self.min_quality_score is not None
             or self.min_dimension_scores
             or self.max_null_percentage
             or self.max_null_percentage_any is not None
@@ -325,6 +329,7 @@ class _Policy:
             )
         document = _json.loads(
             native.quality_gate_json(
+                min_rows=self.min_rows,
                 min_quality_score=self.min_quality_score,
                 min_dimension_scores=list(self.min_dimension_scores.items()),
                 max_null_percentage=list(self.max_null_percentage.items()),

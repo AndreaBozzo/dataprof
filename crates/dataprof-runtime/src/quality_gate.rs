@@ -237,6 +237,8 @@ impl Evidence {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CheckCode {
+    /// The scan must have read at least the threshold's number of rows.
+    MinRows,
     /// The overall quality score must be at least the threshold.
     MinQualityScore,
     /// One ISO 25012 dimension score must be at least the threshold.
@@ -252,6 +254,7 @@ pub enum CheckCode {
 impl fmt::Display for CheckCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MinRows => write!(f, "min_rows"),
             Self::MinQualityScore => write!(f, "min_quality_score"),
             Self::MinDimensionScore => write!(f, "min_dimension_score"),
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
@@ -515,6 +518,7 @@ pub enum RequiredMetric {
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct QualityPolicy {
+    min_rows: Option<usize>,
     min_quality_score: Option<f64>,
     min_dimension_scores: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage: BTreeMap<String, f64>,
@@ -529,6 +533,13 @@ impl QualityPolicy {
     /// [`PolicyError::NoRequirements`].
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Require the scan to have read at least `min` rows, so an empty or
+    /// truncated extract fails instead of passing every other check.
+    pub fn min_rows(mut self, min: usize) -> Self {
+        self.min_rows = Some(min);
+        self
     }
 
     /// Require the overall quality score to be at least `min` (0..=100).
@@ -619,7 +630,8 @@ impl QualityPolicy {
     }
 
     fn is_empty(&self) -> bool {
-        self.min_quality_score.is_none()
+        self.min_rows.is_none()
+            && self.min_quality_score.is_none()
             && self.min_dimension_scores.is_empty()
             && self.max_null_percentage.is_empty()
             && self.max_null_percentage_any.is_none()
@@ -640,6 +652,9 @@ impl QualityPolicy {
 
         for metric in required_metrics_in_order(&self.require_metrics) {
             checks.push(self.require_metric_check(report, metric));
+        }
+        if let Some(min) = self.min_rows {
+            checks.push(self.row_count_check(report, scan, min));
         }
         if let Some(min) = self.min_quality_score {
             checks.push(self.quality_score_check(report, scan, min));
@@ -714,6 +729,45 @@ impl QualityPolicy {
             } else {
                 CheckStatus::Failed
             },
+            message: message.to_string(),
+        }
+    }
+
+    /// The mirror of the duplicate-row rule: rows already read do not stop
+    /// existing when more are read, so a scan that read at least `min` rows
+    /// settles the requirement whatever it missed. Fewer is a failure only
+    /// when the scan covered the whole source, or under
+    /// [`PolicyScope::Observed`]; under [`PolicyScope::FullSource`] the rows
+    /// that were not read may make up the difference.
+    fn row_count_check(&self, report: &ProfileReport, scan: Evidence, min: usize) -> Check {
+        let observed = report.execution.rows_processed;
+        let status = match (self.scope, scan.gap()) {
+            _ if observed >= min => CheckStatus::Passed,
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ => CheckStatus::Failed,
+        };
+        let message = match status {
+            CheckStatus::Passed => "the scan read at least the required number of rows",
+            CheckStatus::Failed => "fewer rows were read than the required minimum",
+            CheckStatus::NotEvaluated(_) => {
+                "fewer rows were read than the required minimum, and the rows that were not \
+                 read may make up the difference"
+            }
+        };
+        Check {
+            code: CheckCode::MinRows,
+            column: None,
+            dimension: None,
+            expected: Expectation::AtLeast {
+                value: MetricValue::Count(min),
+            },
+            observed: Some(MetricValue::Count(observed)),
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            status,
             message: message.to_string(),
         }
     }
