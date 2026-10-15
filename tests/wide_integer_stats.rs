@@ -277,3 +277,48 @@ fn a_scale_zero_decimal_column_keeps_the_spread_of_large_integers() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// Arrow durations are typed integer, so their spread is reported too.
+#[cfg(feature = "parquet")]
+#[test]
+fn a_duration_column_keeps_the_spread_of_large_integers() {
+    use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, DurationNanosecondArray};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+
+    let names = ["reading", "reading_offset"];
+    let duration = |index: usize| -> ArrayRef {
+        let values = ROWS.map(|row| row[index].parse::<i64>().unwrap());
+        Arc::new(DurationNanosecondArray::from(values.to_vec()))
+    };
+    let schema = Arc::new(Schema::new(
+        names
+            .iter()
+            .map(|name| Field::new(*name, DataType::Duration(TimeUnit::Nanosecond), false))
+            .collect::<Vec<_>>(),
+    ));
+    let batch = RecordBatch::try_new(schema.clone(), vec![duration(0), duration(1)]).unwrap();
+    let file = NamedTempFile::with_suffix(".parquet").unwrap();
+    let mut writer = ArrowWriter::try_new(file.reopen().unwrap(), schema, None).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+
+    let columns = Profiler::new()
+        .analyze_file(file.path())
+        .expect("duration parquet")
+        .column_profiles;
+    let (wide, twin) = (
+        spread(&columns, names[0]).unwrap(),
+        spread(&columns, names[1]).unwrap(),
+    );
+    assert!(close(twin[0], Some(PAIRS[0].2)), "{twin:?}");
+    // Variance and standard deviation; duration samples carry no numeric
+    // text, so the shape statistics are absent on both.
+    assert!(
+        close(wide[0], twin[0]) && close(wide[1], twin[1]),
+        "{wide:?} vs {twin:?}"
+    );
+}

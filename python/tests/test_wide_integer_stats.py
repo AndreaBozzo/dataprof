@@ -150,3 +150,16 @@ def test_pyarrow_scale_zero_decimals():
         }
     )
     _assert_spread_kept(dp.profile(table), "pyarrow decimal128(20, 0)")
+
+
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+def test_pyarrow_durations(unit: str):
+    """Arrow durations are typed integer and report the same spread."""
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table(
+        {name: pa.array(COLUMNS[name], pa.duration(unit)) for name in ("reading", "reading_offset")}
+    )
+    stats = {column["name"]: column["stats"] for column in dp.profile(table).to_dict()["columns"]}
+    for statistic in ("variance", "std_dev"):
+        assert stats["reading"][statistic] == stats["reading_offset"][statistic], statistic
+    assert stats["reading_offset"]["variance"] == 23.5833

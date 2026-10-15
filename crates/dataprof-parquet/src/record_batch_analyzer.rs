@@ -1248,7 +1248,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1261,7 +1261,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1274,7 +1274,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
@@ -1287,7 +1287,7 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
                     self.offer_sample(&dur_str);
