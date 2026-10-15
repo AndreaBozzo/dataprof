@@ -479,6 +479,17 @@ def test_policy_value_error_attribution(
         assert str(path) not in result.stderr
     assert "Traceback" not in result.stderr
 
+    json_result = run_check(source, "--policy", path, *flags, "--json")
+    assert json_result.returncode == 3
+    error = json.loads(json_result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert expected_error in error["message"]
+    if file_origin:
+        assert error["path"] == str(path)
+    else:
+        assert "path" not in error
+    assert json_result.stderr == ""
+
 
 def test_valid_cli_override_prevents_file_value_error(
     source: Path,

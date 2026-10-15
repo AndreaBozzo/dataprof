@@ -336,19 +336,22 @@ def main(argv: list[str] | None = None) -> int:
         policy = _policy(args)
     except (OSError, ValueError, RuntimeError) as exc:
         message = str(exc)
+        # A value error names the file only when the file supplied that key
+        # and no flag replaced it.
+        from_flag = isinstance(exc, _PolicyFieldError) and getattr(args, exc.key, None) is not None
 
         if (
             not args.json
             and args.policy is not None
             and isinstance(exc, _PolicyFieldError)
-            and getattr(args, exc.key, None) is None
+            and not from_flag
         ):
             message = f"policy file {args.policy}: {message}"
 
         return _report_error(
             "policy",
             message,
-            path=args.policy,
+            path=None if from_flag else args.policy,
             json_output=args.json,
         )
     try:
