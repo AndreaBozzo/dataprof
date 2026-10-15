@@ -220,8 +220,9 @@ be inferred confidently, such as mixed-format strings.
   `updated`, `begin_date` with `end_date`, `from_date` with `to_date`
   (`start_date` pairs with `end_date` or `endDate`, not with `send_date`).
   With several start or end columns, a start pairs with the end whose other
-  words match, apart from a trailing date word (`trip_start` or
-  `trip_start_date` with `trip_end`); when that is ambiguous, no pair is formed
+  words match (`trip_start` with `trip_end`), or failing that, whose other
+  words match apart from a trailing date word (`trip_start_date` with
+  `trip_end`); when that is ambiguous, no pair is formed
 
 ### Validity
 
