@@ -14,9 +14,9 @@ const LANES: usize = 4;
 /// `sum_squares` here would vectorize just as well and lose the small spread of
 /// a large-offset column entirely, which is what this path used to do.
 ///
-/// A lane sum that overflows falls back to [`compute_stats_fallback`] over the
-/// whole slice: the scalar accumulator rescales its sum before it overflows,
-/// and an infinite lane sum has already lost what it would need.
+/// A lane sum or M2 that overflows falls back to [`compute_stats_fallback`]
+/// over the whole slice: the scalar accumulator rescales both before they
+/// overflow, and an infinite lane value has already lost what it would need.
 pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
     let (chunks, remainder) = values.as_chunks::<LANES>();
 
@@ -54,7 +54,9 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
 
     let (mean, m2) = (mean.to_array(), m2.to_array());
     let (sum, compensation) = (sum.to_array(), compensation.to_array());
-    if !sum.iter().all(|lane| lane.is_finite()) {
+    // M2 overflows the same way, and the scalar accumulator rescales it too
+    // (#805).
+    if !sum.iter().chain(&m2).all(|lane| lane.is_finite()) {
         return compute_stats_fallback(values);
     }
     let (min, max) = (min.to_array(), max.to_array());
