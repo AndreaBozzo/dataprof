@@ -375,6 +375,136 @@ def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: 
     assert "Traceback" not in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("policy_json", "flags", "expected_error", "file_origin"),
+    [
+        (
+            '{"min_quality_score": 150}',
+            (),
+            "min_quality_score threshold",
+            True,
+        ),
+        (
+            '{"min_dimension_scores": {"not_a_dimension": 90}}',
+            (),
+            "not_a_dimension",
+            True,
+        ),
+        (
+            '{"scope": "invalid_scope", "min_quality_score": 90}',
+            (),
+            "invalid_scope",
+            True,
+        ),
+        (
+            '{"min_quality_score": 90}',
+            ("--min-quality", "150"),
+            "min_quality_score threshold",
+            False,
+        ),
+        (
+            '{"max_null_percentage": {"*": 150}}',
+            (),
+            "max_null_percentage threshold",
+            True,
+        ),
+        (
+            '{"max_duplicate_rows": -1}',
+            (),
+            "max_duplicate_rows",
+            True,
+        ),
+        (
+            '{"require_metrics": ["not_a_dimension"]}',
+            (),
+            "not_a_dimension",
+            True,
+        ),
+        (
+            '{"min_quality_score": 150}',
+            ("--max-duplicate-rows", "0"),
+            "min_quality_score threshold",
+            True,
+        ),
+    ],
+    ids=[
+        "file-quality",
+        "file-dimension",
+        "file-scope",
+        "flag-quality",
+        "file-max-null",
+        "file-max-duplicates",
+        "file-required-metric",
+        "file-error-with-valid-flag",
+    ],
+)
+def test_policy_value_error_attribution(
+    source: Path,
+    tmp_path: Path,
+    policy_json: str,
+    flags: tuple[str, ...],
+    expected_error: str,
+    file_origin: bool,
+):
+    path = tmp_path / "policy.json"
+    path.write_text(policy_json, encoding="utf-8")
+
+    result = run_check(source, "--policy", path, *flags)
+
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert expected_error in result.stderr
+    if file_origin:
+        assert f"policy file {path}:" in result.stderr
+    else:
+        assert str(path) not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_valid_cli_override_prevents_file_value_error(
+    source: Path,
+    tmp_path: Path,
+):
+    path = tmp_path / "policy.json"
+    path.write_text('{"min_quality_score": 150}', encoding="utf-8")
+
+    result = run_check(
+        source,
+        "--policy",
+        path,
+        "--min-quality",
+        "0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert "pass:" in result.stderr
+
+
+def test_scope_only_policy_file_combines_with_cli_requirement(
+    source: Path,
+    tmp_path: Path,
+):
+    path = tmp_path / "policy.json"
+    path.write_text('{"scope": "observed"}', encoding="utf-8")
+
+    result = run_check(
+        source,
+        "--policy",
+        path,
+        "--min-quality",
+        "0",
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    output = json.loads(result.stdout)
+
+    assert output["scope"] == "observed"
+    assert output["verdict"] == "pass"
+
+
 def test_invalid_json_policy_error_names_the_file(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     path.write_text("{", encoding="utf-8")

@@ -30,6 +30,14 @@ _PERCENTAGE_MAX = 100.0
 _SCOPES = ("full_source", "observed")
 
 
+class _PolicyFieldError(ValueError):
+    """A policy validation error identifying the invalid configuration key."""
+
+    def __init__(self, key: str, message: str) -> None:
+        super().__init__(message)
+        self.key = key
+
+
 @_dataclass(frozen=True)
 class QualityCheck:
     """One requirement and what the report said about it.
@@ -176,7 +184,13 @@ def _real_number(value: _Any) -> float:
         return float("nan")
 
 
-def _percentage(code: str, subject: str | None, value: _Any) -> float:
+def _percentage(
+    code: str,
+    subject: str | None,
+    value: _Any,
+    *,
+    policy_key: str | None = None,
+) -> float:
     """Accept a 0..=100 threshold, rejecting anything else by name.
 
     An unsatisfiable threshold is a configuration mistake, and reporting it as
@@ -185,9 +199,10 @@ def _percentage(code: str, subject: str | None, value: _Any) -> float:
     number = _real_number(value)
     if number != number or not 0.0 <= number <= _PERCENTAGE_MAX:
         named = f" for `{subject}`" if subject else ""
-        raise ValueError(
+        raise _PolicyFieldError(
+            policy_key or code,
             f"{code} threshold{named} must be a percentage between 0 and "
-            f"{_PERCENTAGE_MAX:g}, got {value!r}"
+            f"{_PERCENTAGE_MAX:g}, got {value!r}",
         )
     return number
 
@@ -201,14 +216,20 @@ def _count(code: str, value: _Any) -> int:
     with ``ValueError`` rather than the ``OverflowError`` its conversion raises.
     """
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _COUNT_MAX:
-        raise ValueError(f"{code} must be a whole number between 0 and {_COUNT_MAX}, got {value!r}")
+        raise _PolicyFieldError(
+            code,
+            f"{code} must be a whole number between 0 and {_COUNT_MAX}, got {value!r}",
+        )
     return value
 
 
 def _dimension_name(name: _Any, *, setting: str) -> str:
     if name not in _QUALITY_DIMENSIONS:
         valid = ", ".join(_QUALITY_DIMENSIONS)
-        raise ValueError(f"{setting}: unknown quality dimension {name!r}. Valid: {valid}")
+        raise _PolicyFieldError(
+            setting,
+            f"{setting}: unknown quality dimension {name!r}. Valid: {valid}",
+        )
     return str(name)
 
 
@@ -226,7 +247,10 @@ class _Policy:
         scope: str,
     ) -> None:
         if scope not in _SCOPES:
-            raise ValueError(f"scope must be one of {_SCOPES}, got {scope!r}")
+            raise _PolicyFieldError(
+                "scope",
+                f"scope must be one of {_SCOPES}, got {scope!r}",
+            )
         self.scope = scope
 
         self.min_quality_score = (
@@ -239,7 +263,10 @@ class _Policy:
         for name, value in (min_dimension_scores or {}).items():
             dimension = _dimension_name(name, setting="min_dimension_scores")
             self.min_dimension_scores[dimension] = _percentage(
-                "min_dimension_score", dimension, value
+                "min_dimension_score",
+                dimension,
+                value,
+                policy_key="min_dimension_scores",
             )
 
         self.max_null_percentage: dict[str, float] = {}

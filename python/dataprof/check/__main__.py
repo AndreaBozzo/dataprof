@@ -12,7 +12,7 @@ from typing import Any, NoReturn
 
 import dataprof
 from dataprof import profile_file
-from dataprof._gate import _Policy
+from dataprof._gate import _Policy, _PolicyFieldError
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
@@ -329,7 +329,22 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = _policy(args)
     except (OSError, ValueError, RuntimeError) as exc:
-        return _report_error("policy", str(exc), path=args.policy, json_output=args.json)
+        message = str(exc)
+
+        if (
+            not args.json
+            and args.policy is not None
+            and isinstance(exc, _PolicyFieldError)
+            and getattr(args, exc.key, None) is None
+        ):
+            message = f"policy file {args.policy}: {message}"
+
+        return _report_error(
+            "policy",
+            message,
+            path=args.policy,
+            json_output=args.json,
+        )
     try:
         report = profile_file(
             args.source,

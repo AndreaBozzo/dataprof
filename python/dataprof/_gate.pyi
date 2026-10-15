@@ -64,6 +64,11 @@ class QualityGateResult:
 
 def _real_number(value: Any) -> float: ...
 
+class _PolicyFieldError(ValueError):
+    key: str
+
+    def __init__(self, key: str, message: str) -> None: ...
+
 class _Policy:
     def __init__(
         self,
