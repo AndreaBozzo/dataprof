@@ -99,11 +99,18 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
     try:
         return pyarrow.Table.from_pandas(df)
     except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
+        # If columns have duplicate labels, pyarrow Table.from_pandas fails with
+        # ValueError; duplicate column frames cannot be converted.
+        if hasattr(df.columns, "is_unique") and not df.columns.is_unique:
+            raise
+
         failing_cols: set[_Any] = set()
-        for name in df.columns:
+        for i in range(len(df.columns)):
+            col = df.iloc[:, i]
+            name = df.columns[i]
             try:
-                pyarrow.Array.from_pandas(df[name])
-            except Exception:
+                pyarrow.Array.from_pandas(col)
+            except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
                 failing_cols.add(name)
 
         if not failing_cols:
@@ -125,7 +132,7 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
             for name in failing_cols:
                 try:
                     pyarrow.Array.from_pandas(df_fixed[name])
-                except Exception as col_exc:
+                except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError) as col_exc:
                     raise ValueError(
                         f"pandas DataFrame: column {name!r} could not be converted for profiling: "
                         f"{col_exc}"

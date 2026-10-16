@@ -131,3 +131,31 @@ def test_interop_profile_dataframe_mixed_columns():
         "numeric": 2,
         "text": 1,
     }
+
+
+def test_pandas_multiindex_columns_with_mixed_objects():
+    """Verify that DataFrames with tuple/MultiIndex columns and mixed objects profile."""
+    df = pd.DataFrame(
+        {
+            ("metrics", "score"): pd.Series([1.5, "n/a", 2.0], dtype=object),
+            ("metrics", "count"): [10, 20, 30],
+        }
+    )
+    report = dp.profile(df)
+    score_col = "('metrics', 'score')"
+    assert report[score_col].data_type == "float"
+    assert report[score_col].type_homogeneity == {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 2,
+        "text": 0,
+    }
+
+
+def test_pandas_duplicate_columns_raises_clear_error():
+    """Duplicate column labels fail cleanly and are not misclassified as mixed objects."""
+    df = pd.DataFrame([[1, 2]], columns=["a", "a"])
+    with pytest.raises(Exception) as exc_info:
+        dp.profile(df)
+    assert "Duplicate column names found" in str(exc_info.value)
+
