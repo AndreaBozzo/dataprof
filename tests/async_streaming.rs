@@ -599,3 +599,73 @@ async fn test_progress_channel_capacity_one_receives_finished_event() {
         );
     }
 }
+
+/// A stream that fails during profiling must never emit `ProgressEvent::Finished`.
+#[tokio::test]
+async fn test_progress_channel_does_not_emit_finished_on_error() {
+    // 1. Duplicate CSV headers error
+    {
+        let csv = b"x,x\n1,2\n";
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(csv),
+            AsyncSourceInfo::new("duplicate-header-csv", FileFormat::Csv),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let consumer = tokio::spawn(async move {
+            let mut got_finished = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    got_finished = true;
+                }
+            }
+            got_finished
+        });
+
+        let res = Profiler::new()
+            .progress_channel(tx)
+            .profile_stream(source)
+            .await;
+
+        assert!(res.is_err(), "profiling should fail due to duplicate headers");
+        let got_finished = consumer.await.unwrap();
+        assert!(
+            !got_finished,
+            "Finished event must not be emitted when profiling fails on duplicate headers"
+        );
+    }
+
+    // 2. Unterminated quote error in strict CSV mode
+    {
+        let csv = b"id,val\n1,\"unterminated\n2,normal\n";
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(csv),
+            AsyncSourceInfo::new("unterminated-quote-csv", FileFormat::Csv),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let consumer = tokio::spawn(async move {
+            let mut got_finished = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    got_finished = true;
+                }
+            }
+            got_finished
+        });
+
+        let res = Profiler::new()
+            .csv_flexible(false)
+            .progress_channel(tx)
+            .profile_stream(source)
+            .await;
+
+        assert!(res.is_err(), "profiling should fail due to unterminated quote in strict mode");
+        let got_finished = consumer.await.unwrap();
+        assert!(
+            !got_finished,
+            "Finished event must not be emitted when profiling fails on unterminated quote"
+        );
+    }
+}
+
