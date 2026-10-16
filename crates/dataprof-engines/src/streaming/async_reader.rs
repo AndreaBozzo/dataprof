@@ -1170,7 +1170,7 @@ impl AsyncStreamingProfiler {
                     sampler.offer((values, containers));
                 } else {
                     count_containers(&headers, &containers, &mut container_counts);
-                    column_stats.process_record(&headers, values);
+                    column_stats.process_record_with_containers(&headers, values, &containers);
                     sampled_rows += 1;
                 }
 
@@ -1273,7 +1273,7 @@ impl AsyncStreamingProfiler {
         // in here rather than row by row.
         for (values, containers) in sampler.take_sample() {
             count_containers(&headers, &containers, &mut container_counts);
-            column_stats.process_record(&headers, values);
+            column_stats.process_record_with_containers(&headers, values, &containers);
             sampled_rows += 1;
         }
 

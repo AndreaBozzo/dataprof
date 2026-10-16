@@ -188,7 +188,8 @@ Measures duplication in the data.
 
 - `duplicate_rows` -- number of exact duplicate rows. A nested value compares
   as a value, so two objects, or two Arrow maps, with the same entries in a
-  different order are equal
+  different order are equal, and a string never equals an object or array,
+  even one that spells its JSON
 - `key_uniqueness` -- ratio of distinct values in likely-key columns
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 

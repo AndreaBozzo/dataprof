@@ -280,10 +280,16 @@ pub async fn analyze_database_with_options(
     // from value-level checks, and the columns no longer line up.
     let mut uniqueness = RowUniquenessTracker::default();
     if !aligned.is_empty() {
+        let container_rows: Vec<&[usize]> = columns.container_rows().collect();
         for row_index in 0..actual_rows_processed {
             let mut signature = RowSignature::default();
-            for cells in &aligned {
-                signature.push_field(&cells[row_index]);
+            for (cells, containers) in aligned.iter().zip(&container_rows) {
+                // Ascending by construction: rows are pushed in order.
+                if containers.binary_search(&row_index).is_ok() {
+                    signature.push_container_field(&cells[row_index]);
+                } else {
+                    signature.push_field(&cells[row_index]);
+                }
             }
             uniqueness.observe(signature.finish());
         }

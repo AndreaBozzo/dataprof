@@ -93,20 +93,45 @@ fn profile_wrongs(report: &ProfileReport, expected: &[(&str, DataType)]) -> Vec<
     wrong
 }
 
+fn duplicate_rows(report: &ProfileReport) -> Option<usize> {
+    report
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.metrics.uniqueness.as_ref())
+        .map(|uniqueness| uniqueness.duplicate_rows)
+}
+
+/// Rows of the column `name` whose value was a container, per path.
+fn container_rows_wrongs(
+    paths: &[(&'static str, QueryColumns)],
+    name: &str,
+    expected: &[usize],
+) -> Vec<String> {
+    let mut wrong = Vec::new();
+    for (path, columns) in paths {
+        let position = columns
+            .names()
+            .position(|column| column == name)
+            .expect("column in the result");
+        let rows = columns
+            .container_rows()
+            .nth(position)
+            .expect("container rows");
+        if rows != expected {
+            wrong.push(format!(
+                "{path} {name}: container rows {rows:?}, expected {expected:?}"
+            ));
+        }
+    }
+    wrong
+}
+
 #[cfg(feature = "postgres")]
 mod postgres {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
 
     const TABLE: &str = "SELECT * FROM structured_decoding_pg ORDER BY id";
-
-    fn duplicate_rows(report: &ProfileReport) -> Option<usize> {
-        report
-            .quality
-            .as_ref()
-            .and_then(|quality| quality.metrics.uniqueness.as_ref())
-            .map(|uniqueness| uniqueness.duplicate_rows)
-    }
 
     /// Created once per process; the tests only read it.
     static FIXTURE: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
@@ -207,6 +232,30 @@ mod postgres {
                 wrong.push(format!("{path}: {:?}", columns["j"]));
             }
         }
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(1) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 1"
+            ));
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A `jsonb` string holding an object's text renders the same text as the
+    /// object, so the row signature must tell them apart by the container
+    /// flag (#945). Rows 2 and 3 hold the object and are one duplicate; row 1
+    /// holds the string and is not.
+    #[tokio::test]
+    async fn a_json_string_spelling_an_object_is_not_the_object() {
+        let Some(url) = url().await else {
+            return;
+        };
+        let query = r#"SELECT id, j FROM (VALUES
+            (1, 1, '"{\"x\":1}"'::jsonb),
+            (2, 1, '{"x":1}'::jsonb),
+            (3, 1, '{"x":1}'::jsonb)) AS t(n, id, j) ORDER BY n"#;
+
+        let mut wrong = container_rows_wrongs(&both_paths(&url, query).await, "j", &[1, 2]);
         let duplicates = duplicate_rows(&profile(&url, query).await);
         if duplicates != Some(1) {
             wrong.push(format!(
@@ -386,6 +435,30 @@ mod mysql {
                 ("scalars", DataType::Integer),
             ],
         );
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A JSON string holding an object's text renders the same text as the
+    /// object, so the row signature must tell them apart by the container
+    /// flag (#945). Rows 2 and 3 hold the object and are one duplicate.
+    #[tokio::test]
+    async fn a_json_string_spelling_an_object_is_not_the_object() {
+        let Some(url) = url().await else {
+            return;
+        };
+        // The streaming path refuses `UNION`, so the rows come from `VALUES`.
+        let query = r#"SELECT id, j FROM (VALUES
+            ROW(1, 1, CAST('"{\\"x\\":1}"' AS JSON)),
+            ROW(2, 1, CAST('{"x":1}' AS JSON)),
+            ROW(3, 1, CAST('{"x":1}' AS JSON))) AS t(n, id, j) ORDER BY n"#;
+
+        let mut wrong = container_rows_wrongs(&both_paths(&url, query).await, "j", &[1, 2]);
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(1) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 1"
+            ));
+        }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }

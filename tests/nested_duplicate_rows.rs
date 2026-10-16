@@ -5,6 +5,8 @@
 //! different order were not duplicates. Arrow and Parquet rendered a nested
 //! value as its display string, which does not quote strings or show a null
 //! list element, so `["p, q"]` matched `["p", "q"]` and `[null]` matched `[]`.
+//! A container's text is its compact JSON, which a string can spell, so a
+//! string equal to it signed the same row as the container (#945).
 //!
 //! `python/tests/test_nested_duplicate_rows.py` is the Python twin.
 
@@ -22,7 +24,7 @@ struct Case {
     arrow: bool,
 }
 
-const CASES: [Case; 6] = [
+const CASES: [Case; 9] = [
     Case {
         name: "key order",
         records: r#"{"id": 1, "a": {"x": 1, "y": 2}}
@@ -66,6 +68,28 @@ const CASES: [Case; 6] = [
 {"id": 1, "a": []}"#,
         duplicates: 0,
         arrow: false,
+    },
+    // #945: a container crosses as its compact JSON, which a string can spell.
+    Case {
+        name: "a string spelling an object against the object",
+        records: r#"{"id": 1, "a": "{\"x\":1,\"y\":2}"}
+{"id": 1, "a": {"y": 2, "x": 1}}"#,
+        duplicates: 0,
+        arrow: false,
+    },
+    Case {
+        name: "a string spelling an array against the array",
+        records: r#"{"id": 1, "a": "[1,2]"}
+{"id": 1, "a": [1, 2]}"#,
+        duplicates: 0,
+        arrow: false,
+    },
+    Case {
+        name: "equal strings spelling an object",
+        records: r#"{"id": 1, "a": "{\"x\":1}"}
+{"id": 1, "a": "{\"x\":1}"}"#,
+        duplicates: 1,
+        arrow: true,
     },
 ];
 
