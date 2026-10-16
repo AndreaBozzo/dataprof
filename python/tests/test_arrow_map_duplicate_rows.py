@@ -90,15 +90,15 @@ def _routes(value_type: Any, values: list[Any], tmp_path: Path) -> dict[str, Any
     try:
         import pandas as pd
 
-        frame = table.to_pandas(types_mapper=pd.ArrowDtype)
-        routes["pandas"] = lambda: dp.profile(frame)
+        pandas_frame = table.to_pandas(types_mapper=pd.ArrowDtype)
+        routes["pandas"] = lambda: dp.profile(pandas_frame)
     except ImportError:
         pass
     try:
         import polars as pl
 
-        frame = pl.from_arrow(table)
-        routes["polars"] = lambda: dp.profile(frame)
+        polars_frame = pl.from_arrow(table)
+        routes["polars"] = lambda: dp.profile(polars_frame)
     except ImportError:
         pass
     return routes
