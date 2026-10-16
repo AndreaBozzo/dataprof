@@ -954,10 +954,16 @@ fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
         )
     })?;
 
-    // Convert pandas to pyarrow Table
-    let pa_table = pyarrow
-        .getattr("Table")?
-        .call_method1("from_pandas", (df,))?;
+    // Convert pandas to pyarrow Table, falling back to string arrays for mixed object columns (#976)
+    let pa_table = if let Ok(inputs_mod) = py.import("dataprof._inputs") {
+        inputs_mod
+            .getattr("_pandas_to_pyarrow_table")?
+            .call1((df, &pyarrow))?
+    } else {
+        pyarrow
+            .getattr("Table")?
+            .call_method1("from_pandas", (df,))?
+    };
 
     import_batches_from_pyarrow(py, &pa_table)
 }
