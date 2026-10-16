@@ -187,7 +187,8 @@ a European spreadsheet export, are not parsed as numbers and land in `text`.
 Measures duplication in the data.
 
 - `duplicate_rows` -- number of exact duplicate rows. A nested value compares
-  as a value, so two objects with the same keys in a different order are equal
+  as a value, so two objects, or two Arrow maps, with the same entries in a
+  different order are equal
 - `key_uniqueness` -- ratio of distinct values in likely-key columns
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
