@@ -163,9 +163,10 @@ class TestTypeHomogeneity:
             "a partial count map must not validate, because the loader drops it"
         )
 
-    def test_a_malformed_mapping_reads_as_absence(self):
+    def test_a_malformed_mapping_is_refused(self):
         # An invented count is worse than a gap: a partial mapping cannot be
         # completed with zeros, because zero is a claim about the data.
+        # It is refused with ValueError naming the field path (#950).
         document = {
             "schema_version": dp.REPORT_SCHEMA_VERSION,
             "source": "hand-edited.csv",
@@ -183,7 +184,8 @@ class TestTypeHomogeneity:
             "quality": None,
         }
 
-        assert dp.ProfileReport.from_dict(document)["v"].type_homogeneity is None
+        with pytest.raises(ValueError, match=r"'columns\[0\]\.type_homogeneity' must be"):
+            dp.ProfileReport.from_dict(document)
 
     def test_the_flat_exports_carry_the_derived_scalars(self, tmp_path):
         # to_dataframe()/save(".csv") are flat and cannot hold the count map, so

@@ -64,6 +64,18 @@ def _no_quality_status(document: dict[str, Any], value: Any) -> None:
 #: (field path in the error, how to place the value, malformed values)
 MALFORMED = [
     ("columns[0].stats", _set("columns", 0, "stats"), [[1], "x", 1]),
+    (
+        "columns[0].type_homogeneity",
+        _set("columns", 0, "type_homogeneity"),
+        [
+            [1],
+            "x",
+            1,
+            {"numeric": 1},
+            {"boolean": "x", "date": 0, "numeric": 0, "text": 0},
+            {"boolean": -1, "date": 0, "numeric": 0, "text": 0},
+        ],
+    ),
     ("columns[1].patterns", _pattern_entry, [1, "x", None]),
     ("columns[1].patterns", _set("columns", 1, "patterns"), ["x", {}]),
     (
@@ -72,8 +84,22 @@ MALFORMED = [
         ["x", None, True, float("nan")],
     ),
     ("quality.low_sample_warning", _set("quality", "low_sample_warning"), ["false", 0, None]),
-    ("quality.assessed_dimensions", _set("quality", "assessed_dimensions"), [None, {}, "x"]),
+    (
+        "quality.overall_score",
+        _set("quality", "overall_score"),
+        ["x", [1], {}, True, float("nan")],
+    ),
+    (
+        "quality.assessed_dimensions",
+        _set("quality", "assessed_dimensions"),
+        [None, {}, "x", [1], ["unknown"]],
+    ),
     ("quality.dimension_scores", _set("quality", "dimension_scores"), [[1], None, "x"]),
+    (
+        "quality.dimension_scores.completeness",
+        _set("quality", "dimension_scores", "completeness"),
+        ["x", [1], {}, True, float("nan")],
+    ),
     ("quality.score_bounds", _set("quality", "score_bounds"), ["x", [1]]),
     ("quality", _no_quality_status, ["x", [1]]),
     ("execution.ragged_row_count", _set("execution", "ragged_row_count"), [None, -1, "0", True]),
@@ -101,7 +127,9 @@ ABSENT = [
     ((), "semantic_hint_bindings", lambda r: r.semantic_hint_bindings, []),
     (("quality",), "low_sample_warning", lambda r: r.quality.low_sample_warning, False),
     (("quality",), "assessed_dimensions", lambda r: r.quality.assessed_dimensions(), []),
+    (("quality",), "overall_score", lambda r: r.quality.overall_quality_score(), None),
     (("columns", 0), "stats", lambda r: r["id"].min, None),
+    (("columns", 0), "type_homogeneity", lambda r: r["id"].type_homogeneity, None),
     (("columns", 1), "patterns", lambda r: r["city"].patterns, None),
 ]
 
@@ -121,11 +149,17 @@ def test_a_missing_key_keeps_its_compatibility_default(summary, section, key, re
 def test_null_still_means_not_analyzed_where_the_schema_allows_it(summary):
     document = copy.deepcopy(summary)
     document["columns"][0]["stats"] = None
+    document["columns"][0]["type_homogeneity"] = None
     document["columns"][1]["patterns"] = None
     document["quality"]["score_bounds"] = None
+    document["quality"]["overall_score"] = None
+    document["quality"]["dimension_scores"]["completeness"] = None
     report = dp.ProfileReport.from_dict(document)
     assert report["id"].min is None
+    assert report["id"].type_homogeneity is None
     assert report["city"].patterns is None
+    assert report.quality.overall_quality_score() is None
+    assert report.quality.dimension_scores()["completeness"] is None
 
 
 def test_a_well_formed_summary_round_trips(summary):
