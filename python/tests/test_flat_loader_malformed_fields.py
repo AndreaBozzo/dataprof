@@ -87,7 +87,7 @@ MALFORMED = [
     (
         "quality.overall_score",
         _set("quality", "overall_score"),
-        ["x", [1], {}, True, float("nan")],
+        ["x", [1], {}, True, float("nan"), 10**309],
     ),
     (
         "quality.assessed_dimensions",
@@ -98,7 +98,7 @@ MALFORMED = [
     (
         "quality.dimension_scores.completeness",
         _set("quality", "dimension_scores", "completeness"),
-        ["x", [1], {}, True, float("nan")],
+        ["x", [1], {}, True, float("nan"), 10**309],
     ),
     ("quality.score_bounds", _set("quality", "score_bounds"), ["x", [1]]),
     ("quality", _no_quality_status, ["x", [1]]),
@@ -164,3 +164,14 @@ def test_null_still_means_not_analyzed_where_the_schema_allows_it(summary):
 
 def test_a_well_formed_summary_round_trips(summary):
     assert dp.ProfileReport.from_dict(copy.deepcopy(summary)).to_dict() == summary
+
+
+def test_unknown_additive_keys_in_type_homogeneity_are_ignored(summary):
+    document = copy.deepcopy(summary)
+    document["columns"][0]["type_homogeneity"]["classifier_provenance"] = "v2"
+    report = dp.ProfileReport.from_dict(document)
+    assert report["id"].type_homogeneity is not None
+    assert (
+        report["id"].type_homogeneity["numeric"]
+        == summary["columns"][0]["type_homogeneity"]["numeric"]
+    )

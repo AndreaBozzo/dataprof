@@ -121,11 +121,12 @@ def _is_count(value: Any) -> bool:
 
 def _is_finite_number(value: Any) -> bool:
     # bool before int: bool is an int subclass, and True == 1.
-    return (
-        isinstance(value, int | float)
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
 
 
 def _is_list_of_mappings(value: Any) -> bool:
@@ -141,9 +142,7 @@ def _is_list_of_dimension_names(value: Any) -> bool:
 def _is_homogeneity_counts(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    return all(
-        name in value for name in _LEXICAL_CLASS_ORDER
-    ) and all(_is_count(v) for v in value.values())
+    return all(name in value and _is_count(value[name]) for name in _LEXICAL_CLASS_ORDER)
 
 
 def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
@@ -170,7 +169,9 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
         lambda value: value is None or _is_homogeneity_counts(value),
         None,
     )
-    values["type_homogeneity"] = _homogeneity_counts(homogeneity) if homogeneity is not None else None
+    values["type_homogeneity"] = (
+        _homogeneity_counts(homogeneity) if homogeneity is not None else None
+    )
     patterns = _read_field(
         document,
         "patterns",
@@ -244,7 +245,8 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     for dim, score in dimension_scores.items():
         if score is not None and not _is_finite_number(score):
             raise ValueError(
-                f"from_dict(): 'quality.dimension_scores.{dim}' must be a finite number or null, got {score!r}."
+                f"from_dict(): 'quality.dimension_scores.{dim}' must be a finite number or null, "
+                f"got {score!r}."
             )
         read_scores[dim] = float(score) if score is not None else None
     values["dimension_scores"] = read_scores
@@ -368,9 +370,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     )
     values["quality"] = _quality_accessor(quality) if quality is not None else None
     values["quality_score"] = (
-        values["quality"].get("overall_quality_score")
-        if values["quality"] is not None
-        else None
+        values["quality"].get("overall_quality_score") if values["quality"] is not None else None
     )
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if quality is not None else None
