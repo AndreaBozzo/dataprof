@@ -16,9 +16,8 @@ from __future__ import annotations
 import datetime
 import decimal
 
-import pytest
-
 import dataprof as dp
+import pytest
 
 pd = pytest.importorskip("pandas", reason="pandas is required for pandas DataFrame tests")
 pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
@@ -69,19 +68,23 @@ def test_pandas_mixed_object_columns_profile_cleanly():
 
 def test_frame_with_mixed_column_and_typed_columns_preserves_typed_profiles():
     """Typed columns keep their native Arrow-derived profiles alongside a mixed column."""
-    df_clean = pd.DataFrame({
-        "id": [1, 2, 3],
-        "score": [95.5, 82.0, 77.5],
-        "name": ["Alice", "Bob", "Charlie"],
-    })
+    df_clean = pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "score": [95.5, 82.0, 77.5],
+            "name": ["Alice", "Bob", "Charlie"],
+        }
+    )
     clean_report = dp.profile(df_clean)
 
-    df_mixed = pd.DataFrame({
-        "id": [1, 2, 3],
-        "score": [95.5, 82.0, 77.5],
-        "name": ["Alice", "Bob", "Charlie"],
-        "notes": pd.Series([1.5, "n/a", 2.0], dtype=object),
-    })
+    df_mixed = pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "score": [95.5, 82.0, 77.5],
+            "name": ["Alice", "Bob", "Charlie"],
+            "notes": pd.Series([1.5, "n/a", 2.0], dtype=object),
+        }
+    )
     mixed_report = dp.profile(df_mixed)
 
     for col in ("id", "score", "name"):
@@ -100,6 +103,7 @@ def test_frame_with_mixed_column_and_typed_columns_preserves_typed_profiles():
 
 def test_unconvertible_column_raises_value_error_naming_column():
     """If a column genuinely cannot be converted, raise ValueError naming the column."""
+
     class Unconvertible:
         def __str__(self):
             raise RuntimeError("cannot stringify object")
@@ -113,9 +117,11 @@ def test_interop_profile_dataframe_mixed_columns():
     """Verify that lower-level interop.profile_dataframe also handles mixed columns."""
     from dataprof.interop import profile_dataframe
 
-    df = pd.DataFrame({
-        "c": pd.Series([1.5, "unknown", 2.0], dtype=object),
-    })
+    df = pd.DataFrame(
+        {
+            "c": pd.Series([1.5, "unknown", 2.0], dtype=object),
+        }
+    )
     raw_report = profile_dataframe(df)
     report = dp.ProfileReport(raw_report)
     assert report["c"].data_type == "string"

@@ -127,7 +127,8 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
                     pyarrow.Array.from_pandas(df_fixed[name])
                 except Exception as col_exc:
                     raise ValueError(
-                        f"pandas DataFrame: column {name!r} could not be converted for profiling: {col_exc}"
+                        f"pandas DataFrame: column {name!r} could not be converted for profiling: "
+                        f"{col_exc}"
                     ) from col_exc
             raise ValueError(f"pandas DataFrame conversion failed: {exc}") from exc
 
