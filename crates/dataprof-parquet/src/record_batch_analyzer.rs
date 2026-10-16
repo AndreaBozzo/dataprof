@@ -221,6 +221,82 @@ pub(crate) fn in_column_order<'a, A>(
         .collect()
 }
 
+/// Whether a value of this type can hold a map, at any depth.
+fn holds_map(data_type: &arrow::datatypes::DataType) -> bool {
+    use arrow::datatypes::DataType as ArrowDataType;
+
+    match data_type {
+        ArrowDataType::Map(_, _) => true,
+        ArrowDataType::List(field)
+        | ArrowDataType::LargeList(field)
+        | ArrowDataType::ListView(field)
+        | ArrowDataType::LargeListView(field)
+        | ArrowDataType::FixedSizeList(field, _) => holds_map(field.data_type()),
+        ArrowDataType::Struct(fields) => fields.iter().any(|field| holds_map(field.data_type())),
+        ArrowDataType::Union(fields, _) => {
+            fields.iter().any(|(_, field)| holds_map(field.data_type()))
+        }
+        ArrowDataType::Dictionary(_, values) => holds_map(values),
+        ArrowDataType::RunEndEncoded(_, values) => holds_map(values.data_type()),
+        _ => false,
+    }
+}
+
+/// The value with every map's entries sorted by key, then by value, at any
+/// depth (#943).
+///
+/// Arrow stores a map's entries in the order they were written, and the row
+/// format encodes them in that order, but neither Arrow nor Parquet gives the
+/// order a meaning: `{a: 1, b: 2}` and `{b: 2, a: 1}` are one value. Sorting
+/// permutes entries only inside each map, so every array keeps its length and
+/// a parent's offsets into it stay valid; a container that holds a map is
+/// rebuilt around its sorted children.
+fn sort_map_entries(data: ArrayData) -> std::result::Result<ArrayData, arrow::error::ArrowError> {
+    use arrow::buffer::OffsetBuffer;
+    use arrow::datatypes::DataType as ArrowDataType;
+    use arrow::row::{RowConverter, SortField};
+
+    if !holds_map(data.data_type()) {
+        return Ok(data);
+    }
+    let children = data
+        .child_data()
+        .iter()
+        .cloned()
+        .map(sort_map_entries)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let data = data.into_builder().child_data(children).build()?;
+    let ArrowDataType::Map(field, ordered) = data.data_type().clone() else {
+        return Ok(data);
+    };
+
+    let map = MapArray::from(data);
+    let entries = map.entries();
+    let converter = RowConverter::new(vec![
+        SortField::new(entries.column(0).data_type().clone()),
+        SortField::new(entries.column(1).data_type().clone()),
+    ])?;
+    let rows = converter.convert_columns(entries.columns())?;
+    let mut indices = Vec::with_capacity(entries.len());
+    let mut offsets = Vec::with_capacity(map.len() + 1);
+    offsets.push(0i32);
+    for window in map.value_offsets().windows(2) {
+        let mut slot: Vec<u32> = (window[0] as u32..window[1] as u32).collect();
+        slot.sort_by(|a, b| rows.row(*a as usize).cmp(&rows.row(*b as usize)));
+        indices.extend(slot);
+        offsets.push(indices.len() as i32);
+    }
+    let sorted = arrow::compute::take(entries, &UInt32Array::from(indices), None)?;
+    let sorted = MapArray::try_new(
+        field,
+        OffsetBuffer::new(offsets.into()),
+        sorted.as_struct().clone(),
+        map.nulls().cloned(),
+        ordered,
+    )?;
+    Ok(sorted.into_data())
+}
+
 /// Fold every row of a batch into the tracker as a canonical signature.
 /// See [`BatchRowTracker`] for the encoding and failure contract.
 fn observe_batch_rows(
@@ -242,8 +318,9 @@ fn observe_batch_rows(
         /// display string cannot stand in for it: `["p, q"]` and `["p", "q"]`
         /// both display as `[p, q]`, and a list holding one null displays as
         /// an empty list (#767). The row format encodes the value itself, so
-        /// equal rows are equal values. It holds no per-converter state, so
-        /// the same value encodes the same in every batch.
+        /// equal rows are equal values, once every map has its entries sorted
+        /// (#943). It holds no per-converter state, so the same value encodes
+        /// the same in every batch.
         Rows(Rows),
     }
 
@@ -263,6 +340,7 @@ fn observe_batch_rows(
                     _ => Ok(column.clone()),
                 };
                 values
+                    .and_then(|values| sort_map_entries(values.to_data()).map(make_array))
                     .and_then(|values| {
                         RowConverter::new(vec![SortField::new(values.data_type().clone())])?
                             .convert_columns(&[values])
@@ -1957,5 +2035,57 @@ mod tests {
         analyzer.process_batch(&batch).unwrap();
         let rows = analyzer.row_duplicate_summary().expect("rows assessed");
         assert_eq!(rows.duplicate_rows, 1);
+    }
+
+    /// `{a: 1, b: 2}` then `{b: 2, a: 1}` after a leading `{z: 0}`, the same
+    /// entries in two orders (#943).
+    fn reordered_maps() -> MapArray {
+        use arrow::array::{Int64Builder, MapBuilder, StringBuilder};
+
+        let mut maps = MapBuilder::new(None, StringBuilder::new(), Int64Builder::new());
+        for entries in [
+            &[("z", 0)][..],
+            &[("a", 1), ("b", 2)],
+            &[("b", 2), ("a", 1)],
+        ] {
+            for (key, value) in entries {
+                maps.keys().append_value(key);
+                maps.values().append_value(*value);
+            }
+            maps.append(true).unwrap();
+        }
+        maps.finish()
+    }
+
+    fn duplicate_rows_of(value: ArrayRef) -> usize {
+        let ids = Int64Array::from(vec![1; value.len()]);
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, false),
+            Field::new("m", value.data_type().clone(), true),
+        ]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(ids), value]).unwrap();
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        analyzer
+            .row_duplicate_summary()
+            .expect("rows assessed")
+            .duplicate_rows
+    }
+
+    #[test]
+    fn a_sliced_map_column_sorts_the_entries_of_the_rows_it_holds() {
+        // A slice starts its map offsets past zero, so the entries of the
+        // rows left out stay in the entries array the sort reads.
+        let maps = reordered_maps().slice(1, 2);
+        assert_eq!(duplicate_rows_of(Arc::new(maps)), 1);
+    }
+
+    #[test]
+    fn a_dictionary_of_maps_sorts_the_entries_of_its_values() {
+        use arrow::array::{DictionaryArray, Int32Array};
+
+        let keys = Int32Array::from(vec![1, 2]);
+        let maps = DictionaryArray::try_new(keys, Arc::new(reordered_maps())).unwrap();
+        assert_eq!(duplicate_rows_of(Arc::new(maps)), 1);
     }
 }
