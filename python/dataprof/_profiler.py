@@ -161,6 +161,11 @@ class Profiler:
         self._kwargs["temporal_columns"] = columns
         return self
 
+    def temporal_pairs(self, pairs: list[tuple[str, str]]) -> Profiler:
+        """Declare start/end column pairs for timeliness to compare as given."""
+        self._kwargs["temporal_pairs"] = pairs
+        return self
+
     def metrics(self, packs: list[str]) -> Profiler:
         """Select metric packs to compute.
 

@@ -211,7 +211,10 @@ Measures whether confidently inferred date/time values are current and
 consistent. Inferred date columns participate automatically. Pass
 `temporal_columns=["created_at", "updated_at"]` in Python or call
 `.temporal_columns(...)` on the Rust profiler to add columns whose dates cannot
-be inferred confidently, such as mixed-format strings.
+be inferred confidently, such as mixed-format strings. Pass
+`temporal_pairs=[("valid_from", "valid_until")]` in Python or call
+`.temporal_pairs(...)` on the Rust profiler to compare start/end pairs that no
+role word below pairs by name.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated
@@ -222,7 +225,8 @@ be inferred confidently, such as mixed-format strings.
   With several start or end columns, a start pairs with the end whose other
   words match (`trip_start` with `trip_end`), or failing that, whose other
   words match apart from a trailing date word (`trip_start_date` with
-  `trip_end`); when that is ambiguous, no pair is formed
+  `trip_end`); when that is ambiguous, no pair is formed unless it is declared
+  in `temporal_pairs`
 
 ### Validity
 

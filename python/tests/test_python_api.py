@@ -702,6 +702,7 @@ class TestNamespace:
             "positive_columns",
             "identifier_columns",
             "temporal_columns",
+            "temporal_pairs",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (

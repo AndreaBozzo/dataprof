@@ -104,6 +104,7 @@ def profile_file(
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
 
@@ -181,6 +182,10 @@ def profile_file(
             identifiers instead of measures.
         temporal_columns: Columns whose values should contribute to timeliness
             quality metrics.
+        temporal_pairs: ``(start, end)`` column pairs whose dates timeliness
+            compares row by row, such as ``("valid_from", "valid_until")``.
+            Declared pairs are compared as given; the remaining temporal
+            columns are still paired by name.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -208,6 +213,7 @@ def profile_file(
         positive_columns=positive_columns,
         identifier_columns=identifier_columns,
         temporal_columns=temporal_columns,
+        temporal_pairs=temporal_pairs,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)
@@ -236,6 +242,7 @@ def profile(
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -323,6 +330,10 @@ def profile(
             identifiers instead of measures.
         temporal_columns: Columns whose values should contribute to timeliness
             quality metrics.
+        temporal_pairs: ``(start, end)`` column pairs whose dates timeliness
+            compares row by row, such as ``("valid_from", "valid_until")``.
+            Declared pairs are compared as given; the remaining temporal
+            columns are still paired by name.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -353,6 +364,7 @@ def profile(
             positive_columns=positive_columns,
             identifier_columns=identifier_columns,
             temporal_columns=temporal_columns,
+            temporal_pairs=temporal_pairs,
         )
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
@@ -369,6 +381,7 @@ def profile(
                 positive_columns,
                 identifier_columns,
                 temporal_columns,
+                temporal_pairs,
             )
         ):
             return ProfilerConfig(
@@ -380,6 +393,7 @@ def profile(
                 positive_columns=positive_columns,
                 identifier_columns=identifier_columns,
                 temporal_columns=temporal_columns,
+                temporal_pairs=temporal_pairs,
             )
         return None
 

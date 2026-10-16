@@ -66,6 +66,8 @@ pub struct SemanticHints {
     pub positive_columns: Vec<String>,
     pub identifier_columns: Vec<String>,
     pub temporal_columns: Vec<String>,
+    /// Start/end column pairs declared by the caller, compared as given.
+    pub temporal_pairs: Vec<(String, String)>,
 }
 
 impl SemanticHints {
@@ -74,6 +76,7 @@ impl SemanticHints {
             positive_columns,
             identifier_columns,
             temporal_columns: Vec::new(),
+            temporal_pairs: Vec::new(),
         }
     }
 
@@ -82,10 +85,18 @@ impl SemanticHints {
         self
     }
 
+    /// Declare start/end column pairs for timeliness to compare as given,
+    /// such as `valid_from`/`valid_until`, which no role word pairs by name.
+    pub fn with_temporal_pairs(mut self, temporal_pairs: Vec<(String, String)>) -> Self {
+        self.temporal_pairs = temporal_pairs;
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
         self.positive_columns.is_empty()
             && self.identifier_columns.is_empty()
             && self.temporal_columns.is_empty()
+            && self.temporal_pairs.is_empty()
     }
 
     pub fn is_identifier_column(&self, column_name: &str) -> bool {
@@ -129,19 +140,35 @@ impl SemanticHints {
     /// hint that cannot bind must not vanish: a typo'd or stale column name is a
     /// mistake the profiler should surface, not silently discard.
     pub fn validate_names(&self, column_names: &[&str]) -> Result<(), DataProfilerError> {
-        let mut unknown: Vec<(SemanticHintKind, &str)> = self
+        // A column compared with itself can never be out of order, so such a
+        // pair would report a clean check that never happened.
+        if let Some((name, _)) = self.temporal_pairs.iter().find(|(start, end)| start == end) {
+            return Err(DataProfilerError::InvalidSemanticHint {
+                message: format!("temporal_pairs names '{name}' as both start and end"),
+                suggestion: "Pair a start column with a different end column.".to_string(),
+            });
+        }
+        let pair_columns = self
+            .temporal_pairs
             .iter()
+            .flat_map(|(start, end)| [start.as_str(), end.as_str()])
+            .map(|name| ("temporal_pairs", name));
+        let mut unknown: Vec<(&str, &str)> = self
+            .iter()
+            .map(|(kind, name)| (kind.field_name(), name))
+            .chain(pair_columns)
             .filter(|(_, name)| !column_names.contains(name))
             .collect();
         if unknown.is_empty() {
             return Ok(());
         }
         // Stable, readable ordering regardless of hint-list order.
-        unknown.sort_unstable_by(|a, b| a.1.cmp(b.1).then(a.0.field_name().cmp(b.0.field_name())));
+        unknown.sort_unstable_by(|a, b| a.1.cmp(b.1).then(a.0.cmp(b.0)));
+        unknown.dedup();
 
         let details = unknown
             .iter()
-            .map(|(kind, name)| format!("'{}' ({})", name, kind.field_name()))
+            .map(|(field, name)| format!("'{name}' ({field})"))
             .collect::<Vec<_>>()
             .join(", ");
         let mut available: Vec<&str> = column_names.to_vec();
@@ -167,14 +194,17 @@ impl SemanticHints {
     /// effective while producing neither metrics nor binding evidence.
     pub fn validate_quality_usage(&self, quality_computed: bool) -> Result<(), DataProfilerError> {
         if quality_computed
-            || (self.positive_columns.is_empty() && self.temporal_columns.is_empty())
+            || (self.positive_columns.is_empty()
+                && self.temporal_columns.is_empty()
+                && self.temporal_pairs.is_empty())
         {
             return Ok(());
         }
 
         Err(DataProfilerError::InvalidSemanticHint {
-            message: "positive_columns and temporal_columns require the Quality metric pack"
-                .to_string(),
+            message:
+                "positive_columns, temporal_columns and temporal_pairs require the Quality metric pack"
+                    .to_string(),
             suggestion: "Include MetricPack::Quality (\"quality\" in Python), or remove the value-driven hint. Identifier hints remain usable without quality because they affect column typing."
                 .to_string(),
         })

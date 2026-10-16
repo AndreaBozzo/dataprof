@@ -121,7 +121,7 @@ pub(crate) fn score_bounds(
         timeliness,
         data,
         column_profiles,
-        &semantic_hints.positive_columns,
+        semantic_hints,
         temporal_columns,
     )?;
 
@@ -420,10 +420,11 @@ fn collect_shares(
     timeliness: &TimelinessCalculator<'_>,
     data: &HashMap<String, Vec<String>>,
     column_profiles: &[ColumnProfile],
-    positive_columns: &[String],
+    semantic_hints: &SemanticHints,
     temporal_columns: &[String],
 ) -> Result<HashMap<QualityDimension, Option<Vec<Share>>>, DataProfilerError> {
     let wants = |dimension: QualityDimension| wanted.contains(&dimension);
+    let positive_columns = &semantic_hints.positive_columns;
     let accuracy = AccuracyCalculator::new(thresholds);
     let (mut types, mut formats, mut encodings) = (Vec::new(), Vec::new(), Vec::new());
     let (mut outliers, mut violations) = (Vec::new(), Vec::new());
@@ -485,7 +486,7 @@ fn collect_shares(
             ));
         }
         if wants(QualityDimension::Timeliness) && temporal_columns.contains(&profile.name) {
-            let metrics = timeliness.calculate(&single, temporal_columns, column_profiles)?;
+            let metrics = timeliness.calculate(&single, temporal_columns, &[], column_profiles)?;
             stale.push(counts(metrics.stale_dates, metrics.valid_dates, 1));
             // A value is either a date, which may be in the future, or invalid.
             date_failures.push(counts(
@@ -510,7 +511,13 @@ fn collect_shares(
 
     let mut timeliness_shares = Some(vec![stale, date_failures]);
     if wants(QualityDimension::Timeliness) {
-        match temporal_pairs(timeliness, data, column_profiles, temporal_columns)? {
+        match temporal_pairs(
+            timeliness,
+            data,
+            column_profiles,
+            temporal_columns,
+            &semantic_hints.temporal_pairs,
+        )? {
             Pairs::None => {}
             Pairs::Aligned(pairs) => {
                 if let Some(shares) = timeliness_shares.as_mut() {
@@ -568,8 +575,9 @@ fn temporal_pairs(
     data: &HashMap<String, Vec<String>>,
     column_profiles: &[ColumnProfile],
     temporal_columns: &[String],
+    declared_pairs: &[(String, String)],
 ) -> Result<Pairs, DataProfilerError> {
-    let metrics = calculator.calculate(data, temporal_columns, column_profiles)?;
+    let metrics = calculator.calculate(data, temporal_columns, declared_pairs, column_profiles)?;
     if metrics.temporal_pairs_checked == 0 {
         return Ok(Pairs::None);
     }

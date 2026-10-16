@@ -298,6 +298,7 @@ class TestProfilerBuilder:
         assert p.positive_columns(["pressure"]) is p
         assert p.identifier_columns(["order_id"]) is p
         assert p.temporal_columns(["observed_on"]) is p
+        assert p.temporal_pairs([("valid_from", "valid_until")]) is p
 
     def test_csv_delimiter(self):
         if not os.path.exists(SEMICOLON_FILE):

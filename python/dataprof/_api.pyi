@@ -39,6 +39,7 @@ def profile(
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
@@ -65,6 +66,7 @@ def profile_file(
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
 ) -> ProfileReport:
     """Profile a file path with file-oriented options."""
     ...
