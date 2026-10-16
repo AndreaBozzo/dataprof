@@ -545,3 +545,57 @@ async fn test_profiler_profile_stream_finished_event_counts_bytes_stop_condition
         "finished event total_rows must match execution.rows_processed"
     );
 }
+
+/// A progress channel that is full when profiling ends must still deliver the
+/// `Finished` event to a consumer draining the channel (gh #974).
+#[tokio::test(flavor = "current_thread")]
+async fn test_progress_channel_capacity_one_receives_finished_event() {
+    for stop_cond in [
+        None,
+        Some(StopCondition::MaxRows(150)),
+        Some(StopCondition::MaxBytes(50_000)),
+    ] {
+        let mut csv_data = String::from("id,value\n");
+        for i in 0..10_000 {
+            csv_data.push_str(&format!("{},val_{}\n", i, i));
+        }
+
+        let source = BytesSource::new(
+            bytes::Bytes::from(csv_data.clone()),
+            AsyncSourceInfo::new("bytes-csv", FileFormat::Csv)
+                .size_hint(Some(csv_data.len() as u64)),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let consumer_task = tokio::spawn(async move {
+            let mut finished_received = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    finished_received = true;
+                    break;
+                }
+            }
+            finished_received
+        });
+
+        let mut profiler = Profiler::new()
+            .progress_interval(Duration::ZERO)
+            .progress_channel(tx);
+
+        if let Some(ref cond) = stop_cond {
+            profiler = profiler.stop_when(cond.clone());
+        }
+
+        let report = profiler.profile_stream(source).await.unwrap();
+        assert!(report.execution.rows_processed > 0);
+
+        drop(profiler);
+
+        let finished_received = consumer_task.await.unwrap();
+        assert!(
+            finished_received,
+            "Finished event must be received by channel consumer for stop_condition {:?}",
+            stop_cond
+        );
+    }
+}

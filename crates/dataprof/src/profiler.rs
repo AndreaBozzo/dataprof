@@ -342,6 +342,11 @@ impl Profiler {
     }
 
     /// Set an async channel for progress events (requires `async-streaming` feature).
+    ///
+    /// Intermediate events (such as [`ProgressEvent::ChunkProcessed`]) are best-effort
+    /// and dropped if the channel is full rather than blocking profiling.
+    /// The terminal [`ProgressEvent::Finished`] event awaits capacity on the channel
+    /// so a consumer draining the channel always learns that profiling completed.
     #[cfg(feature = "async-streaming")]
     pub fn progress_channel(mut self, tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
         self.progress_sink = ProgressSink::Channel(tx);

@@ -63,6 +63,21 @@ impl ProgressSink {
             }
         }
     }
+
+    /// Deliver an event asynchronously, awaiting space if the channel is full.
+    ///
+    /// For a channel, this ensures terminal events (like [`ProgressEvent::Finished`])
+    /// are not dropped when a consumer is actively draining the channel.
+    #[cfg(feature = "async-streaming")]
+    pub async fn emit_async(&self, event: ProgressEvent) {
+        match self {
+            Self::None => {}
+            Self::Callback(callback) => callback(event),
+            Self::Channel(tx) => {
+                let _ = tx.send(event).await;
+            }
+        }
+    }
 }
 
 impl fmt::Debug for ProgressSink {

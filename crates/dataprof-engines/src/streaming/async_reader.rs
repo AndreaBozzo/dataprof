@@ -1277,7 +1277,7 @@ impl AsyncStreamingProfiler {
             sampled_rows += 1;
         }
 
-        progress_tracker.emit_finished(truncation_reason.is_some());
+        progress_tracker.emit_finished_async(truncation_reason.is_some()).await;
 
         Ok((
             headers,
