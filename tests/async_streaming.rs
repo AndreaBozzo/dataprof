@@ -627,7 +627,10 @@ async fn test_progress_channel_does_not_emit_finished_on_error() {
             .profile_stream(source)
             .await;
 
-        assert!(res.is_err(), "profiling should fail due to duplicate headers");
+        assert!(
+            res.is_err(),
+            "profiling should fail due to duplicate headers"
+        );
         let got_finished = consumer.await.unwrap();
         assert!(
             !got_finished,
@@ -660,7 +663,10 @@ async fn test_progress_channel_does_not_emit_finished_on_error() {
             .profile_stream(source)
             .await;
 
-        assert!(res.is_err(), "profiling should fail due to unterminated quote in strict mode");
+        assert!(
+            res.is_err(),
+            "profiling should fail due to unterminated quote in strict mode"
+        );
         let got_finished = consumer.await.unwrap();
         assert!(
             !got_finished,
@@ -668,4 +674,3 @@ async fn test_progress_channel_does_not_emit_finished_on_error() {
         );
     }
 }
-

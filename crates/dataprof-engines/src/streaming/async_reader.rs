@@ -446,9 +446,7 @@ impl AsyncStreamingProfiler {
             execution = execution.with_sampling(sampled_rows as f64 / total_rows as f64);
         }
 
-        progress_tracker
-            .emit_finished_async(is_truncated)
-            .await;
+        progress_tracker.emit_finished_async(is_truncated).await;
 
         Ok(ReportAssembler::new(data_source, execution)
             .columns(column_profiles)
