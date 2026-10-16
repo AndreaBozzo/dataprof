@@ -1206,6 +1206,15 @@ impl AsyncStreamingProfiler {
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
                     truncation_reason = stop_eval.truncation_reason();
                 }
+                // The rows read from the chunk the cap stopped in still count,
+                // so the `Finished` total matches `rows_processed`.
+                if rows_consumed > 0 {
+                    progress_tracker.emit_chunk(
+                        rows_consumed,
+                        chunk_bytes,
+                        estimated_total.map(|rows| rows as usize),
+                    );
+                }
                 drop(rx);
                 break;
             }

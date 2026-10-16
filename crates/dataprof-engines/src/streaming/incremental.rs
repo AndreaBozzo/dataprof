@@ -226,6 +226,8 @@ impl IncrementalProfiler {
 
             // Process this chunk incrementally
             let mut hit_row_limit = false;
+            // Rows of this chunk read before the row cap stopped the scan.
+            let mut rows_read_before_cap = 0;
             if let Some(ref header_record) = headers {
                 let header_names: Vec<String> =
                     header_record.iter().map(|s| s.to_string()).collect();
@@ -291,6 +293,7 @@ impl IncrementalProfiler {
                         && rows_against_cap as u64 >= limit
                     {
                         hit_row_limit = true;
+                        rows_read_before_cap = row_idx + 1;
 
                         // Reaching the cap is only truncation if a row actually
                         // remains. A file holding exactly `limit` rows was read in
@@ -320,6 +323,15 @@ impl IncrementalProfiler {
             memory_sampler.sample();
 
             if hit_row_limit {
+                // The rows read from the chunk the cap stopped in still count,
+                // so the `Finished` total matches `rows_processed`.
+                if rows_read_before_cap > 0 {
+                    progress_tracker.emit_chunk(
+                        rows_read_before_cap,
+                        actual_bytes as u64,
+                        estimated_data_rows,
+                    );
+                }
                 break;
             }
 
@@ -675,6 +687,62 @@ mod tests {
             *estimated_rows.lock().expect("progress estimate lock"),
             Some(2)
         );
+        Ok(())
+    }
+
+    fn finished_total_rows(
+        profiler: IncrementalProfiler,
+        path: &std::path::Path,
+    ) -> Result<(usize, Option<usize>)> {
+        let finished = Arc::new(Mutex::new(None));
+        let captured = Arc::clone(&finished);
+        let progress = ProgressSink::Callback(Arc::new(move |event| {
+            if let ProgressEvent::Finished { total_rows, .. } = event {
+                *captured.lock().expect("finished lock") = Some(total_rows);
+            }
+        }));
+        let report = profiler
+            .progress(progress, Duration::ZERO)
+            .analyze_file(path)?;
+        let total = *finished.lock().expect("finished lock");
+        Ok((report.execution.rows_processed, total))
+    }
+
+    #[test]
+    fn finished_event_counts_the_rows_of_the_chunk_the_row_cap_stops_in() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 0..1000 {
+            writeln!(temp_file, "{i},value_{i}")?;
+        }
+        temp_file.flush()?;
+
+        // 1 KiB chunks hold about 70 rows, so a cap of 150 lands inside the
+        // third chunk rather than on a chunk boundary.
+        let profiler = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1024))
+            .stop_condition(StopCondition::MaxRows(150));
+        let (rows_processed, finished) = finished_total_rows(profiler, temp_file.path())?;
+
+        assert_eq!(rows_processed, 150);
+        assert_eq!(finished, Some(150));
+        Ok(())
+    }
+
+    #[test]
+    fn finished_event_matches_rows_processed_without_a_cap() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 0..1000 {
+            writeln!(temp_file, "{i},value_{i}")?;
+        }
+        temp_file.flush()?;
+
+        let profiler = IncrementalProfiler::new().chunk_size(ChunkSize::Fixed(1024));
+        let (rows_processed, finished) = finished_total_rows(profiler, temp_file.path())?;
+
+        assert_eq!(rows_processed, 1000);
+        assert_eq!(finished, Some(1000));
         Ok(())
     }
 
