@@ -54,6 +54,7 @@ def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
 
 
 def _atomic_write(path: str, writer: _Callable[[str], None]) -> None:
+    path = _os.path.realpath(path)
     directory = _os.path.dirname(_os.path.abspath(path))
     basename = _os.path.basename(path)
 
@@ -66,12 +67,33 @@ def _atomic_write(path: str, writer: _Callable[[str], None]) -> None:
 
     try:
         writer(temp_path)
+
+        try:
+            mode = _os.stat(path).st_mode & 0o777
+        except FileNotFoundError:
+            umask = _os.umask(0)
+            _os.umask(umask)
+            mode = 0o666 & ~umask
+
+        _os.chmod(temp_path, mode)
         _os.replace(temp_path, path)
     finally:
         try:
             _os.unlink(temp_path)
         except FileNotFoundError:
             pass
+
+
+def _atomic_write_text(
+    path: str,
+    content: str,
+    newline: str | None = None,
+) -> None:
+    def write(temp_path: str) -> None:
+        with open(temp_path, "w", encoding="utf-8", newline=newline) as f:
+            f.write(content)
+
+    _atomic_write(path, write)
 
 
 class ProfileReport:
@@ -750,14 +772,10 @@ class ProfileReport:
         """
         path = _normalize_pathlike(path)
         lower_path = path.lower()
+
         if lower_path.endswith(".json"):
-            content = self.to_json()
+            _atomic_write_text(path, self.to_json(), newline="\n")
 
-            def write_json(temp_path: str) -> None:
-                with open(temp_path, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(content)
-
-            _atomic_write(path, write_json)
         elif lower_path.endswith(".csv"):
             records = self._records()
 
@@ -782,21 +800,10 @@ class ProfileReport:
             _atomic_write(path, write_parquet)
 
         elif lower_path.endswith(".html"):
-            content = self.to_html()
+            _atomic_write_text(path, self.to_html())
 
-            def write_html(temp_path: str) -> None:
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-
-            _atomic_write(path, write_html)
         elif lower_path.endswith((".md", ".markdown")):
-            content = self.to_markdown()
-
-            def write_markdown(temp_path: str) -> None:
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-
-            _atomic_write(path, write_markdown)
+            _atomic_write_text(path, self.to_markdown())
         else:
             raise ValueError(
                 f"Unsupported format for '{path}'. "

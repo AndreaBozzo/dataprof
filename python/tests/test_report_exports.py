@@ -543,6 +543,36 @@ class TestSaveFormats:
         assert path.read_bytes() == original
         assert list(tmp_path.glob(f".report{suffix}.*.tmp")) == []
 
+    def test_save_preserves_existing_file_permissions(self, report, tmp_path):
+        path = tmp_path / "report.json"
+        path.write_text("old report", encoding="utf-8")
+        path.chmod(0o640)
+
+        report.save(path)
+
+        assert path.stat().st_mode & 0o777 == 0o640
+
+    def test_new_save_uses_default_file_permissions(self, report, tmp_path):
+        reference = tmp_path / "reference.txt"
+        reference.write_text("reference", encoding="utf-8")
+
+        path = tmp_path / "report.json"
+        report.save(path)
+
+        assert path.stat().st_mode & 0o777 == reference.stat().st_mode & 0o777
+
+    def test_save_through_symlink_preserves_symlink(self, report, tmp_path):
+        target = tmp_path / "target.json"
+        target.write_text("old report", encoding="utf-8")
+
+        path = tmp_path / "report.json"
+        path.symlink_to(target)
+
+        report.save(path)
+
+        assert path.is_symlink()
+        assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
+
     def test_failed_parquet_write_preserves_existing_file_and_cleans_temp(
         self, report, tmp_path, monkeypatch
     ):
