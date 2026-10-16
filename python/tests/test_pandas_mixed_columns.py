@@ -159,3 +159,58 @@ def test_pandas_duplicate_columns_raises_clear_error():
         dp.profile(df)
     assert "Duplicate column names found" in str(exc_info.value)
 
+
+def test_pandas_mixed_columns_preserve_missing_values_as_null():
+    """Verify that pd.NA and pd.NaT in mixed object columns become Arrow nulls,
+    not string literals.
+    """
+    from dataprof._inputs import _pandas_to_pyarrow_table
+
+    df = pd.DataFrame(
+        {
+            "id": [10, 20, 30],
+            "mixed_na": pd.Series([1, "two", pd.NA], dtype=object),
+            "mixed_nat": pd.Series([1, "two", pd.NaT], dtype=object),
+        }
+    )
+
+    tbl = _pandas_to_pyarrow_table(df, pa)
+    assert tbl["mixed_na"].to_pylist() == ["1", "two", None]
+    assert tbl["mixed_na"].null_count == 1
+    assert tbl["mixed_nat"].to_pylist() == ["1", "two", None]
+    assert tbl["mixed_nat"].null_count == 1
+
+    # Neighboring typed column retains native Arrow integer type and values
+    assert pa.types.is_integer(tbl["id"].type)
+    assert tbl["id"].to_pylist() == [10, 20, 30]
+
+    report = dp.profile(df)
+    assert report["mixed_na"].null_count == 1
+    assert report["mixed_na"].total_count == 3
+    assert report["mixed_na"].type_homogeneity == {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 1,
+        "text": 1,
+    }
+    assert report["mixed_nat"].null_count == 1
+    assert report["mixed_nat"].total_count == 3
+    assert report["id"].data_type == "integer"
+    assert report["id"].null_count == 0
+
+
+def test_pandas_mixed_columns_do_not_misclassify_containers_as_null():
+    """Verify container objects like dict and list in mixed columns are not
+    misclassified as null.
+    """
+    from dataprof._inputs import _pandas_to_pyarrow_table
+
+    df = pd.DataFrame(
+        {
+            "mixed_containers": pd.Series([1, "two", {"key": "val"}, [1, 2]], dtype=object),
+        }
+    )
+
+    tbl = _pandas_to_pyarrow_table(df, pa)
+    assert tbl["mixed_containers"].to_pylist() == ["1", "two", '{"key":"val"}', "[1,2]"]
+    assert tbl["mixed_containers"].null_count == 0

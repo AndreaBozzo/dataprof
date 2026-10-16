@@ -120,7 +120,13 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
         for name in failing_cols:
             col = df[name]
             try:
-                df_fixed[name] = [_cell_to_str(v) for v in col]
+                if hasattr(col, "isna"):
+                    missing = col.isna()
+                    df_fixed[name] = [
+                        None if is_m else _cell_to_str(v) for is_m, v in zip(missing, col)
+                    ]
+                else:
+                    df_fixed[name] = [_cell_to_str(v) for v in col]
             except Exception as exc:
                 raise ValueError(
                     f"pandas DataFrame: column {name!r} could not be converted for profiling: {exc}"
