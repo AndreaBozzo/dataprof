@@ -31,6 +31,31 @@ pub enum ProgressEvent {
     Warning { message: String },
 }
 
+/// Channel sink holding a sender and an up-front reserved permit for Finished event delivery.
+#[cfg(feature = "async-streaming")]
+#[derive(Clone)]
+pub struct ChannelSink {
+    tx: tokio::sync::mpsc::Sender<ProgressEvent>,
+    finished_permit: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::OwnedPermit<ProgressEvent>>>>,
+}
+
+#[cfg(feature = "async-streaming")]
+impl ChannelSink {
+    /// Create a new channel sink and attempt to reserve one slot up front for the Finished event.
+    pub fn new(tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
+        let permit = tx.clone().try_reserve_owned().ok();
+        Self {
+            tx,
+            finished_permit: Arc::new(std::sync::Mutex::new(permit)),
+        }
+    }
+
+    /// Access the underlying mpsc Sender.
+    pub fn sender(&self) -> &tokio::sync::mpsc::Sender<ProgressEvent> {
+        &self.tx
+    }
+}
+
 /// How progress events are delivered to the consumer.
 ///
 /// All variants are cheaply cloneable (`Arc` / channel `Sender`).
@@ -43,7 +68,7 @@ pub enum ProgressSink {
     Callback(Arc<dyn Fn(ProgressEvent) + Send + Sync>),
     /// Async channel sender (requires `async-streaming` feature).
     #[cfg(feature = "async-streaming")]
-    Channel(tokio::sync::mpsc::Sender<ProgressEvent>),
+    Channel(ChannelSink),
 }
 
 impl ProgressSink {
@@ -52,31 +77,46 @@ impl ProgressSink {
         !matches!(self, Self::None)
     }
 
-    /// Deliver one event. A full channel drops it rather than block profiling.
+    /// Construct a channel sink, reserving a slot up front for the terminal Finished event.
+    #[cfg(feature = "async-streaming")]
+    pub fn channel(tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
+        Self::Channel(ChannelSink::new(tx))
+    }
+
+    /// Deliver one event. A full channel drops intermediate events rather than
+    /// block profiling, while terminal Finished events use the up-front reserved
+    /// permit so they are guaranteed delivery without blocking.
     pub fn emit(&self, event: ProgressEvent) {
         match self {
             Self::None => {}
             Self::Callback(callback) => callback(event),
             #[cfg(feature = "async-streaming")]
-            Self::Channel(tx) => {
-                let _ = tx.try_send(event);
+            Self::Channel(channel) => {
+                if matches!(event, ProgressEvent::Finished { .. }) {
+                    if let Ok(mut guard) = channel.finished_permit.lock() {
+                        if let Some(permit) = guard.take() {
+                            permit.send(event);
+                            return;
+                        }
+                    }
+                }
+                let _ = channel.tx.try_send(event);
             }
         }
     }
+}
 
-    /// Deliver an event asynchronously, awaiting space if the channel is full.
-    ///
-    /// For a channel, this ensures terminal events (like [`ProgressEvent::Finished`])
-    /// are not dropped when a consumer is actively draining the channel.
-    #[cfg(feature = "async-streaming")]
-    pub async fn emit_async(&self, event: ProgressEvent) {
-        match self {
-            Self::None => {}
-            Self::Callback(callback) => callback(event),
-            Self::Channel(tx) => {
-                let _ = tx.send(event).await;
-            }
-        }
+#[cfg(feature = "async-streaming")]
+impl From<tokio::sync::mpsc::Sender<ProgressEvent>> for ProgressSink {
+    fn from(tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
+        Self::channel(tx)
+    }
+}
+
+#[cfg(feature = "async-streaming")]
+impl From<ChannelSink> for ProgressSink {
+    fn from(sink: ChannelSink) -> Self {
+        Self::Channel(sink)
     }
 }
 

@@ -345,14 +345,12 @@ impl Profiler {
     ///
     /// Intermediate events (such as [`ProgressEvent::ChunkProcessed`]) are best-effort
     /// and dropped if the channel is full rather than blocking profiling.
-    /// On async streaming routes ([`Profiler::profile_stream`] over CSV, JSON, or JSONL),
-    /// the terminal [`ProgressEvent::Finished`] event awaits capacity on the channel so
-    /// a consumer draining the channel always learns that profiling completed.
-    /// Synchronous profiling ([`Profiler::analyze_file`]) and the materialized-Parquet
-    /// buffer path in `profile_stream` do not await channel capacity.
+    /// The terminal [`ProgressEvent::Finished`] event uses a slot reserved up front via
+    /// `try_reserve_owned()`, guaranteeing delivery without blocking even when the consumer
+    /// drains the channel only after profiling completes.
     #[cfg(feature = "async-streaming")]
     pub fn progress_channel(mut self, tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
-        self.progress_sink = ProgressSink::Channel(tx);
+        self.progress_sink = ProgressSink::channel(tx);
         self
     }
 

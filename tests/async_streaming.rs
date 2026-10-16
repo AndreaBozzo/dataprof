@@ -674,3 +674,77 @@ async fn test_progress_channel_does_not_emit_finished_on_error() {
         );
     }
 }
+
+/// A progress channel whose capacity is 1 must deliver `Finished` without blocking
+/// or timing out even when the caller drains the channel only after profiling completes (gh #974).
+#[tokio::test]
+async fn test_progress_channel_drained_after_profile_under_timeout() {
+    let mut csv_data = String::from("id,value\n");
+    for i in 0..10_000 {
+        csv_data.push_str(&format!("{},val_{}\n", i, i));
+    }
+
+    let source = BytesSource::new(
+        bytes::Bytes::from(csv_data.clone()),
+        AsyncSourceInfo::new("drained-after-csv", FileFormat::Csv)
+            .size_hint(Some(csv_data.len() as u64)),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    let report = tokio::time::timeout(Duration::from_secs(2), profiler.profile_stream(source))
+        .await
+        .expect("profiling must not deadlock or time out while channel is not yet drained")
+        .unwrap();
+
+    assert!(report.execution.rows_processed > 0);
+
+    let mut finished_received = false;
+    while let Ok(event) = rx.try_recv() {
+        if let dataprof::ProgressEvent::Finished { .. } = event {
+            finished_received = true;
+            break;
+        }
+    }
+    assert!(
+        finished_received,
+        "Finished event must be received by consumer draining after profiling completes"
+    );
+}
+
+/// A file route with progress channel must also deliver `Finished` event using the reserved permit.
+#[test]
+fn test_progress_channel_file_route_receives_finished_event() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let report = Profiler::new()
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx)
+        .analyze_file(tmp.path())
+        .unwrap();
+
+    assert_eq!(report.execution.rows_processed, 100);
+
+    let mut finished_received = false;
+    while let Ok(event) = rx.try_recv() {
+        if let dataprof::ProgressEvent::Finished { .. } = event {
+            finished_received = true;
+            break;
+        }
+    }
+    assert!(
+        finished_received,
+        "Finished event must be delivered on file routes via reserved permit"
+    );
+}

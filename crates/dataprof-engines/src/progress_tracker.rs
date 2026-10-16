@@ -90,18 +90,6 @@ impl ProgressTracker {
         });
     }
 
-    #[cfg(feature = "async-streaming")]
-    pub(crate) async fn emit_finished_async(&mut self, truncated: bool) {
-        let elapsed = Instant::now().duration_since(self.start_time);
-        let event = ProgressEvent::Finished {
-            total_rows: self.total_rows,
-            total_bytes: self.total_bytes,
-            elapsed,
-            truncated,
-        };
-        self.sink.emit_async(event).await;
-    }
-
     fn emit(&self, event: ProgressEvent) {
         self.sink.emit(event);
     }
