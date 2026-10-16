@@ -343,6 +343,30 @@ impl ArrowProfiler {
         let schema = Arc::new(Schema::new(fields));
 
         let file = File::open(file_path).map_err(|error| CsvDecodeFailure::Other(error.into()))?;
+
+        // No field at all means the `csv` crate found no record: the file is
+        // empty or holds only blank lines, which it skips. Arrow cannot decode
+        // against an empty schema: it sizes the field-end buffer by the column
+        // count and fails on the first byte it reads, blank or not (#964).
+        // There is nothing to decode, so the source is only read through for
+        // its quote state.
+        if schema.fields().is_empty() {
+            let mut source = self.quote_tracked(file);
+            let quote_outcome = source.outcome();
+            std::io::copy(&mut source, &mut std::io::sink())
+                .map_err(|error| CsvDecodeFailure::Other(error.into()))?;
+            let mut memory_sampler = PeakMemorySampler::new();
+            memory_sampler.sample_now();
+            return Ok(CsvDecodeOutcome {
+                column_analyzers: std::collections::HashMap::new(),
+                row_tracker: BatchRowTracker::default(),
+                hint_bindings: ValueHintBindingAccumulator::new(&self.semantic_hints),
+                total_rows: 0,
+                padded_rows: 0,
+                peak_memory_mb: memory_sampler.peak_mb(),
+                unterminated_quote: quote_outcome.at_end(),
+            });
+        }
         let mut arrow_builder = ReaderBuilder::new(schema)
             .with_header(has_header)
             .with_batch_size(self.batch_size);
