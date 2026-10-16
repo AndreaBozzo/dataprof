@@ -8,8 +8,10 @@ import functools as _functools
 import html as _html
 import json as _json
 import os as _os
+import tempfile as _tempfile
 import warnings as _warnings
 from collections.abc import (
+    Callable as _Callable,
     Iterator as _Iterator,
     Mapping as _Mapping,
     Sequence as _Sequence,
@@ -49,6 +51,27 @@ def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
     if error is not None:
         document["error"] = error
     return document
+
+
+def _atomic_write(path: str, writer: _Callable[[str], None]) -> None:
+    directory = _os.path.dirname(_os.path.abspath(path))
+    basename = _os.path.basename(path)
+
+    fd, temp_path = _tempfile.mkstemp(
+        dir=directory,
+        prefix=f".{basename}.",
+        suffix=".tmp",
+    )
+    _os.close(fd)
+
+    try:
+        writer(temp_path)
+        _os.replace(temp_path, path)
+    finally:
+        try:
+            _os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
 
 
 class ProfileReport:
@@ -728,29 +751,52 @@ class ProfileReport:
         path = _normalize_pathlike(path)
         lower_path = path.lower()
         if lower_path.endswith(".json"):
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(self.to_json())
+            content = self.to_json()
+
+            def write_json(temp_path: str) -> None:
+                with open(temp_path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(content)
+
+            _atomic_write(path, write_json)
         elif lower_path.endswith(".csv"):
             records = self._records()
+
             # Opening unconditionally matters for a zero-column report: save()
             # must either create the requested artifact or fail, never return
             # success while leaving no file behind.
-            with open(path, "w", encoding="utf-8", newline="") as f:
-                if records:
-                    writer = _csv.DictWriter(f, fieldnames=records[0].keys())
-                    writer.writeheader()
-                    writer.writerows(records)
+            def write_csv(temp_path: str) -> None:
+                with open(temp_path, "w", encoding="utf-8", newline="") as f:
+                    if records:
+                        writer = _csv.DictWriter(f, fieldnames=records[0].keys())
+                        writer.writeheader()
+                        writer.writerows(records)
+
+            _atomic_write(path, write_csv)
         elif lower_path.endswith(".parquet"):
             table = self.to_arrow()
             import pyarrow.parquet as pq
 
-            pq.write_table(table, path)
+            def write_parquet(temp_path: str) -> None:
+                pq.write_table(table, temp_path)
+
+            _atomic_write(path, write_parquet)
+
         elif lower_path.endswith(".html"):
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self.to_html())
+            content = self.to_html()
+
+            def write_html(temp_path: str) -> None:
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+            _atomic_write(path, write_html)
         elif lower_path.endswith((".md", ".markdown")):
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self.to_markdown())
+            content = self.to_markdown()
+
+            def write_markdown(temp_path: str) -> None:
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+            _atomic_write(path, write_markdown)
         else:
             raise ValueError(
                 f"Unsupported format for '{path}'. "
