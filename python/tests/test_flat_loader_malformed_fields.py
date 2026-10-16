@@ -158,6 +158,7 @@ def test_null_still_means_not_analyzed_where_the_schema_allows_it(summary):
     assert report["id"].min is None
     assert report["id"].type_homogeneity is None
     assert report["city"].patterns is None
+    assert report.quality is not None
     assert report.quality.overall_quality_score() is None
     assert report.quality.dimension_scores()["completeness"] is None
 
