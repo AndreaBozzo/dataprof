@@ -1253,6 +1253,13 @@ impl AsyncStreamingProfiler {
                 tracker.update(fingerprint, chunk_rows as u64);
                 stop_eval.set_schema_stable_rows(tracker.consecutive_stable_rows());
             }
+            // Update progress
+            progress_tracker.emit_chunk(
+                chunk_rows,
+                chunk_bytes,
+                estimated_total.map(|rows| rows as usize),
+            );
+
             if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
                 if !reached_eof {
                     truncation_reason = stop_eval.truncation_reason();
@@ -1260,13 +1267,6 @@ impl AsyncStreamingProfiler {
                 drop(rx); // signal reader task to stop
                 break;
             }
-
-            // Update progress
-            progress_tracker.emit_chunk(
-                chunk_rows,
-                chunk_bytes,
-                estimated_total.map(|rows| rows as usize),
-            );
         }
 
         // A fixed-size sample is only final once reading stops, so it is folded
