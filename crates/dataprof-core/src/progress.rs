@@ -93,11 +93,14 @@ impl ProgressSink {
             #[cfg(feature = "async-streaming")]
             Self::Channel(channel) => {
                 if matches!(event, ProgressEvent::Finished { .. }) {
-                    if let Ok(mut guard) = channel.finished_permit.lock() {
-                        if let Some(permit) = guard.take() {
-                            permit.send(event);
-                            return;
-                        }
+                    let permit = channel
+                        .finished_permit
+                        .lock()
+                        .ok()
+                        .and_then(|mut guard| guard.take());
+                    if let Some(permit) = permit {
+                        permit.send(event);
+                        return;
                     }
                 }
                 let _ = channel.tx.try_send(event);
