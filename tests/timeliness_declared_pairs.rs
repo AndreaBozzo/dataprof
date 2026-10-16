@@ -10,7 +10,7 @@
 
 use std::io::Write;
 
-use dataprof::{DataProfilerError, EngineType, ProfileReport, Profiler};
+use dataprof::{DataProfilerError, EngineType, ProfileReport, Profiler, SemanticHintKind};
 use tempfile::NamedTempFile;
 
 const START: &str = "valid_from";
@@ -138,6 +138,23 @@ fn a_declared_pair_is_compared_on_every_path() {
                     "[{label}] declared {pairs:?}: (pairs_checked, violations) {found:?}, expected {expected:?}"
                 ));
             }
+            // Each pair column binds once, as the option the caller used.
+            let bound: Vec<(&str, usize)> = report
+                .semantic_hint_bindings
+                .iter()
+                .filter(|binding| binding.kind == SemanticHintKind::TemporalPair)
+                .map(|binding| (binding.column.as_str(), binding.matched_values))
+                .collect();
+            let expected_bound = if pairs.is_empty() {
+                vec![]
+            } else {
+                vec![(START, 3), (END, 3)]
+            };
+            if bound != expected_bound {
+                wrong.push(format!(
+                    "[{label}] declared {pairs:?}: bindings {bound:?}, expected {expected_bound:?}"
+                ));
+            }
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
@@ -182,4 +199,45 @@ fn a_pair_of_one_column_with_itself_is_rejected() {
         .temporal_pairs(declared(START, START))
         .analyze_file(csv.path());
     assert_hint_error(result, &["'valid_from'", "temporal_pairs"]);
+}
+
+#[test]
+fn a_declared_pair_over_columns_without_dates_is_rejected() {
+    // The clean check that never happened: two text columns used to profile
+    // fine and report `temporal_pairs_checked == 0`.
+    let body = "name,city\nAda,Turin\nLinus,Helsinki\nGrace,Arlington\n";
+    let csv = text_fixture(".csv", body.to_string());
+    let records = r#"{"name":"Ada","city":"Turin"}
+{"name":"Linus","city":"Helsinki"}"#;
+    let jsonl = text_fixture(".jsonl", records.to_string() + "\n");
+    let mut runs = vec![
+        ("Auto", Profiler::new().engine(EngineType::Auto), csv.path()),
+        (
+            "Incremental",
+            Profiler::new().engine(EngineType::Incremental),
+            csv.path(),
+        ),
+        (
+            "Columnar",
+            Profiler::new().engine(EngineType::Columnar),
+            csv.path(),
+        ),
+    ];
+    runs.push(("jsonl", Profiler::new(), jsonl.path()));
+    for (label, profiler, path) in runs {
+        let result = profiler
+            .temporal_pairs(declared("name", "city"))
+            .analyze_file(path);
+        match result {
+            Err(DataProfilerError::InvalidSemanticHint { message, .. }) => {
+                for needle in ["'name' (temporal_pairs)", "'city' (temporal_pairs)"] {
+                    assert!(
+                        message.contains(needle),
+                        "[{label}] {needle:?} in: {message}"
+                    );
+                }
+            }
+            other => panic!("[{label}] expected InvalidSemanticHint, got {other:?}"),
+        }
+    }
 }

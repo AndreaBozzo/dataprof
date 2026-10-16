@@ -661,10 +661,12 @@ Hints are validated, never silently dropped. A hint that names a missing column
 raises `ValueError` listing the unmatched names and the available columns; a
 `positive_columns` hint on a column with no numeric values, or a
 `temporal_columns` hint on a column with no dates, is likewise rejected. A
-`temporal_pairs` entry that names a missing column is reported the same way.
+`temporal_pairs` entry is checked the same way: a missing column, or a column
+with no dates, raises `ValueError` naming `temporal_pairs`.
 `report.semantic_hint_bindings` records how each hint bound — `column`, `kind`,
 `checked_values`, `matched_values`, and `exact` (whether the counts covered
-every row or a sample):
+every row or a sample). Each column of a declared pair is recorded once, with
+kind `temporal_pair`:
 
 ```python
 report = dp.profile("readings.csv", positive_columns=["pressure"])

@@ -12,6 +12,8 @@ pub enum SemanticHintKind {
     Identifier,
     /// A [`SemanticHints::temporal_columns`] entry.
     Temporal,
+    /// A column named by a [`SemanticHints::temporal_pairs`] entry.
+    TemporalPair,
 }
 
 impl SemanticHintKind {
@@ -21,6 +23,7 @@ impl SemanticHintKind {
             Self::Positive => "positive_columns",
             Self::Identifier => "identifier_columns",
             Self::Temporal => "temporal_columns",
+            Self::TemporalPair => "temporal_pairs",
         }
     }
 }
@@ -117,7 +120,21 @@ impl SemanticHints {
             .any(|candidate| candidate == column_name)
     }
 
-    /// Every `(kind, column_name)` pair across all three hint lists.
+    /// Each column named by a declared pair, once, in the order first named.
+    pub fn temporal_pair_columns(&self) -> Vec<&str> {
+        let mut columns: Vec<&str> = Vec::new();
+        for (start, end) in &self.temporal_pairs {
+            for name in [start.as_str(), end.as_str()] {
+                if !columns.contains(&name) {
+                    columns.push(name);
+                }
+            }
+        }
+        columns
+    }
+
+    /// Every `(kind, column_name)` pair across the hint lists, with each column
+    /// of a declared pair listed once.
     pub fn iter(&self) -> impl Iterator<Item = (SemanticHintKind, &str)> {
         let positive = self
             .positive_columns
@@ -131,7 +148,11 @@ impl SemanticHints {
             .temporal_columns
             .iter()
             .map(|c| (SemanticHintKind::Temporal, c.as_str()));
-        positive.chain(identifier).chain(temporal)
+        let pairs = self
+            .temporal_pair_columns()
+            .into_iter()
+            .map(|c| (SemanticHintKind::TemporalPair, c));
+        positive.chain(identifier).chain(temporal).chain(pairs)
     }
 
     /// Fail loudly when a hint names a column that is not in the schema.
@@ -148,27 +169,19 @@ impl SemanticHints {
                 suggestion: "Pair a start column with a different end column.".to_string(),
             });
         }
-        let pair_columns = self
-            .temporal_pairs
+        let mut unknown: Vec<(SemanticHintKind, &str)> = self
             .iter()
-            .flat_map(|(start, end)| [start.as_str(), end.as_str()])
-            .map(|name| ("temporal_pairs", name));
-        let mut unknown: Vec<(&str, &str)> = self
-            .iter()
-            .map(|(kind, name)| (kind.field_name(), name))
-            .chain(pair_columns)
             .filter(|(_, name)| !column_names.contains(name))
             .collect();
         if unknown.is_empty() {
             return Ok(());
         }
         // Stable, readable ordering regardless of hint-list order.
-        unknown.sort_unstable_by(|a, b| a.1.cmp(b.1).then(a.0.cmp(b.0)));
-        unknown.dedup();
+        unknown.sort_unstable_by(|a, b| a.1.cmp(b.1).then(a.0.field_name().cmp(b.0.field_name())));
 
         let details = unknown
             .iter()
-            .map(|(field, name)| format!("'{name}' ({field})"))
+            .map(|(kind, name)| format!("'{}' ({})", name, kind.field_name()))
             .collect::<Vec<_>>()
             .join(", ");
         let mut available: Vec<&str> = column_names.to_vec();
@@ -240,9 +253,11 @@ impl SemanticHints {
 
         Err(DataProfilerError::InvalidSemanticHint {
             message: format!("semantic hint(s) bound to no matching value: {details}"),
-            suggestion: "positive_columns need numeric values; temporal_columns need date values. \
+            suggestion:
+                "positive_columns need numeric values; temporal_columns and temporal_pairs \
+                 need date values. \
                  Fix the column choice or remove the hint."
-                .to_string(),
+                    .to_string(),
         })
     }
 }

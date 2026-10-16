@@ -131,10 +131,48 @@ def test_a_declared_pair_is_compared_on_every_path(tmp_path: Path):
     wrong = []
     for label, route in _routes(tmp_path).items():
         for pairs, expected in (([], (0, 0)), ([(START, END)], (3, 3))):
-            found = _ordering(route(temporal_pairs=pairs))
+            report = route(temporal_pairs=pairs)
+            found = _ordering(report)
             if found != expected:
                 wrong.append(f"[{label}] declared {pairs}: {found}, expected {expected}")
+            # Each pair column binds once, as the option the caller used.
+            bound = [
+                (binding["column"], binding["matched_values"])
+                for binding in report.semantic_hint_bindings
+                if binding["kind"] == "temporal_pair"
+            ]
+            expected_bound = [(START, 3), (END, 3)] if pairs else []
+            if bound != expected_bound:
+                wrong.append(
+                    f"[{label}] declared {pairs}: bindings {bound}, expected {expected_bound}"
+                )
     assert not wrong, "\n".join(wrong)
+
+
+def test_a_declared_pair_over_columns_without_dates_is_rejected(tmp_path: Path):
+    # The clean check that never happened: two text columns used to profile
+    # fine and report ``temporal_pairs_checked == 0``.
+    columns = {"name": ["Ada", "Linus", "Grace"], "city": ["Turin", "Helsinki", "Arlington"]}
+    path = tmp_path / "people.csv"
+    rows = [
+        "name,city",
+        *(f"{n},{c}" for n, c in zip(columns["name"], columns["city"], strict=True)),
+    ]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    sources: dict[str, Any] = {
+        engine: (str(path), {"engine": engine}) for engine in ("auto", "incremental", "columnar")
+    }
+    sources["dict"] = (columns, {})
+    if importlib.util.find_spec("pyarrow") is not None:
+        import pyarrow as pa
+
+        sources["arrow"] = (pa.table(columns), {})
+    for label, (source, options) in sources.items():
+        with pytest.raises(ValueError) as caught:
+            dp.profile(source, temporal_pairs=[("name", "city")], **options)
+        message = str(caught.value)
+        assert "'name' (temporal_pairs)" in message, label
+        assert "'city' (temporal_pairs)" in message, label
 
 
 def test_a_pair_given_as_a_list_works_like_a_tuple(tmp_path: Path):

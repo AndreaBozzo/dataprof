@@ -2466,6 +2466,11 @@
           "const": "temporal",
           "description": "A [`SemanticHints::temporal_columns`] entry.",
           "type": "string"
+        },
+        {
+          "const": "temporal_pair",
+          "description": "A column named by a [`SemanticHints::temporal_pairs`] entry.",
+          "type": "string"
         }
       ]
     },

@@ -259,11 +259,11 @@ class ProfileReport:
         """Per-column evidence of how each semantic hint bound to the data.
 
         Empty unless ``positive_columns``/``identifier_columns``/
-        ``temporal_columns`` were supplied. Each entry has ``column``, ``kind``,
-        ``checked_values``, ``matched_values``, and ``exact``. A hint proven
-        inert over the full data raises before a report is returned, so a report
-        only ever carries bindings that matched something or whose evidence was
-        sampled.
+        ``temporal_columns``/``temporal_pairs`` were supplied. Each entry has
+        ``column``, ``kind``, ``checked_values``, ``matched_values``, and
+        ``exact``. A hint proven inert over the full data raises before a report
+        is returned, so a report only ever carries bindings that matched
+        something or whose evidence was sampled.
         """
         return list(self._report.semantic_hint_bindings)
 

@@ -428,7 +428,11 @@ impl RecordBatchAnalyzer {
         for field in schema.fields() {
             let column_name = field.name().to_string();
             let positive_hint = self.semantic_hints.is_positive_column(&column_name);
-            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
+            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name)
+                || self
+                    .semantic_hints
+                    .temporal_pair_columns()
+                    .contains(&column_name.as_str());
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
                 entry.insert(ColumnAnalyzer::with_value_hints(
@@ -558,7 +562,16 @@ impl RecordBatchAnalyzer {
                     .get(column)
                     .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::Temporal))
             });
-        positive.chain(temporal).collect()
+        let pairs = self
+            .semantic_hints
+            .temporal_pair_columns()
+            .into_iter()
+            .filter_map(|column| {
+                self.column_analyzers
+                    .get(column)
+                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::TemporalPair))
+            });
+        positive.chain(temporal).chain(pairs).collect()
     }
 }
 
@@ -677,7 +690,9 @@ impl ColumnAnalyzer {
     fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {
         let matched_values = match kind {
             SemanticHintKind::Positive => self.positive_matched_values,
-            SemanticHintKind::Temporal => self.temporal_matched_values,
+            SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
+                self.temporal_matched_values
+            }
             SemanticHintKind::Identifier => self.hint_checked_values,
         };
         SemanticHintBinding {
