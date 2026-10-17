@@ -473,7 +473,10 @@ boolean columns with no parsed booleans have no statistics block. Their statisti
 accessors return `None`, including boolean counts and `true_ratio`. The declared
 column type, row/null counts, and numeric `invalid_count` remain available. A
 measured numeric zero or an all-false column still reports `0.0`. CSV columns
-containing only nulls infer as text because CSV carries no declared type.
+containing only nulls infer as text because CSV carries no declared type. A
+column with no non-null value has no statistics block whatever its type, so an
+all-null text column's `min_length`, `max_length` and `avg_length` are `None`,
+not `0`.
 
 This uses the existing absent-statistics representation (`ColumnStats::None` in
 Rust); numeric fields do not become optional within `NumericStats`, and the report

@@ -42,8 +42,6 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
     ("uint64_edge", "*", "max", "#877"),
     ("uint64_edge", "*", "mode", "#877"),
     ("uint64_edge", "*", "quartiles.iqr", "#877"),
-    // An all-null text column reports lengths of 0 rather than none.
-    ("all_null", "*", "stats", "#983"),
 ];
 
 #[derive(Debug, Clone, PartialEq)]

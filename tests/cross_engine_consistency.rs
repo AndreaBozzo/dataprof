@@ -34,9 +34,18 @@ fn serialized_text_stats_match_column_analysis_and_csv_engines() {
 
         let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
         let expected = serde_json::to_value(&standard.column_profiles[0].stats).unwrap();
-        assert!(expected["Text"].is_object(), "{values:?}");
-        assert!(expected["Text"].get("most_frequent").is_none());
-        assert!(expected["Text"].get("least_frequent").is_none());
+        // A column of nulls only has no values, so no statistics (#983); the
+        // others are text, with frequencies left unassessed.
+        if values
+            .iter()
+            .all(|value| dataprof::is_null_like_token(value.trim()))
+        {
+            assert_eq!(expected, json!("None"), "{values:?}");
+        } else {
+            assert!(expected["Text"].is_object(), "{values:?}");
+            assert!(expected["Text"].get("most_frequent").is_none());
+            assert!(expected["Text"].get("least_frequent").is_none());
+        }
 
         for column in [
             dataprof::analyze_column("text", &data),
