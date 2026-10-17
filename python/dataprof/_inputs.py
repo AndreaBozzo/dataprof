@@ -87,6 +87,69 @@ def _cell_to_str(value: object) -> str | None:
     return str(value)
 
 
+def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
+    """Convert a pandas DataFrame to a pyarrow Table, handling mixed object columns.
+
+    Fast path: delegates directly to ``pyarrow.Table.from_pandas(df)``.
+    Fallback path: for object and categorical columns whose values Arrow cannot
+    cast into a single type (e.g. numeric with placeholder text or mixed
+    booleans/dates), converts their cells via ``_cell_to_str`` into string arrays
+    so they can be profiled with ``type_homogeneity`` rather than aborting (#976).
+    """
+    try:
+        return pyarrow.Table.from_pandas(df)
+    except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
+        # If columns have duplicate labels, pyarrow Table.from_pandas fails with
+        # ValueError; duplicate column frames cannot be converted.
+        if hasattr(df.columns, "is_unique") and not df.columns.is_unique:
+            raise
+
+        failing_cols: set[_Any] = set()
+        for i in range(len(df.columns)):
+            col = df.iloc[:, i]
+            # CategoricalDtype is an extension dtype whose name is "category".
+            # It can also hold mixed Python values that Arrow cannot cast.
+            if col.dtype != object and getattr(col.dtype, "name", None) != "category":
+                continue
+            name = df.columns[i]
+            try:
+                pyarrow.Array.from_pandas(col)
+            except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
+                failing_cols.add(name)
+
+        if not failing_cols:
+            raise
+
+        df_fixed = df.copy(deep=False)
+        for name in failing_cols:
+            col = df[name]
+            try:
+                if hasattr(col, "isna"):
+                    missing = col.isna()
+                    df_fixed[name] = [
+                        None if is_m else _cell_to_str(v) for is_m, v in zip(missing, col)
+                    ]
+                else:
+                    df_fixed[name] = [_cell_to_str(v) for v in col]
+            except Exception as exc:
+                raise ValueError(
+                    f"pandas DataFrame: column {name!r} could not be converted for profiling: {exc}"
+                ) from exc
+
+        try:
+            return pyarrow.Table.from_pandas(df_fixed)
+        except Exception as exc:
+            for name in failing_cols:
+                try:
+                    pyarrow.Array.from_pandas(df_fixed[name])
+                except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError) as col_exc:
+                    raise ValueError(
+                        f"pandas DataFrame: column {name!r} could not be converted for profiling: "
+                        f"{col_exc}"
+                    ) from col_exc
+            raise ValueError(f"pandas DataFrame conversion failed: {exc}") from exc
+
+
 def _columns_from_dict(source: dict[_Any, _Any]) -> list[_Column]:
     """Convert a dict of equal-length sequences into columns."""
     columns: list[_Column] = []
