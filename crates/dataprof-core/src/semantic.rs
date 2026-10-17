@@ -169,6 +169,20 @@ impl SemanticHints {
                 suggestion: "Pair a start column with a different end column.".to_string(),
             });
         }
+        // A pair declared in both orders is compared both ways, so one of the
+        // two reports every row whose dates differ as out of order.
+        if let Some((start, end)) = self.temporal_pairs.iter().find(|(start, end)| {
+            self.temporal_pairs
+                .iter()
+                .any(|(other_start, other_end)| other_start == end && other_end == start)
+        }) {
+            return Err(DataProfilerError::InvalidSemanticHint {
+                message: format!(
+                    "temporal_pairs names both ('{start}', '{end}') and ('{end}', '{start}')"
+                ),
+                suggestion: "Keep only the order with the start column first.".to_string(),
+            });
+        }
         let mut unknown: Vec<(SemanticHintKind, &str)> = self
             .iter()
             .filter(|(_, name)| !column_names.contains(name))

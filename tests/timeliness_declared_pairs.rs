@@ -202,6 +202,20 @@ fn a_pair_of_one_column_with_itself_is_rejected() {
 }
 
 #[test]
+fn a_pair_declared_in_both_orders_is_rejected() {
+    let csv = csv_fixture();
+    let mut pairs = declared(START, END);
+    pairs.extend(declared(END, START));
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let result = Profiler::new()
+            .engine(engine)
+            .temporal_pairs(pairs.clone())
+            .analyze_file(csv.path());
+        assert_hint_error(result, &["'valid_from'", "'valid_until'", "temporal_pairs"]);
+    }
+}
+
+#[test]
 fn a_declared_pair_over_columns_without_dates_is_rejected() {
     // The clean check that never happened: two text columns used to profile
     // fine and report `temporal_pairs_checked == 0`.
