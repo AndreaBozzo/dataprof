@@ -65,6 +65,10 @@ pub use dataprof_runtime::{
     QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Severity,
     UnevaluatedRule, Verdict,
 };
+pub use dataprof_runtime::{
+    ColumnChange, DimensionChange, ReportDelta, ReportReference, ReportSide, SchemaChange,
+    ScoreChange, SemanticsComparison, Sides,
+};
 
 #[cfg(feature = "async-streaming")]
 pub use dataprof_engines::streaming::ReqwestSource;

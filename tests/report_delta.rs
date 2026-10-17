@@ -1,0 +1,262 @@
+//! The typed report-to-report delta (#713).
+//!
+//! `python/tests/test_report_delta.py` is the Python twin, and also checks a
+//! report loaded from a flat summary against the report it came from.
+
+use std::io::Write;
+
+use dataprof::{EvidenceGap, ProfileReport, Profiler, ReportDelta, ReportSide, StopCondition};
+use serde_json::{Value, json};
+
+fn csv(contents: &str) -> tempfile::NamedTempFile {
+    let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    file.write_all(contents.as_bytes()).unwrap();
+    file
+}
+
+fn profile(contents: &str) -> ProfileReport {
+    let file = csv(contents);
+    Profiler::new().analyze_file(file.path()).unwrap()
+}
+
+fn document(delta: &ReportDelta) -> Value {
+    serde_json::to_value(delta).unwrap()
+}
+
+const CLEAN: &str = "id,amount\n1,10\n2,20\n3,30\n4,40\n";
+const WITH_NULLS: &str = "id,amount\n1,10\n2,\n3,\n4,40\n";
+
+#[test]
+fn identical_reports_give_explicit_zeros_for_what_was_assessed() {
+    let report = profile(CLEAN);
+    let delta = document(&ReportDelta::between(&report, &report));
+
+    assert_eq!(delta["quality_score"]["abs"], json!(0.0));
+    assert_eq!(delta["quality_score"]["rel_pct"], json!(0.0));
+    for (name, change) in delta["dimensions"].as_object().unwrap() {
+        if change["a"].is_null() {
+            // Unassessed on both sides: no number to subtract.
+            assert!(change["abs"].is_null(), "{name}");
+        } else {
+            assert_eq!(change["abs"], json!(0.0), "{name}");
+        }
+    }
+    for change in delta["columns"].as_object().unwrap().values() {
+        assert_eq!(change["null_pct_delta"], json!(0.0));
+    }
+    assert_eq!(delta["metric_semantics"]["comparable"], json!(true));
+    assert_eq!(delta["schema"]["common"], json!(["id", "amount"]));
+}
+
+#[test]
+fn every_change_is_b_minus_a() {
+    let worse = profile(WITH_NULLS);
+    let better = profile(CLEAN);
+    let delta = document(&ReportDelta::between(&worse, &better));
+
+    let completeness = &delta["dimensions"]["completeness"];
+    let (a, b) = (
+        completeness["a"].as_f64().unwrap(),
+        completeness["b"].as_f64().unwrap(),
+    );
+    assert!(b > a, "the clean side scores higher");
+    assert!(
+        completeness["abs"].as_f64().unwrap() > 0.0,
+        "improvement is positive"
+    );
+    assert_eq!(delta["columns"]["amount"]["null_pct_a"], json!(50.0));
+    assert_eq!(delta["columns"]["amount"]["null_pct_b"], json!(0.0));
+    assert_eq!(
+        delta["columns"]["amount"]["null_pct_delta"],
+        json!(-50.0),
+        "fewer nulls is negative"
+    );
+}
+
+#[test]
+fn an_all_null_column_is_a_share_and_a_null_free_one_is_zero() {
+    let empty_column = profile("id,note\n1,\n2,\n");
+    let filled = profile("id,note\n1,a\n2,b\n");
+    let delta = document(&ReportDelta::between(&empty_column, &filled));
+
+    // The note column is all null: its share is 100%, a real number.
+    assert_eq!(delta["columns"]["note"]["null_pct_a"], json!(100.0));
+    assert_eq!(delta["columns"]["note"]["null_pct_delta"], json!(-100.0));
+
+    let reversed = document(&ReportDelta::between(&filled, &empty_column));
+    assert_eq!(reversed["columns"]["note"]["null_pct_a"], json!(0.0));
+    assert_eq!(reversed["columns"]["note"]["null_pct_delta"], json!(100.0));
+}
+
+#[test]
+fn a_report_with_nothing_assessed_invents_no_number() {
+    let header_only = profile("id,amount\n");
+    let report = profile(CLEAN);
+    for delta in [
+        document(&ReportDelta::between(&header_only, &report)),
+        document(&ReportDelta::between(&report, &header_only)),
+        document(&ReportDelta::between(&header_only, &header_only)),
+    ] {
+        assert!(delta["quality_score"]["abs"].is_null());
+        assert!(delta["quality_score"]["rel_pct"].is_null());
+        for change in delta["dimensions"].as_object().unwrap().values() {
+            assert!(change["abs"].is_null());
+            assert!(change["rel_pct"].is_null());
+        }
+        for change in delta["columns"].as_object().unwrap().values() {
+            assert!(
+                change["null_pct_delta"].is_null(),
+                "an empty column has no null share"
+            );
+        }
+    }
+}
+
+#[test]
+fn schema_changes_keep_each_side_order() {
+    let a = profile("id,old,shared\n1,x,y\n");
+    let b = profile("shared,new,id\ny,z,1\n");
+    let delta = document(&ReportDelta::between(&a, &b));
+
+    assert_eq!(delta["schema"]["added"], json!(["new"]));
+    assert_eq!(delta["schema"]["removed"], json!(["old"]));
+    assert_eq!(delta["schema"]["common"], json!(["id", "shared"]));
+    let columns: Vec<&String> = delta["columns"].as_object().unwrap().keys().collect();
+    assert_eq!(columns, ["id", "old", "shared", "new"]);
+    assert!(delta["columns"]["old"]["null_pct_b"].is_null());
+    assert!(delta["columns"]["old"]["null_pct_delta"].is_null());
+    assert!(delta["columns"]["new"]["null_pct_a"].is_null());
+}
+
+#[test]
+fn a_truncated_side_says_so_on_every_number() {
+    let rows: String = (0..200).map(|i| format!("{i},{}\n", i * 2)).collect();
+    let file = csv(&format!("id,amount\n{rows}"));
+    let exact = Profiler::new().analyze_file(file.path()).unwrap();
+    let truncated = Profiler::new()
+        .stop_when(StopCondition::MaxRows(50))
+        .analyze_file(file.path())
+        .unwrap();
+
+    let delta = ReportDelta::between(&exact, &truncated);
+    assert!(delta.reports.a.evidence.is_complete());
+    assert_eq!(delta.reports.b.evidence.gap(), Some(EvidenceGap::Truncated));
+    assert_eq!(delta.reports.b.rows_processed, 50);
+    assert!(delta.quality_score.evidence.a.is_complete());
+    assert_eq!(
+        delta.quality_score.evidence.b.gap(),
+        Some(EvidenceGap::Truncated)
+    );
+    for change in &delta.dimensions {
+        assert_eq!(change.score.evidence.b.gap(), Some(EvidenceGap::Truncated));
+    }
+}
+
+#[test]
+fn a_summary_compares_like_the_report_it_came_from() {
+    let a = profile(WITH_NULLS);
+    let b = profile(CLEAN);
+    let native = document(&ReportDelta::between(&a, &b));
+    let side = |report: &ProfileReport| {
+        ReportSide::from_summary_json(&report.summary_json().unwrap()).unwrap()
+    };
+    let flat = document(&ReportDelta::between_sides(&side(&a), &side(&b)));
+
+    let mut masked = native.clone();
+    for name in ["a", "b"] {
+        // A flat summary records neither identity field.
+        masked["reports"][name]["id"] = Value::Null;
+        masked["reports"][name]["timestamp"] = Value::Null;
+    }
+    assert_eq!(flat, masked);
+    assert_eq!(native["reports"]["a"]["id"], json!(a.id));
+}
+
+#[test]
+fn a_summary_from_before_0_12_reads_as_unrecorded() {
+    let legacy = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/legacy_0_11_non_ascii.summary.json"),
+    )
+    .unwrap();
+    let legacy = ReportSide::from_summary_json(&legacy).unwrap();
+    let current = ReportSide::from_report(&profile("city\nOslo\n"));
+    let delta = ReportDelta::between_sides(&legacy, &current);
+
+    assert_eq!(delta.metric_semantics.comparable, None);
+    assert!(delta.metric_semantics.a.is_none());
+    // 0.11 did not record which quality components were sampled.
+    assert_eq!(
+        delta.quality_score.evidence.a.gap(),
+        Some(EvidenceGap::CoverageUnrecorded)
+    );
+    assert!(delta.quality_score.evidence.b.is_complete());
+}
+
+#[test]
+fn a_summary_missing_a_field_the_comparison_reads_is_an_error() {
+    let report = profile(CLEAN);
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    summary["execution"]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_exhausted");
+    let error = ReportSide::from_summary_json(&summary.to_string()).unwrap_err();
+    assert!(error.to_string().contains("source_exhausted"), "{error}");
+}
+
+#[test]
+fn serialization_is_deterministic_and_ordered() {
+    let a = profile(WITH_NULLS);
+    let b = profile(CLEAN);
+    let first = serde_json::to_string(&ReportDelta::between(&a, &b)).unwrap();
+    let second = serde_json::to_string(&ReportDelta::between(&a, &b)).unwrap();
+    assert_eq!(first, second);
+
+    let delta: Value = serde_json::from_str(&first).unwrap();
+    let keys: Vec<&String> = delta.as_object().unwrap().keys().collect();
+    assert_eq!(
+        keys,
+        [
+            "quality_score",
+            "dimensions",
+            "columns",
+            "metric_semantics",
+            "schema",
+            "reports"
+        ]
+    );
+    let dimensions: Vec<&String> = delta["dimensions"].as_object().unwrap().keys().collect();
+    assert_eq!(
+        dimensions,
+        [
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+            "validity",
+            "precision"
+        ]
+    );
+}
+
+#[test]
+fn a_partly_recorded_side_leaves_comparability_unknown() {
+    let report = profile(CLEAN);
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    // 0.12 recorded only its text-length unit.
+    summary["metric_semantics"] = json!({"text_length_unit": "unicode_scalar"});
+    let partial = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    let current = ReportSide::from_report(&report);
+
+    for delta in [
+        ReportDelta::between_sides(&partial, &current),
+        ReportDelta::between_sides(&current, &partial),
+        ReportDelta::between_sides(&partial, &partial),
+    ] {
+        assert_eq!(delta.metric_semantics.comparable, None);
+    }
+    let both = ReportDelta::between_sides(&current, &current);
+    assert_eq!(both.metric_semantics.comparable, Some(true));
+}

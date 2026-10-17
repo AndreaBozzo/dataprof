@@ -623,3 +623,98 @@ fn quality_gate_types_are_matched_with_a_wildcard() {
     let empty = QualityPolicy::new().evaluate(&report).unwrap_err();
     assert_eq!(policy_error(&empty), 1);
 }
+
+/// The report-delta types are `#[non_exhaustive]` so #749 and #310 can add
+/// fields without breaking callers. This names every field through the facade
+/// in code that must compile, so a rename fails here.
+#[test]
+fn report_delta_fields_are_reachable_through_the_facade() {
+    use dataprof::{
+        ColumnChange, DimensionChange, ReportDelta, ReportReference, SchemaChange, ScoreChange,
+        SemanticsComparison, Sides,
+    };
+
+    fn score(change: &ScoreChange) -> usize {
+        let ScoreChange {
+            a,
+            b,
+            abs,
+            rel_pct,
+            evidence: Sides {
+                a: left, b: right, ..
+            },
+            ..
+        } = change;
+        let _ = (a, b, abs, rel_pct, left, right);
+        1
+    }
+
+    fn reference(side: &ReportReference) -> usize {
+        let ReportReference {
+            id,
+            timestamp,
+            source,
+            rows_processed,
+            evidence,
+            ..
+        } = side;
+        let _ = (id, timestamp, evidence);
+        source.len() + rows_processed
+    }
+
+    fn delta(delta: &ReportDelta) -> usize {
+        let ReportDelta {
+            quality_score,
+            dimensions,
+            columns,
+            metric_semantics:
+                SemanticsComparison {
+                    a: semantics_a,
+                    b: semantics_b,
+                    comparable,
+                    ..
+                },
+            schema:
+                SchemaChange {
+                    added,
+                    removed,
+                    common,
+                    ..
+                },
+            reports: Sides { a, b, .. },
+            ..
+        } = delta;
+        let _ = (semantics_a, semantics_b, comparable, added, removed, common);
+        let dimension_total: usize = dimensions
+            .iter()
+            .map(
+                |DimensionChange {
+                     dimension,
+                     score: change,
+                     ..
+                 }| {
+                    let _ = dimension;
+                    score(change)
+                },
+            )
+            .sum();
+        let column_total: usize = columns
+            .iter()
+            .map(
+                |ColumnChange {
+                     name,
+                     null_pct_a,
+                     null_pct_b,
+                     null_pct_delta,
+                     ..
+                 }| {
+                    let _ = (null_pct_a, null_pct_b, null_pct_delta);
+                    name.len()
+                },
+            )
+            .sum();
+        score(quality_score) + dimension_total + column_total + reference(a) + reference(b)
+    }
+
+    let _ = delta;
+}

@@ -1330,3 +1330,34 @@ impl PyProfileReport {
         )
     }
 }
+
+/// One side of `report_delta_json`: a native report, or the flat summary of
+/// a report loaded from one, as JSON.
+#[derive(FromPyObject)]
+pub enum DeltaInput<'py> {
+    Native(PyRef<'py, PyProfileReport>),
+    Summary(String),
+}
+
+impl DeltaInput<'_> {
+    fn side(&self) -> PyResult<dataprof::ReportSide> {
+        match self {
+            Self::Native(report) => Ok(dataprof::ReportSide::from_report(&report.inner)),
+            Self::Summary(text) => dataprof::ReportSide::from_summary_json(text).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "compare(): the flat summary cannot be compared: {e}"
+                ))
+            }),
+        }
+    }
+}
+
+/// Compare two reports with the runtime delta and return its document as
+/// JSON. `ProfileReport.compare()` converts it into the dict it returns.
+#[pyfunction]
+pub fn report_delta_json(a: DeltaInput<'_>, b: DeltaInput<'_>) -> PyResult<String> {
+    let delta = dataprof::ReportDelta::between_sides(&a.side()?, &b.side()?);
+    serde_json::to_string(&delta).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
+    })
+}

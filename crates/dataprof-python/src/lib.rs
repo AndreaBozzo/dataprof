@@ -32,7 +32,7 @@ pub use partial::{
 pub use progress::PyProgressEvent;
 pub use sampling::PySamplingStrategy;
 pub use stop_condition::PyStopCondition;
-pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport};
+pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport, report_delta_json};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
@@ -97,6 +97,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_file, m)?)?;
     m.add_function(wrap_pyfunction!(profile_parquet_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(list_patterns, m)?)?;
+    m.add_function(wrap_pyfunction!(report_delta_json, m)?)?;
 
     // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;

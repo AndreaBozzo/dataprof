@@ -8,6 +8,7 @@ pub mod profile_builder;
 pub mod profile_report;
 pub mod quality_gate;
 pub mod report_assembler;
+pub mod report_delta;
 pub mod streaming_stats;
 
 #[cfg(feature = "async-streaming")]
@@ -37,6 +38,10 @@ pub use quality_gate::{
     MetricValue, NotEvaluated, PolicyError, PolicyScope, QualityPolicy, RequiredMetric, Verdict,
 };
 pub use report_assembler::ReportAssembler;
+pub use report_delta::{
+    ColumnChange, DimensionChange, ReportDelta, ReportReference, ReportSide, SchemaChange,
+    ScoreChange, SemanticsComparison, Sides,
+};
 pub use streaming_stats::{
     RowCompletenessTracker, RowSignature, RowUniquenessTracker, StreamReservoirSampler,
     StreamingColumnCollection, StreamingStatistics, TextLengthStats,
