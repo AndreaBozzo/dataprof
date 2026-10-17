@@ -63,8 +63,6 @@ KNOWN: dict[tuple[str, str, str], str] = {
     },
     ("epoch_nanoseconds", "*", "quartiles.iqr"): "#877",
     ("uint64_edge", "*", "quartiles.iqr"): "#877",
-    # An all-null text column reports lengths of 0 rather than none.
-    ("all_null", "*", "stats"): "#983",
     # The pandas mixed-object fallback renders a container as the text a
     # string can spell, so the two sign one row.
     ("container_vs_its_text", "pandas", "duplicate_rows"): "#982",

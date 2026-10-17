@@ -12,6 +12,7 @@ use dataprof_core::{
     TextStats,
 };
 use dataprof_metrics::{
+    analysis::column::stats_over_values,
     analysis::inference::{
         classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_inferred_date_token,
         is_integer_token, is_null_like_token, parse_strict_boolean_token,
@@ -215,26 +216,18 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         }
     };
 
-    // A column with no rows has counts, but no statistics: every aggregate over
-    // zero values is undefined, and the repo's convention for undefined is
-    // absent, not zero. Text and date columns already landed on
-    // `ColumnStats::None` here through their empty-sample arms; numeric and
-    // boolean did not, and reported a min, max, mean, std_dev and variance of
-    // 0.0, and a true_ratio of 0.0 -- plausible numbers describing rows that do
-    // not exist, which is the failure class AGENTS.md singles out. 0.0 is an
-    // ordinary value for a real numeric column, so nothing about that output
-    // looked wrong.
-    //
-    // Numeric and boolean columns also suppress statistics above when rows
-    // exist but no values parsed. This guard covers zero rows for every type.
+    // A column with no non-null value has counts, but no statistics: every
+    // aggregate over zero values is undefined, and the repo's convention for
+    // undefined is absent, not zero. Without this guard, a column with no rows
+    // reported a numeric min, max, mean, std_dev and variance of 0.0 and a
+    // true_ratio of 0.0, and a text column of nulls reported lengths of 0
+    // (#983): plausible numbers describing values that do not exist, which is
+    // the failure class AGENTS.md singles out. 0.0 and 0 are ordinary values
+    // for a real column, so nothing about that output looked wrong.
     //
     // The counts above are untouched. "0 of 0 values were invalid" is a fact
     // about a column that was analyzed, not a statistic over nothing.
-    let stats = if input.total_count == 0 {
-        ColumnStats::None
-    } else {
-        stats
-    };
+    let stats = stats_over_values(stats, input.total_count, input.null_count);
 
     let patterns = if input.skip_patterns {
         None

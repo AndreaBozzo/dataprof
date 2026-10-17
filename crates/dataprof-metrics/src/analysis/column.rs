@@ -26,6 +26,22 @@ struct ColumnAnalysis {
     skip_unique_count: bool,
 }
 
+/// The statistics a column carries: none when it holds no non-null value.
+///
+/// Every statistic is an aggregate over values, and over no values it is
+/// undefined, which the repo reports as absent, not zero. Each type's arm can
+/// still produce one: a text column of nulls only reported lengths of 0, the
+/// same as a column of real zero-length values (#983). Shared by this path and
+/// `profile_builder::build_column_profile`, so every engine draws the line in
+/// one place; a column with no rows is the case where both counts are 0.
+pub fn stats_over_values(stats: ColumnStats, total_count: usize, null_count: usize) -> ColumnStats {
+    if null_count >= total_count {
+        ColumnStats::None
+    } else {
+        stats
+    }
+}
+
 /// Analyze a column with full profiling (includes pattern detection and unique counts)
 pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
     analyze_column_with_options(
@@ -176,6 +192,7 @@ fn analyze_column_with_options(
             DataType::Nested => unreachable!("infer_type never answers Nested"),
         }
     };
+    let stats = stats_over_values(stats, total_count, null_count);
 
     let patterns = if analysis.skip_patterns {
         None
@@ -220,6 +237,28 @@ fn analyze_column_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The database connectors profile through this path. A column holding
+    /// only nulls and null tokens has no values, so no statistics, where it
+    /// used to report text lengths of 0 (#983); one value restores them.
+    #[test]
+    fn a_column_without_a_value_has_no_statistics() {
+        let nulls: Vec<String> = ["", "NA", "null", " "].map(String::from).to_vec();
+        let profile = analyze_column("empty", &nulls);
+        assert_eq!((profile.null_count, profile.total_count), (4, 4));
+        assert!(
+            matches!(profile.stats, ColumnStats::None),
+            "{:?}",
+            profile.stats
+        );
+
+        let mut one = nulls.clone();
+        one.push("ab".to_string());
+        match analyze_column("one", &one).stats {
+            ColumnStats::Text(text) => assert_eq!((text.min_length, text.max_length), (2, 2)),
+            other => panic!("expected text statistics, got {other:?}"),
+        }
+    }
 
     #[test]
     fn non_finite_numeric_column_has_no_statistics() {
