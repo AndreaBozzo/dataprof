@@ -100,6 +100,7 @@ pub fn create_connector(
         || connection_str.ends_with(".db")
         || connection_str.ends_with(".sqlite")
         || connection_str == ":memory:"
+        || connection_str == "sqlite::memory:"
     {
         Ok(Box::new(connectors::sqlite::SqliteConnector::new(config)?))
     } else {
@@ -144,7 +145,7 @@ fn apply_environment_configuration(
                 .apply_to_connection_string(config.connection_string.clone(), database_type);
         }
 
-        if config.load_credentials_from_env {
+        if config.load_credentials_from_env && database_type != "sqlite" {
             let credentials = DatabaseCredentials::from_environment(database_type);
             config.connection_string =
                 credentials.apply_to_connection_string(&config.connection_string);

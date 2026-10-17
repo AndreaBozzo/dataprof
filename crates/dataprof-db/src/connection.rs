@@ -71,7 +71,13 @@ impl ConnectionInfo {
                 Some(url.username().to_string())
             },
             password: url.password().map(|s| s.to_string()),
-            database: if url.path().len() > 1 {
+            database: if url.scheme() == "sqlite" {
+                match url.host_str() {
+                    Some(host) if !host.is_empty() => Some(format!("{}{}", host, url.path())),
+                    _ if url.path().len() > 1 => Some(url.path().to_string()),
+                    _ => None,
+                }
+            } else if url.path().len() > 1 {
                 Some(url.path().trim_start_matches('/').to_string())
             } else {
                 None
@@ -233,6 +239,7 @@ mod tests {
 
         assert_eq!(info.scheme, "sqlite");
         assert_eq!(info.database_type(), "sqlite");
+        assert_eq!(info.database, Some("/path/to/db.sqlite".to_string()));
     }
 
     #[test]
@@ -243,5 +250,12 @@ mod tests {
         assert_eq!(info.scheme, "file");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
         assert_eq!(info.database_type(), "sqlite");
+    }
+    #[test]
+    fn test_parse_sqlite_relative_url() {
+        let info = ConnectionInfo::parse("sqlite://rel.sqlite").unwrap();
+
+        assert_eq!(info.scheme, "sqlite");
+        assert_eq!(info.database, Some("rel.sqlite".to_string()));
     }
 }
