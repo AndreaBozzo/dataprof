@@ -410,6 +410,199 @@ class TestSaveFormats:
         assert result is report
         assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
 
+    def test_failed_json_save_preserves_existing_file(self, report, tmp_path, monkeypatch):
+        path = tmp_path / "report.json"
+        original = b"previous good report\n"
+        path.write_bytes(original)
+
+        def fail_to_json():
+            raise RuntimeError("simulated serialization failure")
+
+        monkeypatch.setattr(report, "to_json", fail_to_json)
+
+        with pytest.raises(RuntimeError, match="simulated serialization failure"):
+            report.save(path)
+
+        assert path.read_bytes() == original
+
+    def test_failed_json_write_preserves_existing_file_and_cleans_temp(
+        self, report, tmp_path, monkeypatch
+    ):
+        import builtins
+
+        path = tmp_path / "report.json"
+        original = b"previous good report\n"
+        path.write_bytes(original)
+
+        real_open = builtins.open
+
+        class FailingFile:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def write(self, data):
+                raise OSError("simulated write failure")
+
+        def failing_open(file, *args, **kwargs):
+            name = Path(file).name
+
+            if name.startswith(".report.json.") and name.endswith(".tmp"):
+                return FailingFile()
+
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", failing_open)
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            report.save(path)
+
+        monkeypatch.undo()
+
+        assert path.read_bytes() == original
+        assert list(tmp_path.glob(".report.json.*.tmp")) == []
+
+    @pytest.mark.parametrize(
+        ("suffix", "method_name"),
+        [
+            (".json", "to_json"),
+            (".csv", "_records"),
+            (".parquet", "to_arrow"),
+            (".html", "to_html"),
+            (".md", "to_markdown"),
+            (".markdown", "to_markdown"),
+        ],
+    )
+    def test_failed_serialization_preserves_existing_file(
+        self, report, tmp_path, monkeypatch, suffix, method_name
+    ):
+        path = tmp_path / f"report{suffix}"
+        original = b"previous good report\n"
+        path.write_bytes(original)
+
+        def fail():
+            raise RuntimeError("simulated serialization failure")
+
+        monkeypatch.setattr(report, method_name, fail)
+
+        with pytest.raises(RuntimeError, match="simulated serialization failure"):
+            report.save(path)
+
+        assert path.read_bytes() == original
+
+    @pytest.mark.parametrize(
+        "suffix",
+        [".csv", ".html", ".md", ".markdown"],
+    )
+    def test_failed_write_preserves_existing_file_and_cleans_temp(
+        self, report, tmp_path, monkeypatch, suffix
+    ):
+        import builtins
+
+        path = tmp_path / f"report{suffix}"
+        original = b"previous good report\n"
+        path.write_bytes(original)
+
+        real_open = builtins.open
+
+        class FailingFile:
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                self.inner.close()
+                return False
+
+            def write(self, data):
+                # Attempt to simulate a real partial write before the failure.
+                partial = data[: max(1, len(data) // 2)]
+                self.inner.write(partial)
+                self.inner.flush()
+                raise OSError("simulated write failure")
+
+        def failing_open(file, *args, **kwargs):
+            name = Path(file).name
+
+            if name.startswith(f".report{suffix}.") and name.endswith(".tmp"):
+                return FailingFile(real_open(file, *args, **kwargs))
+
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", failing_open)
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            report.save(path)
+
+        monkeypatch.undo()
+
+        assert path.read_bytes() == original
+        assert list(tmp_path.glob(f".report{suffix}.*.tmp")) == []
+
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX file permissions are not available on Windows",
+    )
+    def test_save_preserves_existing_file_permissions(self, report, tmp_path):
+        path = tmp_path / "report.json"
+        path.write_text("old report", encoding="utf-8")
+        path.chmod(0o640)
+
+        report.save(path)
+
+        assert path.stat().st_mode & 0o777 == 0o640
+
+    def test_new_save_uses_default_file_permissions(self, report, tmp_path):
+        reference = tmp_path / "reference.txt"
+        reference.write_text("reference", encoding="utf-8")
+
+        path = tmp_path / "report.json"
+        report.save(path)
+
+        assert path.stat().st_mode & 0o777 == reference.stat().st_mode & 0o777
+
+    def test_save_through_symlink_preserves_symlink(self, report, tmp_path):
+        target = tmp_path / "target.json"
+        target.write_text("old report", encoding="utf-8")
+
+        path = tmp_path / "report.json"
+
+        try:
+            path.symlink_to(target)
+        except OSError as exc:
+            pytest.skip(f"symlinks are not available: {exc}")
+
+        report.save(path)
+
+        assert path.is_symlink()
+        assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
+
+    def test_failed_parquet_write_preserves_existing_file_and_cleans_temp(
+        self, report, tmp_path, monkeypatch
+    ):
+        pq = pytest.importorskip("pyarrow.parquet")
+
+        path = tmp_path / "report.parquet"
+        original = b"previous good report\n"
+        path.write_bytes(original)
+
+        def failing_write_table(table, destination, *args, **kwargs):
+            temp_path = Path(destination)
+            temp_path.write_bytes(b"partial parquet data")
+            raise OSError("simulated parquet write failure")
+
+        monkeypatch.setattr(pq, "write_table", failing_write_table)
+
+        with pytest.raises(OSError, match="simulated parquet write failure"):
+            report.save(path)
+
+        assert path.read_bytes() == original
+        assert list(tmp_path.glob(".report.parquet.*.tmp")) == []
+
     def test_save_empty_report_csv_creates_artifact(self, tmp_path):
         report = dataprof.profile({})
         path = tmp_path / "empty.csv"
@@ -424,18 +617,17 @@ class TestSaveFormats:
         assert report.save(path) is report
         assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
 
-    def test_save_parquet(self, report):
+    def test_save_parquet(self, report, tmp_path):
         pytest.importorskip("pyarrow")
         pq = pytest.importorskip("pyarrow.parquet")
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-            path = f.name
-        try:
-            result = report.save(path)
-            assert result is report
-            table = pq.read_table(path)
-            assert table.num_rows == report.columns
-        finally:
-            os.unlink(path)
+
+        path = tmp_path / "report.parquet"
+
+        result = report.save(path)
+
+        assert result is report
+        table = pq.read_table(path)
+        assert table.num_rows == report.columns
 
 
 def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
