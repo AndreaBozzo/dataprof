@@ -545,3 +545,277 @@ async fn test_profiler_profile_stream_finished_event_counts_bytes_stop_condition
         "finished event total_rows must match execution.rows_processed"
     );
 }
+
+/// A progress channel that is full when profiling ends must still deliver the
+/// `Finished` event to a consumer draining the channel (gh #974).
+#[tokio::test(flavor = "current_thread")]
+async fn test_progress_channel_capacity_one_receives_finished_event() {
+    for stop_cond in [
+        None,
+        Some(StopCondition::MaxRows(150)),
+        Some(StopCondition::MaxBytes(50_000)),
+    ] {
+        let mut csv_data = String::from("id,value\n");
+        for i in 0..10_000 {
+            csv_data.push_str(&format!("{},val_{}\n", i, i));
+        }
+
+        let source = BytesSource::new(
+            bytes::Bytes::from(csv_data.clone()),
+            AsyncSourceInfo::new("bytes-csv", FileFormat::Csv)
+                .size_hint(Some(csv_data.len() as u64)),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let consumer_task = tokio::spawn(async move {
+            let mut finished_received = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    finished_received = true;
+                    break;
+                }
+            }
+            finished_received
+        });
+
+        let mut profiler = Profiler::new()
+            .progress_interval(Duration::ZERO)
+            .progress_channel(tx);
+
+        if let Some(ref cond) = stop_cond {
+            profiler = profiler.stop_when(cond.clone());
+        }
+
+        let report = profiler.profile_stream(source).await.unwrap();
+        assert!(report.execution.rows_processed > 0);
+
+        drop(profiler);
+
+        let finished_received = consumer_task.await.unwrap();
+        assert!(
+            finished_received,
+            "Finished event must be received by channel consumer for stop_condition {:?}",
+            stop_cond
+        );
+    }
+}
+
+/// A stream that fails during profiling must never emit `ProgressEvent::Finished`.
+#[tokio::test]
+async fn test_progress_channel_does_not_emit_finished_on_error() {
+    // 1. Duplicate CSV headers error
+    {
+        let csv = b"x,x\n1,2\n";
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(csv),
+            AsyncSourceInfo::new("duplicate-header-csv", FileFormat::Csv),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let consumer = tokio::spawn(async move {
+            let mut got_finished = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    got_finished = true;
+                }
+            }
+            got_finished
+        });
+
+        let res = Profiler::new()
+            .progress_channel(tx)
+            .profile_stream(source)
+            .await;
+
+        assert!(
+            res.is_err(),
+            "profiling should fail due to duplicate headers"
+        );
+        let got_finished = consumer.await.unwrap();
+        assert!(
+            !got_finished,
+            "Finished event must not be emitted when profiling fails on duplicate headers"
+        );
+    }
+
+    // 2. Unterminated quote error in strict CSV mode
+    {
+        let csv = b"id,val\n1,\"unterminated\n2,normal\n";
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(csv),
+            AsyncSourceInfo::new("unterminated-quote-csv", FileFormat::Csv),
+        );
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let consumer = tokio::spawn(async move {
+            let mut got_finished = false;
+            while let Some(event) = rx.recv().await {
+                if let dataprof::ProgressEvent::Finished { .. } = event {
+                    got_finished = true;
+                }
+            }
+            got_finished
+        });
+
+        let res = Profiler::new()
+            .csv_flexible(false)
+            .progress_channel(tx)
+            .profile_stream(source)
+            .await;
+
+        assert!(
+            res.is_err(),
+            "profiling should fail due to unterminated quote in strict mode"
+        );
+        let got_finished = consumer.await.unwrap();
+        assert!(
+            !got_finished,
+            "Finished event must not be emitted when profiling fails on unterminated quote"
+        );
+    }
+}
+
+/// A progress channel whose capacity is 1 must deliver `Finished` without blocking
+/// or timing out even when the caller drains the channel only after profiling completes (gh #974).
+#[tokio::test]
+async fn test_progress_channel_drained_after_profile_under_timeout() {
+    let mut csv_data = String::from("id,value\n");
+    for i in 0..10_000 {
+        csv_data.push_str(&format!("{},val_{}\n", i, i));
+    }
+
+    let source = BytesSource::new(
+        bytes::Bytes::from(csv_data.clone()),
+        AsyncSourceInfo::new("drained-after-csv", FileFormat::Csv)
+            .size_hint(Some(csv_data.len() as u64)),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    let report = tokio::time::timeout(Duration::from_secs(2), profiler.profile_stream(source))
+        .await
+        .expect("profiling must not deadlock or time out while channel is not yet drained")
+        .unwrap();
+
+    assert!(report.execution.rows_processed > 0);
+
+    let mut finished_received = false;
+    while let Ok(event) = rx.try_recv() {
+        if let dataprof::ProgressEvent::Finished { .. } = event {
+            finished_received = true;
+            break;
+        }
+    }
+    assert!(
+        finished_received,
+        "Finished event must be received by consumer draining after profiling completes"
+    );
+}
+
+/// A facade-bracketed columnar file route must also deliver `Finished` using the reserved permit.
+#[test]
+fn test_progress_channel_file_route_receives_finished_event() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let report = Profiler::new()
+        .engine(dataprof::EngineType::Columnar)
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx)
+        .analyze_file(tmp.path())
+        .unwrap();
+
+    assert_eq!(report.execution.rows_processed, 100);
+
+    let mut finished_received = false;
+    while let Ok(event) = rx.try_recv() {
+        if let dataprof::ProgressEvent::Finished { .. } = event {
+            finished_received = true;
+            break;
+        }
+    }
+    assert!(
+        finished_received,
+        "Finished event must be delivered on file routes via reserved permit"
+    );
+}
+
+/// Reusing a profiler must reserve fresh terminal capacity for every run.
+#[test]
+fn test_progress_channel_reused_profiler_receives_finished_each_run() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    for run in 1..=2 {
+        let report = profiler.analyze_file(tmp.path()).unwrap();
+        assert_eq!(report.execution.rows_processed, 100);
+
+        let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, dataprof::ProgressEvent::Finished { .. })),
+            "run {run} must receive a freshly reserved Finished event; got {events:?}"
+        );
+    }
+}
+
+/// Reusing a facade-bracketed file route must reserve fresh terminal capacity for every run.
+#[test]
+fn test_progress_channel_reused_columnar_file_route_receives_finished_each_run() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .engine(dataprof::EngineType::Columnar)
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    for run in 1..=2 {
+        let report = profiler.analyze_file(tmp.path()).unwrap();
+        assert_eq!(report.execution.rows_processed, 100);
+
+        let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, dataprof::ProgressEvent::Finished { .. })),
+            "columnar run {run} must receive a freshly reserved Finished event; got {events:?}"
+        );
+    }
+}
+
+/// Preserve the public enum constructor accepted before gh #974.
+#[test]
+fn test_progress_sink_channel_variant_accepts_sender() {
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let _sink = dataprof::ProgressSink::Channel(tx);
+}

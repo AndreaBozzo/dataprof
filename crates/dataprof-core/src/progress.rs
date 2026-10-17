@@ -52,6 +52,17 @@ impl ProgressSink {
         !matches!(self, Self::None)
     }
 
+    /// Reserve channel capacity for a terminal event without changing the
+    /// public shape of the Channel variant.
+    #[doc(hidden)]
+    #[cfg(feature = "async-streaming")]
+    pub fn reserve_terminal(&self) -> Option<tokio::sync::mpsc::OwnedPermit<ProgressEvent>> {
+        match self {
+            Self::Channel(tx) => tx.clone().try_reserve_owned().ok(),
+            _ => None,
+        }
+    }
+
     /// Deliver one event. A full channel drops it rather than block profiling.
     pub fn emit(&self, event: ProgressEvent) {
         match self {

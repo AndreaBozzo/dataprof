@@ -334,6 +334,7 @@ impl AsyncStreamingProfiler {
         let (
             _headers,
             mut column_stats,
+            mut progress_tracker,
             total_rows,
             sampled_rows,
             total_bytes,
@@ -434,6 +435,7 @@ impl AsyncStreamingProfiler {
             execution = execution.with_unterminated_quote(ended_inside_quotes);
         }
 
+        let is_truncated = truncation_reason.is_some();
         if let Some(reason) = truncation_reason {
             execution = execution.with_truncation(reason);
         } else if total_rows > 0 && sampled_rows < total_rows {
@@ -443,6 +445,8 @@ impl AsyncStreamingProfiler {
             // scan look like an interrupted one.
             execution = execution.with_sampling(sampled_rows as f64 / total_rows as f64);
         }
+
+        progress_tracker.emit_finished(is_truncated);
 
         Ok(ReportAssembler::new(data_source, execution)
             .columns(column_profiles)
@@ -1055,6 +1059,7 @@ impl AsyncStreamingProfiler {
         (
             Vec<String>,
             StreamingColumnCollection,
+            ProgressTracker,
             usize,
             usize,
             u64,
@@ -1277,11 +1282,10 @@ impl AsyncStreamingProfiler {
             sampled_rows += 1;
         }
 
-        progress_tracker.emit_finished(truncation_reason.is_some());
-
         Ok((
             headers,
             column_stats,
+            progress_tracker,
             total_rows,
             sampled_rows,
             total_bytes,

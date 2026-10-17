@@ -353,6 +353,12 @@ impl Profiler {
     }
 
     /// Set an async channel for progress events (requires `async-streaming` feature).
+    ///
+    /// Intermediate events (such as [`ProgressEvent::ChunkProcessed`]) are best-effort
+    /// and dropped if the channel is full rather than blocking profiling.
+    /// The terminal [`ProgressEvent::Finished`] event uses a slot reserved up front via
+    /// `try_reserve_owned()`, guaranteeing delivery without blocking even when the consumer
+    /// drains the channel only after profiling completes.
     #[cfg(feature = "async-streaming")]
     pub fn progress_channel(mut self, tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
         self.progress_sink = ProgressSink::Channel(tx);
@@ -396,6 +402,12 @@ impl Profiler {
         // finish. A sink on `Auto` routes CSV to the incremental engine.
         let bracket = self.progress_sink.is_active()
             && !(is_csv && !matches!(self.config.engine, EngineType::Columnar));
+        #[cfg(feature = "async-streaming")]
+        let terminal_permit = if bracket {
+            self.progress_sink.reserve_terminal()
+        } else {
+            None
+        };
         let source_bytes = std::fs::metadata(path).ok().map(|meta| meta.len());
         let started = std::time::Instant::now();
         if bracket {
@@ -430,12 +442,20 @@ impl Profiler {
                 } else {
                     0
                 });
-            self.progress_sink.emit(ProgressEvent::Finished {
+            let event = ProgressEvent::Finished {
                 total_rows: execution.rows_processed,
                 total_bytes,
                 elapsed: started.elapsed(),
                 truncated: !execution.source_exhausted,
-            });
+            };
+            #[cfg(feature = "async-streaming")]
+            if let Some(permit) = terminal_permit {
+                permit.send(event);
+            } else {
+                self.progress_sink.emit(event);
+            }
+            #[cfg(not(feature = "async-streaming"))]
+            self.progress_sink.emit(event);
         }
         Ok(report)
     }
