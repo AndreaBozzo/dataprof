@@ -107,6 +107,8 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
         failing_cols: set[_Any] = set()
         for i in range(len(df.columns)):
             col = df.iloc[:, i]
+            if col.dtype != object:
+                continue
             name = df.columns[i]
             try:
                 pyarrow.Array.from_pandas(col)
@@ -116,7 +118,7 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
         if not failing_cols:
             raise
 
-        df_fixed = df.copy()
+        df_fixed = df.copy(deep=False)
         for name in failing_cols:
             col = df[name]
             try:

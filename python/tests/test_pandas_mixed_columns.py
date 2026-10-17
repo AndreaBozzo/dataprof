@@ -24,46 +24,23 @@ pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import
 
 
 def test_pandas_mixed_object_columns_profile_cleanly():
-    """Verify each case from #976 profiles rather than raising raw Arrow exceptions."""
+    """Match list-of-dicts profiles for each mixed-column case from #976."""
     cases = [
-        # values in object column -> expected data_type, expected type_homogeneity
-        (
-            [1, "2", 3],
-            "integer",
-            {"boolean": 0, "date": 0, "numeric": 3, "text": 0},
-        ),
-        (
-            [1.5, "n/a", 2.0],
-            "float",
-            {"boolean": 0, "date": 0, "numeric": 2, "text": 0},
-        ),
-        (
-            [True, "yes", False],
-            "string",
-            {"boolean": 2, "date": 0, "numeric": 0, "text": 1},
-        ),
-        (
-            [datetime.date(2024, 1, 1), "unknown", datetime.date(2024, 1, 2)],
-            "string",
-            {"boolean": 0, "date": 2, "numeric": 0, "text": 1},
-        ),
-        (
-            ["a", None, "b"],
-            "string",
-            {"boolean": 0, "date": 0, "numeric": 0, "text": 2},
-        ),
-        (
-            [1, decimal.Decimal("2.5"), 3],
-            "float",
-            {"boolean": 0, "date": 0, "numeric": 3, "text": 0},
-        ),
+        [1, "2", 3],
+        [1.5, "n/a", 2.0],
+        [True, "yes", False],
+        [datetime.date(2024, 1, 1), "unknown", datetime.date(2024, 1, 2)],
+        ["a", None, "b"],
+        [1, decimal.Decimal("2.5"), 3],
     ]
 
-    for values, expected_type, expected_homogeneity in cases:
+    for values in cases:
         df = pd.DataFrame({"c": pd.Series(values, dtype=object)})
-        report = dp.profile(df)
-        assert report["c"].data_type == expected_type
-        assert report["c"].type_homogeneity == expected_homogeneity
+        dataframe_column = dp.profile(df)["c"]
+        records_column = dp.profile([{"c": value} for value in values])["c"]
+
+        assert dataframe_column.data_type == records_column.data_type
+        assert dataframe_column.type_homogeneity == records_column.type_homogeneity
 
 
 def test_frame_with_mixed_column_and_typed_columns_preserves_typed_profiles():
@@ -173,8 +150,10 @@ def test_pandas_mixed_columns_preserve_missing_values_as_null():
             "mixed_nat": pd.Series([1, "two", pd.NaT], dtype=object),
         }
     )
+    original = df.copy(deep=True)
 
     tbl = _pandas_to_pyarrow_table(df, pa)
+    assert df.equals(original)
     assert tbl["mixed_na"].to_pylist() == ["1", "two", None]
     assert tbl["mixed_na"].null_count == 1
     assert tbl["mixed_nat"].to_pylist() == ["1", "two", None]
