@@ -168,6 +168,10 @@ def test_restored_quality_prints_the_score_it_returns():
 def test_legacy_summary_export_agrees_with_what_was_loaded():
     summary = dataprof.profile({"x": ["a", "1", None]}).to_dict()
     summary["columns"][0]["type_homogeneity"] = {"numeric": 1, "text": 1}
+    with pytest.raises(ValueError, match=r"'columns\[0\]\.type_homogeneity' must be"):
+        dataprof.ProfileReport.from_dict(summary)
+
+    summary["columns"][0]["type_homogeneity"] = None
     restored = dataprof.ProfileReport.from_dict(summary)
     assert restored["x"].type_homogeneity is None
     for exported in (restored.to_dict(), json.loads(restored.to_json())):

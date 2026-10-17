@@ -10,7 +10,7 @@ import math
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
-from ._columns import _homogeneity_counts
+from ._columns import _LEXICAL_CLASS_ORDER, _homogeneity_counts
 from ._report_schema import _QUALITY_DIMENSIONS
 
 # The states a `quality_status` document may declare, and whether each one
@@ -121,15 +121,28 @@ def _is_count(value: Any) -> bool:
 
 def _is_finite_number(value: Any) -> bool:
     # bool before int: bool is an int subclass, and True == 1.
-    return (
-        isinstance(value, int | float)
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
 
 
 def _is_list_of_mappings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(entry, dict) for entry in value)
+
+
+def _is_list_of_dimension_names(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(entry, str) and entry in _QUALITY_DIMENSIONS for entry in value
+    )
+
+
+def _is_homogeneity_counts(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(name in value and _is_count(value[name]) for name in _LEXICAL_CLASS_ORDER)
 
 
 def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
@@ -148,7 +161,17 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     for name, field in vars(ColumnProfile).items():
         if isinstance(field, _Field) and field._document_section == "stats":
             values[name] = stats.get(name) if stats is not None else None
-    values["type_homogeneity"] = _homogeneity_counts(document.get("type_homogeneity"))
+    homogeneity = _read_field(
+        document,
+        "type_homogeneity",
+        f"{path}.type_homogeneity",
+        "a four-count mapping or null",
+        lambda value: value is None or _is_homogeneity_counts(value),
+        None,
+    )
+    values["type_homogeneity"] = (
+        _homogeneity_counts(homogeneity) if homogeneity is not None else None
+    )
     patterns = _read_field(
         document,
         "patterns",
@@ -182,7 +205,16 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
 
 def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     values = dict(document)
-    values["overall_quality_score"] = document.get("overall_score")
+    overall_score = _read_field(
+        document,
+        "overall_score",
+        "quality.overall_score",
+        "a finite number or null",
+        lambda value: value is None or _is_finite_number(value),
+        None,
+    )
+    values["overall_score"] = overall_score
+    values["overall_quality_score"] = float(overall_score) if overall_score is not None else None
     values["low_sample_warning"] = _read_field(
         document,
         "low_sample_warning",
@@ -191,15 +223,17 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
         _is_bool,
         False,
     )
-    values["assessed_dimensions"] = _read_field(
-        document,
-        "assessed_dimensions",
-        "quality.assessed_dimensions",
-        "a list",
-        lambda value: isinstance(value, list),
-        [],
+    values["assessed_dimensions"] = list(
+        _read_field(
+            document,
+            "assessed_dimensions",
+            "quality.assessed_dimensions",
+            "a list of known dimension names",
+            _is_list_of_dimension_names,
+            [],
+        )
     )
-    values["dimension_scores"] = _read_field(
+    dimension_scores = _read_field(
         document,
         "dimension_scores",
         "quality.dimension_scores",
@@ -207,6 +241,15 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
         lambda value: isinstance(value, dict),
         dict.fromkeys(_QUALITY_DIMENSIONS),
     )
+    read_scores = dict(dimension_scores)
+    for dim, score in dimension_scores.items():
+        if score is not None and not _is_finite_number(score):
+            raise ValueError(
+                f"from_dict(): 'quality.dimension_scores.{dim}' must be a finite number or null, "
+                f"got {score!r}."
+            )
+        read_scores[dim] = float(score) if score is not None else None
+    values["dimension_scores"] = read_scores
     values["score_weights"] = _read_score_weights(document)
     return _MappingAccessor(values)
 
@@ -326,7 +369,9 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
         None,
     )
     values["quality"] = _quality_accessor(quality) if quality is not None else None
-    values["quality_score"] = quality.get("overall_score") if quality is not None else None
+    values["quality_score"] = (
+        values["quality"].get("overall_quality_score") if values["quality"] is not None else None
+    )
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if quality is not None else None
     )
