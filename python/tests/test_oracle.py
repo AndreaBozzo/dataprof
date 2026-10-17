@@ -146,6 +146,19 @@ def _routes(case: dict[str, Any], directory: Path) -> Iterator[Route]:
             yield "parquet", lambda path=path: dp.profile(str(path))
 
 
+def _faithful(actual: Any, wanted: str) -> bool:
+    """Whether `actual` is a faithful binary64 rendering of the exact `wanted`.
+
+    Past 2^53 adjacent floats are hundreds apart, so neither a 4dp nor a
+    relative tolerance says anything there: the bound is half an ulp of the
+    exact value, the error rounding to the nearest float may carry.
+    """
+    if actual is None:
+        return False
+    exact = Fraction(wanted)
+    return abs(Fraction(actual) - exact) <= Fraction(math.ulp(float(exact))) / 2
+
+
 def _close(actual: Any, wanted: str, relative: bool) -> bool:
     if actual is None:
         return False
@@ -162,11 +175,13 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
     expected = case.get("expected") or case["expected_common_markers"]
     found: list[Mismatch] = []
 
-    def compare(field: str, actual: Any, wanted: Any, relative: bool = False) -> None:
+    def compare(
+        field: str, actual: Any, wanted: Any, relative: bool = False, faithful: bool = False
+    ) -> None:
         if wanted is None:
             good = actual is None
         elif isinstance(wanted, str) and field != "data_type":
-            good = _close(actual, wanted, relative)
+            good = _faithful(actual, wanted) if faithful else _close(actual, wanted, relative)
         else:
             good = actual == wanted
         if not good:
@@ -197,11 +212,7 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
     compare("variance", stats.get("variance"), variance, relative=extreme)
     compare("std_dev", stats.get("std_dev"), expected["std_dev_4dp"], relative=extreme)
     if wide:
-        exact = Fraction(expected["mean_exact"])
-        bound = Fraction(math.ulp(float(exact))) / 2
-        mean = stats.get("mean")
-        if mean is None or abs(Fraction(mean) - exact) > bound:
-            found.append((case["id"], route, "mean", str(exact), mean))
+        compare("mean", stats.get("mean"), expected["mean_exact"], faithful=True)
     else:
         compare("mean", stats.get("mean"), expected["mean_4dp"], relative=extreme)
     for name in ("min", "max"):
@@ -218,15 +229,15 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
         return found
     compare("skewness", stats.get("skewness"), expected["adjusted_sample_skewness_4dp"])
     compare("kurtosis", stats.get("kurtosis"), expected["adjusted_sample_excess_kurtosis_4dp"])
-    compare("median", stats.get("median"), expected["median_exact"], relative=wide)
-    compare("mode", stats.get("mode"), expected["mode_exact"], relative=wide)
+    compare("median", stats.get("median"), expected["median_exact"], faithful=wide)
+    compare("mode", stats.get("mode"), expected["mode_exact"], faithful=wide)
     compare("outlier_count", stats.get("outlier_count"), expected["outlier_count"])
     quartiles = stats.get("quartiles")
     if expected["quartiles_4dp"] is None:
         compare("quartiles", quartiles, None)
     else:
         for name, value in expected["quartiles_4dp"].items():
-            compare(f"quartiles.{name}", (quartiles or {}).get(name), value, relative=wide)
+            compare(f"quartiles.{name}", (quartiles or {}).get(name), value, faithful=wide)
     return found
 
 
@@ -249,13 +260,14 @@ def test_every_route_matches_the_independent_answer(case: dict[str, Any], tmp_pa
 
     unexplained = [m for m in mismatches if _owner(m) is None]
     explained = {(m[0], m[1], m[2]) for m in mismatches if _owner(m) is not None}
+    # A "*" entry claims every route, so each route it covers must still
+    # disagree: a fix on one route narrows the entry instead of hiding there.
     stale = [
-        key
+        (case["id"], route, key[2])
         for key in KNOWN
         if key[0] == case["id"]
-        and not any(
-            (case["id"], route, key[2]) in explained for _, route in seen if key[1] in ("*", route)
-        )
+        for _, route in seen
+        if key[1] in ("*", route) and (case["id"], route, key[2]) not in explained
     ]
     report = "\n".join(
         f"  {route}: {field} expected {wanted!r}, got {actual!r}"

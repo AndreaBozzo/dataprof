@@ -138,11 +138,51 @@ fn number(text: &str) -> f64 {
     }
 }
 
-/// An exact rational over i128, for integer cases past 2^53.
+/// An exact rational over i128, for integer cases past 2^53: an integer, a
+/// fraction such as `"36893488147419103227/2"`, or a decimal such as
+/// `"18446744073709551612.7500"`.
 fn rational(text: &str) -> (i128, i128) {
-    match text.split_once('/') {
-        Some((num, den)) => (num.parse().unwrap(), den.parse().unwrap()),
+    if let Some((num, den)) = text.split_once('/') {
+        return (num.parse().unwrap(), den.parse().unwrap());
+    }
+    match text.split_once('.') {
+        Some((whole, fraction)) => (
+            format!("{whole}{fraction}").parse().unwrap(),
+            10_i128.pow(fraction.len() as u32),
+        ),
         None => (text.parse().unwrap(), 1),
+    }
+}
+
+/// A reported number as an exact integer when it is one. A JSON integer is
+/// read as an integer: `as_f64` would round `9007199254740993` to a
+/// neighbour, and a fixed #877 would then still read as wrong.
+fn exact_integer(value: &Value) -> Option<i128> {
+    value
+        .as_i64()
+        .map(i128::from)
+        .or_else(|| value.as_u64().map(i128::from))
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|f| f.fract() == 0.0 && f.abs() < 1e38)
+                .map(|f| f as i128)
+        })
+}
+
+/// Whether `actual` is a faithful binary64 rendering of the exact `wanted`.
+///
+/// Past 2^53 adjacent floats are hundreds apart, so neither a 4dp nor a
+/// relative tolerance says anything there: the bound is half an ulp of the
+/// exact value, the error rounding to the nearest float may carry.
+fn faithful(actual: &Value, wanted: &str) -> bool {
+    let (num, den) = rational(wanted);
+    let target = num as f64 / den as f64;
+    match exact_integer(actual) {
+        Some(a) => (a * den - num).abs() * 2 <= (ulp(target) as i128) * den,
+        None => actual
+            .as_f64()
+            .is_some_and(|a| (a - target).abs() <= ulp(target)),
     }
 }
 
@@ -177,6 +217,19 @@ impl Checker<'_> {
                     (a - target).abs() <= ABS_TOLERANCE
                 }
             }),
+            other => actual == other,
+        };
+        if !good {
+            self.record(field, wanted, actual);
+        }
+    }
+
+    /// Compare against an exact value within half an ulp; for values past
+    /// 2^53, where 4dp and relative tolerances say nothing.
+    fn compare_faithful(&mut self, field: &str, actual: &Value, wanted: &Value) {
+        let good = match wanted {
+            Value::Null => actual.is_null(),
+            Value::String(text) => faithful(actual, text),
             other => actual == other,
         };
         if !good {
@@ -254,24 +307,13 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
     if wide {
         // Past 2^53 every f64 is an integer, and an exact mean can fall between
         // two of them; either neighbour is faithful, so the bound is half an ulp.
-        let wanted = expected["mean_exact"].as_str().unwrap();
-        let (num, den) = rational(wanted);
-        let mean = &stats["mean"];
-        let faithful = mean
-            .as_f64()
-            .is_some_and(|m| ((m as i128) * den - num).abs() * 2 <= (ulp(m) as i128) * den);
-        if !faithful {
-            checker.record("mean", wanted, mean);
-        }
+        checker.compare_faithful("mean", &stats["mean"], &expected["mean_exact"]);
         // An exact integer extreme needs an integer-preserving value;
         // comparing after a float conversion would erase the defect (#877).
         for name in ["min", "max"] {
             let wanted = expected[format!("{name}_exact")].as_str().unwrap();
             let actual = &stats[name];
-            if !actual
-                .as_f64()
-                .is_some_and(|a| (a as i128, 1) == rational(wanted))
-            {
+            if exact_integer(actual) != Some(rational(wanted).0) {
                 checker.record(name, wanted, actual);
             }
         }
@@ -297,9 +339,14 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
         &expected["adjusted_sample_excess_kurtosis_4dp"],
         false,
     );
-    checker.compare("median", &stats["median"], &expected["median_exact"], wide);
     let mode = stats.get("mode").cloned().unwrap_or(Value::Null);
-    checker.compare("mode", &mode, &expected["mode_exact"], wide);
+    if wide {
+        checker.compare_faithful("median", &stats["median"], &expected["median_exact"]);
+        checker.compare_faithful("mode", &mode, &expected["mode_exact"]);
+    } else {
+        checker.compare("median", &stats["median"], &expected["median_exact"], false);
+        checker.compare("mode", &mode, &expected["mode_exact"], false);
+    }
     checker.compare(
         "outlier_count",
         &stats["outlier_count"],
@@ -315,12 +362,13 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
         ),
         Some(quartiles) => {
             for (name, wanted) in quartiles {
-                checker.compare(
-                    &format!("quartiles.{name}"),
-                    &stats["quartiles"][name],
-                    wanted,
-                    wide,
-                );
+                let field = format!("quartiles.{name}");
+                let actual = &stats["quartiles"][name];
+                if wide {
+                    checker.compare_faithful(&field, actual, wanted);
+                } else {
+                    checker.compare(&field, actual, wanted, false);
+                }
             }
         }
     }
@@ -360,17 +408,20 @@ fn every_file_engine_matches_the_independent_answer() {
             )
         })
         .collect();
+    // A "*" entry claims every route, so each route it covers must still
+    // disagree: a fix on one route narrows the entry instead of hiding there.
     let stale: Vec<String> = KNOWN
         .iter()
-        .filter(|(case, route, field, _)| {
-            let ran = runs
-                .iter()
-                .any(|(c, r)| c == case && (*route == "*" || route == r));
-            ran && !mismatches.iter().any(|m| {
-                m.case == *case && m.field == *field && (*route == "*" || *route == m.route)
-            })
+        .flat_map(|(case, route, field, issue)| {
+            runs.iter()
+                .filter(move |(c, r)| c == case && (*route == "*" || route == r))
+                .filter(|(c, r)| {
+                    !mismatches
+                        .iter()
+                        .any(|m| m.case == *c && m.route == *r && m.field == *field)
+                })
+                .map(move |(_, r)| format!("  {case} via {r}: {field} ({issue})"))
         })
-        .map(|(case, route, field, issue)| format!("  {case} via {route}: {field} ({issue})"))
         .collect();
 
     assert!(
@@ -391,4 +442,33 @@ fn every_file_engine_matches_the_independent_answer() {
             .len(),
         20
     );
+}
+
+/// The comparison helpers for values past 2^53, on inputs the current data
+/// cannot reach: an exact JSON integer (what a fixed #877 would report), and a
+/// median a million away from the truth.
+#[test]
+fn the_wide_value_helpers_are_exact() {
+    let exact = json!(9_007_199_254_740_993_u64);
+    assert_eq!(exact_integer(&exact), Some(9_007_199_254_740_993));
+    assert!(faithful(&exact, "9007199254740993"));
+    // Its nearest float is a faithful rendering too; a neighbour two ulps off is not.
+    assert!(faithful(
+        &json!(9_007_199_254_740_992.0),
+        "9007199254740993"
+    ));
+    assert!(!faithful(
+        &json!(9_007_199_254_740_996.0),
+        "9007199254740993"
+    ));
+
+    let median = "1759700000123456794";
+    assert!(faithful(&json!(1.759_700_000_123_456_8e18), median));
+    assert!(!faithful(&json!(1.759_700_000_123_456_8e18 + 1e6), median));
+
+    assert_eq!(
+        rational("18446744073709551612.7500"),
+        (184_467_440_737_095_516_127_500, 10_000)
+    );
+    assert_eq!(rational("-5/3"), (-5, 3));
 }
