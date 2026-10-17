@@ -12,6 +12,8 @@ pub enum SemanticHintKind {
     Identifier,
     /// A [`SemanticHints::temporal_columns`] entry.
     Temporal,
+    /// A column named by a [`SemanticHints::temporal_pairs`] entry.
+    TemporalPair,
 }
 
 impl SemanticHintKind {
@@ -21,6 +23,7 @@ impl SemanticHintKind {
             Self::Positive => "positive_columns",
             Self::Identifier => "identifier_columns",
             Self::Temporal => "temporal_columns",
+            Self::TemporalPair => "temporal_pairs",
         }
     }
 }
@@ -66,6 +69,8 @@ pub struct SemanticHints {
     pub positive_columns: Vec<String>,
     pub identifier_columns: Vec<String>,
     pub temporal_columns: Vec<String>,
+    /// Start/end column pairs declared by the caller, compared as given.
+    pub temporal_pairs: Vec<(String, String)>,
 }
 
 impl SemanticHints {
@@ -74,6 +79,7 @@ impl SemanticHints {
             positive_columns,
             identifier_columns,
             temporal_columns: Vec::new(),
+            temporal_pairs: Vec::new(),
         }
     }
 
@@ -82,10 +88,18 @@ impl SemanticHints {
         self
     }
 
+    /// Declare start/end column pairs for timeliness to compare as given,
+    /// such as `valid_from`/`valid_until`, which no role word pairs by name.
+    pub fn with_temporal_pairs(mut self, temporal_pairs: Vec<(String, String)>) -> Self {
+        self.temporal_pairs = temporal_pairs;
+        self
+    }
+
     pub fn is_empty(&self) -> bool {
         self.positive_columns.is_empty()
             && self.identifier_columns.is_empty()
             && self.temporal_columns.is_empty()
+            && self.temporal_pairs.is_empty()
     }
 
     pub fn is_identifier_column(&self, column_name: &str) -> bool {
@@ -106,7 +120,21 @@ impl SemanticHints {
             .any(|candidate| candidate == column_name)
     }
 
-    /// Every `(kind, column_name)` pair across all three hint lists.
+    /// Each column named by a declared pair, once, in the order first named.
+    pub fn temporal_pair_columns(&self) -> Vec<&str> {
+        let mut columns: Vec<&str> = Vec::new();
+        for (start, end) in &self.temporal_pairs {
+            for name in [start.as_str(), end.as_str()] {
+                if !columns.contains(&name) {
+                    columns.push(name);
+                }
+            }
+        }
+        columns
+    }
+
+    /// Every `(kind, column_name)` pair across the hint lists, with each column
+    /// of a declared pair listed once.
     pub fn iter(&self) -> impl Iterator<Item = (SemanticHintKind, &str)> {
         let positive = self
             .positive_columns
@@ -120,7 +148,11 @@ impl SemanticHints {
             .temporal_columns
             .iter()
             .map(|c| (SemanticHintKind::Temporal, c.as_str()));
-        positive.chain(identifier).chain(temporal)
+        let pairs = self
+            .temporal_pair_columns()
+            .into_iter()
+            .map(|c| (SemanticHintKind::TemporalPair, c));
+        positive.chain(identifier).chain(temporal).chain(pairs)
     }
 
     /// Fail loudly when a hint names a column that is not in the schema.
@@ -129,6 +161,14 @@ impl SemanticHints {
     /// hint that cannot bind must not vanish: a typo'd or stale column name is a
     /// mistake the profiler should surface, not silently discard.
     pub fn validate_names(&self, column_names: &[&str]) -> Result<(), DataProfilerError> {
+        // A column compared with itself can never be out of order, so such a
+        // pair would report a clean check that never happened.
+        if let Some((name, _)) = self.temporal_pairs.iter().find(|(start, end)| start == end) {
+            return Err(DataProfilerError::InvalidSemanticHint {
+                message: format!("temporal_pairs names '{name}' as both start and end"),
+                suggestion: "Pair a start column with a different end column.".to_string(),
+            });
+        }
         let mut unknown: Vec<(SemanticHintKind, &str)> = self
             .iter()
             .filter(|(_, name)| !column_names.contains(name))
@@ -167,14 +207,17 @@ impl SemanticHints {
     /// effective while producing neither metrics nor binding evidence.
     pub fn validate_quality_usage(&self, quality_computed: bool) -> Result<(), DataProfilerError> {
         if quality_computed
-            || (self.positive_columns.is_empty() && self.temporal_columns.is_empty())
+            || (self.positive_columns.is_empty()
+                && self.temporal_columns.is_empty()
+                && self.temporal_pairs.is_empty())
         {
             return Ok(());
         }
 
         Err(DataProfilerError::InvalidSemanticHint {
-            message: "positive_columns and temporal_columns require the Quality metric pack"
-                .to_string(),
+            message:
+                "positive_columns, temporal_columns and temporal_pairs require the Quality metric pack"
+                    .to_string(),
             suggestion: "Include MetricPack::Quality (\"quality\" in Python), or remove the value-driven hint. Identifier hints remain usable without quality because they affect column typing."
                 .to_string(),
         })
@@ -210,9 +253,11 @@ impl SemanticHints {
 
         Err(DataProfilerError::InvalidSemanticHint {
             message: format!("semantic hint(s) bound to no matching value: {details}"),
-            suggestion: "positive_columns need numeric values; temporal_columns need date values. \
+            suggestion:
+                "positive_columns need numeric values; temporal_columns and temporal_pairs \
+                 need date values. \
                  Fix the column choice or remove the hint."
-                .to_string(),
+                    .to_string(),
         })
     }
 }

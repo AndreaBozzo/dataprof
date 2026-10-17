@@ -181,6 +181,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
+        declared_pairs: &[(String, String)],
         column_profiles: &[ColumnProfile],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
         let summary = self.calculate_date_summary(data, temporal_columns);
@@ -189,7 +190,12 @@ impl<'a> TimelinessCalculator<'a> {
         } else {
             (summary.stale_dates as f64 / summary.valid_dates as f64) * 100.0
         };
-        let ordering = Self::count_temporal_violations(data, temporal_columns, column_profiles)?;
+        let ordering = Self::count_temporal_violations(
+            data,
+            temporal_columns,
+            declared_pairs,
+            column_profiles,
+        )?;
 
         Ok(TimelinessMetrics {
             future_dates_count: summary.future_dates,
@@ -282,9 +288,15 @@ impl<'a> TimelinessCalculator<'a> {
     /// left unpaired rather than guessed. Names that share nothing still pair
     /// when they are the only start and the only end, as
     /// `created_at`/`last_updated_at` are.
+    ///
+    /// Declared pairs come first and are compared as given (#942). A column
+    /// named in one takes no part in the pairing by name, which pairs the
+    /// rest: declaring `trip_start`/`trip_end` leaves `trip_start_date` free
+    /// to pair by its own name.
     fn column_pairs<'d>(
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &'d [String],
+        declared_pairs: &'d [(String, String)],
     ) -> Vec<(&'d str, &'d str)> {
         let temporal_pairs = [
             ("start_date", "end_date"),
@@ -302,6 +314,20 @@ impl<'a> TimelinessCalculator<'a> {
         let mut evaluated: HashSet<(&str, &str)> = HashSet::new();
         let mut pairs = Vec::new();
 
+        let declared: HashSet<&str> = declared_pairs
+            .iter()
+            .flat_map(|(start, end)| [start.as_str(), end.as_str()])
+            .collect();
+        for (start_name, end_name) in declared_pairs {
+            if start_name != end_name
+                && data.contains_key(start_name)
+                && data.contains_key(end_name)
+                && evaluated.insert((start_name, end_name))
+            {
+                pairs.push((start_name.as_str(), end_name.as_str()));
+            }
+        }
+
         for (start_col, end_col) in &temporal_pairs {
             // Walk `temporal_columns`, not `data`: the HashMap's iteration order
             // is randomized. A name the caller listed but the data does not
@@ -309,7 +335,7 @@ impl<'a> TimelinessCalculator<'a> {
             let holders = |role: &str| -> Vec<(&'d str, Vec<String>)> {
                 temporal_columns
                     .iter()
-                    .filter(|name| data.contains_key(*name))
+                    .filter(|name| data.contains_key(*name) && !declared.contains(name.as_str()))
                     .filter_map(|name| Some((name.as_str(), words_beside_role(name, role)?)))
                     .collect()
             };
@@ -381,6 +407,7 @@ impl<'a> TimelinessCalculator<'a> {
     fn count_temporal_violations(
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
+        declared_pairs: &[(String, String)],
         column_profiles: &[ColumnProfile],
     ) -> Result<TemporalOrdering, DataProfilerError> {
         let mut violations = 0;
@@ -388,7 +415,7 @@ impl<'a> TimelinessCalculator<'a> {
         let mut compared = Vec::new();
         let profile = |name: &str| column_profiles.iter().find(|profile| profile.name == name);
 
-        for (start_name, end_name) in Self::column_pairs(data, temporal_columns) {
+        for (start_name, end_name) in Self::column_pairs(data, temporal_columns, declared_pairs) {
             let (Some(start_values), Some(end_values)) = (data.get(start_name), data.get(end_name))
             else {
                 continue;
@@ -474,7 +501,7 @@ mod tests {
             data: &HashMap<String, Vec<String>>,
             temporal_columns: &[String],
         ) -> Result<TimelinessMetrics, DataProfilerError> {
-            self.calculate(data, temporal_columns, &whole(data))
+            self.calculate(data, temporal_columns, &[], &whole(data))
         }
     }
 
@@ -755,6 +782,126 @@ mod tests {
                 "{order:?}"
             );
         }
+    }
+
+    /// Metrics with `declared` pairs, over `temporal_columns` as the metrics
+    /// pass them: hinted columns, then the columns of the declared pairs.
+    fn metrics_with_pairs(
+        data: &HashMap<String, Vec<String>>,
+        temporal_columns: &[&str],
+        declared: &[(&str, &str)],
+    ) -> TimelinessMetrics {
+        let named: Vec<String> = temporal_columns
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let declared: Vec<(String, String)> = declared
+            .iter()
+            .map(|(start, end)| (start.to_string(), end.to_string()))
+            .collect();
+        TimelinessCalculator::with_reference_date(&config(), reference())
+            .calculate(data, &named, &declared, &whole(data))
+            .expect("timeliness metrics")
+    }
+
+    fn sorted(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
+        let mut pairs: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(start, end)| (start.as_str(), end.as_str()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn a_declared_pair_is_compared_whatever_its_names() {
+        // #942: no role word fits these names, so they were never compared.
+        let data = HashMap::from([
+            ("valid_from".to_string(), vec!["2024-01-05".to_string()]),
+            ("valid_until".to_string(), vec!["2024-01-01".to_string()]),
+            ("checkin".to_string(), vec!["2024-03-01".to_string()]),
+            ("checkout".to_string(), vec!["2024-03-04".to_string()]),
+        ]);
+        let columns = ["valid_from", "valid_until", "checkin", "checkout"];
+
+        let metrics = metrics_with_pairs(&data, &columns, &[]);
+        assert!(metrics.compared_pairs.is_empty());
+
+        let declared = [("valid_from", "valid_until"), ("checkin", "checkout")];
+        let metrics = metrics_with_pairs(&data, &columns, &declared);
+        assert_eq!(metrics.temporal_pairs_checked, 2);
+        assert_eq!(metrics.temporal_violations, 1);
+        assert_eq!(
+            sorted(&metrics.compared_pairs),
+            [("checkin", "checkout"), ("valid_from", "valid_until")]
+        );
+    }
+
+    #[test]
+    fn a_declared_pair_settles_names_that_are_ambiguous() {
+        // The #913 case, which pairs nothing by name.
+        let data = HashMap::from([
+            ("primary_start".to_string(), vec!["2024-01-01".to_string()]),
+            (
+                "secondary_start".to_string(),
+                vec!["2024-01-03".to_string()],
+            ),
+            ("end".to_string(), vec!["2024-01-02".to_string()]),
+        ]);
+        let metrics = metrics_with_pairs(
+            &data,
+            &["primary_start", "secondary_start", "end"],
+            &[("secondary_start", "end")],
+        );
+
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+        assert_eq!(metrics.temporal_violations, 1);
+        assert_eq!(
+            sorted(&metrics.compared_pairs),
+            [("secondary_start", "end")]
+        );
+    }
+
+    #[test]
+    fn columns_outside_the_declared_pairs_still_pair_by_name() {
+        let data = HashMap::from([
+            ("valid_from".to_string(), vec!["2024-01-01".to_string()]),
+            ("valid_until".to_string(), vec!["2024-01-05".to_string()]),
+            ("billing_start".to_string(), vec!["2024-06-30".to_string()]),
+            ("billing_end".to_string(), vec!["2024-06-01".to_string()]),
+        ]);
+        let metrics = metrics_with_pairs(
+            &data,
+            &["billing_start", "billing_end", "valid_from", "valid_until"],
+            &[("valid_from", "valid_until")],
+        );
+
+        assert_eq!(metrics.temporal_pairs_checked, 2);
+        assert_eq!(metrics.temporal_violations, 1);
+        assert_eq!(
+            sorted(&metrics.compared_pairs),
+            [
+                ("billing_start", "billing_end"),
+                ("valid_from", "valid_until")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_column_in_a_declared_pair_is_not_paired_again_by_name() {
+        // `start` and `end` would pair by name; declaring `start` with
+        // `finish` says which end it has.
+        let data = HashMap::from([
+            ("start".to_string(), vec!["2024-01-03".to_string()]),
+            ("end".to_string(), vec!["2024-01-01".to_string()]),
+            ("finish".to_string(), vec!["2024-01-05".to_string()]),
+        ]);
+        let metrics =
+            metrics_with_pairs(&data, &["start", "end", "finish"], &[("start", "finish")]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+        assert_eq!(metrics.temporal_violations, 0);
+        assert_eq!(sorted(&metrics.compared_pairs), [("start", "finish")]);
     }
 
     // ---------------------------------------------------------------- #378

@@ -1223,6 +1223,7 @@ impl PyProfileReport {
                         SemanticHintKind::Positive => "positive",
                         SemanticHintKind::Identifier => "identifier",
                         SemanticHintKind::Temporal => "temporal",
+                        SemanticHintKind::TemporalPair => "temporal_pair",
                     },
                 )?;
                 dict.set_item("checked_values", b.checked_values)?;

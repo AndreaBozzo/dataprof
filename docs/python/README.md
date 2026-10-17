@@ -110,6 +110,7 @@ dp.profile(
     positive_columns=None,           # list[str] -- columns expected to be non-negative
     identifier_columns=None,         # list[str] -- semantic IDs, not measures
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
+    temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
 ) -> ProfileReport
 ```
 
@@ -652,15 +653,20 @@ marks numeric-looking IDs as semantic strings so numeric stats and outlier
 metrics do not treat them as measures.
 Timeliness scoring assesses confidently inferred date columns by default.
 `temporal_columns` adds columns that inference cannot identify confidently, such
-as mixed-format date strings.
+as mixed-format date strings. `temporal_pairs=[("valid_from", "valid_until")]`
+declares start/end pairs that timeliness compares row by row, for names no role
+word pairs; the remaining temporal columns are still paired by name.
 
 Hints are validated, never silently dropped. A hint that names a missing column
 raises `ValueError` listing the unmatched names and the available columns; a
 `positive_columns` hint on a column with no numeric values, or a
-`temporal_columns` hint on a column with no dates, is likewise rejected.
+`temporal_columns` hint on a column with no dates, is likewise rejected. A
+`temporal_pairs` entry is checked the same way: a missing column, or a column
+with no dates, raises `ValueError` naming `temporal_pairs`.
 `report.semantic_hint_bindings` records how each hint bound — `column`, `kind`,
 `checked_values`, `matched_values`, and `exact` (whether the counts covered
-every row or a sample):
+every row or a sample). Each column of a declared pair is recorded once, with
+kind `temporal_pair`:
 
 ```python
 report = dp.profile("readings.csv", positive_columns=["pressure"])

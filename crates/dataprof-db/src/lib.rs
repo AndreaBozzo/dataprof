@@ -191,8 +191,8 @@ pub async fn analyze_database_with_options(
     // ignored. Checked before connecting so nothing is scanned first.
     if !options.semantic_hints().is_empty() {
         return Err(DataProfilerError::UnsupportedDataSource {
-            message: "positive_columns, identifier_columns, and temporal_columns are not \
-                      supported for database profiling yet"
+            message: "positive_columns, identifier_columns, temporal_columns, and temporal_pairs \
+                      are not supported for database profiling yet"
                 .to_string(),
         });
     }

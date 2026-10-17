@@ -37,7 +37,7 @@ Keyword arguments: `engine`, `chunk_size`, `memory_limit_mb`, `format`,
 `max_rows`, `name`, `csv_delimiter`, `csv_flexible`, `jsonl_on_error`,
 `sampling`, `stop_condition`, `on_progress`, `progress_interval_ms`,
 `quality_dimensions`, `metrics`, `locale`, `positive_columns`,
-`identifier_columns`, `temporal_columns`.
+`identifier_columns`, `temporal_columns`, `temporal_pairs`.
 
 ## Profiler builder (when keyword arguments are not enough)
 
@@ -56,7 +56,8 @@ report = (
 Every builder method returns the profiler, so calls chain. Other methods:
 `chunk_size`, `memory_limit_mb`, `format`, `name`, `csv_delimiter`,
 `csv_flexible`, `sampling`, `stop_condition`, `stop_when`, `on_progress`,
-`progress_interval_ms`, `locale`, `positive_columns`, `temporal_columns`.
+`progress_interval_ms`, `locale`, `positive_columns`, `temporal_columns`,
+`temporal_pairs`.
 
 ## ProfileReport: execution metadata
 

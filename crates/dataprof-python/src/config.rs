@@ -38,6 +38,7 @@ pub struct PyProfilerConfig {
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
+    pub(crate) temporal_pairs: Vec<(String, String)>,
 }
 
 #[pymethods]
@@ -63,6 +64,7 @@ impl PyProfilerConfig {
         identifier_columns = None,
         temporal_columns = None,
         columns = None,
+        temporal_pairs = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -85,6 +87,7 @@ impl PyProfilerConfig {
         identifier_columns: Option<Vec<String>>,
         temporal_columns: Option<Vec<String>>,
         columns: Option<Vec<String>>,
+        temporal_pairs: Option<Vec<Vec<String>>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -135,6 +138,20 @@ impl PyProfilerConfig {
         // return a plausible, emptier report with nothing saying why.
         let locale = Locale::parse_optional(locale.as_deref()).map_err(PyValueError::new_err)?;
 
+        // Taken as sequences, so a pair read from JSON as a list works like a
+        // tuple; anything but two names is refused rather than cut to fit.
+        let temporal_pairs = temporal_pairs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pair| match <[String; 2]>::try_from(pair) {
+                Ok([start, end]) => Ok((start, end)),
+                Err(pair) => Err(PyValueError::new_err(format!(
+                    "temporal_pairs entries must be (start, end) column pairs, got {} name(s)",
+                    pair.len()
+                ))),
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
         // Parse metrics strings into MetricPack enums
         let metric_packs = metrics
             .map(|packs| {
@@ -165,6 +182,7 @@ impl PyProfilerConfig {
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
             temporal_columns: temporal_columns.unwrap_or_default(),
+            temporal_pairs,
         })
     }
 
@@ -253,6 +271,12 @@ impl PyProfilerConfig {
         self.temporal_columns.clone()
     }
 
+    /// Start/end column pairs timeliness compares as given
+    #[getter]
+    fn temporal_pairs(&self) -> Vec<(String, String)> {
+        self.temporal_pairs.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ProfilerConfig(engine='{}', chunk_size={}, memory_limit_mb={}, format={}, max_rows={})",
@@ -330,6 +354,9 @@ impl PyProfilerConfig {
         if !self.temporal_columns.is_empty() {
             profiler = profiler.temporal_columns(self.temporal_columns.clone());
         }
+        if !self.temporal_pairs.is_empty() {
+            profiler = profiler.temporal_pairs(self.temporal_pairs.clone());
+        }
 
         profiler
     }
@@ -340,6 +367,7 @@ impl PyProfilerConfig {
             self.identifier_columns.clone(),
         )
         .with_temporal_columns(self.temporal_columns.clone())
+        .with_temporal_pairs(self.temporal_pairs.clone())
     }
 
     /// The analysis selection this config asks for.

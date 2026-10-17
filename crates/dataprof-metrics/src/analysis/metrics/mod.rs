@@ -147,14 +147,21 @@ impl MetricsCalculator {
         }
     }
 
-    /// Explicit temporal hints plus columns the profiler itself inferred as dates.
-    /// Hints come first; inferred columns are appended in stable profile order
-    /// and duplicates are removed.
+    /// Explicit temporal hints, then the columns of declared pairs, plus columns
+    /// the profiler itself inferred as dates. Hints come first; inferred columns
+    /// are appended in stable profile order and duplicates are removed.
     fn effective_temporal_columns(
         column_profiles: &[ColumnProfile],
         semantic_hints: &SemanticHints,
     ) -> Vec<String> {
         let mut columns = semantic_hints.temporal_columns.clone();
+        for (start, end) in &semantic_hints.temporal_pairs {
+            for name in [start, end] {
+                if !columns.contains(name) {
+                    columns.push(name.clone());
+                }
+            }
+        }
         for profile in column_profiles {
             if profile.data_type == DataType::Date && !columns.contains(&profile.name) {
                 columns.push(profile.name.clone());
@@ -295,6 +302,7 @@ impl MetricsCalculator {
             let t = TimelinessCalculator::new(&self.thresholds).calculate(
                 data,
                 &temporal_columns,
+                &semantic_hints.temporal_pairs,
                 column_profiles,
             )?;
             Some(TimelinessMetrics {
@@ -613,7 +621,12 @@ impl MetricsCalculator {
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
             let t = if !data.is_empty() {
-                timeliness_calculator.calculate(data, &temporal_columns, column_profiles)?
+                timeliness_calculator.calculate(
+                    data,
+                    &temporal_columns,
+                    &semantic_hints.temporal_pairs,
+                    column_profiles,
+                )?
             } else {
                 timeliness::TimelinessMetrics {
                     future_dates_count: 0,

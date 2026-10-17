@@ -67,6 +67,8 @@ pub struct ProfilerConfig {
     pub identifier_columns: Vec<String>,
     /// Columns whose values should contribute to timeliness quality metrics.
     pub temporal_columns: Vec<String>,
+    /// Start/end column pairs timeliness compares as given.
+    pub temporal_pairs: Vec<(String, String)>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]
     pub database_config: Option<DatabaseConfig>,
@@ -92,6 +94,7 @@ impl Default for ProfilerConfig {
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
             temporal_columns: Vec::new(),
+            temporal_pairs: Vec::new(),
             #[cfg(feature = "database")]
             database_config: None,
         }
@@ -308,6 +311,14 @@ impl Profiler {
     /// Mark columns whose values should contribute to timeliness metrics.
     pub fn temporal_columns(mut self, columns: Vec<String>) -> Self {
         self.config.temporal_columns = columns;
+        self
+    }
+
+    /// Declare start/end column pairs for timeliness to compare, such as
+    /// `valid_from`/`valid_until`. Declared pairs are compared as given; the
+    /// other temporal columns are still paired by name.
+    pub fn temporal_pairs(mut self, pairs: Vec<(String, String)>) -> Self {
+        self.config.temporal_pairs = pairs;
         self
     }
 
@@ -543,6 +554,7 @@ impl Profiler {
             self.config.identifier_columns.clone(),
         )
         .with_temporal_columns(self.config.temporal_columns.clone())
+        .with_temporal_pairs(self.config.temporal_pairs.clone())
     }
 
     /// Reject semantic hints that could not bind to the profiled data.

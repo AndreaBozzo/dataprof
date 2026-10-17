@@ -36,8 +36,20 @@ impl ValueHintBindingAccumulator {
                 exact: true,
             },
         });
+        let pairs = hints
+            .temporal_pair_columns()
+            .into_iter()
+            .map(|column| BindingCounter {
+                binding: SemanticHintBinding {
+                    column: column.to_string(),
+                    kind: SemanticHintKind::TemporalPair,
+                    checked_values: 0,
+                    matched_values: 0,
+                    exact: true,
+                },
+            });
         Self {
-            counters: positive.chain(temporal).collect(),
+            counters: positive.chain(temporal).chain(pairs).collect(),
         }
     }
 

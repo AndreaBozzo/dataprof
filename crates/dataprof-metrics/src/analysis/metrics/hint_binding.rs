@@ -15,8 +15,8 @@ use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 use super::utils::extract_year;
 use crate::analysis::inference::is_null_like_token;
 
-/// Compute binding evidence for the value-driven hints (`positive_columns` and
-/// `temporal_columns`) over `data`.
+/// Compute binding evidence for the value-driven hints (`positive_columns`,
+/// `temporal_columns` and the columns of `temporal_pairs`) over `data`.
 ///
 /// `exact` states whether `data` covers every row (`true`) or is a sample
 /// (`false`); it is copied onto each binding so a proven-inert hint can be told
@@ -44,17 +44,19 @@ pub fn compute_value_hint_bindings(
         }
     }
 
-    for column in &hints.temporal_columns {
+    let temporal = hints
+        .temporal_columns
+        .iter()
+        .map(|column| (SemanticHintKind::Temporal, column.as_str()));
+    let pairs = hints
+        .temporal_pair_columns()
+        .into_iter()
+        .map(|column| (SemanticHintKind::TemporalPair, column));
+    for (kind, column) in temporal.chain(pairs) {
         if let Some(values) = data.get(column) {
             // Mirror timeliness.rs: a value counts as a date if a year parses.
-            let (checked, matched) = count_matches(values, SemanticHintKind::Temporal);
-            bindings.push(binding(
-                column,
-                SemanticHintKind::Temporal,
-                checked,
-                matched,
-                exact,
-            ));
+            let (checked, matched) = count_matches(values, kind);
+            bindings.push(binding(column, kind, checked, matched, exact));
         }
     }
 
@@ -112,7 +114,9 @@ pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
             .parse::<f64>()
             .is_ok_and(|number| number.is_finite()),
         // Mirror timeliness.rs: it extracts a year from the original cell.
-        SemanticHintKind::Temporal => extract_year(value).is_some(),
+        SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
+            extract_year(value).is_some()
+        }
         // Identifier binding is structural and is not value-driven.
         SemanticHintKind::Identifier => true,
     }
