@@ -340,6 +340,44 @@ fn a_row_cap_equal_to_the_row_count_is_a_complete_scan() {
 }
 
 #[test]
+fn analyze_csv_file_reports_a_row_cap_like_the_engines() {
+    // `dataprof::analyze_csv_file` takes its cap from `CsvParserConfig`. A cap
+    // that leaves rows unread must read as truncated, and a cap at the last
+    // row as complete, as the engines report them (#890).
+    let csv = write_csv(500);
+
+    for (limit, truncated) in [(123usize, true), (500, false)] {
+        let engines = Profiler::new()
+            .engine(EngineType::Incremental)
+            .stop_when(StopCondition::MaxRows(limit as u64))
+            .analyze_file(csv.path())
+            .unwrap();
+        let csv_file = dataprof::analyze_csv_file(
+            csv.path(),
+            &dataprof::CsvParserConfig::default().max_rows(Some(limit)),
+        )
+        .unwrap();
+
+        assert_eq!(csv_file.execution.rows_processed, limit);
+        assert_eq!(
+            csv_file.execution.source_exhausted, !truncated,
+            "max_rows({limit}): source_exhausted"
+        );
+        assert_eq!(
+            (
+                csv_file.execution.source_exhausted,
+                &csv_file.execution.truncation_reason
+            ),
+            (
+                engines.execution.source_exhausted,
+                &engines.execution.truncation_reason
+            ),
+            "max_rows({limit}): analyze_csv_file and the engines disagree"
+        );
+    }
+}
+
+#[test]
 fn byte_caps_stop_at_the_first_record_boundary_past_them() {
     // Reads are sized to the budget that remains, so the stop lands at the
     // end of the first record reaching the cap whatever the chunk size. The

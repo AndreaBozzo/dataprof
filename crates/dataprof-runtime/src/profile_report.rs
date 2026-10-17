@@ -1,6 +1,6 @@
 use dataprof_core::{
-    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, QualityScoreWeights,
-    SemanticHintBinding, TextLengthUnit,
+    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, PatternMatchCount,
+    QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -100,6 +100,28 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "NullTokenSet")]
     pub null_tokens: Option<NullTokenSet>,
+    /// What every pattern's `match_count` and `match_percentage` count.
+    ///
+    /// Absent means not recorded: through 0.12 they counted every regular
+    /// expression match, validated or not.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "PatternMatchCount")]
+    pub pattern_match_count: Option<PatternMatchCount>,
+    /// The estimator behind every column's `skewness` and `kurtosis`.
+    ///
+    /// Absent means not recorded: through 0.12 both used a form that matches
+    /// neither the population nor the adjusted estimators.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "ShapeMomentEstimator")]
+    pub shape_moments: Option<ShapeMomentEstimator>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -118,6 +140,8 @@ impl MetricSemantics {
         Self {
             text_length_unit: Some(TextLengthUnit::UnicodeScalar),
             null_tokens: Some(NullTokenSet::CommonMarkers),
+            pattern_match_count: Some(PatternMatchCount::Validated),
+            shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
         }
     }
 }
@@ -943,8 +967,18 @@ where
     let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     match value {
         None => Ok(None),
-        Some(v) => {
-            if v.get("metrics").is_some() && v.get("confidence").is_some() {
+        Some(mut v) => {
+            // Either wrapper key marks the canonical shape. Read as flat
+            // metrics, a canonical object matches no field and decodes as an
+            // empty assessment, dropping every metric without an error.
+            if v.get("metrics").is_some() || v.get("confidence").is_some() {
+                if let Some(object) = v.as_object_mut() {
+                    // Metrics whose provenance was lost are kept, and the
+                    // provenance stays unknown, as for a flat legacy object.
+                    object
+                        .entry("confidence")
+                        .or_insert_with(|| serde_json::json!("Unrecorded"));
+                }
                 let assessment: QualityAssessment =
                     serde_json::from_value(v).map_err(serde::de::Error::custom)?;
                 Ok(Some(assessment))
@@ -1084,6 +1118,8 @@ mod tests {
         let recorded = json!({
             "text_length_unit": "unicode_scalar",
             "null_tokens": "common_markers",
+            "pattern_match_count": "validated",
+            "shape_moments": "adjusted_sample",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1109,6 +1145,10 @@ mod tests {
             json!({"text_length_unit": null}),
             json!({"null_tokens": "empty_null_nan"}),
             json!({"null_tokens": null}),
+            json!({"pattern_match_count": "regex"}),
+            json!({"pattern_match_count": null}),
+            json!({"shape_moments": "population"}),
+            json!({"shape_moments": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();
@@ -1353,6 +1393,44 @@ mod tests {
             .expect("legacy completeness facts should deserialize");
         assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
         assert!(quality.metrics.assessed_dimensions().is_empty());
+    }
+
+    /// A canonical quality object that lost its `confidence` still holds its
+    /// metrics. The flat legacy reader dropped every one of them without an
+    /// error; they are kept, and the missing provenance stays unknown.
+    #[test]
+    fn a_canonical_quality_without_confidence_keeps_its_metrics() {
+        let mut document = current_document();
+        document["quality"] = json!({
+            "metrics": {
+                "completeness": {
+                    "missing_values_ratio": 0.0,
+                    "complete_records_ratio": 100.0,
+                    "null_columns": []
+                }
+            }
+        });
+
+        let report: ProfileReport = serde_json::from_value(document).unwrap();
+
+        let quality = report.quality.expect("the assessment survives");
+        let completeness = quality
+            .metrics
+            .completeness
+            .as_ref()
+            .expect("the metrics survive");
+        assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
+        assert!(!matches!(quality.confidence, MetricConfidence::Exact));
+    }
+
+    /// A `confidence` with no `metrics` is a malformed canonical object, not
+    /// an empty legacy one.
+    #[test]
+    fn a_canonical_quality_without_metrics_is_malformed() {
+        let mut document = current_document();
+        document["quality"] = json!({ "confidence": "Exact" });
+
+        assert!(serde_json::from_value::<ProfileReport>(document).is_err());
     }
 
     fn current_document() -> serde_json::Value {

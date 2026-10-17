@@ -160,10 +160,6 @@ class TestSamplingStrategy:
         s = dataprof.SamplingStrategy.systematic(10)
         assert s is not None
 
-    def test_adaptive(self):
-        s = dataprof.SamplingStrategy.adaptive()
-        assert s is not None
-
     def test_profile_with_sampling(self):
         r = dataprof.profile(CSV_FILE, sampling=dataprof.SamplingStrategy.random(2))
         assert r.rows > 0

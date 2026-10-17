@@ -284,11 +284,13 @@ class ProfileReport:
         """How this report's measurements were defined.
 
         A dict of named definitions, currently
-        ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}``.
+        ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers",
+        "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}``.
         ``schema_version`` says whether a document validates, not whether two
         reports measured the same way: text lengths counted UTF-8 bytes through
-        0.11, and only empty, ``null`` and ``nan`` were nulls through 0.12, with
-        no change to the document's shape.
+        0.11; through 0.12 only empty, ``null`` and ``nan`` were nulls, pattern
+        counts took every regex match, and skewness and kurtosis used another
+        estimator, all with no change to the document's shape.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded this, whose definitions are unknown rather than the current
@@ -615,6 +617,7 @@ class ProfileReport:
     def check(
         self,
         *,
+        min_rows: int | None = None,
         min_quality_score: float | None = None,
         min_dimension_scores: _Mapping[str, float] | None = None,
         max_null_percentage: _Mapping[str, float] | float | None = None,
@@ -644,6 +647,12 @@ class ProfileReport:
         unanswerable gate never reads as a green one.
 
         Args:
+            min_rows: Floor for the number of rows the scan read, so an empty
+                or truncated extract fails instead of passing every other
+                check. A scan that read this many rows passes even when it
+                stopped early; one that read fewer fails, unless it stopped
+                early under ``"full_source"`` scope, which leaves the check
+                unevaluated.
             min_quality_score: Floor for the overall score, 0-100.
             min_dimension_scores: Floor per ISO 25012 dimension, 0-100.
             max_null_percentage: Ceiling for a column's null percentage,
@@ -665,16 +674,19 @@ class ProfileReport:
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
                 outside 0-100, an unknown dimension name, or no requirement at
-                all. A misconfigured gate is not a failing dataset.
+                all. A misconfigured gate is not a failing dataset. Also raised
+                for a report loaded from a flat ``to_dict()`` summary, which
+                the Rust gate cannot read.
         """
         return _Policy(
+            min_rows=min_rows,
             min_quality_score=min_quality_score,
             min_dimension_scores=min_dimension_scores,
             max_null_percentage=max_null_percentage,
             max_duplicate_rows=max_duplicate_rows,
             require_metrics=require_metrics,
             scope=scope,
-        ).evaluate(self)
+        ).evaluate(self._native_report)
 
     def findings(
         self,

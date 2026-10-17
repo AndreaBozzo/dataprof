@@ -36,7 +36,8 @@ flat summary stays flat when resaved: it never recorded report identity, full
 source metadata or quality confidence, so manufacturing those fields would
 misrepresent the original run. Missing provenance markers stay missing; the
 resave does add `schema_version`, because it is written by a v1 build. Rust's `ProfileReport` reader reads the canonical shape; the flat
-compatibility loader remains a Python API.
+compatibility loader remains a Python API. `check()` refuses a loaded flat summary,
+because the gate runs on Rust's report.
 
 This preserves the published v1 validation contract instead of silently
 narrowing it. New profiles save only the canonical shape. Consumers of the old
@@ -85,16 +86,32 @@ not stable codes. The last retry in a successful result succeeded; preceding
 retries may have failed and led to further events. Row-level error and ragged-row
 counts retain their existing meaning and are not incremented for failed attempts.
 
-Python exposes the same history through `report.recovery_events`. The standalone
-Rust `dataprof_csv::RobustCsvParser` does not produce a `ProfileReport`; its
-`parse_csv()` and `parse_csv_with_recovery()` methods return `CsvParseOutput`
-with `headers`, `records`, and `recovery_events`. This includes the ordinary
-strict-to-flexible retry and the outer auto-recovery strategies. Callers building
-their own report should transfer this history to its execution metadata.
-The existing encoding-recovery placeholder only retries flexible parsing; its
-history therefore records `flexible`, without claiming an encoding conversion.
+Python exposes the same history through `report.recovery_events`. No current
+engine records `csv_auto_recovery`: it came from the standalone CSV recovery
+parser, removed before 1.0, and stays in the schema so reports written by earlier
+versions still load.
 
 ## Numeric equality contract
+
+`skewness` uses adjusted Fisher-Pearson sample skewness and requires at least
+three finite numeric values. `kurtosis` uses adjusted Fisher sample excess
+kurtosis and requires at least four. These match pandas
+[`Series.skew`](https://pandas.pydata.org/docs/reference/api/pandas.Series.skew.html)
+and [`Series.kurt`](https://pandas.pydata.org/docs/reference/api/pandas.Series.kurt.html).
+A constant column reports zero once the minimum count is met. When a reservoir
+is used, its mean, sample standard deviation and higher moments all describe
+that same retained sample. `is_approximate: false` records exact numeric
+statistics; `true` records sampling, and absence means the approximation status
+was not analyzed or is missing from an older report.
+
+The coefficient of variation is `100 * std_dev / abs(mean)`. Its zero-mean
+guard is relative to the spread (`abs(mean) <= f64::EPSILON * abs(std_dev)`),
+so changing measurement units does not make the statistic disappear.
+
+Timeliness compares whole dates against the freshness cutoff. A configured
+`max_data_age_years` uses the Gregorian mean year of 365.2425 days, including
+fractional years; the age budget is rounded down to whole days before it is
+subtracted from the reference date. A date equal to the cutoff remains fresh.
 
 For numeric columns, `mean` is always a finite number, including when the sum
 of the input values overflows `f64`: the mean of finite values lies between
@@ -109,6 +126,13 @@ then `0`, which is exact: fences beyond the `f64` range leave no finite value
 outside them. This distinction survives report save/load and applies to the
 Python summary as well. A document that omits any of the three keys is
 malformed and fails to load; it is not read as `null`.
+
+Integers of 2^53 or more in magnitude, up to the 64-bit range, are not exact as
+`f64`. `variance`, `std_dev`, `skewness` and `kurtosis` are computed from the
+exact integers on every input path, so epoch nanoseconds a few units apart keep
+their spread (#877). `mean` sums the exact integers in a compensated `f64`
+sum. `min`, `max`, `median`, quartiles, `mode` and `outlier_count` are taken
+from the nearest `f64` of each value.
 
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
@@ -617,3 +641,28 @@ vocabulary reads back as unknown and Python's `compare()` reports
 records the same value. The field is additive and not `required`, so stored v1
 reports remain valid; an explicit `null` is malformed, as for
 `text_length_unit`.
+
+## v1 additive change: `metric_semantics.pattern_match_count` and `shape_moments`
+
+`metric_semantics` gains two definitions:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `pattern_match_count` | `"validated"` | what every pattern's `match_count` and `match_percentage` count |
+| `shape_moments` | `"adjusted_sample"` | the estimator behind `skewness` and `kurtosis` |
+
+Under `validated` a pattern match is a value that passes the pattern's regular
+expression and, where the pattern has one, its semantic validator (checksum,
+range or calendar check). Through 0.12 every regular expression match counted,
+so random 16-digit ids were 100% `Credit Card`.
+
+Under `adjusted_sample` skewness is the adjusted Fisher-Pearson sample skewness,
+from three values, and kurtosis the adjusted Fisher sample excess kurtosis, from
+four, as pandas computes them. Through 0.12 both divided population moments by
+the sample standard deviation.
+
+A report that records neither reads back with both unknown, and Python's
+`compare()` reports `comparable: None` against a current report. Every engine
+and input path records the same values. The fields are additive and not
+`required`, so stored v1 reports remain valid; an explicit `null` is malformed,
+as for `text_length_unit`.

@@ -115,6 +115,21 @@ pub struct FrequencyItem {
     pub percentage: f64,
 }
 
+/// The estimator behind `skewness` and `kurtosis`, as recorded in a report's
+/// metric semantics.
+///
+/// Only the current estimator has a value. Through 0.12 both divided
+/// population moments by the sample standard deviation, a form matching
+/// neither the population nor the adjusted estimators, and those releases
+/// recorded no definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeMomentEstimator {
+    /// Adjusted Fisher-Pearson sample skewness from three values and adjusted
+    /// Fisher sample excess kurtosis from four, as pandas computes them.
+    AdjustedSample,
+}
+
 /// Statistics for numeric (integer or float) columns.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NumericStats {

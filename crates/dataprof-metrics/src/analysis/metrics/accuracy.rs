@@ -28,11 +28,17 @@ pub(crate) struct AccuracyMetrics {
 ///
 /// A rule applies when a whole word of the name, split as identifier names are,
 /// is one of the rule's words: `age` and `customer_age` are held to ages, while
-/// `average_price`, `mileage` and `page_views` are not; `conversion_rate` is a
+/// `average_price`, `mileage` and `page_views` are not; `discount_percent` is a
 /// percentage, `migrated_rows` is not; `item_count` must be non-negative,
 /// `discount` and `account_number` need not be (#871). Concatenated lowercase
 /// names such as `itemcount` no longer match. `years` is not a year word, since
 /// a plural names a duration (`years_of_service`), not a calendar year.
+///
+/// A rule applies only where the name pins the unit its range is in (#880).
+/// `rate` is not a percentage word: `sample_rate`, `heart_rate` and
+/// `frame_rate` are rates in hertz, beats and frames. An `age` is in years
+/// unless another word of the name is a smaller unit, as in
+/// `account_age_days`.
 ///
 /// The counter and the score bounds both read this, so they cannot disagree on
 /// which rules a column is under.
@@ -44,11 +50,39 @@ struct RangeRules {
     year: bool,
 }
 
+/// Time units an `age` can be counted in other than years.
+const AGE_UNITS_BELOW_YEARS: [&str; 23] = [
+    "ms",
+    "millis",
+    "milliseconds",
+    "s",
+    "sec",
+    "secs",
+    "second",
+    "seconds",
+    "min",
+    "mins",
+    "minute",
+    "minutes",
+    "h",
+    "hr",
+    "hrs",
+    "hour",
+    "hours",
+    "day",
+    "days",
+    "week",
+    "weeks",
+    "month",
+    "months",
+];
+
 impl RangeRules {
     fn for_column(column_name: &str) -> Self {
         Self {
-            age: has_identifier_word(column_name, &["age"]),
-            percent: has_identifier_word(column_name, &["percent", "percentage", "rate", "rates"]),
+            age: has_identifier_word(column_name, &["age"])
+                && !has_identifier_word(column_name, &AGE_UNITS_BELOW_YEARS),
+            percent: has_identifier_word(column_name, &["percent", "percentage", "pct"]),
             count: has_identifier_word(column_name, &["count", "counts"]),
             year: has_identifier_word(column_name, &["year"]),
         }
@@ -344,9 +378,10 @@ mod tests {
             ("age", rules(true, false, false, false)),
             ("customer_age", rules(true, false, false, false)),
             ("customerAge", rules(true, false, false, false)),
-            ("conversion_rate", rules(false, true, false, false)),
-            ("conversion_rates", rules(false, true, false, false)),
+            ("discount_percent", rules(false, true, false, false)),
             ("discount_percentage", rules(false, true, false, false)),
+            ("conversion_rate_pct", rules(false, true, false, false)),
+            ("account_age_years", rules(true, false, false, false)),
             ("item_count", rules(false, false, true, false)),
             ("item_counts", rules(false, false, true, false)),
             ("birth_year", rules(false, false, false, true)),
@@ -358,6 +393,16 @@ mod tests {
             ("discount", rules(false, false, false, false)),
             ("account_number", rules(false, false, false, false)),
             ("years_of_service", rules(false, false, false, false)),
+            // #880: a rate is not a percentage, and an age in days is not in years.
+            ("conversion_rate", rules(false, false, false, false)),
+            ("conversion_rates", rules(false, false, false, false)),
+            ("sample_rate", rules(false, false, false, false)),
+            ("heart_rate", rules(false, false, false, false)),
+            ("frame_rate", rules(false, false, false, false)),
+            ("account_age_days", rules(false, false, false, false)),
+            ("session_age_ms", rules(false, false, false, false)),
+            ("cacheAgeHours", rules(false, false, false, false)),
+            ("account_age_month", rules(false, false, false, false)),
         ] {
             assert_eq!(RangeRules::for_column(name), expected, "{name}");
         }
@@ -369,7 +414,7 @@ mod tests {
     fn each_range_rule_counts_only_values_outside_its_range() {
         for (name, values, expected) in [
             ("customer_age", ["0", "150", "30", "-1"], 1),
-            ("conversion_rate", ["0", "100", "50", "101"], 1),
+            ("discount_percent", ["0", "100", "50", "101"], 1),
             ("item_count", ["0", "5", "-1", "-2"], 2),
             ("birth_year", ["1900", "2100", "1990", "1899"], 1),
             ("price", ["-1", "200", "3000", "101"], 0),

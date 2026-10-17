@@ -468,3 +468,80 @@ async fn test_profile_stream_refuses_parquet_that_is_not_a_buffer() {
     assert!(error.contains("does not support"), "{error}");
     assert!(error.contains("synchronous profiler"), "{error}");
 }
+
+/// The `Finished` progress event must count the rows of the chunk the row cap
+/// stops in, so it agrees with `rows_processed` like the other engines (gh #824).
+#[tokio::test]
+async fn test_profiler_profile_stream_finished_event_counts_capped_chunk() {
+    use std::sync::{Arc, Mutex};
+
+    let mut csv_data = String::from("id,value\n");
+    for i in 0..10_000 {
+        csv_data.push_str(&format!("{},val_{}\n", i, i));
+    }
+
+    let source = BytesSource::new(
+        bytes::Bytes::from(csv_data.clone()),
+        AsyncSourceInfo::new("capped-csv", FileFormat::Csv).size_hint(Some(csv_data.len() as u64)),
+    );
+
+    let finished = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&finished);
+    let sink = dataprof::ProgressSink::Callback(Arc::new(move |event| {
+        if let dataprof::ProgressEvent::Finished { total_rows, .. } = event {
+            *captured.lock().unwrap() = Some(total_rows);
+        }
+    }));
+
+    let report = Profiler::new()
+        .stop_when(StopCondition::MaxRows(150))
+        .progress_interval(Duration::ZERO)
+        .progress_sink(sink)
+        .profile_stream(source)
+        .await
+        .unwrap();
+
+    assert_eq!(report.execution.rows_processed, 150);
+    assert_eq!(*finished.lock().unwrap(), Some(150));
+}
+
+/// The `Finished` progress event must count the rows of the chunk when a stop condition
+/// other than row cap (e.g. MaxBytes) stops an async stream (gh #969).
+#[tokio::test]
+async fn test_profiler_profile_stream_finished_event_counts_bytes_stop_condition() {
+    use std::sync::{Arc, Mutex};
+
+    let mut csv_data = String::from("id,value\n");
+    for i in 0..10_000 {
+        csv_data.push_str(&format!("{},val_{}\n", i, i));
+    }
+
+    let source = BytesSource::new(
+        bytes::Bytes::from(csv_data.clone()),
+        AsyncSourceInfo::new("bytes-capped-csv", FileFormat::Csv)
+            .size_hint(Some(csv_data.len() as u64)),
+    );
+
+    let finished = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&finished);
+    let sink = dataprof::ProgressSink::Callback(Arc::new(move |event| {
+        if let dataprof::ProgressEvent::Finished { total_rows, .. } = event {
+            *captured.lock().unwrap() = Some(total_rows);
+        }
+    }));
+
+    let report = Profiler::new()
+        .stop_when(StopCondition::MaxBytes(50_000))
+        .progress_interval(Duration::ZERO)
+        .progress_sink(sink)
+        .profile_stream(source)
+        .await
+        .unwrap();
+
+    assert!(report.execution.rows_processed > 0);
+    assert_eq!(
+        *finished.lock().unwrap(),
+        Some(report.execution.rows_processed),
+        "finished event total_rows must match execution.rows_processed"
+    );
+}

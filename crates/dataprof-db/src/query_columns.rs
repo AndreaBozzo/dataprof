@@ -18,6 +18,9 @@ use std::ops::Index;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryColumns {
     columns: Vec<(String, Vec<String>)>,
+    /// Per column, by position, how many values were a JSON object or array or
+    /// a SQL array. Always as long as `columns`.
+    containers: Vec<usize>,
 }
 
 impl QueryColumns {
@@ -36,12 +39,10 @@ impl QueryColumns {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        Self {
-            columns: names
-                .into_iter()
-                .map(|name| (name.into(), Vec::with_capacity(row_capacity)))
-                .collect(),
-        }
+        names
+            .into_iter()
+            .map(|name| (name.into(), Vec::with_capacity(row_capacity)))
+            .collect()
     }
 
     /// Append a value to the column at `index`.
@@ -50,9 +51,27 @@ impl QueryColumns {
     /// they built the result from, so there is no in-range/out-of-range decision
     /// for them to get wrong.
     pub fn push_value(&mut self, index: usize, value: String) {
+        self.push_decoded(index, value, false);
+    }
+
+    /// Append a value to the column at `index`, recording whether it was a
+    /// container: a JSON object or array, or a SQL array.
+    pub fn push_decoded(&mut self, index: usize, value: String, container: bool) {
         if let Some((_, data)) = self.columns.get_mut(index) {
             data.push(value);
+            self.containers[index] += usize::from(container);
         }
+    }
+
+    /// Per column name, how many of its values were containers. Columns with
+    /// none are left out.
+    pub fn container_counts(&self) -> HashMap<String, usize> {
+        self.columns
+            .iter()
+            .zip(&self.containers)
+            .filter(|(_, count)| **count > 0)
+            .map(|((name, _), count)| (name.clone(), *count))
+            .collect()
     }
 
     /// Number of columns.
@@ -106,8 +125,13 @@ impl QueryColumns {
             .iter()
             .map(String::as_str)
             .collect::<std::collections::HashSet<_>>();
-        self.columns
-            .retain(|(name, _)| names.contains(name.as_str()));
+        let (columns, containers) = std::mem::take(&mut self.columns)
+            .into_iter()
+            .zip(std::mem::take(&mut self.containers))
+            .filter(|((name, _), _)| names.contains(name.as_str()))
+            .unzip();
+        self.columns = columns;
+        self.containers = containers;
     }
 
     /// Drop the order and hand back a plain map.
@@ -116,21 +140,6 @@ impl QueryColumns {
     /// by name and never iterate for presentation.
     pub fn into_map(self) -> HashMap<String, Vec<String>> {
         self.columns.into_iter().collect()
-    }
-
-    /// Append a batch's values to the matching columns.
-    ///
-    /// Columns are matched by name so a driver that reorders between batches
-    /// cannot interleave data; a column seen for the first time in a later batch
-    /// is appended at the end, the same first-seen rule the JSON path uses for
-    /// fields that only appear in later records.
-    fn extend_from(&mut self, batch: QueryColumns) {
-        for (name, data) in batch.columns {
-            match self.columns.iter_mut().find(|(column, _)| *column == name) {
-                Some((_, existing)) => existing.extend(data),
-                None => self.columns.push((name, data)),
-            }
-        }
     }
 }
 
@@ -145,8 +154,11 @@ impl Index<&str> for QueryColumns {
 
 impl FromIterator<(String, Vec<String>)> for QueryColumns {
     fn from_iter<I: IntoIterator<Item = (String, Vec<String>)>>(iter: I) -> Self {
+        let columns: Vec<_> = iter.into_iter().collect();
+        let containers = vec![0; columns.len()];
         Self {
-            columns: iter.into_iter().collect(),
+            columns,
+            containers,
         }
     }
 }
@@ -160,32 +172,9 @@ impl IntoIterator for QueryColumns {
     }
 }
 
-/// Merge batches of a streamed query into one result.
-///
-/// The first batch fixes the column order; later batches append to it.
-pub fn merge_column_batches(batches: Vec<QueryColumns>) -> QueryColumns {
-    let mut merged = QueryColumns::new();
-    for batch in batches {
-        merged.extend_from(batch);
-    }
-    merged
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn columns(pairs: &[(&str, &[&str])]) -> QueryColumns {
-        pairs
-            .iter()
-            .map(|(name, data)| {
-                (
-                    (*name).to_string(),
-                    data.iter().map(|v| (*v).to_string()).collect(),
-                )
-            })
-            .collect()
-    }
 
     #[test]
     fn names_come_back_in_the_order_they_went_in() {
@@ -209,38 +198,5 @@ mod tests {
         assert_eq!(result["b"], vec!["b1", "b2"]);
         assert_eq!(result["a"], vec!["a1", "a2"]);
         assert_eq!(result.row_count(), 2);
-    }
-
-    #[test]
-    fn merging_keeps_the_first_batch_order() {
-        let merged = merge_column_batches(vec![
-            columns(&[("id", &["1"]), ("cap", &["20121"])]),
-            columns(&[("id", &["2"]), ("cap", &["00184"])]),
-        ]);
-
-        assert_eq!(merged.names().collect::<Vec<_>>(), ["id", "cap"]);
-        assert_eq!(merged["id"], vec!["1", "2"]);
-        assert_eq!(merged["cap"], vec!["20121", "00184"]);
-    }
-
-    #[test]
-    fn merging_matches_columns_by_name_not_position() {
-        // A driver that hands back a later batch in another order must not have
-        // its values interleaved into the wrong column.
-        let merged = merge_column_batches(vec![
-            columns(&[("id", &["1"]), ("cap", &["20121"])]),
-            columns(&[("cap", &["00184"]), ("id", &["2"])]),
-        ]);
-
-        assert_eq!(merged.names().collect::<Vec<_>>(), ["id", "cap"]);
-        assert_eq!(merged["id"], vec!["1", "2"]);
-        assert_eq!(merged["cap"], vec!["20121", "00184"]);
-    }
-
-    #[test]
-    fn merging_nothing_yields_nothing() {
-        let merged = merge_column_batches(Vec::new());
-        assert!(merged.is_empty());
-        assert_eq!(merged.row_count(), 0);
     }
 }

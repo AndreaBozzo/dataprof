@@ -373,6 +373,11 @@ impl Profiler {
             .format_override
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
+        // A binary file bound for a text reader fails here with what it is,
+        // before every engine fails on it with parsing advice (#893).
+        if !matches!(format, FileFormat::Parquet) {
+            dataprof_core::binary_input::reject_binary_input(path)?;
+        }
         let is_csv = matches!(format, FileFormat::Csv);
 
         // Only the incremental CSV engine reports progress as it reads; every
@@ -1137,6 +1142,9 @@ impl Profiler {
             .format_override
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
+        if !matches!(format, FileFormat::Parquet) {
+            dataprof_core::binary_input::reject_binary_input(path)?;
+        }
 
         match format {
             FileFormat::Parquet => {
@@ -1351,16 +1359,23 @@ fn map_csv_encoding_error(file_path: &Path, err: DataProfilerError) -> DataProfi
     }
 }
 
-/// One-liner API for quick profiling with intelligent engine selection
-pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64, DataProfilerError> {
+/// One-liner API for quick profiling with intelligent engine selection.
+///
+/// Returns the report's [`quality_score`](ProfileReport::quality_score):
+/// `None` when nothing was assessable, such as a header-only CSV. Absence of
+/// evidence is not a zero, so a caller thresholding the score decides what an
+/// unassessed file means.
+pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<Option<f64>, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_file(file_path)?;
-    Ok(report.quality_score().unwrap_or(0.0))
+    Ok(report.quality_score())
 }
 
-/// One-liner API for quick profiling from a DataSource
-pub fn quick_quality_check_source(source: &DataSource) -> Result<f64, DataProfilerError> {
+/// One-liner API for quick profiling from a DataSource.
+///
+/// Returns `None` when nothing was assessable, as [`quick_quality_check`] does.
+pub fn quick_quality_check_source(source: &DataSource) -> Result<Option<f64>, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_source(source)?;
-    Ok(report.quality_score().unwrap_or(0.0))
+    Ok(report.quality_score())
 }

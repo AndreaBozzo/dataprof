@@ -8,7 +8,9 @@ use dataprof_core::{
     ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
+use dataprof_metrics::{
+    CardinalityEstimator, NumericAccumulator, ParsedNumber, spill_largest_exact_sets,
+};
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
@@ -136,7 +138,7 @@ pub fn sampling_can_decide_type(arrow_type: &arrow::datatypes::DataType) -> bool
 /// which is stable across the batches of one source.
 ///
 /// When a column's values cannot be rendered (an Arrow type without a
-/// formatter), tracking disables itself and [`Self::summary`] returns `None`
+/// formatter or, for a nested type, a row encoding), tracking disables itself and [`Self::summary`] returns `None`
 /// — the duplicate component reads "not assessed". Substituting placeholder
 /// values instead would fabricate or mask duplicates, which is worse than
 /// admitting the metric was skipped; and the profile as a whole must not
@@ -219,6 +221,82 @@ pub(crate) fn in_column_order<'a, A>(
         .collect()
 }
 
+/// Whether a value of this type can hold a map, at any depth.
+fn holds_map(data_type: &arrow::datatypes::DataType) -> bool {
+    use arrow::datatypes::DataType as ArrowDataType;
+
+    match data_type {
+        ArrowDataType::Map(_, _) => true,
+        ArrowDataType::List(field)
+        | ArrowDataType::LargeList(field)
+        | ArrowDataType::ListView(field)
+        | ArrowDataType::LargeListView(field)
+        | ArrowDataType::FixedSizeList(field, _) => holds_map(field.data_type()),
+        ArrowDataType::Struct(fields) => fields.iter().any(|field| holds_map(field.data_type())),
+        ArrowDataType::Union(fields, _) => {
+            fields.iter().any(|(_, field)| holds_map(field.data_type()))
+        }
+        ArrowDataType::Dictionary(_, values) => holds_map(values),
+        ArrowDataType::RunEndEncoded(_, values) => holds_map(values.data_type()),
+        _ => false,
+    }
+}
+
+/// The value with every map's entries sorted by key, then by value, at any
+/// depth (#943).
+///
+/// Arrow stores a map's entries in the order they were written, and the row
+/// format encodes them in that order, but neither Arrow nor Parquet gives the
+/// order a meaning: `{a: 1, b: 2}` and `{b: 2, a: 1}` are one value. Sorting
+/// permutes entries only inside each map, so every array keeps its length and
+/// a parent's offsets into it stay valid; a container that holds a map is
+/// rebuilt around its sorted children.
+fn sort_map_entries(data: ArrayData) -> std::result::Result<ArrayData, arrow::error::ArrowError> {
+    use arrow::buffer::OffsetBuffer;
+    use arrow::datatypes::DataType as ArrowDataType;
+    use arrow::row::{RowConverter, SortField};
+
+    if !holds_map(data.data_type()) {
+        return Ok(data);
+    }
+    let children = data
+        .child_data()
+        .iter()
+        .cloned()
+        .map(sort_map_entries)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let data = data.into_builder().child_data(children).build()?;
+    let ArrowDataType::Map(field, ordered) = data.data_type().clone() else {
+        return Ok(data);
+    };
+
+    let map = MapArray::from(data);
+    let entries = map.entries();
+    let converter = RowConverter::new(vec![
+        SortField::new(entries.column(0).data_type().clone()),
+        SortField::new(entries.column(1).data_type().clone()),
+    ])?;
+    let rows = converter.convert_columns(entries.columns())?;
+    let mut indices = Vec::with_capacity(entries.len());
+    let mut offsets = Vec::with_capacity(map.len() + 1);
+    offsets.push(0i32);
+    for window in map.value_offsets().windows(2) {
+        let mut slot: Vec<u32> = (window[0] as u32..window[1] as u32).collect();
+        slot.sort_by(|a, b| rows.row(*a as usize).cmp(&rows.row(*b as usize)));
+        indices.extend(slot);
+        offsets.push(indices.len() as i32);
+    }
+    let sorted = arrow::compute::take(entries, &UInt32Array::from(indices), None)?;
+    let sorted = MapArray::try_new(
+        field,
+        OffsetBuffer::new(offsets.into()),
+        sorted.as_struct().clone(),
+        map.nulls().cloned(),
+        ordered,
+    )?;
+    Ok(sorted.into_data())
+}
+
 /// Fold every row of a batch into the tracker as a canonical signature.
 /// See [`BatchRowTracker`] for the encoding and failure contract.
 fn observe_batch_rows(
@@ -229,43 +307,100 @@ fn observe_batch_rows(
     use arrow::datatypes::DataType as ArrowDataType;
     use arrow::util::display::{ArrayFormatter, FormatOptions};
 
+    use arrow::row::{RowConverter, Rows, SortField};
+
+    /// How one column's values enter the row signature.
+    enum FieldText<'a> {
+        /// A NullArray has no validity buffer; every slot is null.
+        Null,
+        Display(ArrayFormatter<'a>),
+        /// A nested value in the Arrow row format, written as hex. Its
+        /// display string cannot stand in for it: `["p, q"]` and `["p", "q"]`
+        /// both display as `[p, q]`, and a list holding one null displays as
+        /// an empty list (#767). The row format encodes the value itself, so
+        /// equal rows are equal values, once every map has its entries sorted
+        /// (#943). It holds no per-converter state, so the same value encodes
+        /// the same in every batch.
+        Rows(Rows),
+    }
+
     // Null must render as an empty field, matching the incremental engine —
     // the default formatter would render a visible placeholder.
     let options = FormatOptions::default().with_null("");
-    let formatters: Vec<Option<ArrayFormatter>> = batch
+    let fields: Vec<FieldText> = batch
         .columns()
         .iter()
         .map(|column| match column.data_type() {
-            // A NullArray has no validity buffer; every slot is null.
-            ArrowDataType::Null => Ok(None),
-            _ => ArrayFormatter::try_new(column.as_ref(), &options).map(Some),
+            ArrowDataType::Null => Ok(FieldText::Null),
+            data_type if data_type.is_nested() => {
+                // The row format takes a dictionary only of flat values, so a
+                // dictionary of nested values is encoded through its values.
+                let values = match data_type {
+                    ArrowDataType::Dictionary(_, values) => arrow::compute::cast(column, values),
+                    _ => Ok(column.clone()),
+                };
+                values
+                    .and_then(|values| sort_map_entries(values.to_data()).map(make_array))
+                    .and_then(|values| {
+                        RowConverter::new(vec![SortField::new(values.data_type().clone())])?
+                            .convert_columns(&[values])
+                    })
+                    .map(FieldText::Rows)
+            }
+            _ => ArrayFormatter::try_new(column.as_ref(), &options).map(FieldText::Display),
         })
         .collect::<std::result::Result<_, _>>()
         .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
+
+    // Logical nulls, not the validity buffer: a dictionary key that points at
+    // a null value is null too, and must render empty like a null key rather
+    // than as the row encoding of a null.
+    let nulls: Vec<_> = batch
+        .columns()
+        .iter()
+        .map(|column| column.logical_nulls())
+        .collect();
 
     let mut value_buffer = String::new();
     for row_index in 0..batch.num_rows() {
         let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
-        for (column, formatter) in batch.columns().iter().zip(&formatters) {
+        for (field, nulls) in fields.iter().zip(&nulls) {
             value_buffer.clear();
-            if let Some(formatter) = formatter
-                && !column.is_null(row_index)
-            {
-                write!(value_buffer, "{}", formatter.value(row_index))
-                    .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
+            if !nulls.as_ref().is_some_and(|nulls| nulls.is_null(row_index)) {
+                match field {
+                    FieldText::Null => {}
+                    FieldText::Display(formatter) => {
+                        write!(value_buffer, "{}", formatter.value(row_index)).map_err(
+                            |error| anyhow::anyhow!("row signature formatting failed: {error}"),
+                        )?;
+                    }
+                    FieldText::Rows(rows) => push_hex(&mut value_buffer, rows.row(row_index)),
+                }
             }
             row_signature.push_field(&value_buffer);
             // Arrow nulls already render empty here, and the null-like tokens
             // are the same ones the column analyzers count, so the record
-            // count and the cell counts describe one definition of null.
-            row_has_null |= is_null_like_token(&value_buffer);
+            // count and the cell counts describe one definition of null. A
+            // nested value is never null-like: only its own null slot counts.
+            row_has_null |= match field {
+                FieldText::Rows(_) => value_buffer.is_empty(),
+                _ => is_null_like_token(&value_buffer),
+            };
         }
         tracker.observe(row_signature.finish());
         completeness.observe(row_has_null);
     }
 
     Ok(())
+}
+
+fn push_hex(out: &mut String, bytes: impl AsRef<[u8]>) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for byte in bytes.as_ref() {
+        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        out.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
 }
 
 /// Analyzer for processing multiple RecordBatches and building column profiles.
@@ -564,17 +699,17 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: String) {
+    fn offer_sample(&mut self, value: &str) {
         if !is_null_like_token(value.trim()) {
             let matches_date = self.should_track_date_matches()
-                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal);
+                && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Temporal);
             if matches_date {
                 self.date_matched_values += 1;
             }
             if self.positive_hint || self.temporal_hint {
                 self.hint_checked_values += 1;
                 if self.positive_hint
-                    && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Positive)
+                    && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Positive)
                 {
                     self.positive_matched_values += 1;
                 }
@@ -832,7 +967,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(value);
                 }
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -851,7 +986,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(value_f64);
                 }
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -861,10 +996,9 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_integer(value);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -877,7 +1011,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -890,7 +1024,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -903,7 +1037,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -913,10 +1047,9 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                self.numeric.update_unsigned(value);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -929,7 +1062,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -942,7 +1075,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -955,7 +1088,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(value.to_string());
+                self.offer_sample(&value.to_string());
             }
         }
         Ok(())
@@ -975,11 +1108,11 @@ impl ColumnAnalyzer {
                 // fed so numeric stats never fall back to the sample.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
         Ok(())
@@ -996,11 +1129,11 @@ impl ColumnAnalyzer {
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
         Ok(())
@@ -1017,7 +1150,7 @@ impl ColumnAnalyzer {
                 }
                 let value_str = if value { "True" } else { "False" };
                 self.cardinality.insert(value_str);
-                self.offer_sample(value_str.to_string());
+                self.offer_sample(value_str);
             }
         }
         Ok(())
@@ -1031,7 +1164,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(days as f64);
                 let date_str = formatter.value(index).to_string();
                 self.cardinality.insert(&date_str);
-                self.offer_sample(date_str);
+                self.offer_sample(&date_str);
             }
         }
         Ok(())
@@ -1045,7 +1178,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(millis as f64);
                 let datetime_str = formatter.value(index).to_string();
                 self.cardinality.insert(&datetime_str);
-                self.offer_sample(datetime_str);
+                self.offer_sample(&datetime_str);
             }
         }
         Ok(())
@@ -1066,7 +1199,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1079,7 +1212,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1092,7 +1225,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -1105,7 +1238,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
-                    self.offer_sample(ts_str);
+                    self.offer_sample(&ts_str);
                 }
             }
         }
@@ -1136,7 +1269,7 @@ impl ColumnAnalyzer {
                 key.clear();
                 write!(key, "{}", formatter.value(index))?;
                 self.cardinality.insert(&key);
-                self.offer_sample(format!("<binary:{len} bytes>"));
+                self.offer_sample(&format!("<binary:{len} bytes>"));
             }
         }
         Ok(())
@@ -1150,16 +1283,18 @@ impl ColumnAnalyzer {
     /// Arrow's own rendering applies the scale, negative scales included, so
     /// each value is read through it: the number parsed from it is correctly
     /// rounded, and the text it leaves for samples and distinct counts is the
-    /// one a CSV of the same data holds.
+    /// one a CSV of the same data holds. A scale-0 decimal beyond 2^53, such
+    /// as a `decimal(20, 0)` column of 64-bit ids or epoch nanoseconds, keeps
+    /// its exact integer for the spread, as an `Int64` column does (#877).
     fn process_decimal_value(&mut self, rendered: String) -> Result<()> {
-        let value: f64 = rendered.parse().map_err(|error| {
-            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number: {error}")
-        })?;
         // Every decimal Arrow stores is finite in f64: `decimal256` holds at
         // most 76 digits, far inside the f64 range.
-        self.update_numeric_stats(value);
+        let number = ParsedNumber::parse(&rendered).ok_or_else(|| {
+            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number")
+        })?;
+        self.numeric.update_number(number);
         self.cardinality.insert(&rendered);
-        self.offer_sample(rendered);
+        self.offer_sample(&rendered);
         Ok(())
     }
 
@@ -1191,10 +1326,10 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1204,10 +1339,10 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1217,10 +1352,10 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -1230,10 +1365,10 @@ impl ColumnAnalyzer {
             for index in 0..dur_array.len() {
                 if !dur_array.is_null(index) {
                     let dur_value = dur_array.value(index);
-                    self.update_numeric_stats(dur_value as f64);
+                    self.numeric.update_integer(dur_value);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.offer_sample(dur_str);
+                    self.offer_sample(&dur_str);
                 }
             }
         }
@@ -1248,7 +1383,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = formatter.value(index).to_string();
                         self.update_text_stats(&value_str);
-                        self.offer_sample(value_str.clone());
+                        self.offer_sample(&value_str);
                         self.cardinality.insert_owned(value_str);
                     }
                 }
@@ -1873,5 +2008,84 @@ mod tests {
         );
         assert_eq!(observable(view), expected);
         assert_eq!(observable(large_view), expected);
+    }
+
+    #[test]
+    fn a_dictionary_key_to_a_null_value_signs_like_a_null_key() {
+        // #767 review: a nested dictionary cell is null when its key is null
+        // and when its key points at a null value. Both must sign as an
+        // empty field, or two null cells differ and a duplicate is missed.
+        use arrow::array::{DictionaryArray, Int32Array, ListBuilder, StringBuilder};
+
+        let mut lists = ListBuilder::new(StringBuilder::new());
+        lists.values().append_value("a");
+        lists.append(true);
+        lists.append(false);
+        let values = Arc::new(lists.finish());
+        let keys = Int32Array::from(vec![None, Some(1), Some(0)]);
+        let tags = DictionaryArray::try_new(keys, values).unwrap();
+        let ids = Int64Array::from(vec![1, 1, 2]);
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, false),
+            Field::new("tags", tags.data_type().clone(), true),
+        ]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(ids), Arc::new(tags)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let rows = analyzer.row_duplicate_summary().expect("rows assessed");
+        assert_eq!(rows.duplicate_rows, 1);
+    }
+
+    /// `{a: 1, b: 2}` then `{b: 2, a: 1}` after a leading `{z: 0}`, the same
+    /// entries in two orders (#943).
+    fn reordered_maps() -> MapArray {
+        use arrow::array::{Int64Builder, MapBuilder, StringBuilder};
+
+        let mut maps = MapBuilder::new(None, StringBuilder::new(), Int64Builder::new());
+        for entries in [
+            &[("z", 0)][..],
+            &[("a", 1), ("b", 2)],
+            &[("b", 2), ("a", 1)],
+        ] {
+            for (key, value) in entries {
+                maps.keys().append_value(key);
+                maps.values().append_value(*value);
+            }
+            maps.append(true).unwrap();
+        }
+        maps.finish()
+    }
+
+    fn duplicate_rows_of(value: ArrayRef) -> usize {
+        let ids = Int64Array::from(vec![1; value.len()]);
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, false),
+            Field::new("m", value.data_type().clone(), true),
+        ]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(ids), value]).unwrap();
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        analyzer
+            .row_duplicate_summary()
+            .expect("rows assessed")
+            .duplicate_rows
+    }
+
+    #[test]
+    fn a_sliced_map_column_sorts_the_entries_of_the_rows_it_holds() {
+        // A slice starts its map offsets past zero, so the entries of the
+        // rows left out stay in the entries array the sort reads.
+        let maps = reordered_maps().slice(1, 2);
+        assert_eq!(duplicate_rows_of(Arc::new(maps)), 1);
+    }
+
+    #[test]
+    fn a_dictionary_of_maps_sorts_the_entries_of_its_values() {
+        use arrow::array::{DictionaryArray, Int32Array};
+
+        let keys = Int32Array::from(vec![1, 2]);
+        let maps = DictionaryArray::try_new(keys, Arc::new(reordered_maps())).unwrap();
+        assert_eq!(duplicate_rows_of(Arc::new(maps)), 1);
     }
 }

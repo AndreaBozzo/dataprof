@@ -9,7 +9,7 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator};
+use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, ParsedNumber};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
     StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
@@ -20,6 +20,88 @@ use std::sync::Arc;
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
+
+/// The source as `arrow-csv` must see it: UTF-8, checked as the bytes stream
+/// through, failing with an error that names UTF-8 so the facade reports the
+/// same encoding diagnostic as every other CSV route.
+///
+/// `arrow-csv` checks UTF-8 over a batch's field bytes joined together, then
+/// slices fields out unchecked. Two fields that are invalid alone can join into
+/// a valid character (`\xCD`, a newline, `\x9C`), and each field then reaches
+/// the profile as a `&str` that is not UTF-8 (#963). In a file that is valid
+/// UTF-8 as a whole, no ASCII delimiter, quote or line end can fall inside a
+/// character, so checking the stream rules that out.
+struct Utf8CheckedReader<R> {
+    inner: R,
+    /// The start of a character the last read cut short, completed by the next.
+    pending: Vec<u8>,
+    /// Bytes read so far, for the error's position.
+    offset: u64,
+}
+
+impl<R> Utf8CheckedReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            pending: Vec::with_capacity(4),
+            offset: 0,
+        }
+    }
+
+    fn invalid(&self, at: u64) -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("CSV source is not valid UTF-8 at byte {at}"),
+        )
+    }
+}
+
+impl<R: std::io::Read> std::io::Read for Utf8CheckedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        let start_offset = self.offset;
+        self.offset += read as u64;
+        if read == 0 {
+            if !self.pending.is_empty() {
+                return Err(self.invalid(start_offset - self.pending.len() as u64));
+            }
+            return Ok(0);
+        }
+
+        // Finish the character the previous read cut short, if there is one.
+        let mut checked = 0;
+        if let Some(&lead) = self.pending.first() {
+            // Only a valid lead byte is ever held back, so its width is known.
+            let width = match lead {
+                0xC0..=0xDF => 2,
+                0xE0..=0xEF => 3,
+                _ => 4,
+            };
+            let missing = (width - self.pending.len()).min(read);
+            self.pending.extend_from_slice(&buf[..missing]);
+            checked = missing;
+            if self.pending.len() < width {
+                return Ok(read);
+            }
+            if std::str::from_utf8(&self.pending).is_err() {
+                let at = start_offset + missing as u64 - self.pending.len() as u64;
+                return Err(self.invalid(at));
+            }
+            self.pending.clear();
+        }
+
+        match std::str::from_utf8(&buf[checked..read]) {
+            Ok(_) => Ok(read),
+            // A character cut by the end of this read: hold its start back.
+            Err(error) if error.error_len().is_none() => {
+                let tail = checked + error.valid_up_to();
+                self.pending.extend_from_slice(&buf[tail..read]);
+                Ok(read)
+            }
+            Err(error) => Err(self.invalid(start_offset + (checked + error.valid_up_to()) as u64)),
+        }
+    }
+}
 
 /// What a pass with the `csv` crate learns about a file that Arrow cannot
 /// report on its own: see [`ArrowProfiler::pre_scan`].
@@ -261,6 +343,30 @@ impl ArrowProfiler {
         let schema = Arc::new(Schema::new(fields));
 
         let file = File::open(file_path).map_err(|error| CsvDecodeFailure::Other(error.into()))?;
+
+        // No field at all means the `csv` crate found no record: the file is
+        // empty or holds only blank lines, which it skips. Arrow cannot decode
+        // against an empty schema: it sizes the field-end buffer by the column
+        // count and fails on the first byte it reads, blank or not (#964).
+        // There is nothing to decode, so the source is only read through for
+        // its quote state.
+        if schema.fields().is_empty() {
+            let mut source = self.quote_tracked(file);
+            let quote_outcome = source.outcome();
+            std::io::copy(&mut source, &mut std::io::sink())
+                .map_err(|error| CsvDecodeFailure::Other(error.into()))?;
+            let mut memory_sampler = PeakMemorySampler::new();
+            memory_sampler.sample_now();
+            return Ok(CsvDecodeOutcome {
+                column_analyzers: std::collections::HashMap::new(),
+                row_tracker: BatchRowTracker::default(),
+                hint_bindings: ValueHintBindingAccumulator::new(&self.semantic_hints),
+                total_rows: 0,
+                padded_rows: 0,
+                peak_memory_mb: memory_sampler.peak_mb(),
+                unterminated_quote: quote_outcome.at_end(),
+            });
+        }
         let mut arrow_builder = ReaderBuilder::new(schema)
             .with_header(has_header)
             .with_batch_size(self.batch_size);
@@ -286,6 +392,7 @@ impl ArrowProfiler {
         }
         let source = self.quote_tracked(file);
         let quote_outcome = source.outcome();
+        let source = Utf8CheckedReader::new(source);
         let mut csv_reader = arrow_builder
             .build(source)
             .map_err(|error| classify_arrow_csv_error(file_path, error))?;
@@ -639,8 +746,8 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: String) {
-        if dataprof_metrics::value_matches_hint(&value, dataprof_core::SemanticHintKind::Temporal) {
+    fn offer_sample(&mut self, value: &str) {
+        if dataprof_metrics::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
         self.sample_values.offer(value);
@@ -679,13 +786,13 @@ impl ColumnAnalyzer {
                 // infinities, and overflowing literals are excluded here.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.numeric.update(number);
+                if let Some(number) = ParsedNumber::parse(value) {
+                    self.numeric.update_number(number);
                 }
 
                 self.cardinality.insert(value);
 
-                self.offer_sample(value.to_string());
+                self.offer_sample(value);
             }
         }
     }
@@ -766,6 +873,54 @@ mod tests {
     use dataprof_core::ColumnStats;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    /// A source that hands out one byte per read, so every multi-byte
+    /// character arrives split across reads.
+    struct ByteAtATime<'a>(&'a [u8]);
+
+    impl std::io::Read for ByteAtATime<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let Some((&first, rest)) = self.0.split_first() else {
+                return Ok(0);
+            };
+            buf[0] = first;
+            self.0 = rest;
+            Ok(1)
+        }
+    }
+
+    fn read_checked(source: impl std::io::Read) -> std::io::Result<Vec<u8>> {
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut Utf8CheckedReader::new(source), &mut out)?;
+        Ok(out)
+    }
+
+    #[test]
+    fn the_checked_reader_passes_utf8_split_across_reads() {
+        let text = "a,é\n東京,🦀\n".as_bytes();
+        assert_eq!(read_checked(ByteAtATime(text)).unwrap(), text);
+        assert_eq!(read_checked(text).unwrap(), text);
+    }
+
+    #[test]
+    fn the_checked_reader_refuses_what_is_not_utf8() {
+        for bytes in [
+            // Two fields invalid alone that join into a valid character (#963).
+            b"v\n\xCD\n\x9C\n".as_slice(),
+            b"a,b\n\xCD,\x9C\n",
+            // An invalid byte mid-stream, and a character cut by the end.
+            b"a\nJos\xE9\n",
+            b"a\n\xE6\x9D",
+        ] {
+            for error in [
+                read_checked(bytes).unwrap_err(),
+                read_checked(ByteAtATime(bytes)).unwrap_err(),
+            ] {
+                assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+                assert!(error.to_string().contains("UTF-8"), "{error}");
+            }
+        }
+    }
 
     #[test]
     fn test_arrow_profiler() -> Result<(), DataProfilerError> {

@@ -12,21 +12,26 @@ readme = "README.md"
 [features]
 default = []
 # `sqlx/bigdecimal` rides with the two backends that have a decimal type.
-# SQLite has none, so a sqlite-only build does not pay for it.
-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/bigdecimal"]
-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/bigdecimal"]
-sqlite = ["dep:sqlx", "sqlx/sqlite"]
+# SQLite has none, so a sqlite-only build does not pay for it. `futures`
+# reads the row stream a profiled query is executed through. `sqlx/json`,
+# `dataprof-json` and `serde_json` decode and render JSON columns, which
+# SQLite does not have either: it stores JSON as TEXT.
+postgres = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "dep:serde_json", "sqlx/postgres", "sqlx/bigdecimal", "sqlx/json"]
+mysql = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "dep:serde_json", "sqlx/mysql", "sqlx/bigdecimal", "sqlx/json"]
+sqlite = ["dep:sqlx", "dep:futures", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
 [dependencies]
 async-trait = { workspace = true }
 dataprof-core = { workspace = true }
+dataprof-json = { workspace = true, optional = true }
 dataprof-metrics = { workspace = true }
 dataprof-runtime = { workspace = true }
+futures = { workspace = true, optional = true }
 log = { workspace = true }
-rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true, optional = true, features = ["raw_value"] }
 sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }

@@ -19,6 +19,7 @@ async-streaming = [
     "dep:tokio",
     "dep:tokio-util",
     "dep:uuid",
+    "dep:dataprof-json",
     "dataprof-core/async-streaming",
     "dataprof-runtime/async-streaming",
 ]
@@ -28,6 +29,7 @@ parquet-async = ["async-streaming", "dataprof-runtime/parquet-async"]
 csv = { workspace = true }
 dataprof-core = { workspace = true }
 dataprof-csv = { workspace = true }
+dataprof-json = { workspace = true, optional = true }
 dataprof-parquet = { workspace = true, optional = true }
 dataprof-runtime = { workspace = true }
 log = { workspace = true }
@@ -39,5 +41,6 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+arrow = { workspace = true }
 bytes = { workspace = true }
 tempfile = { workspace = true }

@@ -80,8 +80,12 @@ fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::JsonParsingError { .. }
         | DataProfilerError::CsvParsingError { .. }
         | DataProfilerError::EncodingError { .. }
+        | DataProfilerError::BinaryInput { .. }
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
+        // A read that failed because the source changed under it: an I/O
+        // condition a caller can retry, not an analysis failure (#865).
+        DataProfilerError::SourceChanged { .. } => PyIOError::new_err(message),
         DataProfilerError::IoError { .. } => {
             if message.to_ascii_lowercase().contains("permission denied") {
                 PyPermissionError::new_err(message)

@@ -3,9 +3,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, ScoreInterval,
-    SemanticHintKind, TextLengthUnit, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, PatternMatchCount,
+    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
+    QualityPolicy, QualityScores, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1184,6 +1185,22 @@ impl PyProfileReport {
                 },
             )?;
         }
+        if let Some(count) = semantics.pattern_match_count {
+            dict.set_item(
+                "pattern_match_count",
+                match count {
+                    PatternMatchCount::Validated => "validated",
+                },
+            )?;
+        }
+        if let Some(estimator) = semantics.shape_moments {
+            dict.set_item(
+                "shape_moments",
+                match estimator {
+                    ShapeMomentEstimator::AdjustedSample => "adjusted_sample",
+                },
+            )?;
+        }
         Ok(Some(dict))
     }
 
@@ -1228,6 +1245,69 @@ impl PyProfileReport {
     fn from_json(text: &str) -> PyResult<Self> {
         serde_json::from_str(text).map(Self::new).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid report document: {e}"))
+        })
+    }
+
+    /// Evaluate a quality policy with the runtime gate and return its result
+    /// document as JSON. `ProfileReport.check()` validates the keywords first,
+    /// so an error here means the two layers disagree on a policy rule.
+    #[pyo3(signature = (
+        *,
+        min_rows = None,
+        min_quality_score = None,
+        min_dimension_scores = Vec::new(),
+        max_null_percentage = Vec::new(),
+        max_null_percentage_any = None,
+        max_duplicate_rows = None,
+        require_quality = false,
+        require_dimensions = Vec::new(),
+        scope = "full_source",
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn quality_gate_json(
+        &self,
+        min_rows: Option<usize>,
+        min_quality_score: Option<f64>,
+        min_dimension_scores: Vec<(String, f64)>,
+        max_null_percentage: Vec<(String, f64)>,
+        max_null_percentage_any: Option<f64>,
+        max_duplicate_rows: Option<usize>,
+        require_quality: bool,
+        require_dimensions: Vec<String>,
+        scope: &str,
+    ) -> PyResult<String> {
+        let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
+        let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
+        let mut policy = QualityPolicy::new().scope(scope.parse().map_err(value_error)?);
+        if let Some(min) = min_rows {
+            policy = policy.min_rows(min);
+        }
+        if let Some(min) = min_quality_score {
+            policy = policy.min_quality_score(min);
+        }
+        for (name, min) in &min_dimension_scores {
+            policy = policy.min_dimension_score(dimension(name)?, *min);
+        }
+        for (column, max) in max_null_percentage {
+            policy = policy.max_null_percentage(column, max);
+        }
+        if let Some(max) = max_null_percentage_any {
+            policy = policy.max_null_percentage_any(max);
+        }
+        if let Some(max) = max_duplicate_rows {
+            policy = policy.max_duplicate_rows(max);
+        }
+        if require_quality {
+            policy = policy.require_quality();
+        }
+        for name in &require_dimensions {
+            policy = policy.require_dimension(dimension(name)?);
+        }
+        let result = policy
+            .evaluate(&self.inner)
+            .map_err(|e| value_error(e.to_string()))?;
+        serde_json::to_string(&result).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
         })
     }
 

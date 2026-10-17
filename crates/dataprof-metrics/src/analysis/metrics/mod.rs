@@ -148,8 +148,8 @@ impl MetricsCalculator {
     }
 
     /// Explicit temporal hints plus columns the profiler itself inferred as dates.
-    /// Hint order wins for ambiguous start/end role matching; inferred columns
-    /// are appended in stable profile order and duplicates are removed.
+    /// Hints come first; inferred columns are appended in stable profile order
+    /// and duplicates are removed.
     fn effective_temporal_columns(
         column_profiles: &[ColumnProfile],
         semantic_hints: &SemanticHints,
@@ -174,59 +174,19 @@ impl MetricsCalculator {
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<QualityMetrics, DataProfilerError> {
-        self.calculate_comprehensive_metrics_with_positive_columns(
+        self.calculate_comprehensive_metrics_with_hints(
             data,
             column_profiles,
             requested_dimensions,
-            &[],
+            &SemanticHints::default(),
             None,
         )
     }
 
-    /// Calculate comprehensive metrics with explicit positive-only column
-    /// hints and, when the engine tracked whole rows, full-stream duplicate
-    /// counts that supersede the sample-based duplicate scan.
-    pub fn calculate_comprehensive_metrics_with_positive_columns(
-        &self,
-        data: &HashMap<String, Vec<String>>,
-        column_profiles: &[ColumnProfile],
-        requested_dimensions: Option<&[QualityDimension]>,
-        positive_columns: &[String],
-        row_duplicates: Option<RowDuplicateSummary>,
-    ) -> Result<QualityMetrics, DataProfilerError> {
-        self.calculate_comprehensive_metrics_with_semantic_hints(
-            data,
-            column_profiles,
-            requested_dimensions,
-            positive_columns,
-            &[],
-            row_duplicates,
-        )
-    }
-
-    /// Calculate comprehensive metrics with explicit semantic column hints.
-    pub fn calculate_comprehensive_metrics_with_semantic_hints(
-        &self,
-        data: &HashMap<String, Vec<String>>,
-        column_profiles: &[ColumnProfile],
-        requested_dimensions: Option<&[QualityDimension]>,
-        positive_columns: &[String],
-        identifier_columns: &[String],
-        row_duplicates: Option<RowDuplicateSummary>,
-    ) -> Result<QualityMetrics, DataProfilerError> {
-        let semantic_hints =
-            SemanticHints::new(positive_columns.to_vec(), identifier_columns.to_vec());
-        self.calculate_comprehensive_metrics_with_all_semantic_hints(
-            data,
-            column_profiles,
-            requested_dimensions,
-            &semantic_hints,
-            row_duplicates,
-        )
-    }
-
-    /// Calculate comprehensive metrics with all explicit semantic column hints.
-    pub fn calculate_comprehensive_metrics_with_all_semantic_hints(
+    /// Calculate comprehensive metrics with explicit semantic column hints and,
+    /// when the engine tracked whole rows, full-stream duplicate counts that
+    /// supersede the sample-based duplicate scan.
+    pub fn calculate_comprehensive_metrics_with_hints(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
@@ -490,59 +450,19 @@ impl MetricsCalculator {
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<BifurcatedResult, DataProfilerError> {
-        self.calculate_bifurcated_metrics_with_positive_columns(
+        self.calculate_bifurcated_metrics_with_hints(
             data,
             column_profiles,
             requested_dimensions,
-            &[],
+            &SemanticHints::default(),
             None,
         )
     }
 
-    /// Calculate bifurcated metrics with explicit positive-only column
-    /// hints and, when the engine tracked whole rows, full-stream duplicate
-    /// counts that supersede the sample-based duplicate scan.
-    pub fn calculate_bifurcated_metrics_with_positive_columns(
-        &self,
-        data: &HashMap<String, Vec<String>>,
-        column_profiles: &[ColumnProfile],
-        requested_dimensions: Option<&[QualityDimension]>,
-        positive_columns: &[String],
-        row_duplicates: Option<RowDuplicateSummary>,
-    ) -> Result<BifurcatedResult, DataProfilerError> {
-        self.calculate_bifurcated_metrics_with_semantic_hints(
-            data,
-            column_profiles,
-            requested_dimensions,
-            positive_columns,
-            &[],
-            row_duplicates,
-        )
-    }
-
-    /// Calculate bifurcated metrics with explicit semantic column hints.
-    pub fn calculate_bifurcated_metrics_with_semantic_hints(
-        &self,
-        data: &HashMap<String, Vec<String>>,
-        column_profiles: &[ColumnProfile],
-        requested_dimensions: Option<&[QualityDimension]>,
-        positive_columns: &[String],
-        identifier_columns: &[String],
-        row_duplicates: Option<RowDuplicateSummary>,
-    ) -> Result<BifurcatedResult, DataProfilerError> {
-        let semantic_hints =
-            SemanticHints::new(positive_columns.to_vec(), identifier_columns.to_vec());
-        self.calculate_bifurcated_metrics_with_all_semantic_hints(
-            data,
-            column_profiles,
-            requested_dimensions,
-            &semantic_hints,
-            row_duplicates,
-        )
-    }
-
-    /// Calculate bifurcated metrics with all explicit semantic column hints.
-    pub fn calculate_bifurcated_metrics_with_all_semantic_hints(
+    /// Calculate bifurcated metrics with explicit semantic column hints and,
+    /// when the engine tracked whole rows, full-stream duplicate counts that
+    /// supersede the sample-based duplicate scan.
+    pub fn calculate_bifurcated_metrics_with_hints(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
@@ -847,11 +767,11 @@ mod tests {
         let requested = [QualityDimension::Uniqueness];
 
         let metrics = MetricsCalculator::new()
-            .calculate_comprehensive_metrics_with_positive_columns(
+            .calculate_comprehensive_metrics_with_hints(
                 &data,
                 &profiles,
                 Some(&requested),
-                &[],
+                &SemanticHints::default(),
                 Some(RowDuplicateSummary {
                     duplicate_rows: 0,
                     rows_checked: 1_000,
@@ -891,11 +811,11 @@ mod tests {
 
         for (approximate, filed_as_sampled) in [(true, true), (false, false)] {
             let result = MetricsCalculator::new()
-                .calculate_bifurcated_metrics_with_positive_columns(
+                .calculate_bifurcated_metrics_with_hints(
                     &data,
                     &[key(approximate)],
                     Some(&requested),
-                    &[],
+                    &SemanticHints::default(),
                     None,
                 )
                 .expect("quality metrics");

@@ -167,33 +167,6 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 fn parse_flexible_full(s: &str, month_first: bool) -> Option<ParsedDateTime> {
     let trimmed = s.trim();
 
-    // An offset-bearing value is an instant, normalized to UTC before anything
-    // else sees it — see the "UTC Offsets" section in the module docs. `Z`
-    // values are unaffected (their offset is already zero); the rule only moves
-    // values written at a non-zero offset.
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
-        let utc = dt.naive_utc();
-        return Some(ParsedDateTime {
-            date: utc.date(),
-            datetime: Some(utc),
-        });
-    }
-
-    // Try datetime formats first (these have time components)
-    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Some(ParsedDateTime {
-            date: dt.date(),
-            datetime: Some(dt),
-        });
-    }
-
-    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
-        return Some(ParsedDateTime {
-            date: dt.date(),
-            datetime: Some(dt),
-        });
-    }
-
     // The column's order first, then the other one: a value that parses in
     // only one order is read in that order, which is what `resolve_slash_order`
     // counted it as.
@@ -209,20 +182,36 @@ fn parse_flexible_full(s: &str, month_first: bool) -> Option<ParsedDateTime> {
         )
     };
 
-    for format in slash_datetimes {
-        if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
+    // Every datetime format needs at least 11 bytes (`1-1-1T1:1:1`), so a
+    // plain date such as `2024-01-15` goes straight to the date formats.
+    if trimmed.len() > 10 {
+        // An offset-bearing value is an instant, normalized to UTC before
+        // anything else sees it — see the "UTC Offsets" section in the module
+        // docs. `Z` values are unaffected (their offset is already zero); the
+        // rule only moves values written at a non-zero offset.
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+            let utc = dt.naive_utc();
             return Some(ParsedDateTime {
-                date: dt.date(),
-                datetime: Some(dt),
+                date: utc.date(),
+                datetime: Some(utc),
             });
         }
-    }
 
-    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(ParsedDateTime {
-            date: dt.date(),
-            datetime: Some(dt),
-        });
+        let datetime_formats = [
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            slash_datetimes[0],
+            slash_datetimes[1],
+            "%Y-%m-%dT%H:%M:%S%.f",
+        ];
+        for format in datetime_formats {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
+                return Some(ParsedDateTime {
+                    date: dt.date(),
+                    datetime: Some(dt),
+                });
+            }
+        }
     }
 
     // Try date-only formats (no time component). Only the slash form exists in
@@ -283,8 +272,11 @@ pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
 /// Every supported raw format starts with either `YYYY<sep>MM<sep>DD` or
 /// `DD<sep>MM<sep>YYYY`. Malformed date-shaped values remain candidates so the
 /// calendar parser can reject and count values such as `2024-13-45`.
+///
+/// Runs on every value of every column, so the byte tests come before the
+/// whitespace test, and that one compares lengths instead of contents.
 fn looks_like_raw_datetime_candidate(s: &str) -> bool {
-    if s != s.trim() || s.len() < 10 {
+    if s.len() < 10 {
         return false;
     }
 
@@ -303,7 +295,7 @@ fn looks_like_raw_datetime_candidate(s: &str) -> bool {
         && bytes.get(2).is_some_and(|byte| supported_separator(*byte))
         && bytes.get(5) == bytes.get(2);
 
-    year_first || year_last
+    (year_first || year_last) && s.trim().len() == s.len()
 }
 
 fn build_year_distribution(dates: &[NaiveDate]) -> HashMap<i32, usize> {

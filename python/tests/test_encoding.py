@@ -34,6 +34,19 @@ def test_latin1_csv_raises_clean_value_error(tmp_path, engine):
         raise AssertionError("non-UTF-8 CSV must raise, not profile silently")
 
 
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+@pytest.mark.parametrize("data", [b"v\n\xcd\n\x9c\n", b"a,b\n\xcd,\x9c\n"], ids=["rows", "fields"])
+def test_utf8_split_across_fields_is_refused_by_every_engine(tmp_path, engine, data):
+    """Bytes invalid alone but valid joined used to pass the columnar engine
+    (#963); every engine raises the same encoding error."""
+    path = tmp_path / "split.csv"
+    path.write_bytes(data)
+    with pytest.raises(ValueError) as excinfo:
+        dataprof.profile(str(path), engine=engine)
+    assert "utf-8" in str(excinfo.value).lower()
+    assert "iconv" in str(excinfo.value)
+
+
 def test_windows1252_csv_is_flagged(tmp_path):
     path = tmp_path / "cp1252.csv"
     # 0x93/0x94 are windows-1252 smart quotes (invalid UTF-8).

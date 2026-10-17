@@ -12,11 +12,12 @@ from typing import Any, NoReturn
 
 import dataprof
 from dataprof import profile_file
-from dataprof._gate import _Policy
+from dataprof._gate import _Policy, _PolicyFieldError
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
 _POLICY_DEFAULTS: dict[str, Any] = {
+    "min_rows": None,
     "min_quality_score": None,
     "min_dimension_scores": None,
     "max_null_percentage": None,
@@ -172,6 +173,11 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         version=f"dataprof {dataprof.__version__}",
     )
     parser.add_argument(
+        "--min-rows",
+        type=int,
+        help="minimum number of rows the scan must read",
+    )
+    parser.add_argument(
         "--min-quality",
         dest="min_quality_score",
         type=float,
@@ -253,17 +259,33 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     policy = dict(_POLICY_DEFAULTS)
     if args.policy is not None:
         try:
+            raw_bytes = args.policy.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"cannot read policy file {args.policy}: {exc.strerror}") from exc
+        try:
+            text = raw_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"policy file {args.policy} is not UTF-8: {exc}") from exc
+        try:
             document = json.loads(
-                args.policy.read_text(encoding="utf-8-sig"),
+                text,
                 object_pairs_hook=_unique_policy_keys,
             )
         except json.JSONDecodeError as exc:
             raise ValueError(f"policy file {args.policy} is not valid JSON: {exc}") from exc
+        except RecursionError as exc:
+            raise ValueError(f"policy file {args.policy} is nested too deeply: {exc}") from exc
+        except ValueError as exc:
+            raise ValueError(f"policy file {args.policy}: {exc}") from exc
         if not isinstance(document, dict):
-            raise ValueError("policy file must contain a JSON object of check() keywords")
+            raise ValueError(
+                f"policy file {args.policy} must contain a JSON object of check() keywords"
+            )
         unknown = document.keys() - policy.keys()
         if unknown:
-            raise ValueError(f"unknown policy keys: {', '.join(sorted(unknown))}")
+            raise ValueError(
+                f"policy file {args.policy} has unknown policy keys: {', '.join(sorted(unknown))}"
+            )
         policy.update(document)
     for key in policy:
         value = getattr(args, key)
@@ -277,12 +299,14 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     # scope, and empty-policy semantics belong to that validator.
     dimensions = policy["min_dimension_scores"]
     if dimensions is not None and not isinstance(dimensions, dict):
-        raise ValueError("min_dimension_scores must be a JSON object")
+        raise ValueError(f"policy file {args.policy}: min_dimension_scores must be a JSON object")
     required = policy["require_metrics"]
     if required is not None and (
         not isinstance(required, list) or not all(isinstance(name, str) for name in required)
     ):
-        raise ValueError("require_metrics must be a JSON array of names")
+        raise ValueError(
+            f"policy file {args.policy}: require_metrics must be a JSON array of names"
+        )
     _Policy(**policy)
     return policy
 
@@ -311,7 +335,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = _policy(args)
     except (OSError, ValueError, RuntimeError) as exc:
-        return _report_error("policy", str(exc), path=args.policy, json_output=args.json)
+        message = str(exc)
+        # A value error names the file only when the file supplied that key
+        # and no flag replaced it.
+        from_flag = isinstance(exc, _PolicyFieldError) and getattr(args, exc.key, None) is not None
+
+        if (
+            not args.json
+            and args.policy is not None
+            and isinstance(exc, _PolicyFieldError)
+            and not from_flag
+        ):
+            message = f"policy file {args.policy}: {message}"
+
+        return _report_error(
+            "policy",
+            message,
+            path=None if from_flag else args.policy,
+            json_output=args.json,
+        )
     try:
         report = profile_file(
             args.source,

@@ -112,24 +112,6 @@ print(f"Sampled {report.rows} rows, sampling_ratio: {report.sampling_ratio}")
 
 # Systematic: every 10th row. Decided per row, so no extra memory.
 report = dp.profile("huge.csv", sampling=SamplingStrategy.systematic(10))
-
-# Stratified: up to 1,000 rows per region, however many regions there are.
-report = dp.profile("huge.csv", sampling=SamplingStrategy.stratified(["region"], 1000))
-
-# Importance: only the rows you nominate as worth profiling.
-report = dp.profile("huge.csv", sampling=SamplingStrategy.importance("risk_score", 0.9))
-
-# Progressive: grow the sample until each numeric mean is within 1% of itself,
-# between 1,000 and 100,000 rows.
-report = dp.profile("huge.csv", sampling=SamplingStrategy.progressive(1000, 0.99, 100000))
-
-# Multi-stage: filters first, then one fixed-size stage.
-report = dp.profile(
-    "huge.csv",
-    sampling=SamplingStrategy.multi_stage(
-        [SamplingStrategy.systematic(10), SamplingStrategy.reservoir(50000)]
-    ),
-)
 ```
 
 Sampling limits how much data is **analyzed**, not how much is **read**: pair it
@@ -469,6 +451,10 @@ print(problematic.select(["name", "null_percentage", "unique_count"]))
 
 ### Profile NumPy feature matrices via pandas
 
+Skewness and excess kurtosis use the adjusted sample estimators from pandas.
+They require at least three and four numeric values respectively; a constant
+column reports zero. The skewness threshold below uses that convention.
+
 ```python
 import numpy as np
 import pandas as pd
@@ -674,8 +660,11 @@ println!("{} rows (exact: {})", count.count, count.exact);
 ```rust
 use dataprof::quick_quality_check;
 
-let score = quick_quality_check("data.csv")?;
-println!("Quality: {:.1}%", score);
+// `None` when nothing was assessable, such as a header-only CSV.
+match quick_quality_check("data.csv")? {
+    Some(score) => println!("Quality: {score:.1}%"),
+    None => println!("Quality: not assessed"),
+}
 ```
 
 ### Async stream profiling

@@ -75,21 +75,7 @@ class SamplingStrategy:
     @staticmethod
     def reservoir(size: int) -> SamplingStrategy: ...
     @staticmethod
-    def stratified(key_columns: list[str], samples_per_stratum: int) -> SamplingStrategy: ...
-    @staticmethod
-    def progressive(
-        initial_size: int,
-        confidence_level: float = 0.95,
-        max_size: int = 100_000,
-    ) -> SamplingStrategy: ...
-    @staticmethod
     def systematic(interval: int) -> SamplingStrategy: ...
-    @staticmethod
-    def importance(weight_column: str, weight_threshold: float) -> SamplingStrategy: ...
-    @staticmethod
-    def multi_stage(stages: list[SamplingStrategy]) -> SamplingStrategy: ...
-    @staticmethod
-    def adaptive(total_rows: int | None = None, file_size_mb: float = 0.0) -> SamplingStrategy: ...
     @property
     def is_noop(self) -> bool: ...
 
@@ -98,6 +84,7 @@ class SamplingStrategy:
 class StopCondition:
     """Composable stop condition for early termination."""
 
+    def _memory_row_limit(self) -> int | None: ...
     @staticmethod
     def max_rows(n: int) -> StopCondition: ...
     @staticmethod
@@ -139,7 +126,7 @@ class ProgressEvent:
 # --- Data types ---
 
 class Pattern:
-    """Detected pattern statistics."""
+    """Detected pattern statistics, counting only semantically validated matches."""
 
     name: str
     regex: str
@@ -404,6 +391,19 @@ class ProfileReport:
     def metric_semantics(self) -> dict[str, str] | None: ...
     @staticmethod
     def from_json(text: str) -> ProfileReport: ...
+    def quality_gate_json(
+        self,
+        *,
+        min_rows: int | None = ...,
+        min_quality_score: float | None = ...,
+        min_dimension_scores: list[tuple[str, float]] = ...,
+        max_null_percentage: list[tuple[str, float]] = ...,
+        max_null_percentage_any: float | None = ...,
+        max_duplicate_rows: int | None = ...,
+        require_quality: bool = ...,
+        require_dimensions: list[str] = ...,
+        scope: str = ...,
+    ) -> str: ...
     def summary_json(self) -> str: ...
     def to_json(self) -> str: ...
 

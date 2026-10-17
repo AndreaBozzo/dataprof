@@ -273,6 +273,7 @@ def test_capped_input_respects_evidence_scope(source: Path, scope: str, code: in
 
 def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path):
     policy = {
+        "min_rows": 1,
         "min_quality_score": 0,
         "min_dimension_scores": {"completeness": 0},
         "max_null_percentage": {"*": 100, "amount": 50},
@@ -285,6 +286,24 @@ def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path)
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == dp.profile_file(source).check(**policy).to_dict()
+
+
+@pytest.mark.parametrize(
+    "flags,code",
+    [
+        (("--min-rows", "3"), 0),
+        (("--min-rows", "4"), 1),
+        # A capped scan short of the minimum may be short only because of the cap.
+        (("--min-rows", "2", "--max-rows", "1"), 2),
+        (("--min-rows", "2", "--max-rows", "1", "--scope", "observed"), 1),
+    ],
+    ids=["enough", "too-few", "capped-full-source", "capped-observed"],
+)
+def test_min_rows_flag(source: Path, flags: tuple[str, ...], code: int):
+    result = run_check(source, *flags, "--json")
+    assert result.returncode == code, result.stderr
+    (check,) = json.loads(result.stdout)["checks"]
+    assert check["code"] == "min_rows"
 
 
 def test_flags_replace_matching_policy_keys(source: Path, tmp_path: Path):
@@ -375,6 +394,147 @@ def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: 
     assert "Traceback" not in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("policy_json", "flags", "expected_error", "file_origin"),
+    [
+        (
+            '{"min_quality_score": 150}',
+            (),
+            "min_quality_score threshold",
+            True,
+        ),
+        (
+            '{"min_dimension_scores": {"not_a_dimension": 90}}',
+            (),
+            "not_a_dimension",
+            True,
+        ),
+        (
+            '{"scope": "invalid_scope", "min_quality_score": 90}',
+            (),
+            "invalid_scope",
+            True,
+        ),
+        (
+            '{"min_quality_score": 90}',
+            ("--min-quality", "150"),
+            "min_quality_score threshold",
+            False,
+        ),
+        (
+            '{"max_null_percentage": {"*": 150}}',
+            (),
+            "max_null_percentage threshold",
+            True,
+        ),
+        (
+            '{"max_duplicate_rows": -1}',
+            (),
+            "max_duplicate_rows",
+            True,
+        ),
+        (
+            '{"require_metrics": ["not_a_dimension"]}',
+            (),
+            "not_a_dimension",
+            True,
+        ),
+        (
+            '{"min_quality_score": 150}',
+            ("--max-duplicate-rows", "0"),
+            "min_quality_score threshold",
+            True,
+        ),
+    ],
+    ids=[
+        "file-quality",
+        "file-dimension",
+        "file-scope",
+        "flag-quality",
+        "file-max-null",
+        "file-max-duplicates",
+        "file-required-metric",
+        "file-error-with-valid-flag",
+    ],
+)
+def test_policy_value_error_attribution(
+    source: Path,
+    tmp_path: Path,
+    policy_json: str,
+    flags: tuple[str, ...],
+    expected_error: str,
+    file_origin: bool,
+):
+    path = tmp_path / "policy.json"
+    path.write_text(policy_json, encoding="utf-8")
+
+    result = run_check(source, "--policy", path, *flags)
+
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert expected_error in result.stderr
+    if file_origin:
+        assert f"policy file {path}:" in result.stderr
+    else:
+        assert str(path) not in result.stderr
+    assert "Traceback" not in result.stderr
+
+    json_result = run_check(source, "--policy", path, *flags, "--json")
+    assert json_result.returncode == 3
+    error = json.loads(json_result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert expected_error in error["message"]
+    if file_origin:
+        assert error["path"] == str(path)
+    else:
+        assert "path" not in error
+    assert json_result.stderr == ""
+
+
+def test_valid_cli_override_prevents_file_value_error(
+    source: Path,
+    tmp_path: Path,
+):
+    path = tmp_path / "policy.json"
+    path.write_text('{"min_quality_score": 150}', encoding="utf-8")
+
+    result = run_check(
+        source,
+        "--policy",
+        path,
+        "--min-quality",
+        "0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert "pass:" in result.stderr
+
+
+def test_scope_only_policy_file_combines_with_cli_requirement(
+    source: Path,
+    tmp_path: Path,
+):
+    path = tmp_path / "policy.json"
+    path.write_text('{"scope": "observed"}', encoding="utf-8")
+
+    result = run_check(
+        source,
+        "--policy",
+        path,
+        "--min-quality",
+        "0",
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    output = json.loads(result.stdout)
+
+    assert output["scope"] == "observed"
+    assert output["verdict"] == "pass"
+
+
 def test_invalid_json_policy_error_names_the_file(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     path.write_text("{", encoding="utf-8")
@@ -425,8 +585,48 @@ def test_duplicate_policy_keys_cannot_silently_relax_a_gate(
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert "duplicate policy key" in error["message"]
+    assert str(path) in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_is_reported_clearly(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path, "--json")
+    assert result.returncode == 3, result.stderr
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert f"policy file {path} is not UTF-8: " in error["message"]
+    assert result.stderr == ""
+    assert "Traceback" not in result.stderr
+
+
+def test_non_utf8_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_utf16.json"
+    path.write_bytes('{"min_quality_score": 90}'.encode("utf-16"))
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} is not UTF-8: " in result.stderr
+
+
+def test_non_object_policy_file_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_array.json"
+    path.write_text("[]", encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} must contain a JSON object of check() keywords" in result.stderr
+
+
+def test_unknown_policy_keys_in_text_mode_names_file_on_stderr(source: Path, tmp_path: Path):
+    path = tmp_path / "policy_unknown.json"
+    path.write_text('{"typo": 90}', encoding="utf-8")
+    result = run_check(source, "--policy", path)
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert f"policy file {path} has unknown policy keys: typo" in result.stderr
 
 
 def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Path):
@@ -452,16 +652,25 @@ def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_
 def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     # Deep enough that json.loads raises RecursionError (a RuntimeError), which
-    # the pre-fix except clause let escape as a traceback with exit 1.
-    path.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    # the pre-fix except clause let escape as a traceback with exit 1. From 3.14
+    # the C decoder's limit is the thread's stack, not sys.getrecursionlimit():
+    # an 8 MB stack held 20000 and 50000 levels on CI, so stay far beyond it.
+    depth = 1_000_000
+    path.write_text("[" * depth + "]" * depth, encoding="utf-8")
     result = run_check(source, "--policy", path, "--json")
     assert result.returncode == 3, result.stderr
     error = json.loads(result.stdout)["error"]
     assert error["kind"] == "policy"
     assert error["path"] == str(path)
-    assert error["message"]
+    assert f"policy file {path} is nested too deeply: " in error["message"]
     assert result.stderr == ""
     assert "Traceback" not in result.stderr
+
+    text_result = run_check(source, "--policy", path)
+    assert text_result.returncode == 3, text_result.stderr
+    assert text_result.stdout == ""
+    assert f"policy file {path} is nested too deeply: " in text_result.stderr
+    assert "Traceback" not in text_result.stderr
 
 
 @pytest.mark.parametrize("flag", ["--engine", "--format"])

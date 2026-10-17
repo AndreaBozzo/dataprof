@@ -5,6 +5,16 @@ use dataprof_core::{LexicalClass, TypeHomogeneity};
 
 use crate::types::DataType;
 
+// Date grammar shared by type inference and the date patterns in `patterns.rs`,
+// so a value is a date to both or to neither.
+pub(crate) const DATE_ISO_PATTERN: &str = r"^\d{4}-\d{2}-\d{2}$";
+pub(crate) const DATE_SLASH_PATTERN: &str = r"^\d{2}/\d{2}/\d{4}$";
+pub(crate) const DATE_DASH_PATTERN: &str = r"^\d{2}-\d{2}-\d{4}$";
+pub(crate) const DATE_YEAR_SLASH_PATTERN: &str = r"^\d{4}/\d{2}/\d{2}$";
+pub(crate) const DATE_DOT_PATTERN: &str = r"^\d{2}\.\d{2}\.\d{4}$";
+pub(crate) const ISO_DATETIME_PATTERN: &str =
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$";
+
 // Pre-compile regex patterns for better performance
 // These patterns are compiled once at startup instead of on every column analysis
 //
@@ -13,15 +23,15 @@ use crate::types::DataType;
 // See datetime.rs documentation for details on date format handling.
 static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
-        Regex::new(r"^\d{4}-\d{2}-\d{2}$")
+        Regex::new(DATE_ISO_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for ISO 8601 date"),
-        Regex::new(r"^\d{2}/\d{2}/\d{4}$")
+        Regex::new(DATE_SLASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD/MM/YYYY date"),
-        Regex::new(r"^\d{2}-\d{2}-\d{4}$")
+        Regex::new(DATE_DASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD-MM-YYYY date"),
-        Regex::new(r"^\d{4}/\d{2}/\d{2}$")
+        Regex::new(DATE_YEAR_SLASH_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for YYYY/MM/DD date"),
-        Regex::new(r"^\d{2}\.\d{2}\.\d{4}$")
+        Regex::new(DATE_DOT_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for DD.MM.YYYY date"),
         // RFC 3339: the `T` form with an optional fractional part and an
         // optional `Z`/`±HH:MM` offset. The offset alternatives are exactly the
@@ -33,10 +43,8 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         // column `Date` and then count every value as `invalid_date_values` —
         // the exact mismatch this pattern exists to avoid. The ISO 8601 basic
         // form (`+0200`) is absent for the same reason.
-        Regex::new(
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$",
-        )
-        .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
+        Regex::new(ISO_DATETIME_PATTERN)
+            .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
         Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
             .expect("BUG: Invalid hardcoded regex pattern for spaced ISO datetime"),
         Regex::new(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$")
@@ -143,7 +151,12 @@ pub fn infer_type(data: &[String]) -> DataType {
 ///
 /// Deliberately narrower than [`is_date_token`]: this set decides the *type*, so
 /// widening it changes which columns are dates.
-pub(crate) fn is_inferred_date_token(value: &str) -> bool {
+///
+/// The streaming engines type their columns from sampled strings and call this
+/// directly; the buffered paths reach it through [`infer_type`]. Both decide
+/// "is this a date" on the same set, so a file cannot be a date column through
+/// one engine and a text column through the other.
+pub fn is_inferred_date_token(value: &str) -> bool {
     DATE_REGEXES.iter().any(|regex| regex.is_match(value))
 }
 
@@ -775,6 +788,68 @@ mod tests {
         // Validate that all hardcoded regex patterns compile successfully
         // This test will fail at initialization if any pattern is invalid
         assert_eq!(DATE_REGEXES.len(), 8);
+    }
+
+    #[test]
+    fn test_is_inferred_date_token() {
+        // Test various date formats
+        assert!(is_inferred_date_token("2024-01-15"));
+        assert!(is_inferred_date_token("15/01/2024"));
+        assert!(is_inferred_date_token("15-01-2024"));
+        assert!(is_inferred_date_token("2024/01/15"));
+        assert!(is_inferred_date_token("15.01.2024"));
+        assert!(is_inferred_date_token("2024-01-15T10:30:00"));
+
+        // Test non-dates
+        assert!(!is_inferred_date_token("not a date"));
+        assert!(!is_inferred_date_token("12345"));
+        assert!(!is_inferred_date_token("user@example.com"));
+    }
+
+    /// The streaming engines type their columns through `is_inferred_date_token`
+    /// and the buffered ones through `infer_type`. Both read the same set, so
+    /// the forms one accepts are exactly the forms the other accepts.
+    #[test]
+    fn inferred_date_token_accepts_offsets_and_rejects_what_chrono_cannot_parse() {
+        for value in [
+            // Forms the streaming engines' old private list missed, so a column
+            // of them used to be a date through the buffered engines and text
+            // through streaming.
+            "2024-01-15T10:30:00Z",
+            "2024-01-15T10:30:00+02:00",
+            "2024-01-15T10:30:00.500-05:00",
+            "2024-01-15 10:30:00",
+            "15/01/2024 10:30:00",
+            // Forms both lists always shared.
+            "2024-01-15",
+            "15.01.2024",
+        ] {
+            assert!(
+                is_inferred_date_token(value),
+                "{value:?} should be an inferred date"
+            );
+        }
+
+        for value in [
+            // The old list's ISO datetime pattern was unanchored, so it typed
+            // these as dates and then failed to parse a single one of them.
+            "2024-01-15T10:",
+            "2024-01-15T10:30",
+            "2024-01-15T10:30:00 (UTC)",
+            // The ISO 8601 basic offset, which chrono's RFC 3339 parser rejects.
+            "2024-01-15T10:30:00+0200",
+            // Offsets chrono rejects as out of range. A grammar that took these
+            // would type the column `Date` and then fail to parse a value of it.
+            "2024-01-15T10:30:00+24:00",
+            "2024-01-15T10:30:00+99:99",
+            "2024-01-15T10:30:00-00:60",
+            "not a date",
+        ] {
+            assert!(
+                !is_inferred_date_token(value),
+                "{value:?} should not be an inferred date"
+            );
+        }
     }
 
     /// Every date pattern dataprof recognizes, paired with an example of it.

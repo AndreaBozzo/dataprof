@@ -391,13 +391,23 @@ def profile(
         "format": format is not None,
         "csv_delimiter": csv_delimiter is not None,
         "csv_flexible": csv_flexible is not None,
-        "sampling": sampling is not None,
-        "stop_condition": stop_condition is not None,
         "on_progress": on_progress is not None,
         "progress_interval_ms": progress_interval_ms is not None,
     }
 
+    def _resolve_memory_controls():
+        nonlocal max_rows
+        if stop_condition is not None:
+            if max_rows is not None:
+                raise ValueError("Cannot use both max_rows and stop_condition.")
+            max_rows = stop_condition._memory_row_limit()
+        if sampling is not None and not getattr(sampling, "is_noop", False):
+            raise ValueError(
+                "sampling is not applied to in-memory sources. Use a file or async stream."
+            )
+
     def _warn_if_config_ignored():
+        _resolve_memory_controls()
         ignored = [k for k, v in _file_only_kwargs.items() if v]
         if ignored:
             _warnings.warn(
@@ -580,6 +590,7 @@ def profile(
             raise ValueError(
                 f"Arrow streams cannot apply: {', '.join(unsupported)}. Use max_rows for a row cap."
             )
+        _resolve_memory_controls()
         return ProfileReport(_profile_arrow(source, name or "arrow_stream", max_rows, _df_config()))
 
     # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object

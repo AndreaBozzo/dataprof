@@ -35,6 +35,23 @@ fn ragged_rows_are_counted_not_swallowed() {
 }
 
 #[test]
+fn analyze_csv_file_counts_ragged_rows_like_the_engines() {
+    // `dataprof::analyze_csv_file` pads and cuts rows the way the engines do,
+    // so it must count them the way the engines do (#890).
+    let csv = write_csv("name,age,city\nAlice,25,NYC\nBob,30\nCarol,35,LA,EXTRA\nDave,40,SF\n");
+
+    let engines = Profiler::new().analyze_file(csv.path()).unwrap();
+    let csv_file =
+        dataprof::analyze_csv_file(csv.path(), &dataprof::CsvParserConfig::default()).unwrap();
+
+    assert_eq!(engines.execution.ragged_row_count, 2);
+    assert_eq!(
+        csv_file.execution.ragged_row_count, engines.execution.ragged_row_count,
+        "analyze_csv_file must not report ragged rows as clean"
+    );
+}
+
+#[test]
 fn well_formed_csv_reports_zero_ragged_rows() {
     let csv = write_csv("name,age,city\nAlice,25,NYC\nBob,30,LA\n");
 

@@ -2,9 +2,8 @@
 
 CSV parsing and report assembly for the `dataprof` workspace.
 
-This crate owns delimiter detection, parser configuration, robust CSV recovery
-and diagnostics, reader- and file-based CSV analysis, and memory-mapped CSV
-reading. Format-independent metrics and engine selection belong elsewhere.
+This crate owns delimiter detection, parser configuration, encoding diagnosis,
+reader- and file-based CSV analysis, and memory-mapped CSV reading. Format-independent metrics and engine selection belong elsewhere.
 
 ## Public surface
 

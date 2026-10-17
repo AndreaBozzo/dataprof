@@ -307,6 +307,22 @@ mod profiler_builder_tests {
         assert!(report.quality.is_some());
     }
 
+    /// The query runs as written. Paging appended `LIMIT n OFFSET k` to it, so a
+    /// query with its own `LIMIT` became a syntax error (#887).
+    #[tokio::test]
+    async fn test_profiler_analyze_query_keeps_its_own_limit() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_query("SELECT * FROM test_users ORDER BY id LIMIT 2")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 2);
+    }
+
     #[tokio::test]
     async fn test_profiler_analyze_query_no_quality() {
         let (_dir, conn_str) = create_test_db();
@@ -467,6 +483,89 @@ mod postgres_tests {
         assert!(count > 0);
 
         connector.disconnect().await.unwrap();
+    }
+
+    /// Every row of a query is profiled exactly once.
+    ///
+    /// The table is larger than a quarter of `shared_buffers` (32 MB with the
+    /// default 128 MB), so PostgreSQL synchronizes sequential scans: a new scan
+    /// starts near where the previous one stopped. Paging the query with
+    /// LIMIT/OFFSET then returned overlapping pages, so ids repeated and others
+    /// never arrived while the row count still matched (#887).
+    #[tokio::test]
+    async fn test_postgres_query_rows_are_each_profiled_once() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        const ROWS: usize = 400_000;
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS dataprof_rows_profiled_once")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(&format!(
+            "CREATE TABLE dataprof_rows_profiled_once AS \
+             SELECT g::bigint AS id, md5(g::text) || md5((g * 7)::text) || 'x' AS payload \
+             FROM generate_series(1, {ROWS}) g"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let report = Profiler::new()
+            .database(postgres_config(&url))
+            .analyze_query("SELECT * FROM dataprof_rows_profiled_once")
+            .await;
+        sqlx::query("DROP TABLE dataprof_rows_profiled_once")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let report = report.unwrap();
+
+        let id = report
+            .column_profiles
+            .iter()
+            .find(|column| column.name == "id")
+            .unwrap();
+        let duplicate_rows = report
+            .quality
+            .as_ref()
+            .and_then(|quality| quality.metrics.uniqueness.as_ref())
+            .map(|uniqueness| uniqueness.duplicate_rows);
+        assert_eq!(report.execution.rows_processed, ROWS);
+        assert_eq!(
+            (id.unique_count, duplicate_rows),
+            (Some(ROWS), Some(0)),
+            "every id once, no row read twice"
+        );
+    }
+
+    /// An error partway through a result fails the profile. Reading the result
+    /// as a stream must not stop at the failing row and profile the rows before
+    /// it as if they were the whole result (#887).
+    #[tokio::test]
+    async fn test_postgres_error_partway_through_a_result_is_raised() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+
+        let error = Profiler::new()
+            .database(postgres_config(&url))
+            .analyze_query(
+                "SELECT CASE WHEN g = 30000 THEN 1 / (g - g) ELSE g END AS v \
+                 FROM generate_series(1, 50000) g",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                dataprof::DataProfilerError::DatabaseQueryError { message }
+                    if message.starts_with("Query execution failed")
+            ),
+            "{error:?}"
+        );
     }
 }
 

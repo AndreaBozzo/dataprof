@@ -164,7 +164,7 @@ pub(crate) fn has_identifier_word(column_name: &str, words: &[&str]) -> bool {
 /// This keeps identifier inference from treating unrelated names such as
 /// `paid`, `valid`, or `monkey` as keys merely because they contain `id` or
 /// `key` as a substring.
-fn identifier_words(column_name: &str) -> Vec<&str> {
+pub(crate) fn identifier_words(column_name: &str) -> Vec<&str> {
     let mut boundaries = Vec::with_capacity(column_name.len() / 2 + 2);
     boundaries.push(0);
 

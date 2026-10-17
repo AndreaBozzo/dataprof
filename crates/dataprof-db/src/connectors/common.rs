@@ -59,6 +59,11 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// same profile. Rendering the offset would buy fidelity in the raw sample
 /// values and nothing in the numbers.
 ///
+/// The last arm is [`DecodeStructured`]: JSON and array types, which each
+/// backend decodes its own way (#766). It yields the only values that can be
+/// containers, so the macro evaluates to the text and whether the value was a
+/// container: `(Option<String>, bool)`.
+///
 /// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
 /// binary column type rather than a decode arm.
 #[macro_export]
@@ -69,8 +74,9 @@ macro_rules! db_column_to_string {
     ($row:expr, $index:expr, [$($backend_ty:ty),* $(,)?]) => {{
         let row = $row;
         let index = $index;
+        let mut container = false;
 
-        if let Ok(v) = row.try_get::<Option<String>, _>(index) {
+        let text = if let Ok(v) = row.try_get::<Option<String>, _>(index) {
             v
         } else if let Ok(v) = row.try_get::<Option<i64>, _>(index) {
             v.map(|x| x.to_string())
@@ -113,10 +119,114 @@ macro_rules! db_column_to_string {
             v.map(|x| x.format("%H:%M:%S%.f").to_string())
         } else if let Ok(v) = row.try_get::<Option<::sqlx::types::Uuid>, _>(index) {
             v.map(|x| x.to_string())
+        } else if let Some(value) = $crate::DecodeStructured::decode_structured(row, index) {
+            container = value.container;
+            Some(value.text)
         } else {
             None
-        }
+        };
+        (text, container)
     }};
+}
+
+/// A value of a JSON or array column, rendered for the profiler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructuredValue {
+    /// The text the profiler ingests. Empty for a JSON `null`, which then
+    /// counts as missing, as it does in the JSON readers.
+    pub text: String,
+    /// Whether the value was an object or an array. A column whose non-null
+    /// values all are is reported as nested.
+    pub container: bool,
+}
+
+/// Decode the structured types of one backend: JSON, JSONB and arrays.
+///
+/// Neither decodes as `String` through sqlx, so before this every such value
+/// fell past the whole chain and was recorded as SQL NULL (#766). Called for
+/// non-null values only: the `Option<String>` arm has already taken every NULL.
+/// `None` means the column is of none of these types.
+pub trait DecodeStructured {
+    fn decode_structured(&self, index: usize) -> Option<StructuredValue>;
+}
+
+/// Render a decoded JSON value the way the JSON readers render it.
+///
+/// Objects get their keys sorted, so two equal documents render alike however
+/// the database ordered them: PostgreSQL `json` and MySQL keep the source order,
+/// and duplicate-row detection compares this text (#767). A scalar renders as
+/// itself and is profiled as a scalar, so a `jsonb` column of numbers is typed
+/// from its values, as a JSONL field of numbers is.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub fn json_structured_value(value: &::sqlx::types::JsonValue) -> StructuredValue {
+    StructuredValue {
+        text: dataprof_json::record::json_value_text(value),
+        container: value.is_array() || value.is_object(),
+    }
+}
+
+/// A JSON document serde_json could not decode into a value, kept as the
+/// database's text.
+///
+/// The database accepted it, so it is a value, not a missing one: PostgreSQL
+/// takes numbers beyond `f64` (`1e400`) and nesting deeper than serde_json's
+/// recursion limit. The text is still made canonical, with sorted keys and no
+/// whitespace between tokens, so key order does not split duplicate rows here
+/// either. Only nesting past the recursion limit keeps the text as stored.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub fn raw_json_structured_value(text: &str) -> StructuredValue {
+    let text = text.trim();
+    let mut canonical = String::with_capacity(text.len());
+    let text = match write_canonical_raw_json(text, &mut canonical) {
+        Ok(()) => canonical,
+        Err(_) => text.to_string(),
+    };
+    let container = text.starts_with(['{', '[']);
+    StructuredValue { text, container }
+}
+
+/// Write `text` with every object's keys sorted, as
+/// [`json_value_text`](dataprof_json::record::json_value_text) does, without
+/// converting any number. Containers are split into raw members, which serde_json
+/// only checks for syntax, so a number beyond `f64` keeps its digits.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+fn write_canonical_raw_json(text: &str, out: &mut String) -> Result<(), serde_json::Error> {
+    use serde_json::value::RawValue;
+    use std::collections::BTreeMap;
+
+    match text.as_bytes().first() {
+        Some(b'{') => {
+            // A later duplicate key wins, as when serde_json builds a value.
+            let fields: BTreeMap<String, &RawValue> = serde_json::from_str(text)?;
+            out.push('{');
+            for (index, (key, field)) in fields.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(&key)?);
+                out.push(':');
+                write_canonical_raw_json(field.get().trim(), out)?;
+            }
+            out.push('}');
+        }
+        Some(b'[') => {
+            let items: Vec<&RawValue> = serde_json::from_str(text)?;
+            out.push('[');
+            for (index, item) in items.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical_raw_json(item.get().trim(), out)?;
+            }
+            out.push(']');
+        }
+        // One spelling per string: `"\u0041"` and `"A"` are the same value.
+        Some(b'"') => out.push_str(&serde_json::to_string(&serde_json::from_str::<String>(
+            text,
+        )?)?),
+        _ => out.push_str(text),
+    }
+    Ok(())
 }
 
 /// Render a naive datetime in the ISO form dataprof's date grammar accepts.
@@ -131,24 +241,28 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
-/// Macro to generate the streaming batch loop for profiling queries.
+/// Macro to fetch a profiled query's result in one execution, read as a stream.
+///
+/// The result comes from a single execution. Paging it as `LIMIT n OFFSET k`
+/// executions with no order of their own let pages overlap and skip rows: on
+/// PostgreSQL a sequential scan of a large table starts near where the previous
+/// one stopped (#887). `$batch_size` only sets how often progress is logged.
 #[macro_export]
 macro_rules! streaming_profile_loop {
-    ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {
-        $crate::streaming_profile_loop!($pool, $query, $batch_size, $total_rows, $db_name, [])
+    ($pool:expr, $query:expr, $batch_size:expr, $db_name:literal) => {
+        $crate::streaming_profile_loop!($pool, $query, $batch_size, $db_name, [])
     };
-    ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
+    ($pool:expr, $query:expr, $batch_size:expr, $db_name:literal,
      [$($backend_ty:ty),* $(,)?]) => {{
+        use futures::TryStreamExt;
         use sqlx::{Column, Executor, Row};
-        use $crate::connectors::common::build_batch_query;
-        use $crate::streaming::{StreamingProgress, merge_column_batches};
+        use $crate::connectors::common::build_select_query;
 
-        let mut progress = StreamingProgress::new(Some($total_rows as u64));
+        let select_query = build_select_query($query)?;
         // Describe the query before fetching rows. Row metadata is unavailable
-        // when the first batch is empty, but projection still needs the source
+        // when the result is empty, but projection still needs the source
         // schema to validate duplicate and unknown requested names.
-        let first_batch_query = build_batch_query($query, $batch_size, 0)?;
-        let description = ($pool).describe(&first_batch_query).await.map_err(|e| {
+        let description = ($pool).describe(&select_query).await.map_err(|e| {
             $crate::DataProfilerError::DatabaseQueryError {
                 message: format!("Query description failed: {}", e),
             }
@@ -163,63 +277,44 @@ macro_rules! streaming_profile_loop {
             concat!($db_name, " query result"),
         )?;
 
-        // Seed the merge with the schema so a zero-row query still returns
-        // named empty columns in query order.
-        let mut all_batches: Vec<$crate::QueryColumns> = vec![
-            $crate::QueryColumns::with_names(column_names.clone(), 0),
-        ];
-        let mut offset = 0usize;
+        // Built from the driver's column list, so a zero-row query still returns
+        // named empty columns, and values are filed by position in query order.
+        let mut columns = $crate::QueryColumns::with_names(column_names.clone(), 0);
+        let mut rows = sqlx::query(&select_query).fetch($pool);
+        let mut rows_read = 0usize;
+        let mut log_progress = |read: usize| {
+            rows_read += read;
+            log::info!("{} streaming progress: {} rows read", $db_name, rows_read);
+        };
+        let mut unlogged_rows = 0usize;
 
-        loop {
-            let batch_query = build_batch_query($query, $batch_size, offset)?;
-            let rows = sqlx::query(&batch_query)
-                .fetch_all($pool)
-                .await
-                .map_err(|e| $crate::DataProfilerError::DatabaseQueryError {
-                    message: format!("Batch query execution failed: {}", e),
-                })?;
-
-            if rows.is_empty() {
-                break;
+        while let Some(row) = rows.try_next().await.map_err(|e| {
+            $crate::DataProfilerError::DatabaseQueryError {
+                message: format!("Query execution failed: {}", e),
+            }
+        })? {
+            for i in 0..column_names.len() {
+                let (value, container) =
+                    $crate::db_column_to_string!(&row, i, [$($backend_ty),*]);
+                // decode-audit: no-data — None is SQL NULL (or a type
+                // db_column_to_string documents as unsupported); "" is
+                // the profiler's textual null.
+                columns.push_decoded(i, value.unwrap_or_default(), container);
             }
 
-            // Built from the driver's column list, so the batch carries the
-            // query's column order and values are filed by position.
-            let mut batch_result =
-                $crate::QueryColumns::with_names(column_names.clone(), rows.len());
-
-            for row in &rows {
-                for i in 0..column_names.len() {
-                    let value: Option<String> =
-                        $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
-                    // decode-audit: no-data — None is SQL NULL (or a type
-                    // db_column_to_string documents as unsupported); "" is
-                    // the profiler's textual null.
-                    batch_result.push_value(i, value.unwrap_or_default());
-                }
-            }
-
-            let batch_size_actual = rows.len();
-            all_batches.push(batch_result);
-            progress.update(batch_size_actual as u64);
-
-            if let Some(percentage) = progress.percentage() {
-                log::info!(
-                    "{} streaming progress: {:.1}% ({}/{} rows)",
-                    $db_name,
-                    percentage,
-                    progress.processed_rows,
-                    $total_rows
-                );
-            }
-
-            offset += $batch_size;
-            if batch_size_actual < $batch_size {
-                break;
+            unlogged_rows += 1;
+            if unlogged_rows == $batch_size {
+                log_progress(unlogged_rows);
+                unlogged_rows = 0;
             }
         }
+        // The rows after the last full interval are progress too, so the last
+        // line accounts for every row read.
+        if unlogged_rows > 0 {
+            log_progress(unlogged_rows);
+        }
 
-        Ok(merge_column_batches(all_batches))
+        Ok(columns)
     }};
 }
 
@@ -252,12 +347,12 @@ macro_rules! process_rows_to_columns {
 
                     for row in &$rows {
                         for i in 0..columns.len() {
-                            let value: Option<String> =
+                            let (value, container) =
                                 $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
                             // decode-audit: no-data — None is SQL NULL (or a type
                             // db_column_to_string documents as unsupported); "" is
                             // the profiler's textual null.
-                            result.push_value(i, value.unwrap_or_default());
+                            result.push_decoded(i, value.unwrap_or_default(), container);
                         }
                     }
 
@@ -268,38 +363,15 @@ macro_rules! process_rows_to_columns {
     }};
 }
 
-/// Build a count query for a given table or query
+/// Build the statement a query or table name is profiled with.
 #[allow(dead_code)]
-pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
+pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
     if query.trim().to_uppercase().starts_with("SELECT") {
-        let validated_query = validate_base_query(query)?;
-        Ok(format!(
-            "SELECT COUNT(*) FROM ({}) as count_subquery",
-            validated_query
-        ))
+        validate_base_query(query)
     } else {
         validate_sql_identifier(query)?;
-        Ok(format!("SELECT COUNT(*) FROM {}", query))
+        Ok(format!("SELECT * FROM {}", query))
     }
-}
-
-/// Build a batch query with LIMIT and OFFSET
-#[allow(dead_code)]
-pub fn build_batch_query(
-    query: &str,
-    batch_size: usize,
-    offset: usize,
-) -> Result<String, DataProfilerError> {
-    let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
-        validate_base_query(query)?
-    } else {
-        validate_sql_identifier(query)?;
-        format!("SELECT * FROM {}", query)
-    };
-    Ok(format!(
-        "{} LIMIT {} OFFSET {}",
-        validated_query, batch_size, offset
-    ))
 }
 
 #[cfg(test)]
@@ -307,21 +379,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_count_query_table() {
-        let result = build_count_query("users").unwrap();
-        assert_eq!(result, "SELECT COUNT(*) FROM users");
-    }
-
-    #[test]
-    fn test_build_count_query_select() {
-        let result = build_count_query("SELECT * FROM users WHERE active = true").unwrap();
-        assert!(result.contains("SELECT COUNT(*) FROM"));
-        assert!(result.contains("count_subquery"));
-    }
-
-    #[test]
-    fn test_build_batch_query() {
-        let result = build_batch_query("users", 100, 0).unwrap();
-        assert_eq!(result, "SELECT * FROM users LIMIT 100 OFFSET 0");
+    fn test_build_select_query() {
+        assert_eq!(build_select_query("users").unwrap(), "SELECT * FROM users");
+        assert_eq!(
+            build_select_query("SELECT id FROM users").unwrap(),
+            "SELECT id FROM users"
+        );
     }
 }

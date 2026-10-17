@@ -63,6 +63,15 @@ def test_unassessed_dimensions_are_named_not_omitted() -> None:
     assert "not assessed" in result.stdout
 
 
+def test_max_tokens_help_names_the_output_outside_the_budget() -> None:
+    result = run("--help")
+
+    assert result.returncode == 0, result.stderr
+    help_text = " ".join(result.stdout.split())
+    assert "token ceiling for the LLM summary only" in help_text
+    assert "quality block and caveats follow it" in help_text
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -235,11 +244,54 @@ class _FailedReport:
         self.quality_error = error
 
 
+class _RawQuality:
+    completeness = {
+        "missing_values_ratio": 1.6920000000000002,
+        "complete_records_ratio": 65.91266666666667,
+    }
+
+
+class _RoundedReport:
+    quality = _RawQuality()
+
+    @staticmethod
+    def to_dict() -> dict[str, object]:
+        return {
+            "quality": {
+                "overall_score": 95.42,
+                "dimension_scores": {
+                    "completeness": 82.11,
+                    "consistency": None,
+                    "uniqueness": None,
+                    "accuracy": None,
+                    "timeliness": None,
+                    "validity": None,
+                    "precision": None,
+                },
+                "completeness": {
+                    "missing_values_ratio": 1.69,
+                    "complete_records_ratio": 65.91,
+                },
+            }
+        }
+
+
 def test_unavailable_quality_sample_is_distinct_from_analyzed_empty_input() -> None:
     from types import SimpleNamespace
 
     report = SimpleNamespace(quality=None, quality_status="no_data")
     assert _quality_block(report) == ["quality: not analyzed (no quality sample was supplied)"]
+
+
+def test_quality_block_uses_serialized_precision() -> None:
+    output = "\n".join(_quality_block(_RoundedReport()))
+
+    assert "quality score: 95.42" in output
+    assert "completeness: 82.11" in output
+    assert '"missing_values_ratio": 1.69' in output
+    assert '"complete_records_ratio": 65.91' in output
+    assert "1.6920000000000002" not in output
+    assert "65.91266666666667" not in output
 
 
 def test_failed_quality_computation_is_not_rendered_as_a_skip() -> None:

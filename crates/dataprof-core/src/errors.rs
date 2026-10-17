@@ -1,3 +1,4 @@
+use crate::binary_input::BinarySignature;
 use thiserror::Error;
 
 /// The file formats this build can actually read, reflecting compiled features.
@@ -59,45 +60,6 @@ pub fn redact_credentials(input: &str) -> String {
     out
 }
 
-/// Auto-retry configuration for error recovery
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    pub max_attempts: usize,
-    pub enable_delimiter_detection: bool,
-    pub enable_encoding_detection: bool,
-    pub enable_flexible_parsing: bool,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            enable_delimiter_detection: true,
-            enable_encoding_detection: true,
-            enable_flexible_parsing: true,
-        }
-    }
-}
-
-/// Result of an auto-recovery attempt
-#[derive(Debug, Clone)]
-pub struct RecoveryAttempt {
-    pub attempt_number: usize,
-    pub strategy: RecoveryStrategy,
-    pub success: bool,
-    pub error_message: Option<String>,
-}
-
-/// Strategies for error recovery
-#[derive(Debug, Clone)]
-pub enum RecoveryStrategy {
-    DelimiterDetection { delimiter: char },
-    EncodingConversion { from: String, to: String },
-    FlexibleParsing,
-    ChunkSizeReduction { new_size: usize },
-    MemoryOptimization,
-}
-
 /// Boxed originating error retained by the variants that can carry a cause.
 ///
 /// `Box` rather than `Arc` is deliberate. `thiserror` renders a boxed source
@@ -112,8 +74,7 @@ pub type ErrorSource = Box<dyn std::error::Error + Send + Sync + 'static>;
 ///
 /// Not `Clone`: a retained [`ErrorSource`] is a boxed trait object, and the
 /// originating errors (`std::io::Error`, `csv::Error`, ...) are not cloneable
-/// themselves. Cloning an error was only ever used by the recovery manager,
-/// which now takes ownership instead.
+/// themselves.
 #[derive(Error, Debug)]
 pub enum DataProfilerError {
     #[error("CSV parsing failed: {message}\nSuggestion: {suggestion}")]
@@ -136,11 +97,6 @@ pub enum DataProfilerError {
     )]
     UnsupportedFormat { format: String },
 
-    #[error(
-        "Memory limit exceeded while processing large file\nTry using streaming mode or increase available memory"
-    )]
-    MemoryLimitExceeded,
-
     #[error("Invalid configuration: {message}\n{suggestion}")]
     #[non_exhaustive]
     InvalidConfiguration {
@@ -153,23 +109,8 @@ pub enum DataProfilerError {
     #[error("Invalid semantic hint: {message}\n{suggestion}")]
     InvalidSemanticHint { message: String, suggestion: String },
 
-    #[error(
-        "Data quality issue detected: {issue}\nImpact: {impact}\nRecommendation: {recommendation}"
-    )]
-    DataQualityIssue {
-        issue: String,
-        impact: String,
-        recommendation: String,
-    },
-
     #[error("Streaming processing failed: {message}{}", suggestion_line(.suggestion))]
     StreamingError { message: String, suggestion: String },
-
-    #[error("SIMD acceleration not available: {reason}\nFalling back to standard processing")]
-    SimdUnavailable { reason: String },
-
-    #[error("Sampling error: {message}\n{suggestion}")]
-    SamplingError { message: String, suggestion: String },
 
     #[error("I/O error: {message}\nCheck file permissions and disk space")]
     #[non_exhaustive]
@@ -188,40 +129,36 @@ pub enum DataProfilerError {
         guess: String,
     },
 
+    /// A file whose signature bytes name a binary format (gzip, zstd, zip,
+    /// Parquet) was about to reach a text reader (#893). Built with
+    /// [`DataProfilerError::binary_input`].
+    #[error("Binary input in {path}: the file is {detected}, not text\n{suggestion}")]
+    #[non_exhaustive]
+    BinaryInput {
+        path: String,
+        /// What the signature says the file is, e.g. `gzip-compressed`.
+        detected: String,
+        suggestion: String,
+    },
+
+    /// A remote object changed between the ranged reads of one profile, so
+    /// the bytes read do not all come from one version of it (#865). Built
+    /// with [`DataProfilerError::source_changed`].
+    #[error("Source changed during the read: {path}: {detail}\n{suggestion}")]
+    #[non_exhaustive]
+    SourceChanged {
+        path: String,
+        /// What showed the change, e.g. the server answering 412 to `If-Match`.
+        detail: String,
+        suggestion: String,
+    },
+
     #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
     #[non_exhaustive]
     JsonParsingError {
         message: String,
         #[source]
         source: Option<ErrorSource>,
-    },
-
-    #[error("Column analysis failed for '{column}': {reason}\n{suggestion}")]
-    ColumnAnalysisError {
-        column: String,
-        reason: String,
-        suggestion: String,
-    },
-
-    #[error(
-        "Recoverable error (attempt {attempt}/{max_attempts}): {message}\n{recovery_suggestion}"
-    )]
-    RecoverableError {
-        message: String,
-        recovery_suggestion: String,
-        attempt: usize,
-        max_attempts: usize,
-        recovery_attempts: Vec<RecoveryAttempt>,
-    },
-
-    #[error(
-        "Auto-recovery failed after {attempts} attempts\nLast strategy tried: {last_strategy}\nRecovery log: {recovery_log}"
-    )]
-    RecoveryFailed {
-        attempts: usize,
-        last_strategy: String,
-        recovery_log: String,
-        original_error: String,
     },
 
     #[error("Parquet processing failed: {message}")]
@@ -278,15 +215,6 @@ pub enum DataProfilerError {
 
     #[error("Database SSL/TLS error: {message}")]
     DatabaseSslError { message: String },
-
-    #[error(
-        "Database retry exhausted: operation '{operation}' failed after {attempts} attempts\nLast error: {last_error}"
-    )]
-    DatabaseRetryExhausted {
-        operation: String,
-        attempts: u32,
-        last_error: String,
-    },
 }
 
 impl DataProfilerError {
@@ -425,6 +353,27 @@ impl DataProfilerError {
         }
     }
 
+    /// A file at `path` whose bytes carry `signature`, refused before a text
+    /// reader parses it.
+    pub fn binary_input(path: &std::path::Path, signature: BinarySignature) -> Self {
+        let path = path.display().to_string();
+        DataProfilerError::BinaryInput {
+            detected: signature.description().to_string(),
+            suggestion: signature.suggestion(&path),
+            path,
+        }
+    }
+
+    /// The object at `path` changed while it was being read; `detail` says
+    /// how that showed.
+    pub fn source_changed(path: &str, detail: impl Into<String>) -> Self {
+        DataProfilerError::SourceChanged {
+            path: path.to_string(),
+            detail: detail.into(),
+            suggestion: "Profile it again once writes to it have finished, or profile a copy that is not being rewritten.".to_string(),
+        }
+    }
+
     /// Create unsupported format error with format detection
     pub fn unsupported_format(extension: &str) -> Self {
         DataProfilerError::UnsupportedFormat {
@@ -460,43 +409,11 @@ impl DataProfilerError {
         }
     }
 
-    /// Create data quality issue with impact and recommendation
-    pub fn data_quality_issue(issue: &str, impact: &str, recommendation: &str) -> Self {
-        DataProfilerError::DataQualityIssue {
-            issue: issue.to_string(),
-            impact: impact.to_string(),
-            recommendation: recommendation.to_string(),
-        }
-    }
-
     /// Create streaming error with context
     pub fn streaming_error(message: &str) -> Self {
         DataProfilerError::StreamingError {
             message: message.to_string(),
             suggestion: String::new(),
-        }
-    }
-
-    /// Create streaming error with context and a suggested remedy
-    pub fn streaming_error_with_suggestion(message: &str, suggestion: &str) -> Self {
-        DataProfilerError::StreamingError {
-            message: message.to_string(),
-            suggestion: suggestion.to_string(),
-        }
-    }
-
-    /// Create SIMD error with fallback information
-    pub fn simd_unavailable(reason: &str) -> Self {
-        DataProfilerError::SimdUnavailable {
-            reason: reason.to_string(),
-        }
-    }
-
-    /// Create sampling error with suggestion
-    pub fn sampling_error(message: &str, suggestion: &str) -> Self {
-        DataProfilerError::SamplingError {
-            message: message.to_string(),
-            suggestion: suggestion.to_string(),
         }
     }
 
@@ -651,119 +568,6 @@ impl DataProfilerError {
         }
     }
 
-    /// Create a Parquet error that retains `original` as its source.
-    pub fn parquet_error_from<E>(original: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        DataProfilerError::ParquetError {
-            message: original.to_string(),
-            source: Some(Box::new(original)),
-        }
-    }
-
-    /// Create column analysis error with specific suggestion
-    pub fn column_analysis_error(column: &str, reason: &str, suggestion: &str) -> Self {
-        DataProfilerError::ColumnAnalysisError {
-            column: column.to_string(),
-            reason: reason.to_string(),
-            suggestion: suggestion.to_string(),
-        }
-    }
-
-    /// Create a recoverable error that can be auto-retried
-    pub fn recoverable_error(
-        message: &str,
-        recovery_suggestion: &str,
-        attempt: usize,
-        max_attempts: usize,
-    ) -> Self {
-        DataProfilerError::RecoverableError {
-            message: message.to_string(),
-            recovery_suggestion: recovery_suggestion.to_string(),
-            attempt,
-            max_attempts,
-            recovery_attempts: Vec::new(),
-        }
-    }
-
-    /// Create a recovery failed error with attempt log
-    pub fn recovery_failed(
-        attempts: usize,
-        last_strategy: &str,
-        recovery_log: &str,
-        original_error: &str,
-    ) -> Self {
-        DataProfilerError::RecoveryFailed {
-            attempts,
-            last_strategy: last_strategy.to_string(),
-            recovery_log: recovery_log.to_string(),
-            original_error: original_error.to_string(),
-        }
-    }
-
-    /// Add a recovery attempt to the error
-    pub fn add_recovery_attempt(&mut self, attempt: RecoveryAttempt) {
-        if let DataProfilerError::RecoverableError {
-            recovery_attempts, ..
-        } = self
-        {
-            recovery_attempts.push(attempt);
-        }
-    }
-
-    /// Check if error supports auto-recovery
-    pub fn supports_auto_recovery(&self) -> bool {
-        matches!(
-            self,
-            DataProfilerError::CsvParsingError { .. }
-                | DataProfilerError::JsonParsingError { .. }
-                | DataProfilerError::StreamingError { .. }
-                | DataProfilerError::MemoryLimitExceeded
-                | DataProfilerError::RecoverableError { .. }
-        )
-    }
-
-    /// Get suggested recovery strategies for this error
-    pub fn suggested_recovery_strategies(&self) -> Vec<RecoveryStrategy> {
-        match self {
-            DataProfilerError::CsvParsingError { .. } => vec![
-                RecoveryStrategy::DelimiterDetection { delimiter: ',' },
-                RecoveryStrategy::DelimiterDetection { delimiter: ';' },
-                RecoveryStrategy::DelimiterDetection { delimiter: '\t' },
-                RecoveryStrategy::DelimiterDetection { delimiter: '|' },
-                RecoveryStrategy::EncodingConversion {
-                    from: "latin1".to_string(),
-                    to: "utf8".to_string(),
-                },
-                RecoveryStrategy::FlexibleParsing,
-            ],
-            DataProfilerError::MemoryLimitExceeded => vec![
-                RecoveryStrategy::ChunkSizeReduction { new_size: 1000 },
-                RecoveryStrategy::MemoryOptimization,
-            ],
-            DataProfilerError::JsonParsingError { .. } => {
-                vec![RecoveryStrategy::EncodingConversion {
-                    from: "latin1".to_string(),
-                    to: "utf8".to_string(),
-                }]
-            }
-            DataProfilerError::StreamingError { .. } => vec![RecoveryStrategy::MemoryOptimization],
-            _ => vec![],
-        }
-    }
-
-    /// Check if this error is recoverable (can continue processing)
-    pub fn is_recoverable(&self) -> bool {
-        matches!(
-            self,
-            DataProfilerError::SimdUnavailable { .. }
-                | DataProfilerError::SamplingError { .. }
-                | DataProfilerError::DataQualityIssue { .. }
-                | DataProfilerError::RecoverableError { .. }
-        )
-    }
-
     /// The actionable next step for this error, as structured context.
     ///
     /// Suggestions live in the variants and the `Display` string, but callers
@@ -774,11 +578,11 @@ impl DataProfilerError {
             DataProfilerError::CsvParsingError { suggestion, .. }
             | DataProfilerError::InvalidConfiguration { suggestion, .. }
             | DataProfilerError::InvalidSemanticHint { suggestion, .. }
-            | DataProfilerError::SamplingError { suggestion, .. }
+            | DataProfilerError::BinaryInput { suggestion, .. }
+            | DataProfilerError::SourceChanged { suggestion, .. }
             | DataProfilerError::DatabaseConnectionError { suggestion, .. } => {
                 Some(suggestion.clone())
             }
-            DataProfilerError::ColumnAnalysisError { suggestion, .. } => Some(suggestion.clone()),
             DataProfilerError::FileNotFound { .. } => {
                 Some("Check that the file exists and you have permission to read it.".to_string())
             }
@@ -789,18 +593,12 @@ impl DataProfilerError {
             DataProfilerError::EncodingError { guess, .. } => Some(format!(
                 "Re-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8`) and profile the result."
             )),
-            DataProfilerError::MemoryLimitExceeded => {
-                Some("Use streaming mode or increase available memory.".to_string())
-            }
             DataProfilerError::StreamingError { suggestion, .. } => {
                 if suggestion.is_empty() {
                     None
                 } else {
                     Some(suggestion.clone())
                 }
-            }
-            DataProfilerError::DataQualityIssue { recommendation, .. } => {
-                Some(recommendation.clone())
             }
             DataProfilerError::DatabaseFeatureDisabled { .. } => {
                 Some("Recompile with the appropriate database feature flag.".to_string())
@@ -816,18 +614,13 @@ impl DataProfilerError {
             DataProfilerError::FileNotFound { .. } => "file_not_found",
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
             DataProfilerError::EncodingError { .. } => "encoding",
-            DataProfilerError::MemoryLimitExceeded => "memory_limit",
+            DataProfilerError::BinaryInput { .. } => "binary_input",
+            DataProfilerError::SourceChanged { .. } => "source_changed",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
             DataProfilerError::InvalidSemanticHint { .. } => "semantic_hint",
-            DataProfilerError::DataQualityIssue { .. } => "data_quality",
             DataProfilerError::StreamingError { .. } => "streaming",
-            DataProfilerError::SimdUnavailable { .. } => "simd",
-            DataProfilerError::SamplingError { .. } => "sampling",
             DataProfilerError::IoError { .. } => "io",
             DataProfilerError::JsonParsingError { .. } => "json_parsing",
-            DataProfilerError::ColumnAnalysisError { .. } => "column_analysis",
-            DataProfilerError::RecoverableError { .. } => "recoverable",
-            DataProfilerError::RecoveryFailed { .. } => "recovery_failed",
             DataProfilerError::ParquetError { .. } => "parquet",
             DataProfilerError::ArrowError { .. } => "arrow",
             DataProfilerError::UnsupportedDataSource { .. } => "unsupported_data_source",
@@ -841,7 +634,6 @@ impl DataProfilerError {
             DataProfilerError::DatabaseFeatureDisabled { .. } => "database_feature_disabled",
             DataProfilerError::SqlValidationError { .. } => "sql_validation",
             DataProfilerError::DatabaseSslError { .. } => "database_ssl",
-            DataProfilerError::DatabaseRetryExhausted { .. } => "database_retry_exhausted",
         }
     }
 }
@@ -933,155 +725,6 @@ impl From<serde_json::Error> for DataProfilerError {
     }
 }
 
-/// Convert from glob::PatternError to DataProfilerError
-impl From<glob::PatternError> for DataProfilerError {
-    fn from(err: glob::PatternError) -> Self {
-        let message = format!("Invalid glob pattern: {}", err);
-        DataProfilerError::invalid_config_with_source(message, "Check the glob pattern syntax", err)
-    }
-}
-
-/// Convert from toml::de::Error to DataProfilerError
-impl From<toml::de::Error> for DataProfilerError {
-    fn from(err: toml::de::Error) -> Self {
-        let message = format!("Failed to parse TOML configuration: {}", err);
-        DataProfilerError::invalid_config_with_source(
-            message,
-            "Check your configuration file syntax",
-            err,
-        )
-    }
-}
-
-/// Convert from toml::ser::Error to DataProfilerError
-impl From<toml::ser::Error> for DataProfilerError {
-    fn from(err: toml::ser::Error) -> Self {
-        let message = format!("Failed to serialize configuration: {}", err);
-        DataProfilerError::invalid_config_with_source(
-            message,
-            "Check configuration values for serialization issues",
-            err,
-        )
-    }
-}
-
-/// Auto-recovery manager for handling error recovery strategies
-pub struct AutoRecoveryManager {
-    config: RetryConfig,
-    recovery_log: Vec<RecoveryAttempt>,
-}
-
-impl AutoRecoveryManager {
-    pub fn new(config: RetryConfig) -> Self {
-        Self {
-            config,
-            recovery_log: Vec::new(),
-        }
-    }
-
-    /// Attempt auto-recovery for a given error
-    pub fn attempt_recovery<F, T>(
-        &mut self,
-        error: DataProfilerError,
-        retry_fn: F,
-    ) -> Result<T, DataProfilerError>
-    where
-        F: Fn(RecoveryStrategy) -> Result<T, DataProfilerError>,
-    {
-        if !error.supports_auto_recovery() {
-            return Err(error);
-        }
-
-        let strategies = error.suggested_recovery_strategies();
-        let mut last_error: DataProfilerError = error;
-
-        for (attempt, strategy) in strategies.iter().enumerate() {
-            if attempt >= self.config.max_attempts {
-                break;
-            }
-
-            // Log attempt start
-            log::info!(
-                "Auto-recovery attempt {}/{}: {:?}",
-                attempt + 1,
-                self.config.max_attempts,
-                strategy
-            );
-
-            match retry_fn(strategy.clone()) {
-                Ok(result) => {
-                    let recovery_attempt = RecoveryAttempt {
-                        attempt_number: attempt + 1,
-                        strategy: strategy.clone(),
-                        success: true,
-                        error_message: None,
-                    };
-                    self.recovery_log.push(recovery_attempt);
-
-                    log::info!("Auto-recovery successful with strategy: {:?}", strategy);
-                    return Ok(result);
-                }
-                Err(err) => {
-                    let recovery_attempt = RecoveryAttempt {
-                        attempt_number: attempt + 1,
-                        strategy: strategy.clone(),
-                        success: false,
-                        error_message: Some(err.to_string()),
-                    };
-                    self.recovery_log.push(recovery_attempt);
-                    last_error = err;
-
-                    log::warn!("Auto-recovery attempt failed: {}", last_error);
-                }
-            }
-        }
-
-        // All recovery attempts failed
-        let recovery_log_text = self
-            .recovery_log
-            .iter()
-            .map(|attempt| {
-                format!(
-                    "Attempt {}: {:?} - {}",
-                    attempt.attempt_number,
-                    attempt.strategy,
-                    if attempt.success { "Success" } else { "Failed" }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-
-        let last_strategy = self
-            .recovery_log
-            .last()
-            .map(|attempt| format!("{:?}", attempt.strategy))
-            .unwrap_or_else(|| "None".to_string());
-
-        Err(DataProfilerError::recovery_failed(
-            self.recovery_log.len(),
-            &last_strategy,
-            &recovery_log_text,
-            &last_error.to_string(),
-        ))
-    }
-
-    /// Get the recovery log
-    pub fn get_recovery_log(&self) -> &[RecoveryAttempt] {
-        &self.recovery_log
-    }
-
-    /// Clear the recovery log
-    pub fn clear_log(&mut self) {
-        self.recovery_log.clear();
-    }
-}
-
-impl Default for AutoRecoveryManager {
-    fn default() -> Self {
-        Self::new(RetryConfig::default())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1090,13 +733,6 @@ mod tests {
     fn test_error_categorization() {
         let csv_error = DataProfilerError::csv_parsing("field count mismatch", Some("test.csv"));
         assert_eq!(csv_error.category(), "csv_parsing");
-        assert!(!csv_error.is_recoverable());
-    }
-
-    #[test]
-    fn test_recoverable_errors() {
-        let simd_error = DataProfilerError::simd_unavailable("CPU doesn't support SIMD");
-        assert!(simd_error.is_recoverable());
     }
 
     #[test]
@@ -1240,7 +876,7 @@ mod tests {
     fn suggestion_is_available_as_structured_context() {
         let err = DataProfilerError::unsupported_format("xlsx");
         assert!(err.suggestion().is_some());
-        let hint = DataProfilerError::simd_unavailable("no avx2");
+        let hint = DataProfilerError::streaming_error("reader task panicked");
         assert!(hint.suggestion().is_none());
     }
 
@@ -1374,32 +1010,6 @@ mod tests {
             .and_then(|s| s.downcast_ref())
             .expect("parquet errors must retain the reader failure");
         assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
-    }
-
-    #[test]
-    fn from_toml_error_retains_the_parse_error() {
-        let original = toml::from_str::<toml::Value>("key = [unclosed").unwrap_err();
-        let expected = original.to_string();
-        let err: DataProfilerError = original.into();
-
-        let toml_err: &toml::de::Error = err
-            .source()
-            .and_then(|s| s.downcast_ref())
-            .expect("source must downcast to toml::de::Error");
-        assert_eq!(toml_err.to_string(), expected);
-    }
-
-    #[test]
-    fn from_glob_error_retains_the_pattern_error() {
-        let original = glob::Pattern::new("[").unwrap_err();
-        let expected = original.to_string();
-        let err: DataProfilerError = original.into();
-
-        let glob_err: &glob::PatternError = err
-            .source()
-            .and_then(|s| s.downcast_ref())
-            .expect("source must downcast to glob::PatternError");
-        assert_eq!(glob_err.to_string(), expected);
     }
 
     #[test]

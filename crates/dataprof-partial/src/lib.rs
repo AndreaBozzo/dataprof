@@ -32,14 +32,14 @@ use dataprof_runtime::StreamingColumnCollection;
 /// Schema inference sample size (rows to read for CSV/JSON).
 const SCHEMA_SAMPLE_ROWS: usize = 1000;
 
-/// File size threshold for full-scan vs sampling row count (10 MB).
+/// JSONL file size threshold for full-scan vs sampling row count (10 MB).
 const FULL_SCAN_THRESHOLD: u64 = 10 * 1024 * 1024;
 
-/// Number of lines to sample for row estimation.
+/// Number of lines to sample for JSONL row estimation.
 const ROW_SAMPLE_LINES: usize = 10_000;
 
 /// Number of evenly-spaced windows sampled across a large file when estimating
-/// a CSV row count. Sampling at multiple offsets removes the prefix bias of the
+/// a JSONL row count. Sampling at multiple offsets removes the prefix bias of the
 /// old first-N-lines approach.
 const ROW_SAMPLE_WINDOWS: usize = 16;
 
@@ -55,6 +55,16 @@ const STRUCTURE_SAMPLE_ROWS: usize = 1000;
 /// budget; the reader is stopped by its row limit, not by this.
 #[cfg(feature = "parquet")]
 const PARQUET_SAMPLE_BATCH_ROWS: usize = 8192;
+
+fn map_io_error(path: &Path, error: std::io::Error) -> DataProfilerError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        DataProfilerError::FileNotFound {
+            path: path.display().to_string(),
+        }
+    } else {
+        DataProfilerError::io_error(error)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public free functions
@@ -83,8 +93,8 @@ pub fn infer_schema<P: AsRef<Path>>(path: P) -> Result<SchemaResult, DataProfile
 
 /// Quick row count (exact or estimated) for a file.
 ///
-/// Returns an exact count for small files and Parquet; an estimate for large
-/// CSV/JSON files via sampling.
+/// Returns an exact count for CSV, JSON arrays and Parquet; an estimate for
+/// large JSONL files via sampling. CSV counting scans logical records.
 ///
 /// # Example
 /// ```no_run
@@ -130,11 +140,22 @@ pub fn detect_format(file_path: &Path) -> FileFormat {
 // Format-aware internals (also used by Profiler methods)
 // ---------------------------------------------------------------------------
 
+/// Refuse a binary file (gzip, zstd, zip, Parquet) on every route that would
+/// read it as text, including an unknown extension, so it fails with what the
+/// file is rather than a parse error or an unsupported extension (#893).
+fn reject_binary_text_input(path: &Path, format: &FileFormat) -> Result<(), DataProfilerError> {
+    if matches!(format, FileFormat::Parquet) {
+        return Ok(());
+    }
+    dataprof_core::binary_input::reject_binary_input(path)
+}
+
 pub fn infer_schema_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<SchemaResult, DataProfilerError> {
     let start = Instant::now();
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Parquet => {
@@ -162,6 +183,7 @@ pub fn quick_row_count_with_format(
     format: FileFormat,
 ) -> Result<RowCountEstimate, DataProfilerError> {
     let start = Instant::now();
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Parquet => {
@@ -191,11 +213,10 @@ pub fn analyze_structure_with_format(
 ) -> Result<StructureReport, DataProfilerError> {
     // Establish file existence up front so all formats return the same
     // path-specific error shape as the existing partial APIs.
-    fs::metadata(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    fs::metadata(path).map_err(|error| map_io_error(path, error))?;
 
     let limit = max_rows.unwrap_or(STRUCTURE_SAMPLE_ROWS);
+    reject_binary_text_input(path, &format)?;
 
     match format {
         FileFormat::Csv => analyze_structure_csv(path, limit),
@@ -274,9 +295,7 @@ fn parquet_scan(
     sample_rows: usize,
     counters: bool,
 ) -> Result<ParquetScan, DataProfilerError> {
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
         DataProfilerError::parquet_with_source(format!("Failed to read Parquet metadata: {}", e), e)
@@ -551,9 +570,7 @@ fn value_typed_names(columns: &[ColumnSchema], text_columns: &[usize]) -> Vec<St
 }
 
 fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
     let mut result = infer_schema_from_csv_reader(file, true)?;
     result.inference_time_ms = start.elapsed().as_millis();
     Ok(result)
@@ -564,9 +581,7 @@ fn infer_schema_json(
     format: &FileFormat,
     start: Instant,
 ) -> Result<SchemaResult, DataProfilerError> {
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
     let mut result = infer_schema_from_json_reader(BufReader::new(file), format)?;
     result.inference_time_ms = start.elapsed().as_millis();
     Ok(result)
@@ -740,9 +755,7 @@ fn count_from_reader<R: Read>(
 
 #[cfg(feature = "parquet")]
 fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfilerError> {
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
         DataProfilerError::parquet_with_source(format!("Failed to read Parquet metadata: {}", e), e)
@@ -760,70 +773,11 @@ fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataPr
 }
 
 fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfilerError> {
-    let metadata = fs::metadata(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
-    let file_size = metadata.len();
-
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
-    let reader = BufReader::new(file);
-
-    if file_size < FULL_SCAN_THRESHOLD {
-        full_scan_csv(reader, start)
-    } else {
-        // Sampling — estimate the local row density (rows per byte) at several
-        // evenly-spaced offsets across the file, then integrate over the file
-        // size. A prefix-only sample is systematically biased on the common
-        // case of an autoincrement id or growing timestamp, where early rows
-        // are shorter than later ones, so extrapolating from the file's head
-        // overestimates. Sampling across offsets removes that bias for the same
-        // I/O budget. Every physical line counts as a row for CSV.
-        let sample = sample_row_density_multi_offset(path, file_size, |_| true)?;
-
-        if sample.rows_sampled == 0 {
-            // The sampler could not observe a single complete line — e.g. rows
-            // longer than a sampling window, so every seek lands inside one row
-            // and the resync consumes the rest to EOF. Fall back to an exact
-            // scan rather than reporting a fabricated zero labelled `exact`.
-            // `reader` is still positioned at the start of the file (the
-            // sampler uses its own independent handle).
-            return full_scan_csv(reader, start);
-        }
-
-        // Subtract 1 for the header line.
-        let estimated_total_rows = sample.estimated_rows.round() as u64;
-        let count = estimated_total_rows.saturating_sub(1);
-
-        Ok(RowCountEstimate {
-            count,
-            exact: false,
-            method: CountMethod::Sampling,
-            count_time_ms: start.elapsed().as_millis(),
-            relative_error: sample.relative_error,
-        })
-    }
-}
-
-/// Exact CSV row count via a full scan with the CSV parser, so embedded
-/// newlines in quoted fields do not inflate the count. Shared by the
-/// small-file path and the large-file fallback when sampling observes no
-/// complete lines.
-fn full_scan_csv<R: Read>(
-    reader: R,
-    start: Instant,
-) -> Result<RowCountEstimate, DataProfilerError> {
-    let mut csv_reader = csv::ReaderBuilder::new()
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(reader);
-    let mut count: u64 = 0;
-    for result in csv_reader.records() {
-        let _record = result?;
-        count += 1;
-    }
-
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
+    let delimiter = dataprof_csv::detect_delimiter_from_path(path)
+        .map_err(|error| map_io_error(path, error))?;
+    let count = dataprof_csv::row_count::csv_record_count(BufReader::new(file), delimiter, b'"')?
+        .saturating_sub(1);
     Ok(RowCountEstimate {
         count,
         exact: true,
@@ -876,7 +830,7 @@ struct MultiOffsetRowSample {
 /// ([`ROW_SAMPLE_LINES`]).
 ///
 /// `counts_as_row` decides which physical lines count toward the row total
-/// (e.g. every line for CSV; only non-empty lines for JSONL). Every line's
+/// (non-empty lines for JSONL). Every line's
 /// bytes are counted regardless, so skipped lines (like JSONL blanks) still
 /// lower the local density and are accounted for.
 ///
@@ -896,9 +850,7 @@ fn sample_row_density_multi_offset(
     file_size: u64,
     counts_as_row: impl Fn(&str) -> bool,
 ) -> Result<MultiOffsetRowSample, DataProfilerError> {
-    let mut file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let mut file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
 
     let window_span = file_size / ROW_SAMPLE_WINDOWS as u64;
     // Per-window row density in qualifying rows per byte.
@@ -980,14 +932,10 @@ fn count_json(
     format: FileFormat,
     start: Instant,
 ) -> Result<RowCountEstimate, DataProfilerError> {
-    let metadata = fs::metadata(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let metadata = fs::metadata(path).map_err(|error| map_io_error(path, error))?;
     let file_size = metadata.len();
 
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
 
     match format {
         FileFormat::Jsonl => {
@@ -1065,9 +1013,7 @@ fn count_json(
 }
 
 fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
     let mut reader = BufReader::new(file);
 
     let first_non_whitespace = consume_leading_whitespace(&mut reader)?;
@@ -1114,9 +1060,7 @@ fn analyze_structure_csv(
 ) -> Result<StructureReport, DataProfilerError> {
     let start = Instant::now();
     let delimiter = dataprof_csv::detect_delimiter_from_path(path).ok();
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
 
     let mut config = CsvParserConfig::default().max_rows(Some(max_rows));
     if let Some(delimiter) = delimiter {
@@ -1156,9 +1100,7 @@ fn analyze_structure_json(
     max_rows: usize,
 ) -> Result<StructureReport, DataProfilerError> {
     let start = Instant::now();
-    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
-        path: path.display().to_string(),
-    })?;
+    let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
     let reader = BufReader::new(file);
     let config = match format {
         FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(max_rows),
@@ -1771,8 +1713,8 @@ mod tests {
         assert_eq!(result.method, CountMethod::FullScan);
     }
 
-    /// Write a CSV larger than `FULL_SCAN_THRESHOLD` so `count_csv` takes the
-    /// sampling branch. `grow` makes each row's filler length increase with the
+    /// Write a CSV larger than the former sampling threshold. `grow` makes
+    /// each row's filler length increase with the
     /// row index, reproducing the short-early / long-late bias of autoincrement
     /// ids and growing timestamps (issue #428). Returns the exact data-row count.
     fn write_large_csv(grow: bool) -> (NamedTempFile, u64) {
@@ -1802,49 +1744,29 @@ mod tests {
     }
 
     #[test]
-    fn test_quick_row_count_csv_sampling_uniform_is_accurate() {
+    fn test_quick_row_count_large_csv_uniform_is_exact() {
         let (f, actual) = write_large_csv(false);
         let result = quick_row_count(f.path()).unwrap();
 
-        assert_eq!(result.method, CountMethod::Sampling);
-        assert!(!result.exact);
+        assert_eq!(result.method, CountMethod::FullScan);
+        assert!(result.exact);
 
-        let err = (result.count as f64 - actual as f64).abs() / actual as f64;
-        assert!(
-            err < 0.02,
-            "uniform sampling estimate off by {:.2}% (count={}, actual={})",
-            err * 100.0,
-            result.count,
-            actual
-        );
-        // A hint should be present and tight for a uniform file.
-        let rel = result
-            .relative_error
-            .expect("relative_error should be Some");
-        assert!(
-            (0.0..0.05).contains(&rel),
-            "unexpected relative_error {rel}"
-        );
+        assert_eq!(result.count, actual);
+        assert_eq!(result.relative_error, None);
     }
 
     #[test]
-    fn test_quick_row_count_csv_sampling_growing_rows_not_biased() {
+    fn test_quick_row_count_large_csv_growing_rows_is_exact() {
         // With prefix-only sampling the short early rows made
-        // `file_size / avg_row_len` overestimate by ~9%. Multi-offset sampling
-        // should keep the estimate within a few percent of the true count.
+        // `file_size / avg_row_len` overestimate by ~9%. Counting complete
+        // records removes that bias.
         let (f, actual) = write_large_csv(true);
         let result = quick_row_count(f.path()).unwrap();
 
-        assert_eq!(result.method, CountMethod::Sampling);
-        let err = (result.count as f64 - actual as f64).abs() / actual as f64;
-        assert!(
-            err < 0.03,
-            "multi-offset estimate off by {:.2}% (count={}, actual={}) — prefix bias not removed",
-            err * 100.0,
-            result.count,
-            actual
-        );
-        assert!(result.relative_error.is_some());
+        assert_eq!(result.method, CountMethod::FullScan);
+        assert!(result.exact);
+        assert_eq!(result.count, actual);
+        assert_eq!(result.relative_error, None);
     }
 
     #[test]
@@ -1856,11 +1778,9 @@ mod tests {
     }
 
     #[test]
-    fn test_quick_row_count_csv_sampling_zero_lines_falls_back_to_exact() {
-        // Header + a single data field larger than the whole sampling-window
-        // grid: every window seeks inside that one line and the resync consumes
-        // the remainder to EOF, so the sampler observes no complete line. The
-        // result must be an exact full scan (count=1), not a fabricated zero.
+    fn test_quick_row_count_csv_single_large_record_is_exact() {
+        // A header and one data field larger than the old sampling-window
+        // grid still count as one data record.
         let mut f = NamedTempFile::with_suffix(".csv").unwrap();
         writeln!(f, "data").unwrap();
         let big = "x".repeat(FULL_SCAN_THRESHOLD as usize + 1024 * 1024);

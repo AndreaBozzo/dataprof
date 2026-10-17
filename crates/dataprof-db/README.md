@@ -3,9 +3,8 @@
 Database connectivity and query profiling support for the `dataprof` workspace.
 
 This crate owns connector configuration and traits, PostgreSQL, MySQL, and
-SQLite implementations, SQL validation and credential safety, database
-sampling, retries, and batched streaming helpers. It does not own generic
-profile metrics or Python bindings.
+SQLite implementations, SQL validation and credential safety, and streaming
+query reads. It does not own generic profile metrics or Python bindings.
 
 ## Public surface
 

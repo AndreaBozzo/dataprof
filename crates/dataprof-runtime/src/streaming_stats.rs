@@ -7,8 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, NumericAccumulator, RowCompletenessSummary, RowDuplicateSummary,
-    value_matches_hint,
+    CardinalityEstimator, NumericAccumulator, ParsedNumber, RowCompletenessSummary,
+    RowDuplicateSummary, value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -59,14 +59,14 @@ impl StreamReservoirSampler {
     }
 
     #[inline]
-    pub fn offer(&mut self, value: String) {
+    pub fn offer(&mut self, value: &str) {
         self.count += 1;
         if self.reservoir.len() < self.capacity {
-            self.reservoir.push(value);
+            self.reservoir.push(value.to_owned());
         } else {
             let index = self.rng.random_range(0..self.count as usize);
             if index < self.capacity {
-                self.reservoir[index] = value;
+                self.reservoir[index] = value.to_owned();
             }
         }
     }
@@ -297,22 +297,17 @@ impl StreamingStatistics {
         }
 
         self.distinct.insert(value);
-        self.sampler.offer(value.to_string());
+        self.sampler.offer(value);
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
         self.text_length_tracker.update(char_len(value));
         if value_matches_hint(value, SemanticHintKind::Temporal) {
             self.date_match_count += 1;
         }
 
-        if let Some(number) = value
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|num| num.is_finite())
-        {
-            self.welford.update(number);
-            self.min = self.min.min(number);
-            self.max = self.max.max(number);
+        if let Some(number) = ParsedNumber::parse(value) {
+            self.welford.update_number(number);
+            self.min = self.min.min(number.to_f64());
+            self.max = self.max.max(number.to_f64());
         }
     }
 
@@ -719,11 +714,15 @@ impl StreamingColumnCollection {
             let value = values.next().unwrap_or_default();
             row_signature.push_field(&value);
 
-            if !self.columns.contains_key(header) {
+            if let Some(stats) = self.columns.get_mut(header) {
+                stats.update(&value);
+            } else {
                 self.ordered_names.push(header.clone());
+                self.columns
+                    .entry(header.clone())
+                    .or_default()
+                    .update(&value);
             }
-            let stats = self.columns.entry(header.to_string()).or_default();
-            stats.update(&value);
             // Same null definition the column counters use, so the record
             // count and the cell counts always describe the same nulls.
             row_has_null |= is_null_like_token(&value);
@@ -1552,11 +1551,11 @@ mod tests {
     fn test_reservoir_merge_weights_sides_by_population() {
         let mut large = StreamReservoirSampler::new(100);
         for index in 0..10_000 {
-            large.offer(format!("large-{index}"));
+            large.offer(&format!("large-{index}"));
         }
         let mut small = StreamReservoirSampler::new(100);
         for index in 0..100 {
-            small.offer(format!("small-{index}"));
+            small.offer(&format!("small-{index}"));
         }
 
         large.merge(&small);
@@ -1579,10 +1578,10 @@ mod tests {
     #[test]
     fn test_reservoir_merge_keeps_every_value_when_capacity_allows() {
         let mut left = StreamReservoirSampler::new(100);
-        left.offer("a".to_string());
-        left.offer("b".to_string());
+        left.offer("a");
+        left.offer("b");
         let mut right = StreamReservoirSampler::new(100);
-        right.offer("c".to_string());
+        right.offer("c");
 
         left.merge(&right);
 
@@ -1627,8 +1626,8 @@ mod tests {
         let mut left = StreamReservoirSampler::new(10);
         let mut right = StreamReservoirSampler::new(10);
         for value in 0..1_000 {
-            left.offer(value.to_string());
-            right.offer(value.to_string());
+            left.offer(&value.to_string());
+            right.offer(&value.to_string());
         }
 
         assert_eq!(left.samples(), right.samples());
@@ -1640,7 +1639,7 @@ mod tests {
         // in order, so truncating it kept exactly the first values.
         let mut sampler = StreamReservoirSampler::new(1_000);
         for value in 0..1_000 {
-            sampler.offer(value.to_string());
+            sampler.offer(&value.to_string());
         }
         sampler.shrink_to(100);
 
@@ -1664,7 +1663,7 @@ mod tests {
     #[test]
     fn test_reservoir_zero_capacity_still_retains_a_sample() {
         let mut sampler = StreamReservoirSampler::new(0);
-        sampler.offer("value".to_string());
+        sampler.offer("value");
 
         assert_eq!(sampler.samples(), ["value"]);
     }
@@ -1730,7 +1729,7 @@ mod tests {
         let mut sampler = StreamReservoirSampler::seed(1000, 42);
         let total = 100_000;
         for index in 0..total {
-            sampler.offer(index.to_string());
+            sampler.offer(&index.to_string());
         }
 
         assert_eq!(sampler.samples().len(), 1000);

@@ -14,7 +14,6 @@ anyhow = { workspace = true }
 csv = { workspace = true }
 dataprof-core = { workspace = true }
 dataprof-runtime = { workspace = true }
-log = { workspace = true }
 memmap2 = { workspace = true }
 memchr = { workspace = true }
 

@@ -621,7 +621,7 @@ mod tests {
         profiles: &[ColumnProfile],
     ) -> super::super::BifurcatedResult {
         MetricsCalculator::new()
-            .calculate_bifurcated_metrics_with_all_semantic_hints(
+            .calculate_bifurcated_metrics_with_hints(
                 data,
                 profiles,
                 None,
@@ -767,7 +767,7 @@ mod tests {
         let mut thresholds = IsoQualityConfig::default();
         thresholds.score_weights.uniqueness = 0.0;
         let result = MetricsCalculator::with_thresholds(thresholds)
-            .calculate_bifurcated_metrics_with_all_semantic_hints(
+            .calculate_bifurcated_metrics_with_hints(
                 &data,
                 &profiles,
                 None,
@@ -801,6 +801,42 @@ mod tests {
                 "seed {seed}: {exact} outside {bound:?}"
             );
             assert!(bound.upper - bound.lower < 5.0, "seed {seed}: {bound:?}");
+        }
+    }
+
+    #[test]
+    fn mixed_date_formats_keep_the_full_source_score_within_the_bounds_of_its_samples() {
+        // One value in six is a slash date in an ISO column. The format count
+        // read only the first 50 values, so it reported a fraction of the
+        // minority, and an interval built on all checked values sat above the
+        // source score (#873).
+        let source: Vec<String> = (0..20_000)
+            .map(|index| {
+                if index % 6 == 0 {
+                    format!("{:02}/03/2024", 1 + index % 28)
+                } else {
+                    format!("2024-03-{:02}", 1 + index % 28)
+                }
+            })
+            .collect();
+        let minority = source.iter().filter(|value| value.contains('/')).count();
+        let exact = 100.0 - 100.0 * minority as f64 / source.len() as f64;
+        let profiles = vec![profile("order_date", DataType::Date, 20_000, 0)];
+        let full = HashMap::from([("order_date".to_string(), source.clone())]);
+        let scored = score(&full, &profiles, QualityDimension::Consistency);
+        assert!((scored - exact).abs() < 1e-9, "{scored} against {exact}");
+
+        for seed in 0..25 {
+            let retained =
+                HashMap::from([("order_date".to_string(), sample(&source, 2_000, seed))]);
+            let bound = interval(
+                &bounds_for(&retained, &profiles),
+                QualityDimension::Consistency,
+            );
+            assert!(
+                contains(bound, exact),
+                "seed {seed}: {exact} outside {bound:?}"
+            );
         }
     }
 
@@ -863,13 +899,17 @@ mod tests {
     /// `start_date`/`end_date` columns of `rows` rows, where every
     /// `inverted_every`-th row ends before it starts.
     fn date_pairs(rows: usize, inverted_every: usize) -> (Vec<String>, Vec<String>) {
+        use chrono::Datelike;
+        // Keep this ordering fixture fresh, so staleness cannot flatten its
+        // score interval as the calendar advances.
+        let year = chrono::Utc::now().year() - 1;
         (0..rows)
             .map(|row| {
-                let start = format!("2021-03-{:02}", 2 + row % 27);
+                let start = format!("{year}-03-{:02}", 2 + row % 27);
                 let end = if row % inverted_every == 0 {
-                    "2021-03-01".to_string()
+                    format!("{year}-03-01")
                 } else {
-                    format!("2021-04-{:02}", 1 + row % 28)
+                    format!("{year}-04-{:02}", 1 + row % 28)
                 };
                 (start, end)
             })

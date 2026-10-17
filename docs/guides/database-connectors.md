@@ -5,13 +5,18 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 > [!NOTE]
 > Before 0.9.0, every column was read as text and non-text columns profiled as
 > all-null strings. Integers, floats and booleans decode from 0.9.0; temporal
-> columns, `NUMERIC`/`DECIMAL`, `UUID` and MySQL's `BIGINT UNSIGNED` decode from
-> 0.12.
+> columns, `NUMERIC`/`DECIMAL`, `UUID` and MySQL's `BIGINT UNSIGNED` and `TIME`
+> decode from 0.12; PostgreSQL `json`, `jsonb` and arrays and MySQL `JSON`
+> decode from 0.13.
 >
-> Two types are still unsupported and still profile as null: `BLOB`/`BYTEA`,
-> which needs a binary column type rather than a decode arm, and MySQL `TIME`,
-> which sqlx decodes as a duration rather than a time of day. Profile an
-> exported CSV or Parquet file if you need statistics for those.
+> A JSON or array column whose non-null values are all objects or arrays is
+> reported as `nested`, counts only, as the same records are from a JSONL or
+> Parquet file. A JSON column of scalars is typed from its values, and one
+> mixing scalars with containers stays text, as in the JSON readers.
+>
+> `BLOB`/`BYTEA` is still unsupported and still profiles as null: it needs a
+> binary column type rather than a decode arm. Profile an exported CSV or
+> Parquet file if you need statistics for it.
 >
 > Timestamps render in dataprof's naive ISO form (`YYYY-MM-DDTHH:MM:SS`) rather
 > than RFC 3339. A `TIMESTAMPTZ` is converted to UTC and its offset dropped: the
@@ -121,16 +126,14 @@ if let Some(quality) = &report.quality {
 
 ```rust
 use dataprof::{DatabaseConfig, analyze_database};
-use dataprof::{RetryConfig, SslConfig};
+use dataprof::SslConfig;
 
 let config = DatabaseConfig {
     connection_string: "postgres://user:pass@localhost/mydb".to_string(),
     batch_size: 10000,
     max_connections: Some(5),
     connection_timeout: Some(std::time::Duration::from_secs(30)),
-    retry_config: Some(RetryConfig::default()),
     ssl_config: Some(SslConfig::default()),
-    sampling_config: None,
     load_credentials_from_env: true,
 };
 
@@ -179,62 +182,20 @@ Examples:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `connection_string` | `String` | required | Database connection URL |
-| `batch_size` | `usize` | `10000` | Rows per streaming batch |
+| `batch_size` | `usize` | `10000` | Rows read between progress log lines |
 | `max_connections` | `Option<u32>` | `Some(10)` | Connection pool size |
 | `connection_timeout` | `Option<Duration>` | `Some(30s)` | Connection timeout |
-| `retry_config` | `Option<RetryConfig>` | `Some(default)` | Retry with exponential backoff |
-| `sampling_config` | `Option<SamplingConfig>` | `None` | Sampling strategy for large tables |
 | `ssl_config` | `Option<SslConfig>` | `Some(default)` | SSL/TLS encryption settings |
 | `load_credentials_from_env` | `bool` | `true` | Load credentials from environment variables |
 
-## Streaming for Large Datasets
+## Large Results
 
-dataprof processes database results in configurable batches to handle tables with millions of rows without exceeding memory:
+dataprof evaluates the query once and reads the rows as the driver returns them:
 
-1. Counts total rows for progress tracking
-2. Fetches data in batches (default: 10,000 rows)
-3. Merges statistics from all batches
-4. Reports progress
+1. Fetches the result in one execution, logging the rows read every `batch_size` rows
+2. Profiles the collected columns
 
-Adjust `batch_size` based on your dataset:
-
-| Dataset size | Recommended batch size |
-|---|---|
-| < 100k rows | `1000` -- `5000` |
-| 100k -- 1M rows | `10000` -- `25000` |
-| > 1M rows | `50000` -- `100000` |
-
-## Sampling
-
-For very large tables, configure sampling to analyze a representative subset:
-
-```rust
-use dataprof::SamplingConfig;
-
-// Quick random sample
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::quick_sample(10000)),
-    ..Default::default()
-};
-
-// Representative stratified sample
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::representative_sample(
-        25000,
-        Some("category".to_string()),
-    )),
-    ..Default::default()
-};
-
-// Temporal sample for time-series data
-let config = DatabaseConfig {
-    sampling_config: Some(SamplingConfig::temporal_sample(
-        50000,
-        "created_at".to_string(),
-    )),
-    ..Default::default()
-};
-```
+The whole result is held in memory before it is profiled, so memory grows with the number of rows and columns returned. For a large table, filter with `WHERE`, select only the columns you need, or add a `LIMIT` or a sampling clause your database supports (`TABLESAMPLE` on PostgreSQL) to the query.
 
 ## Security
 
@@ -325,5 +286,4 @@ print(f"Connection: {'OK' if ok else 'FAILED'}")
 1. **Add WHERE clauses** to filter data before profiling
 2. **Use indexes** on filtered columns for faster queries
 3. **Avoid SELECT \*** on very wide tables -- select relevant columns
-4. **Set appropriate batch sizes** based on row count (see table above)
-5. **Use connection pooling** (`max_connections`) for repeated queries
+4. **Use connection pooling** (`max_connections`) for repeated queries

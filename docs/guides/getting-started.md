@@ -143,9 +143,12 @@ Measures whether values conform to their expected types and formats.
 
 - `data_type_consistency` -- fraction of values matching the column's type
 - `format_violations` -- values in a column's minority date format (`15/01/2024`
-  beside `2024-01-15`, checked over each column's first 50 values, whatever the
-  column is called), in a minority decimal separator (`1,5` beside `3.5`), or
-  holding both separators (`1.234,56`, counted even when every value does)
+  beside `2024-01-15`, whatever the column is called), in a minority decimal
+  separator (`1,5` beside `3.5`), or
+  holding both separators (`1.234,56`, counted even when every value does).
+  Counted over the values `values_checked` counts: the whole column, or a
+  sample of 10,000 values of a longer column on file, Arrow and DataFrame
+  input
 - `encoding_issues` -- invalid character encoding detected
 
 For a column with an inferred type, `data_type_consistency` is the fraction of
@@ -183,7 +186,9 @@ a European spreadsheet export, are not parsed as numbers and land in `text`.
 
 Measures duplication in the data.
 
-- `duplicate_rows` -- number of exact duplicate rows
+- `duplicate_rows` -- number of exact duplicate rows. A nested value compares
+  as a value, so two objects, or two Arrow maps, with the same entries in a
+  different order are equal
 - `key_uniqueness` -- ratio of distinct values in likely-key columns
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
@@ -193,9 +198,12 @@ Measures whether values fall within expected ranges.
 
 - `outlier_ratio` -- fraction of values outside the interquartile range
 - `range_violations` -- values outside the range a word of the column name
-  implies: `age` 0 to 150, `percent`, `percentage`, `rate` or `rates` 0 to 100,
+  implies: `age` 0 to 150, `percent`, `percentage` or `pct` 0 to 100,
   `count` or `counts` not negative, `year` 1900 to 2100 (`customer_age`
-  matches, `average_price` does not)
+  matches, `average_price` does not). A rule applies only where the name pins
+  its unit: `age` is not held to years beside a smaller unit
+  (`account_age_days`), and a `rate` is not taken for a percentage
+  (`sample_rate`, `heart_rate`)
 - `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
 
 ### Timeliness
@@ -208,7 +216,14 @@ be inferred confidently, such as mixed-format strings.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated
-- `temporal_violations` -- ordering inconsistencies in time series
+- `temporal_violations` -- rows where an end date precedes its start date.
+  Columns pair by a word of their names: `start` with `end`, `created` with
+  `updated`, `begin_date` with `end_date`, `from_date` with `to_date`
+  (`start_date` pairs with `end_date` or `endDate`, not with `send_date`).
+  With several start or end columns, a start pairs with the end whose other
+  words match (`trip_start` with `trip_end`), or failing that, whose other
+  words match apart from a trailing date word (`trip_start_date` with
+  `trip_end`); when that is ambiguous, no pair is formed
 
 ### Validity
 

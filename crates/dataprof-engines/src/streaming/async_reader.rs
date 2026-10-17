@@ -4,12 +4,17 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
+    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler,
     SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
     StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
+};
+
+use dataprof_json::record::{
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
+    malformed_array_error, non_object_record_error, read_json_record, read_jsonl_line,
 };
 
 use super::async_source::AsyncDataSource;
@@ -78,151 +83,6 @@ fn peek_non_whitespace<R: std::io::BufRead>(
         }
         reader.consume(whitespace_len);
         consumed += whitespace_len;
-    }
-}
-
-/// Build a strict-mode error for a standard JSON document that is not exactly
-/// one value. Mirrors `dataprof_json::json_document_error`.
-fn json_document_error(err: serde_json::Error) -> DataProfilerError {
-    let message = format!(
-        // One source line on purpose: see dataprof_json::json_document_error.
-        "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
-    );
-    DataProfilerError::json_parsing_with_source(message, err)
-}
-
-fn malformed_json_array_error(message: &str) -> DataProfilerError {
-    // Callers hold a message, not the decoder error: nothing to retain.
-    DataProfilerError::json_parsing_error(&format!("malformed JSON array: {message}"))
-}
-
-/// One record read from a JSON or JSONL stream.
-///
-/// This mirrors `dataprof_json::JsonRecord`; the two scanners are kept
-/// byte-for-byte equivalent so a payload profiles identically whether it
-/// arrives as a file or as an async stream.
-enum JsonRecord {
-    /// A JSON object — the only value with named fields to profile as a row.
-    Object(serde_json::Map<String, serde_json::Value>),
-    /// Valid JSON that is not an object, carrying the value's kind for the
-    /// error message.
-    NonObject(&'static str),
-    /// The bytes are not valid JSON.
-    Malformed(serde_json::Error),
-}
-
-/// Parse one JSONL line as exactly one JSON value.
-///
-/// `serde_json::from_str` requires the value to fill the whole input, so a line
-/// carrying two adjacent or space-separated values is a malformed record rather
-/// than two clean ones. Mirrors `dataprof_json::read_jsonl_line`.
-fn read_jsonl_line(line: &str) -> JsonRecord {
-    match serde_json::from_str::<serde_json::Value>(line.trim()) {
-        Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
-        Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
-        Err(err) => JsonRecord::Malformed(err),
-    }
-}
-
-/// Read one JSON value and leave the reader positioned immediately after it.
-///
-/// `first` is the value's first byte, already located by
-/// [`peek_non_whitespace`] but not yet consumed.
-fn read_json_record<R: std::io::BufRead>(
-    reader: &mut R,
-    first: u8,
-) -> Result<JsonRecord, DataProfilerError> {
-    // A number is the only JSON value that is not self-delimiting: serde finds
-    // its end by peeking one byte past it and then drops that byte along with
-    // the deserializer. Inside an array that byte is the `,` or `]` the scanner
-    // needs next, so numbers are read byte-wise instead.
-    if first == b'-' || first.is_ascii_digit() {
-        let token = read_number_token(reader)?;
-        return Ok(match serde_json::from_str::<serde_json::Value>(&token) {
-            Ok(_) => JsonRecord::NonObject("number"),
-            Err(err) => JsonRecord::Malformed(err),
-        });
-    }
-
-    let mut de = serde_json::Deserializer::from_reader(reader);
-    Ok(
-        match <serde_json::Value as serde::Deserialize>::deserialize(&mut de) {
-            Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
-            Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
-            Err(err) => JsonRecord::Malformed(err),
-        },
-    )
-}
-
-/// Read the bytes that can spell a JSON number, stopping at the first byte that
-/// cannot. The token is returned unvalidated — the caller decides whether it
-/// actually parses, so `1.2.3` stays a malformed record rather than a number.
-///
-/// Leading whitespace is consumed first: the JSONL loop locates the next
-/// value's first byte without consuming what precedes it, because serde needs
-/// that whitespace to keep its line and column context.
-fn read_number_token<R: std::io::BufRead>(reader: &mut R) -> Result<String, DataProfilerError> {
-    peek_non_whitespace(reader)?;
-    let mut token = String::new();
-    loop {
-        let (consume, token_ended) = {
-            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-            if buf.is_empty() {
-                break;
-            }
-            let consume = buf
-                .iter()
-                .take_while(|byte| is_json_number_byte(**byte))
-                .count();
-            // decode-audit: impossible — every byte accepted above is ASCII.
-            token.push_str(
-                std::str::from_utf8(&buf[..consume]).expect("JSON number bytes are ASCII"),
-            );
-            (consume, consume < buf.len())
-        };
-        reader.consume(consume);
-        if token_ended {
-            break;
-        }
-    }
-    Ok(token)
-}
-
-fn is_json_number_byte(byte: u8) -> bool {
-    byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E')
-}
-
-fn json_value_kind(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
-}
-
-/// Build a strict-mode error for valid JSON that is not a row object. This is a
-/// distinct category from a syntax failure: the document parsed, it just does
-/// not hold records. `position` is 1-based over the records scanned so far.
-fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
-    // No source: the document parsed, it simply does not hold records.
-    DataProfilerError::json_parsing_error(&format!(
-        "non-object JSON record at position {position}: \
-         expected an object with fields to profile, found {kind}"
-    ))
-}
-
-fn drain_to_end<R: std::io::BufRead>(reader: &mut R) -> Result<usize, DataProfilerError> {
-    let mut consumed = 0;
-    loop {
-        let available = reader.fill_buf().map_err(DataProfilerError::from)?.len();
-        if available == 0 {
-            return Ok(consumed);
-        }
-        reader.consume(available);
-        consumed += available;
     }
 }
 
@@ -397,7 +257,38 @@ impl AsyncStreamingProfiler {
         }
 
         let start = std::time::Instant::now();
-        let reader = source.into_async_read().await?;
+        let needs_total = self.stop_condition.needs_row_count() || self.progress_sink.is_active();
+        let materialized = if format == FileFormat::Csv && needs_total {
+            source.take_bytes()
+        } else {
+            Err(source)
+        };
+        let (reader, exact_total_rows) = match materialized {
+            Ok(data) => {
+                let delimiter = self.csv_delimiter;
+                let (data, count) = tokio::task::spawn_blocking(move || {
+                    let delimiter = match delimiter {
+                        Some(delimiter) => delimiter,
+                        None => dataprof_csv::detect_delimiter(std::io::Cursor::new(&data))
+                            .map_err(DataProfilerError::io_error)?,
+                    };
+                    let count = Some(
+                        dataprof_csv::row_count::csv_record_count(&data[..], delimiter, b'"')?
+                            .saturating_sub(1),
+                    );
+                    Ok::<_, DataProfilerError>((data, count))
+                })
+                .await
+                .map_err(|error| DataProfilerError::StreamingError {
+                    message: format!("Row counter task failed: {error}"),
+                    suggestion: "Retry profiling the source".into(),
+                })??;
+                let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>> =
+                    Box::pin(std::io::Cursor::new(data));
+                (reader, count)
+            }
+            Err(source) => (source.into_async_read().await?, None),
+        };
 
         let bytes_per_chunk = self.bytes_per_chunk();
         let (tx, rx) = mpsc::channel::<ParsedChunk>(self.channel_capacity);
@@ -432,7 +323,9 @@ impl AsyncStreamingProfiler {
         });
 
         // Process chunks on the current task
-        let process_result = self.process_chunks(rx, source_info.size_hint).await;
+        let process_result = self
+            .process_chunks(rx, source_info.size_hint, exact_total_rows)
+            .await;
 
         // If processing failed, prefer the reader's error when it also failed:
         // a strict-mode malformed record aborts the reader before any data
@@ -781,18 +674,7 @@ impl AsyncStreamingProfiler {
                 .map(|col| {
                     // decode-audit: no-data — a key absent from this object is
                     // a missing field, and "" is the profiler's textual null.
-                    obj.get(col)
-                        .map(|v| match v {
-                            Value::Null => String::new(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Number(n) => n.to_string(),
-                            Value::String(s) => s.to_string(),
-                            // decode-audit: impossible — re-serializing an
-                            // in-memory Value cannot fail; panic beats a fake null.
-                            _ => serde_json::to_string(v)
-                                .expect("re-serializing a parsed JSON value cannot fail"),
-                        })
-                        .unwrap_or_default()
+                    obj.get(col).map(json_value_text).unwrap_or_default()
                 })
                 .collect();
             (row, containers)
@@ -991,7 +873,7 @@ impl AsyncStreamingProfiler {
                     bytes_in_chunk += whitespace as u64;
                     let Some(next) = next else {
                         if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_json_array_error(
+                            return Err(malformed_array_error(
                                 "unexpected end of input before closing ']'",
                             ));
                         }
@@ -1004,7 +886,7 @@ impl AsyncStreamingProfiler {
                         if next == b']' {
                             if !allow_end {
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_json_array_error(
+                                    return Err(malformed_array_error(
                                         "trailing comma before closing ']'",
                                     ));
                                 }
@@ -1020,7 +902,7 @@ impl AsyncStreamingProfiler {
 
                         if next == b',' {
                             if error_policy == JsonErrorPolicy::Strict {
-                                return Err(malformed_json_array_error(
+                                return Err(malformed_array_error(
                                     "unexpected comma where an array value was required",
                                 ));
                             }
@@ -1101,7 +983,7 @@ impl AsyncStreamingProfiler {
                             }
                             _ => {
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_json_array_error(
+                                    return Err(malformed_array_error(
                                         "expected ',' or ']' after an array value",
                                     ));
                                 }
@@ -1120,7 +1002,7 @@ impl AsyncStreamingProfiler {
                     bytes_in_chunk += whitespace as u64;
                     if trailing.is_some() {
                         if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_json_array_error(
+                            return Err(malformed_array_error(
                                 "non-whitespace content follows the closing ']'",
                             ));
                         }
@@ -1168,6 +1050,7 @@ impl AsyncStreamingProfiler {
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
+        exact_total_rows: Option<u64>,
     ) -> Result<
         (
             Vec<String>,
@@ -1189,7 +1072,7 @@ impl AsyncStreamingProfiler {
         let mut total_bytes: u64 = 0;
 
         // Initialize stop condition evaluator
-        let estimated_total = size_hint.map(|total| total / 50); // ~50 bytes per row
+        let mut estimated_total = exact_total_rows;
         let mut stop_eval = StopEvaluator::new(self.stop_condition.clone());
         if let Some(est) = estimated_total {
             stop_eval = stop_eval.with_estimated_total(est);
@@ -1241,12 +1124,8 @@ impl AsyncStreamingProfiler {
         // same header-only CSV invariant as the file-based engines.
         column_stats.init_columns(&headers);
 
-        // Estimate total rows for progress (if we know the total size)
-        let estimated_total_rows = size_hint.map(|total| {
-            (total as usize) / 50 // rough estimate: ~50 bytes per row
-        });
-
-        progress_tracker.emit_started(estimated_total_rows, size_hint);
+        let header_bytes = total_bytes;
+        progress_tracker.emit_started(estimated_total.map(|rows| rows as usize), size_hint);
         progress_tracker.emit_schema(headers.clone());
 
         // A row cap is a hard ceiling on what the caller authorized us to
@@ -1280,7 +1159,7 @@ impl AsyncStreamingProfiler {
                     break;
                 }
 
-                if !sampler.accept(RowView::new(&headers, &values)) {
+                if !sampler.accept() {
                     continue;
                 }
 
@@ -1327,6 +1206,15 @@ impl AsyncStreamingProfiler {
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
                     truncation_reason = stop_eval.truncation_reason();
                 }
+                // The rows read from the chunk the cap stopped in still count,
+                // so the `Finished` total matches `rows_processed`.
+                if rows_consumed > 0 {
+                    progress_tracker.emit_chunk(
+                        rows_consumed,
+                        chunk_bytes,
+                        estimated_total.map(|rows| rows as usize),
+                    );
+                }
                 drop(rx);
                 break;
             }
@@ -1343,7 +1231,34 @@ impl AsyncStreamingProfiler {
             } else {
                 0.0
             };
-            let reached_eof = size_hint.is_some_and(|size| total_bytes >= size);
+            let reached_eof = exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
+                || size_hint.is_some_and(|size| total_bytes >= size);
+
+            if exact_total_rows.is_none()
+                && let Some(size) = size_hint
+            {
+                estimated_total = dataprof_csv::row_count::observed_total_rows(
+                    size.saturating_sub(header_bytes),
+                    total_bytes.saturating_sub(header_bytes),
+                    total_rows as u64,
+                );
+                if let Some(rows) = estimated_total {
+                    stop_eval.set_estimated_total(rows);
+                }
+            }
+
+            // Schema stability is a leaf of the composed stop condition.
+            if let Some(ref mut tracker) = schema_tracker {
+                let fingerprint = column_stats.column_type_fingerprint();
+                tracker.update(fingerprint, chunk_rows as u64);
+                stop_eval.set_schema_stable_rows(tracker.consecutive_stable_rows());
+            }
+            // Update progress
+            progress_tracker.emit_chunk(
+                chunk_rows,
+                chunk_bytes,
+                estimated_total.map(|rows| rows as usize),
+            );
 
             if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
                 if !reached_eof {
@@ -1352,21 +1267,6 @@ impl AsyncStreamingProfiler {
                 drop(rx); // signal reader task to stop
                 break;
             }
-
-            // Check schema stability
-            if let Some(ref mut tracker) = schema_tracker {
-                let fingerprint = column_stats.column_type_fingerprint();
-                if tracker.update(fingerprint, chunk_rows as u64) {
-                    if !reached_eof {
-                        truncation_reason = Some(tracker.truncation_reason());
-                    }
-                    drop(rx);
-                    break;
-                }
-            }
-
-            // Update progress
-            progress_tracker.emit_chunk(chunk_rows, chunk_bytes, estimated_total_rows);
         }
 
         // A fixed-size sample is only final once reading stops, so it is folded

@@ -66,10 +66,12 @@ const PERCENTAGE_MAX: f64 = 100.0;
 /// configuration mistake, and reporting it as a failed gate would blame the
 /// data for it.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PolicyError {
     /// A threshold on the 0..=100 percentage scale fell outside it, or was not
     /// a finite number. Quality scores and null percentages are percentages,
     /// not 0..1 ratios.
+    #[non_exhaustive]
     ThresholdOutOfRange {
         /// The requirement that carried it.
         code: CheckCode,
@@ -117,6 +119,7 @@ impl std::error::Error for PolicyError {}
 /// question it asks rather than letting the evaluator guess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PolicyScope {
     /// The entire source. A requirement is evaluated only when the evidence
     /// covers it, or when the observed data already witnesses a violation that
@@ -155,6 +158,7 @@ impl std::str::FromStr for PolicyScope {
 /// Why the data behind a number falls short of the whole source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EvidenceGap {
     /// Profiling stopped before the source was exhausted.
     Truncated,
@@ -188,10 +192,12 @@ impl fmt::Display for EvidenceGap {
 /// Whether the data behind a number covers the whole source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "coverage", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Evidence {
     /// Every row of the source is behind the number.
     Complete,
     /// Some of the source is not, for this reason.
+    #[non_exhaustive]
     Incomplete {
         /// The gap between what was read and the whole source.
         reason: EvidenceGap,
@@ -229,7 +235,10 @@ impl Evidence {
 /// not change when the prose does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CheckCode {
+    /// The scan must have read at least the threshold's number of rows.
+    MinRows,
     /// The overall quality score must be at least the threshold.
     MinQualityScore,
     /// One ISO 25012 dimension score must be at least the threshold.
@@ -245,6 +254,7 @@ pub enum CheckCode {
 impl fmt::Display for CheckCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MinRows => write!(f, "min_rows"),
             Self::MinQualityScore => write!(f, "min_quality_score"),
             Self::MinDimensionScore => write!(f, "min_dimension_score"),
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
@@ -260,6 +270,7 @@ impl fmt::Display for CheckCode {
 /// whole numbers and are not widened into rounded floats.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum MetricValue {
     /// A count of rows or values.
     Count(usize),
@@ -281,13 +292,16 @@ impl fmt::Display for MetricValue {
 /// The constraint a check applied.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(tag = "comparison", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Expectation {
     /// The observed value must be at least `value`.
+    #[non_exhaustive]
     AtLeast {
         /// The threshold.
         value: MetricValue,
     },
     /// The observed value must be at most `value`.
+    #[non_exhaustive]
     AtMost {
         /// The threshold.
         value: MetricValue,
@@ -314,8 +328,10 @@ impl fmt::Display for Expectation {
 /// profiled, or a scan that does not reach as far as the requirement does.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NotEvaluated {
     /// The report carries no quality assessment, for this recorded reason.
+    #[non_exhaustive]
     QualityUnavailable {
         /// The report's `quality_status` state, verbatim.
         quality_status: String,
@@ -330,6 +346,7 @@ pub enum NotEvaluated {
     ColumnNotProfiled,
     /// The requirement asks about the full source, the evidence does not reach
     /// that far, and nothing observed settles it regardless.
+    #[non_exhaustive]
     EvidenceIncomplete {
         /// The gap between the evidence and the requirement's scope.
         gap: EvidenceGap,
@@ -339,6 +356,7 @@ pub enum NotEvaluated {
 /// What happened to one requirement.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CheckStatus {
     /// Evaluated and met.
     Passed,
@@ -350,6 +368,7 @@ pub enum CheckStatus {
 
 /// One requirement and what the report said about it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct Check {
     /// Which requirement this is.
     pub code: CheckCode,
@@ -405,6 +424,7 @@ impl Check {
 
 /// The interval a sampled score was decided on.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct CheckBounds {
     /// Lowest value the whole-source score can take.
     #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
@@ -419,6 +439,7 @@ pub struct CheckBounds {
 /// The overall outcome of a policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Verdict {
     /// Every requirement was evaluated and met.
     Pass,
@@ -441,6 +462,7 @@ impl fmt::Display for Verdict {
 
 /// The structured result of evaluating a [`QualityPolicy`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
 pub struct GateResult {
     /// The overall outcome.
     pub verdict: Verdict,
@@ -479,6 +501,7 @@ impl GateResult {
 
 /// A metric a policy requires to have been analyzed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RequiredMetric {
     /// The quality assessment as a whole.
     Quality,
@@ -493,7 +516,9 @@ pub enum RequiredMetric {
 /// depend on the order they were added, so two callers stating the same policy
 /// get the same document out.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct QualityPolicy {
+    min_rows: Option<usize>,
     min_quality_score: Option<f64>,
     min_dimension_scores: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage: BTreeMap<String, f64>,
@@ -508,6 +533,13 @@ impl QualityPolicy {
     /// [`PolicyError::NoRequirements`].
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Require the scan to have read at least `min` rows, so an empty or
+    /// truncated extract fails instead of passing every other check.
+    pub fn min_rows(mut self, min: usize) -> Self {
+        self.min_rows = Some(min);
+        self
     }
 
     /// Require the overall quality score to be at least `min` (0..=100).
@@ -598,7 +630,8 @@ impl QualityPolicy {
     }
 
     fn is_empty(&self) -> bool {
-        self.min_quality_score.is_none()
+        self.min_rows.is_none()
+            && self.min_quality_score.is_none()
             && self.min_dimension_scores.is_empty()
             && self.max_null_percentage.is_empty()
             && self.max_null_percentage_any.is_none()
@@ -619,6 +652,9 @@ impl QualityPolicy {
 
         for metric in required_metrics_in_order(&self.require_metrics) {
             checks.push(self.require_metric_check(report, metric));
+        }
+        if let Some(min) = self.min_rows {
+            checks.push(self.row_count_check(report, scan, min));
         }
         if let Some(min) = self.min_quality_score {
             checks.push(self.quality_score_check(report, scan, min));
@@ -693,6 +729,45 @@ impl QualityPolicy {
             } else {
                 CheckStatus::Failed
             },
+            message: message.to_string(),
+        }
+    }
+
+    /// The mirror of the duplicate-row rule: rows already read do not stop
+    /// existing when more are read, so a scan that read at least `min` rows
+    /// settles the requirement whatever it missed. Fewer is a failure only
+    /// when the scan covered the whole source, or under
+    /// [`PolicyScope::Observed`]; under [`PolicyScope::FullSource`] the rows
+    /// that were not read may make up the difference.
+    fn row_count_check(&self, report: &ProfileReport, scan: Evidence, min: usize) -> Check {
+        let observed = report.execution.rows_processed;
+        let status = match (self.scope, scan.gap()) {
+            _ if observed >= min => CheckStatus::Passed,
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ => CheckStatus::Failed,
+        };
+        let message = match status {
+            CheckStatus::Passed => "the scan read at least the required number of rows",
+            CheckStatus::Failed => "fewer rows were read than the required minimum",
+            CheckStatus::NotEvaluated(_) => {
+                "fewer rows were read than the required minimum, and the rows that were not \
+                 read may make up the difference"
+            }
+        };
+        Check {
+            code: CheckCode::MinRows,
+            column: None,
+            dimension: None,
+            expected: Expectation::AtLeast {
+                value: MetricValue::Count(min),
+            },
+            observed: Some(MetricValue::Count(observed)),
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            status,
             message: message.to_string(),
         }
     }
@@ -1185,6 +1260,48 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
     }
 }
 
+/// Every public type in this module is `#[non_exhaustive]` (#894), and so is
+/// every enum variant with named fields, so the gate can gain variants,
+/// struct fields and variant fields (#749) without breaking callers. Tuple
+/// variants such as `CheckStatus::NotEvaluated(_)` are not marked: growing
+/// one changes its positional shape, which is a redesign, not an extension.
+///
+/// The attribute only binds outside this crate, which is where doctests
+/// compile. Each block below builds one struct with update syntax from a
+/// supplied value. That is rejected only for a non-exhaustive struct from
+/// another crate, so a field added later cannot make a block fail for a
+/// different reason. The enums and their variants are checked by
+/// `tests::every_public_type_is_non_exhaustive`, because no `match` or
+/// pattern stays independent of the variants and fields they gain.
+///
+/// Stable rustdoc does not check the error code of a `compile_fail` block, so
+/// any error would pass one. `tests/public_api_facade.rs` names the fields
+/// used here in code that must compile, so a renamed field fails there instead
+/// of passing here for the wrong reason.
+///
+/// ```compile_fail
+/// use dataprof_runtime::CheckBounds;
+/// fn f(base: CheckBounds) -> CheckBounds {
+///     CheckBounds { lower: 0.0, ..base }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::Check;
+/// fn f(base: Check) -> Check {
+///     Check { message: String::new(), ..base }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use dataprof_runtime::GateResult;
+/// fn f(base: GateResult) -> GateResult {
+///     GateResult { checks: Vec::new(), ..base }
+/// }
+/// ```
+#[cfg(doctest)]
+struct NonExhaustiveGuards;
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1196,6 +1313,69 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    /// The source-level half of `NonExhaustiveGuards` (#894): every `pub` type
+    /// declared in this module carries `#[non_exhaustive]`, and so does every
+    /// variant with named fields inside a `pub enum`. Reading the source keeps
+    /// the check independent of the variants and fields the types gain, and
+    /// covers a type or variant added later without a list to update.
+    #[test]
+    fn every_public_type_is_non_exhaustive() {
+        let lines: Vec<&str> = include_str!("quality_gate.rs").lines().collect();
+        let marked = |i: usize| {
+            lines[..i]
+                .iter()
+                .rev()
+                .map(|l| l.trim())
+                .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
+                .any(|l| l == "#[non_exhaustive]")
+        };
+        let identifier = |s: &str| -> String {
+            s.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        };
+        let mut declared = Vec::new();
+        let mut variants = Vec::new();
+        let mut unmarked = Vec::new();
+        let mut in_enum: Option<String> = None;
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(enum_name) = &in_enum {
+                if *line == "}" {
+                    in_enum = None;
+                } else if let Some(rest) = line.strip_prefix("    ")
+                    && rest.starts_with(|c: char| c.is_ascii_uppercase())
+                    && rest.contains(" {")
+                {
+                    let variant = format!("{enum_name}::{}", identifier(rest));
+                    if !marked(i) {
+                        unmarked.push(variant.clone());
+                    }
+                    variants.push(variant);
+                }
+                continue;
+            }
+            let Some(rest) = line
+                .strip_prefix("pub enum ")
+                .or_else(|| line.strip_prefix("pub struct "))
+            else {
+                continue;
+            };
+            let name = identifier(rest);
+            if !marked(i) {
+                unmarked.push(name.clone());
+            }
+            if line.starts_with("pub enum ") {
+                in_enum = Some(name.clone());
+            }
+            declared.push(name);
+        }
+        // Guard the premise: the scan found the module's types and the
+        // variants with named fields at all.
+        assert!(declared.len() >= 15, "{declared:?}");
+        assert!(variants.len() >= 6, "{variants:?}");
+        assert!(unmarked.is_empty(), "not #[non_exhaustive]: {unmarked:?}");
+    }
     use crate::ReportAssembler;
 
     fn source() -> DataSource {

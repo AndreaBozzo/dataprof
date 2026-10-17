@@ -1,4 +1,5 @@
 use crate::acceleration::simd::compute_stats_auto;
+use crate::stats::ParsedNumber;
 use crate::types::{ColumnStats, NumericStats, Quartiles};
 use std::collections::HashMap;
 
@@ -23,24 +24,31 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
 /// cells that parsed as a finite number. Lets callers derive invalid-value
 /// counts without a second parse pass over the data.
 pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
-    // decode-audit: no-data — cells that do not parse are non-numeric values
-    // (nulls, tokens like "N/A"), excluded from numeric stats by design.
-    let numbers: Vec<f64> = data
-        .iter()
-        .filter_map(|s| s.trim().parse::<f64>().ok())
-        .filter(|x| x.is_finite())
-        .collect();
+    // Cells that do not parse are non-numeric values (nulls, tokens like
+    // "N/A"), excluded from numeric stats by design.
+    let parsed: Vec<ParsedNumber> = data.iter().filter_map(|s| ParsedNumber::parse(s)).collect();
+    let numbers: Vec<f64> = parsed.iter().map(|number| number.to_f64()).collect();
     let parsed_count = numbers.len();
 
     if numbers.is_empty() {
         return (NumericStats::empty(), 0);
     }
 
+    // An integer beyond 2^53 is rounded in `numbers`, so its spread is taken
+    // from the exact values instead (#877). The SIMD path only reads `f64`.
+    let wide = parsed
+        .iter()
+        .any(|number| matches!(number, ParsedNumber::Integer(_)));
+
     // Single stable pass for the base statistics. `NumericAccumulator` carries
     // Welford's mean and M2 alongside a compensated sum, so the variance of a
     // small spread on a large offset survives and the mean survives both
     // cancellation and an overflowing sum.
-    let base = compute_stats_auto(&numbers);
+    let base = if wide {
+        parsed.iter().copied().collect()
+    } else {
+        compute_stats_auto(&numbers)
+    };
     let min = base.min().expect("accumulator covers a non-empty column");
     let max = base.max().expect("accumulator covers a non-empty column");
     let mean = base.mean();
@@ -53,7 +61,7 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let (sample_data, is_approximate) = if numbers.len() > SAMPLE_THRESHOLD {
         (reservoir_sample(&numbers, SAMPLE_THRESHOLD), Some(true))
     } else {
-        (numbers.clone(), None)
+        (numbers.clone(), Some(false))
     };
 
     // Statistics requiring sorted/complete data
@@ -66,9 +74,32 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let coefficient_of_variation =
         std_dev.and_then(|value| calculate_coefficient_of_variation(value, mean));
 
-    // Advanced metrics
-    let skewness = std_dev.and_then(|value| calculate_skewness(&sample_data, mean, value));
-    let kurtosis = std_dev.and_then(|value| calculate_kurtosis(&sample_data, mean, value));
+    // Shape estimators use moments from the same population. If a reservoir
+    // was needed, its mean and sample deviation belong with its higher moments.
+    // They do not depend on a shift, so a wide column takes them from exact
+    // deviations: the rounded values would standardize to multiples of the
+    // `f64` spacing over a spread far smaller than it.
+    let deviations;
+    let shape_data: &[f64] = if wide {
+        let sample = if is_approximate == Some(true) {
+            reservoir_sample(&parsed, SAMPLE_THRESHOLD)
+        } else {
+            parsed
+        };
+        deviations = deviations_from_pivot(&sample);
+        &deviations
+    } else {
+        &sample_data
+    };
+    let shape_base = if wide || is_approximate == Some(true) {
+        compute_stats_auto(shape_data)
+    } else {
+        base
+    };
+    let shape_mean = shape_base.mean();
+    let shape_std_dev = shape_base.sample_std_dev();
+    let skewness = std_dev.and_then(|_| calculate_skewness(shape_data, shape_mean, shape_std_dev));
+    let kurtosis = std_dev.and_then(|_| calculate_kurtosis(shape_data, shape_mean, shape_std_dev));
 
     // Per-column outlier count using the same Tukey IQR rule as the global
     // accuracy.outlier_ratio dimension (k = 1.5). Returns `None` for tiny
@@ -217,9 +248,9 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
 
 /// Calculate coefficient of variation (CV)
 pub fn calculate_coefficient_of_variation(std_dev: f64, mean: f64) -> Option<f64> {
-    // A near-zero mean would divide by zero, and an infinite one would divide
-    // any spread down to 0.0. A non-finite spread fails the result check.
-    if !mean.is_finite() || mean.abs() < 0.001 {
+    // Reject a mean indistinguishable from zero relative to the spread. This
+    // condition is invariant under a change of measurement units.
+    if !mean.is_finite() || !std_dev.is_finite() || mean.abs() <= f64::EPSILON * std_dev.abs() {
         None
     } else {
         let value = (std_dev / mean.abs()) * 100.0;
@@ -227,12 +258,16 @@ pub fn calculate_coefficient_of_variation(std_dev: f64, mean: f64) -> Option<f64
     }
 }
 
-/// Calculate skewness (Pearson's moment coefficient)
+/// Adjusted Fisher-Pearson sample skewness, as in pandas `Series.skew`.
+/// `std_dev` must be the sample standard deviation of `data`.
 pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
     // An infinite std_dev would standardize every value to 0.0; a non-finite
     // mean fails the result check below.
-    if data.len() < 3 || !std_dev.is_finite() || std_dev < 1e-10 {
+    if data.len() < 3 || !mean.is_finite() || !std_dev.is_finite() || std_dev < 0.0 {
         return None;
+    }
+    if std_dev == 0.0 {
+        return Some(0.0);
     }
 
     let n = data.len() as f64;
@@ -244,15 +279,19 @@ pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         })
         .sum();
 
-    let value = sum_cubed / n;
+    let value = n / ((n - 1.0) * (n - 2.0)) * sum_cubed;
     value.is_finite().then_some(value)
 }
 
-/// Calculate kurtosis (excess kurtosis)
+/// Adjusted Fisher sample excess kurtosis, as in pandas `Series.kurt`.
+/// `std_dev` must be the sample standard deviation of `data`.
 pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
     // Same guards as `calculate_skewness`.
-    if data.len() < 4 || !std_dev.is_finite() || std_dev < 1e-10 {
+    if data.len() < 4 || !mean.is_finite() || !std_dev.is_finite() || std_dev < 0.0 {
         return None;
+    }
+    if std_dev == 0.0 {
+        return Some(0.0);
     }
 
     let n = data.len() as f64;
@@ -265,14 +304,35 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         })
         .sum();
 
-    // Excess kurtosis (subtract 3 for normal distribution)
-    let value = (sum_fourth / n) - 3.0;
+    let value = n * (n + 1.0) / ((n - 1.0) * (n - 2.0) * (n - 3.0)) * sum_fourth
+        - 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
     value.is_finite().then_some(value)
+}
+
+/// Each value minus the first integer beyond `f64`'s exact range, with the
+/// integer differences taken exactly. Values near 1.76e18 sit 256 apart as
+/// `f64`, so a spread of a few units only survives as deviations (#877).
+fn deviations_from_pivot(values: &[ParsedNumber]) -> Vec<f64> {
+    let Some(pivot) = values.iter().find_map(|number| match number {
+        ParsedNumber::Integer(value) => Some(*value),
+        ParsedNumber::Float(_) => None,
+    }) else {
+        return values.iter().map(|number| number.to_f64()).collect();
+    };
+    let pivot_high = pivot as f64;
+    let pivot_low = (pivot - pivot_high as i128) as f64;
+    values
+        .iter()
+        .map(|number| match *number {
+            ParsedNumber::Integer(value) => (value - pivot) as f64,
+            ParsedNumber::Float(value) => (value - pivot_high) - pivot_low,
+        })
+        .collect()
 }
 
 /// Reservoir sampling for large datasets, seeded so the sample is the same
 /// on every run for the same values.
-fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
+fn reservoir_sample<T: Copy>(data: &[T], k: usize) -> Vec<T> {
     use rand::rngs::SmallRng;
     use rand::{Rng, SeedableRng};
 
@@ -281,7 +341,7 @@ fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
     }
 
     let mut rng = SmallRng::seed_from_u64(SAMPLE_SEED);
-    let mut reservoir: Vec<f64> = data[0..k].to_vec();
+    let mut reservoir: Vec<T> = data[0..k].to_vec();
 
     for (i, &value) in data.iter().enumerate().skip(k) {
         let j = rng.random_range(0..=i);
@@ -296,6 +356,30 @@ fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampled_shape_moments_use_the_same_retained_population() {
+        let values: Vec<f64> = (0..50_000).map(|i| ((i * 7919) % 50_000) as f64).collect();
+        let sample = reservoir_sample(&values, SAMPLE_THRESHOLD);
+        let n = sample.len() as f64;
+        let mean = sample.iter().sum::<f64>() / n;
+        let deviation = (sample.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        let skew = n / ((n - 1.0) * (n - 2.0))
+            * sample
+                .iter()
+                .map(|x| ((x - mean) / deviation).powi(3))
+                .sum::<f64>();
+        let kurt = n * (n + 1.0) / ((n - 1.0) * (n - 2.0) * (n - 3.0))
+            * sample
+                .iter()
+                .map(|x| ((x - mean) / deviation).powi(4))
+                .sum::<f64>()
+            - 3.0 * (n - 1.0).powi(2) / ((n - 2.0) * (n - 3.0));
+        let stats =
+            compute_numeric_stats(&values.iter().map(ToString::to_string).collect::<Vec<_>>());
+        assert!((stats.skewness.unwrap() - skew).abs() < 1e-9);
+        assert!((stats.kurtosis.unwrap() - kurt).abs() < 1e-9);
+    }
 
     #[test]
     fn sampled_statistics_are_the_same_on_every_run() {

@@ -147,6 +147,25 @@ the CSV, JSON, Parquet and Arrow paths use. The tokens are empty or whitespace,
 Note that a `dict` is *not* round-tripped through pandas, so an integer column
 containing a null stays `integer` rather than being widened to `float`.
 
+Dicts, row lists, pandas, polars and Arrow inputs apply `StopCondition.max_rows`
+and row-only `|`/`&` compositions. They accept `StopCondition.never()` and
+`SamplingStrategy.none()` as no-ops. Other stop conditions and sampling strategies
+raise `ValueError` because those routes cannot apply them. `max_rows` and
+`stop_condition` remain mutually exclusive.
+
+`StopCondition.confidence_threshold(f)` means the fraction of the estimated
+record count read. CSV files and materialized async CSV buffers use an exact
+logical-record count from a bounded-memory scan before profiling. This preflight
+also supplies progress percentages; scans without fraction stops or progress
+skip it. The preflight reads the whole CSV before a profiling row or byte cap
+takes effect; `bytes_consumed` describes the profiling pass, excluding this
+preflight. A true async stream with a size hint estimates its total from complete
+records and bytes
+already read, excluding CSV header bytes; changing row widths can bias that
+estimate. For a true stream without a size hint the condition is inert. Schema
+stability starts after the first chunk establishes a baseline, and each leaf in an `|`/`&` tree
+retains its own threshold.
+
 **Column order** follows the source on every input and transport: the CSV
 header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
 JSON/JSONL the field order of the first record, with fields that only appear in
@@ -275,7 +294,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records no `null_tokens`: it counted only empty, `null` and `nan` as missing |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -477,14 +496,16 @@ rather than of the value, and is reported at the source level instead.
 
 ## `Pattern`
 
-Represents a statistical pattern match (regex) found in a column.
+Represents a pattern found in a column. Matches pass both the regular expression
+and the semantic validator, when the detector has one. The counts and percentages
+describe the analyzed non-null values, which may be a sample of the column.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `name` | `str` | Name of the pattern (e.g. `"email"`, `"url"`) |
+| `name` | `str` | Name of the pattern (e.g. `"Email"`, `"URL"`) |
 | `regex` | `str` | Regular expression used for matching |
-| `match_count` | `int` | Number of rows matching the pattern |
-| `match_percentage` | `float` | Percentage of non-null rows matching (0.0--100.0) |
+| `match_count` | `int` | Number of analyzed non-null values passing validation |
+| `match_percentage` | `float` | Percentage of analyzed non-null values passing validation (0.0--100.0) |
 
 ## Configuration
 
@@ -516,11 +537,6 @@ SamplingStrategy.none()                              # process everything
 SamplingStrategy.random(size=10000)                  # uniform sample of 10000 rows
 SamplingStrategy.reservoir(size=10000)               # same guarantee, Algorithm R
 SamplingStrategy.systematic(interval=10)             # every Nth row
-SamplingStrategy.stratified(["region"], 1000)        # up to 1000 rows per region
-SamplingStrategy.progressive(5000, 0.95, 100000)     # grow until means are precise
-SamplingStrategy.importance("risk_score", 0.8)       # rows whose weight >= 0.8
-SamplingStrategy.multi_stage([s1, s2])               # filters, then one fixed-size stage
-SamplingStrategy.adaptive(total_rows=1000000, file_size_mb=500.0)
 ```
 
 Sampling applies to CSV sources on the `auto` and `incremental` engines and to
@@ -909,6 +925,7 @@ if not result.passed:
 
 | Keyword | Type | Meaning |
 |---|---|---|
+| `min_rows` | `int` | Floor for the number of rows the scan read |
 | `min_quality_score` | `float` | Floor for the overall score, 0--100 |
 | `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
@@ -923,6 +940,11 @@ outside the range, an unknown dimension, no requirement at all -- raises
 bad extract. A threshold must be a real number: text is refused even when it
 spells one (`"90"`), and so is a number too large for a float. Numpy scalars,
 `Decimal` and `Fraction` are accepted.
+
+The gate is evaluated in Rust, the same code a Rust caller uses. It reads a
+profiled report or one loaded from the JSON `save()` and `to_json()` write. A
+report loaded from a flat `to_dict()` summary raises `ValueError`: the summary
+does not record the provenance the gate decides on.
 
 **The verdict has three values, not two.**
 
@@ -997,6 +1019,13 @@ floors, wide on a source far past a million rows (the floor is a million of
 its rows), and the overall score is bounded again. A `max_duplicate_rows`
 requirement on an estimated count stays unevaluated, since the estimate can
 neither witness duplicates nor rule them out.
+
+`min_rows` reads the report's `execution.rows_processed`. Rows already read do
+not go away when more are read, so a scan that read at least `min_rows` rows
+passes even when it stopped early or sampled. One that read fewer fails when it
+covered the whole source, or under `scope="observed"`; under `"full_source"` a
+scan that stopped early leaves it `evidence_incomplete`, since the rows it did
+not read may make up the difference.
 
 A duplicate-row scan over a sample, on engines without a row tracker, has no
 bound, and a requirement that reads it stays unevaluated. Start/end date ordering is
@@ -1084,6 +1113,7 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 
 ```json
 {
+  "min_rows": 1,
   "min_quality_score": 90,
   "max_null_percentage": {"customer_id": 0, "*": 20},
   "max_duplicate_rows": 0,
@@ -1097,8 +1127,8 @@ Flags replace the corresponding policy-file key in full. For example,
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
 entries; the last occurrence of a repeated mapping key wins.
-`--min-quality`, `--max-duplicate-rows`, and `--scope` cover the other policy
-keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
+`--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
+other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
 
 `--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through
@@ -1241,6 +1271,11 @@ print(f"{result.count} rows ({'exact' if result.exact else 'estimated'})")
 print(f"Method: {result.method}, took {result.count_time_ms}ms")
 ```
 
+CSV counts scan every logical record, including quoted multiline fields, and
+return `exact=True`, method `full_scan`, and no relative-error estimate. This
+costs a complete read even for large CSV files. Parquet uses footer metadata;
+large JSONL files retain their sampled density estimate.
+
 ## Async API
 
 The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts. These helpers ship in the published wheels.
@@ -1257,6 +1292,11 @@ report = await profile_bytes(csv_bytes, format="csv")
 # Profile a remote file over HTTP
 report = await profile_url("https://example.com/data.parquet")
 ```
+
+Remote Parquet is read with several ranged requests, all tied to the `ETag`
+the server sent first. If the object is replaced while it is being read,
+`profile_url` raises `OSError` naming the URL instead of profiling a mix of the
+two versions. A server that sends no `ETag` leaves nothing to check against.
 
 Async byte streams use the incremental engine; `engine="columnar"` is rejected.
 Local async Parquet profiling honors `max_rows` and row-limit stop conditions,

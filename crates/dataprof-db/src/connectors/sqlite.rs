@@ -3,7 +3,7 @@
 #[cfg(not(feature = "sqlite"))]
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "sqlite")]
-use super::common::{build_count_query, not_connected_error};
+use super::common::not_connected_error;
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "sqlite")]
 use crate::security::validate_sql_identifier;
@@ -142,15 +142,7 @@ impl DatabaseConnector for SqliteConnector {
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let count_query = build_count_query(query)?;
-            let total_rows: i64 = sqlx::query_scalar(&count_query)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| {
-                    DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
-                })?;
-
-            streaming_profile_loop!(pool, query, batch_size, total_rows, "SQLite")
+            streaming_profile_loop!(pool, query, batch_size, "SQLite")
         }
 
         #[cfg(not(feature = "sqlite"))]
@@ -228,5 +220,14 @@ impl DatabaseConnector for SqliteConnector {
 
         #[cfg(not(feature = "sqlite"))]
         Err(feature_not_enabled_error("SQLite", "sqlite"))
+    }
+}
+
+/// SQLite has no JSON or array type: JSON is stored as TEXT, and the `String`
+/// arm decodes it as text.
+#[cfg(feature = "sqlite")]
+impl crate::DecodeStructured for sqlx::sqlite::SqliteRow {
+    fn decode_structured(&self, _index: usize) -> Option<crate::StructuredValue> {
+        None
     }
 }
