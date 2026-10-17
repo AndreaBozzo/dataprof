@@ -189,6 +189,16 @@ def test_an_unknown_column_in_a_declared_pair_is_rejected(tmp_path: Path):
         assert "temporal_pairs" in message, label
 
 
+def test_a_pair_declared_in_both_orders_is_rejected(tmp_path: Path):
+    for label, route in _routes(tmp_path).items():
+        with pytest.raises(ValueError) as caught:
+            route(temporal_pairs=[(START, END), (END, START)])
+        message = str(caught.value)
+        assert f"'{START}'" in message, label
+        assert f"'{END}'" in message, label
+        assert "temporal_pairs" in message, label
+
+
 @pytest.mark.parametrize("pair", [[START], [START, END, END]])
 def test_an_entry_that_is_not_two_names_is_rejected(tmp_path: Path, pair: list[str]):
     with pytest.raises(ValueError, match="temporal_pairs entries must be"):
