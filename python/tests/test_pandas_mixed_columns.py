@@ -43,6 +43,20 @@ def test_pandas_mixed_object_columns_profile_cleanly():
         assert dataframe_column.type_homogeneity == records_column.type_homogeneity
 
 
+def test_pandas_mixed_categorical_column_matches_records_route():
+    """Mixed categorical values use the same profile as list-of-dicts input."""
+    values = [1.5, "n/a", 2.0]
+    df = pd.DataFrame({"c": pd.Categorical(values)})
+    original = df.copy(deep=True)
+
+    dataframe_column = dp.profile(df)["c"]
+    records_column = dp.profile([{"c": value} for value in values])["c"]
+
+    assert dataframe_column.data_type == records_column.data_type
+    assert dataframe_column.type_homogeneity == records_column.type_homogeneity
+    assert df.equals(original)
+
+
 def test_frame_with_mixed_column_and_typed_columns_preserves_typed_profiles():
     """Typed columns keep their native Arrow-derived profiles alongside a mixed column."""
     df_clean = pd.DataFrame(

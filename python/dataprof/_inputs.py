@@ -91,10 +91,10 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
     """Convert a pandas DataFrame to a pyarrow Table, handling mixed object columns.
 
     Fast path: delegates directly to ``pyarrow.Table.from_pandas(df)``.
-    Fallback path: for object columns whose values Arrow cannot cast into a single
-    type (e.g. numeric with placeholder text or mixed booleans/dates), converts
-    their cells via ``_cell_to_str`` into string arrays so they can be profiled
-    with ``type_homogeneity`` rather than aborting (#976).
+    Fallback path: for object and categorical columns whose values Arrow cannot
+    cast into a single type (e.g. numeric with placeholder text or mixed
+    booleans/dates), converts their cells via ``_cell_to_str`` into string arrays
+    so they can be profiled with ``type_homogeneity`` rather than aborting (#976).
     """
     try:
         return pyarrow.Table.from_pandas(df)
@@ -107,7 +107,9 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
         failing_cols: set[_Any] = set()
         for i in range(len(df.columns)):
             col = df.iloc[:, i]
-            if col.dtype != object:
+            # CategoricalDtype is an extension dtype whose name is "category".
+            # It can also hold mixed Python values that Arrow cannot cast.
+            if col.dtype != object and getattr(col.dtype, "name", None) != "category":
                 continue
             name = df.columns[i]
             try:
