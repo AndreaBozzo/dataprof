@@ -462,7 +462,21 @@ impl RowSignature {
     /// ending in one of those against a row that ends in no field at all,
     /// inventing a duplicate.
     pub fn push_field(&mut self, value: &str) {
-        let _ = write!(self.buffer, "{}:", value.len());
+        self.push_tagged(value, ':');
+    }
+
+    /// Append one field holding a JSON object or array, given as its text.
+    ///
+    /// A container crosses as its compact JSON, which a string can spell, so
+    /// it is tagged apart from a scalar: `"{\"x\":1}"` and `{"x": 1}` are two
+    /// values and must not sign alike (#945).
+    pub fn push_container_field(&mut self, text: &str) {
+        self.push_tagged(text, '#');
+    }
+
+    /// Append one field as its length, `tag`, then the text.
+    fn push_tagged(&mut self, value: &str, tag: char) {
+        let _ = write!(self.buffer, "{}{tag}", value.len());
         self.buffer.push_str(value);
         if !value.is_empty() {
             self.len_through_last_present = self.buffer.len();
@@ -703,6 +717,22 @@ impl StreamingColumnCollection {
     where
         I: IntoIterator<Item = String>,
     {
+        self.process_record_with_containers(headers, values, &[]);
+    }
+
+    /// [`process_record`](Self::process_record) for a record whose fields at
+    /// `containers` (positions in `headers`) were JSON objects or arrays,
+    /// given as their text. Their statistics read the text like any other
+    /// value; only the row signature tells them apart from a string that
+    /// spells the same text (#945).
+    pub fn process_record_with_containers<I>(
+        &mut self,
+        headers: &[String],
+        values: I,
+        containers: &[usize],
+    ) where
+        I: IntoIterator<Item = String>,
+    {
         let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
         let mut values = values.into_iter();
@@ -710,9 +740,13 @@ impl StreamingColumnCollection {
         // Headers define the row schema. Normalize a missing trailing field to
         // the profiler's empty/null representation so ragged flexible records
         // update every column and hash identically to an explicit empty field.
-        for header in headers {
+        for (position, header) in headers.iter().enumerate() {
             let value = values.next().unwrap_or_default();
-            row_signature.push_field(&value);
+            if containers.contains(&position) {
+                row_signature.push_container_field(&value);
+            } else {
+                row_signature.push_field(&value);
+            }
 
             if let Some(stats) = self.columns.get_mut(header) {
                 stats.update(&value);

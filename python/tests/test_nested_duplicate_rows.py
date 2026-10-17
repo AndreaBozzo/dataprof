@@ -3,7 +3,9 @@
 The JSON readers rendered an object in its source key order, so equal records
 with their keys in a different order were not duplicates. Arrow and Parquet
 rendered a nested value as its display string, which matches ``["p, q"]`` with
-``["p", "q"]`` and ``[None]`` with ``[]``.
+``["p", "q"]`` and ``[None]`` with ``[]``. A container's text is its compact
+JSON, which a string can spell, so a string equal to it signed the same row as
+the container (#945).
 
 ``tests/nested_duplicate_rows.rs`` is the Rust twin.
 """
@@ -65,6 +67,25 @@ CASES = [
         [{"id": 1, "a": {}}, {"id": 1, "a": []}],
         0,
         False,
+    ),
+    # #945: a container crosses as its compact JSON, which a string can spell.
+    (
+        "a string spelling an object against the object",
+        [{"id": 1, "a": '{"x":1,"y":2}'}, {"id": 1, "a": {"y": 2, "x": 1}}],
+        0,
+        False,
+    ),
+    (
+        "a string spelling an array against the array",
+        [{"id": 1, "a": "[1,2]"}, {"id": 1, "a": [1, 2]}],
+        0,
+        False,
+    ),
+    (
+        "equal strings spelling an object",
+        [{"id": 1, "a": '{"x":1}'}, {"id": 1, "a": '{"x":1}'}],
+        1,
+        True,
     ),
 ]
 

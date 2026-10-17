@@ -714,8 +714,14 @@ fn feed_json_object(
             obj.get(column).map(json_value_text).unwrap_or_default()
         })
         .collect();
+    let containers: Vec<usize> = known_columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| matches!(obj.get(*column), Some(Value::Array(_) | Value::Object(_))))
+        .map(|(position, _)| position)
+        .collect();
 
-    column_stats.process_record(known_columns, values);
+    column_stats.process_record_with_containers(known_columns, values, &containers);
 }
 
 /// Analyze JSON/JSONL data from a buffered reader using streaming statistics.

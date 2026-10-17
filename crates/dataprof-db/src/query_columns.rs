@@ -18,9 +18,9 @@ use std::ops::Index;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryColumns {
     columns: Vec<(String, Vec<String>)>,
-    /// Per column, by position, how many values were a JSON object or array or
-    /// a SQL array. Always as long as `columns`.
-    containers: Vec<usize>,
+    /// Per column, by position, the rows whose value was a JSON object or array
+    /// or a SQL array, ascending. Always as long as `columns`.
+    containers: Vec<Vec<usize>>,
 }
 
 impl QueryColumns {
@@ -58,8 +58,10 @@ impl QueryColumns {
     /// container: a JSON object or array, or a SQL array.
     pub fn push_decoded(&mut self, index: usize, value: String, container: bool) {
         if let Some((_, data)) = self.columns.get_mut(index) {
+            if container {
+                self.containers[index].push(data.len());
+            }
             data.push(value);
-            self.containers[index] += usize::from(container);
         }
     }
 
@@ -69,9 +71,16 @@ impl QueryColumns {
         self.columns
             .iter()
             .zip(&self.containers)
-            .filter(|(_, count)| **count > 0)
-            .map(|((name, _), count)| (name.clone(), *count))
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|((name, _), rows)| (name.clone(), rows.len()))
             .collect()
+    }
+
+    /// Per column, in query order, the rows whose value was a container,
+    /// ascending. Row signatures tag those values apart from a string that
+    /// spells the same text (#945).
+    pub fn container_rows(&self) -> impl Iterator<Item = &[usize]> {
+        self.containers.iter().map(Vec::as_slice)
     }
 
     /// Number of columns.
@@ -155,7 +164,7 @@ impl Index<&str> for QueryColumns {
 impl FromIterator<(String, Vec<String>)> for QueryColumns {
     fn from_iter<I: IntoIterator<Item = (String, Vec<String>)>>(iter: I) -> Self {
         let columns: Vec<_> = iter.into_iter().collect();
-        let containers = vec![0; columns.len()];
+        let containers = vec![Vec::new(); columns.len()];
         Self {
             columns,
             containers,

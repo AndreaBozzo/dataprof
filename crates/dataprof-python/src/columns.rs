@@ -172,9 +172,14 @@ pub fn profile_columns(
             for row_index in 0..num_rows {
                 let mut row_signature = RowSignature::default();
                 let mut row_has_null = false;
-                for (_, cells, _) in &columns {
+                for (_, cells, containers) in &columns {
                     let value = cells[row_index].as_deref().unwrap_or("");
-                    row_signature.push_field(value);
+                    // Validated above as ascending, so a binary search holds.
+                    if containers.binary_search(&row_index).is_ok() {
+                        row_signature.push_container_field(value);
+                    } else {
+                        row_signature.push_field(value);
+                    }
                     // A missing cell renders empty, which `is_null_like_token`
                     // already treats as null — the same rule that produces
                     // `null_count` below.
