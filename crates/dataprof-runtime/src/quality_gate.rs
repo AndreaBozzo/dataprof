@@ -1216,7 +1216,7 @@ pub(crate) enum Provenance {
 /// Uniqueness is the one dimension with two, and they can differ in
 /// provenance: a full-stream row tracker counts duplicates over every row
 /// while the key scan reads the retained sample.
-fn dimension_components(dimension: QualityDimension) -> &'static [&'static str] {
+pub(crate) fn dimension_components(dimension: QualityDimension) -> &'static [&'static str] {
     match dimension {
         QualityDimension::Completeness => &["completeness"],
         QualityDimension::Consistency => &["consistency"],

@@ -359,3 +359,39 @@ fn a_partly_recorded_side_leaves_comparability_unknown() {
     let both = ReportDelta::between_sides(&current, &current);
     assert_eq!(both.metric_semantics.comparable, Some(true));
 }
+
+/// A dimension a later release added carries weight in the stored overall
+/// score. When its component was sampled, nothing this build knows rules out
+/// that the sample reaches the score, so the score is not certified exact.
+#[test]
+fn a_sampled_component_this_build_does_not_know_leaves_the_overall_unrecorded() {
+    let report = profile(CLEAN);
+    let mut canonical = serde_json::to_value(&report).unwrap();
+    canonical["quality"]["confidence"] = json!({"Mixed": {
+        "exact_dimensions": ["completeness"],
+        "sample_size": 4,
+        "sampled_dimensions": ["future_dimension"],
+    }});
+    let native: ProfileReport = serde_json::from_value(canonical).unwrap();
+    let delta = ReportDelta::between(&native, &native);
+    assert_eq!(
+        delta.quality_score.evidence.a.gap(),
+        Some(EvidenceGap::CoverageUnrecorded)
+    );
+    // A known dimension's own score is unaffected.
+    let completeness = &delta.dimensions[0];
+    assert!(completeness.score.evidence.a.is_complete());
+
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    summary["quality"]["sampled_dimensions"] = json!(["future_dimension"]);
+    summary["quality"]["assessed_dimensions"] = json!(["completeness", "future_dimension"]);
+    let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    assert_eq!(
+        ReportDelta::between_sides(&side, &side)
+            .quality_score
+            .evidence
+            .a
+            .gap(),
+        Some(EvidenceGap::CoverageUnrecorded)
+    );
+}
