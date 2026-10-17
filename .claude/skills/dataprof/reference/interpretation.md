@@ -181,7 +181,8 @@ with every locale-specific pattern suppressed.
 `before.compare(after)` returns deltas. Three caveats:
 
 - Comparing a sampled profile to a full one measures your sampling, not drift.
-  Check `sampling_applied` on both sides first.
+  Each score's `evidence` and `reports.a`/`reports.b` `evidence` say whether a
+  side was truncated, sampled or scored from a sample; read them first.
 - Comparing profiles with different `metrics` selections produces absence, not
   change. Narrow both sides the same way.
 - A stored report can predate a change in how something is measured: text

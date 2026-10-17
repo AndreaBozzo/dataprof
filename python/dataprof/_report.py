@@ -18,7 +18,7 @@ from typing import Any as _Any, cast as _cast
 
 from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _ReportView
 from ._columns import _column_record, _dominant_pattern, column_to_dict
-from ._dataprof import ProfileReport as _RustProfileReport
+from ._dataprof import ProfileReport as _RustProfileReport, report_delta_json as _report_delta_json
 from ._findings import FindingsResult as _FindingsResult, _FindingPolicy
 from ._gate import QualityGateResult as _QualityGateResult, _Policy
 from ._paths import _normalize_pathlike
@@ -34,7 +34,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _METRIC_SEMANTICS, _report_from_dict
+from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -955,18 +955,21 @@ class ProfileReport:
         return "\n".join([*header, *body])
 
     def compare(self, other: ProfileReport) -> dict[str, _Any]:
-        """Compare this report with another and return a dict of deltas.
+        """Compare this report (``a``) with ``other`` (``b``) and return the deltas.
 
         The result captures quality drift and schema differences between two
-        profiles (e.g. the same dataset before and after a pipeline change):
+        profiles, such as a saved baseline and today's run. It is computed by
+        the Rust ``ReportDelta``, so Rust and Python return the same document:
 
-        - ``quality_score``: overall score for each side plus absolute and
-          relative-percent change.
-        - ``dimensions``: the same a/b/abs/rel_pct shape per ISO 25012
-          dimension (completeness, consistency, uniqueness, accuracy,
-          timeliness, validity, precision), sourced from :meth:`quality_summary`.
-        - ``columns``: per-column null-percentage drift over the union of
-          column names (missing on one side → ``None``).
+        - ``quality_score``: ``a``, ``b``, ``abs`` (``b - a`` in points) and
+          ``rel_pct`` (``b - a`` as a percentage of ``a``), plus ``evidence``,
+          the coverage behind each side's score.
+        - ``dimensions``: the same shape for each ISO 25012 dimension
+          (completeness, consistency, uniqueness, accuracy, timeliness,
+          validity, precision), as :meth:`quality_summary` reports them.
+        - ``columns``: per-column ``null_pct_a``, ``null_pct_b`` and
+          ``null_pct_delta`` over the union of column names, this report's
+          order first.
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
         - ``metric_semantics``: each side's :attr:`metric_semantics` and
           ``comparable``: ``True`` when both record every definition this
@@ -974,92 +977,33 @@ class ProfileReport:
           does not, which includes every report written before 0.12. Only
           ``True`` means a difference in a measurement, such as a text
           length, is a difference in the data.
+        - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
+          for a flat summary), ``source``, ``rows_processed`` and the scan's
+          ``evidence``.
 
-        .. note::
-            The exact shape is provisional and will align with the Rust-side
-            ``QualityDelta`` type (#310) once it lands.
+        Every change is ``b - a``: a positive score change is an improvement,
+        a positive ``null_pct_delta`` is more nulls. Numbers are compared at
+        their serialized 2-decimal precision. A number either side lacks
+        leaves the change ``None``, and so does ``rel_pct`` when ``a`` is 0.
+
+        Each ``evidence`` is ``{"coverage": "complete"}``, or
+        ``{"coverage": "incomplete", "reason": ...}`` with the reason
+        ``check()`` uses: ``truncated``, ``sampled``, ``records_skipped``,
+        ``quality_sampled`` or ``coverage_unrecorded``. A change between an
+        exact and a sampled side can be a sampling difference.
+
+        The shape is stable: later releases may add keys, but do not remove
+        or rename them. Either report may be loaded from a flat ``to_dict()``
+        summary, including one saved before 0.12.
         """
+        return _json.loads(_report_delta_json(self._delta_input(), other._delta_input()))
 
-        def _delta(a: float | None, b: float | None) -> dict[str, float | None]:
-            abs_change = None if a is None or b is None else _r2(b - a)
-            if a is None or b is None or a == 0:
-                rel_pct = None
-            else:
-                rel_pct = _r2((b - a) / abs(a) * 100.0)
-            return {"a": a, "b": b, "abs": abs_change, "rel_pct": rel_pct}
-
-        a_summary = self.quality_summary()
-        b_summary = other.quality_summary()
-
-        dimensions = {
-            dim: _delta(a_summary.get(dim), b_summary.get(dim))
-            for dim in (
-                "completeness",
-                "consistency",
-                "uniqueness",
-                "accuracy",
-                "timeliness",
-                "validity",
-                "precision",
-            )
-        }
-
-        a_cols = self.column_profiles
-        b_cols = other.column_profiles
-        a_order = list(a_cols)
-        b_order = list(b_cols)
-        a_names = set(a_order)
-        b_names = set(b_order)
-        # Preserve the left report's schema order, then append right-only
-        # columns in their source order.
-        all_names = [*a_order, *(name for name in b_order if name not in a_names)]
-
-        def _null_pct(cols: dict[str, ColumnProfile], name: str) -> float | None:
-            col = cols.get(name)
-            return _r2(col.null_percentage) if col is not None else None
-
-        columns: dict[str, dict[str, float | None]] = {}
-        for name in all_names:
-            null_a = _null_pct(a_cols, name)
-            null_b = _null_pct(b_cols, name)
-            null_delta = None if null_a is None or null_b is None else _r2(null_b - null_a)
-            columns[name] = {
-                "null_pct_a": null_a,
-                "null_pct_b": null_b,
-                "null_pct_delta": null_delta,
-            }
-
-        a_semantics = self.metric_semantics
-        b_semantics = other.metric_semantics
-        # Both sides must record every definition this build knows; an empty
-        # or partial record is as unknown as a missing one. Loaded values are
-        # validated to the one value each definition has today, so a `False`
-        # needs a second recorded value to become reachable.
-        known = _METRIC_SEMANTICS.keys()
-        comparable = (
-            a_semantics == b_semantics
-            if a_semantics is not None
-            and b_semantics is not None
-            and a_semantics.keys() == known
-            and b_semantics.keys() == known
-            else None
-        )
-
-        return {
-            "quality_score": _delta(self.quality_score, other.quality_score),
-            "dimensions": dimensions,
-            "columns": columns,
-            "metric_semantics": {
-                "a": a_semantics,
-                "b": b_semantics,
-                "comparable": comparable,
-            },
-            "schema": {
-                "added": [name for name in b_order if name not in a_names],
-                "removed": [name for name in a_order if name not in b_names],
-                "common": [name for name in a_order if name in b_names],
-            },
-        }
+    def _delta_input(self) -> _RustProfileReport | str:
+        # A flat summary never becomes a native report (it lacks the
+        # provenance one records), so it crosses as the summary it exports.
+        if self._native_report is not None:
+            return self._native_report
+        return _json.dumps(self._legacy_summary())
 
     @classmethod
     def from_dict(cls, data: dict[str, _Any]) -> ProfileReport:

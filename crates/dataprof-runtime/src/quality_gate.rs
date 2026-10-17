@@ -169,10 +169,11 @@ pub enum EvidenceGap {
     /// Every row was scanned, but this metric was computed from a retained
     /// sample of them.
     QualitySampled,
-    /// The report does not record how its quality numbers were obtained, so
-    /// whether they cover every scanned row is unknown. Only reachable for a
-    /// report read back from a document written before dataprof recorded it;
-    /// a profiling run always records it. Unknown coverage is not full
+    /// The report does not record how its numbers were obtained: which quality
+    /// components were sampled, or, in a flat summary from an older release,
+    /// whether the scan read the whole source. Only reachable for a report
+    /// read back from a document written before dataprof recorded it; a
+    /// profiling run always records it. Unknown coverage is not full
     /// coverage, so a full-source requirement is left unevaluated.
     CoverageUnrecorded,
 }
@@ -221,7 +222,7 @@ impl Evidence {
     /// The weaker of two evidence statements: a number is only as complete as
     /// the least complete input behind it. The left-hand gap wins a tie, so
     /// the scan's gap is named ahead of the quality sample's.
-    fn and(self, other: Self) -> Self {
+    pub(crate) fn and(self, other: Self) -> Self {
         match self {
             Self::Complete => other,
             incomplete => incomplete,
@@ -1172,12 +1173,22 @@ fn null_percentage(profile: &ColumnProfile) -> Option<f64> {
 ///
 /// Truncation is named ahead of sampling and sampling ahead of skipped
 /// records, so the gap reported is the largest one.
-fn scan_evidence(execution: &ExecutionMetadata) -> Evidence {
-    let reason = if !execution.source_exhausted || execution.truncation_reason.is_some() {
+pub(crate) fn scan_evidence(execution: &ExecutionMetadata) -> Evidence {
+    scan_coverage(
+        !execution.source_exhausted || execution.truncation_reason.is_some(),
+        execution.sampling_applied,
+        execution.error_count > 0,
+    )
+}
+
+/// [`scan_evidence`] over the three recorded facts it reads, for a report
+/// delta reading them from a flat summary.
+pub(crate) fn scan_coverage(truncated: bool, sampled: bool, records_skipped: bool) -> Evidence {
+    let reason = if truncated {
         Some(EvidenceGap::Truncated)
-    } else if execution.sampling_applied {
+    } else if sampled {
         Some(EvidenceGap::Sampled)
-    } else if execution.error_count > 0 {
+    } else if records_skipped {
         Some(EvidenceGap::RecordsSkipped)
     } else {
         None
@@ -1191,7 +1202,7 @@ fn scan_evidence(execution: &ExecutionMetadata) -> Evidence {
 /// Which part of the assessment a check reads, and so whose provenance
 /// decides whether its number covers every scanned row.
 #[derive(Debug, Clone, Copy)]
-enum Provenance {
+pub(crate) enum Provenance {
     /// The aggregate over every dimension.
     Overall,
     /// One dimension, through whichever components it is built from.
@@ -1205,7 +1216,7 @@ enum Provenance {
 /// Uniqueness is the one dimension with two, and they can differ in
 /// provenance: a full-stream row tracker counts duplicates over every row
 /// while the key scan reads the retained sample.
-fn dimension_components(dimension: QualityDimension) -> &'static [&'static str] {
+pub(crate) fn dimension_components(dimension: QualityDimension) -> &'static [&'static str] {
     match dimension {
         QualityDimension::Completeness => &["completeness"],
         QualityDimension::Consistency => &["consistency"],
@@ -1228,7 +1239,23 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         // absence itself, and there is no number for evidence to describe.
         return Evidence::Complete;
     };
-    let Some(sampled) = quality.sampled_dimensions() else {
+    sampled_component_evidence(
+        quality.sampled_dimensions().as_deref(),
+        &quality.metrics.assessed_dimensions(),
+        provenance,
+    )
+}
+
+/// [`quality_evidence`] over the recorded facts it reads: the sampled
+/// component labels (`None` when the report did not record them) and the
+/// dimensions the overall score weighs. A report delta reads the same facts
+/// from a flat summary, which has no [`QualityAssessment`] behind it.
+pub(crate) fn sampled_component_evidence(
+    sampled: Option<&[String]>,
+    assessed: &[QualityDimension],
+    provenance: Provenance,
+) -> Evidence {
+    let Some(sampled) = sampled else {
         return Evidence::Incomplete {
             reason: EvidenceGap::CoverageUnrecorded,
         };
@@ -1239,10 +1266,9 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         // dimensions, so a sampled dimension the weights exclude does not
         // reach it. Reporting the aggregate as sampled because of one would
         // withhold a verdict the number does not depend on.
-        Provenance::Overall => quality
-            .metrics
-            .assessed_dimensions()
-            .into_iter()
+        Provenance::Overall => assessed
+            .iter()
+            .copied()
             .flat_map(dimension_components)
             .any(|component| contains(component)),
         Provenance::Dimension(dimension) => dimension_components(dimension)

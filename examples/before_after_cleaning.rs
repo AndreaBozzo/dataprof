@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
-use dataprof::{ColumnProfile, ProfileReport, Profiler};
+use dataprof::{ColumnProfile, ProfileReport, Profiler, ReportDelta};
 
 const RAW: &str = "\
 signup_id,email,plan,monthly_eur
@@ -48,10 +48,6 @@ fn profile(path: &Path) -> Result<ProfileReport> {
         .analyze_file(path)?)
 }
 
-fn null_percentage(col: &ColumnProfile) -> f64 {
-    100.0 * col.null_count as f64 / col.total_count.max(1) as f64
-}
-
 fn by_name(report: &ProfileReport) -> BTreeMap<&str, &ColumnProfile> {
     report
         .column_profiles
@@ -78,35 +74,49 @@ fn main() -> Result<()> {
     let before: ProfileReport = serde_json::from_reader(std::fs::File::open(&baseline_path)?)?;
     let after = profile(&clean_path)?;
 
+    // The delta never invents a number: a score either side did not assess
+    // stays `None`, so print it as such instead of as zero.
+    let delta = ReportDelta::between(&before, &after);
+    let show = |value: Option<f64>| value.map_or("n/a".to_string(), |v| format!("{v:.1}"));
+    let quality = &delta.quality_score;
+
     println!("## Cleaning summary\n");
     println!(
-        "| | rows | quality |\n|---|---:|---:|\n| before | {} | {:.1} |\n| after | {} | {:.1} |",
+        "| | rows | quality |\n|---|---:|---:|\n| before | {} | {} |\n| after | {} | {} |",
         before.execution.rows_processed,
-        before.quality_score().unwrap_or(0.0),
+        show(quality.a),
         after.execution.rows_processed,
-        after.quality_score().unwrap_or(0.0),
+        show(quality.b),
     );
 
     let dropped = before.execution.rows_processed - after.execution.rows_processed;
-    let gained = after.quality_score().unwrap_or(0.0) - before.quality_score().unwrap_or(0.0);
-    println!("\n{dropped} row(s) dropped, {gained:+.1} quality points\n");
+    let gained = quality
+        .abs
+        .map_or("n/a".to_string(), |change| format!("{change:+.1}"));
+    println!("\n{dropped} row(s) dropped, {gained} quality points\n");
 
     println!("## Per-column null rate\n");
     println!("| column | before | after | delta |");
     println!("|---|---:|---:|---:|");
 
-    let (before_cols, after_cols) = (by_name(&before), by_name(&after));
-    for (name, before_col) in &before_cols {
-        let Some(after_col) = after_cols.get(name) else {
-            println!(
-                "| {name} | {:.0}% | *dropped* | |",
-                null_percentage(before_col)
-            );
+    let pct = |value: Option<f64>| value.map_or("n/a".to_string(), |v| format!("{v:.0}%"));
+    for column in &delta.columns {
+        let name = &column.name;
+        if delta.schema.removed.contains(name) {
+            println!("| {name} | {} | *dropped* | |", pct(column.null_pct_a));
             continue;
-        };
-        let (b, a) = (null_percentage(before_col), null_percentage(after_col));
-        println!("| {name} | {b:.0}% | {a:.0}% | {:+.0}pp |", a - b);
+        }
+        let change = column
+            .null_pct_delta
+            .map_or(String::new(), |change| format!("{change:+.0}pp"));
+        println!(
+            "| {name} | {} | {} | {change} |",
+            pct(column.null_pct_a),
+            pct(column.null_pct_b)
+        );
     }
+
+    let after_cols = by_name(&after);
 
     // The headline numbers can improve while a specific defect survives. Check the
     // defects you set out to fix, not just the score.

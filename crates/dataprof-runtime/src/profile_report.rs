@@ -144,6 +144,23 @@ impl MetricSemantics {
             shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
         }
     }
+
+    /// Whether every definition this build knows is recorded. A comparison
+    /// can only vouch for definitions both reports declare, so an unrecorded
+    /// one leaves it unknown. Destructured, so a new field fails to compile
+    /// here until it is counted.
+    pub(crate) fn is_fully_recorded(&self) -> bool {
+        let Self {
+            text_length_unit,
+            null_tokens,
+            pattern_match_count,
+            shape_moments,
+        } = self;
+        text_length_unit.is_some()
+            && null_tokens.is_some()
+            && pattern_match_count.is_some()
+            && shape_moments.is_some()
+    }
 }
 
 /// Complete profiling report for a data source.

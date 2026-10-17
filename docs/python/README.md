@@ -1195,30 +1195,45 @@ checkout with `uv sync` and `uv run maturin develop`, then invoke the module wit
 
 ### `compare()`
 
-Detect quality drift or schema changes between two profiles (e.g. the same
-dataset before and after a pipeline run):
+`a.compare(b)` returns what changed from `a` to `b`, such as a saved baseline
+and today's run. It is computed by the Rust `ReportDelta`, so both languages
+return the same document:
 
 ```python
-before = dp.profile("data_v1.csv")
-after = dp.profile("data_v2.csv")
-delta = before.compare(after)
-# {
-#   "quality_score": {"a": 92.3, "b": 88.1, "abs": -4.2, "rel_pct": -4.55},
-#   "dimensions": {"completeness": {...}, "consistency": {...}, ...},
-#   "columns": {"email": {"null_pct_a": 1.0, "null_pct_b": 6.5, "null_pct_delta": 5.5}, ...},
-#   "schema": {"added": ["phone"], "removed": [], "common": ["id", "email", ...]},
-#   "metric_semantics": {"a": {...}, "b": {...}, "comparable": True},
-# }
+baseline = dp.ProfileReport.load("baseline.json")
+delta = baseline.compare(dp.profile("orders.csv"))
+
+delta["quality_score"]                  # {"a": 91.2, "b": 88.75, "abs": -2.45, "rel_pct": -2.69, "evidence": {...}}
+delta["dimensions"]["completeness"]     # the same shape, for each of the seven dimensions
+delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5}
+delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
+delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
+delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
 ```
 
-`metric_semantics.comparable` is `True` when both reports record every
-measurement definition this release knows, with the same values, and `None`
-when either side does not, which includes every report written before 0.12. Text lengths counted UTF-8 bytes through 0.11,
-so across that boundary a changed `max_length` on non-ASCII text can be the unit
-rather than the data.
+- **Signs.** Every change is `b - a`. A positive score change is an
+  improvement; a positive `null_pct_delta` is more nulls.
+- **Precision.** Both sides are compared at their serialized 2-decimal
+  precision, so a report and its saved file compare alike.
+- **No invented numbers.** A score either side did not assess, or a column one
+  side lacks or that holds no values, leaves the change `None`. `rel_pct` is
+  `None` when `a` is 0.
+- **Evidence.** Each score carries the coverage behind it on both sides, with
+  the reasons `check()` uses (`truncated`, `sampled`, `records_skipped`,
+  `quality_sampled`, `coverage_unrecorded`). A change between an exact
+  baseline and a sampled or truncated run can be a sampling difference.
+- **Definitions.** Only `comparable: True` means a change in a measurement
+  is a change in the data. Text lengths counted UTF-8 bytes through 0.11, so
+  across that boundary a changed `max_length` on non-ASCII text can be the
+  unit rather than the data. `comparable` covers how dataprof measures, not
+  how each report was configured: profile both sides with the same options
+  (`metrics`, `positive_columns`, `temporal_columns`, ...) before reading a
+  change as drift.
 
-> The `compare()` result shape is provisional and will align with the Rust-side
-> `QualityDelta` type once it lands.
+Either side may be a report loaded from a flat `to_dict()` summary, including
+one saved before 0.12; its `id` and `timestamp` are `None`, and coverage it
+did not record reads as `coverage_unrecorded`. The shape is stable: later
+releases may add keys, but do not remove or rename them.
 
 ### `save()`
 
