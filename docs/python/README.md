@@ -1225,7 +1225,10 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **Definitions.** Only `comparable: True` means a change in a measurement
   is a change in the data. Text lengths counted UTF-8 bytes through 0.11, so
   across that boundary a changed `max_length` on non-ASCII text can be the
-  unit rather than the data.
+  unit rather than the data. `comparable` covers how dataprof measures, not
+  how each report was configured: profile both sides with the same options
+  (`metrics`, `positive_columns`, `temporal_columns`, ...) before reading a
+  change as drift.
 
 Either side may be a report loaded from a flat `to_dict()` summary, including
 one saved before 0.12; its `id` and `timestamp` are `None`, and coverage it

@@ -83,13 +83,13 @@ fn main() -> Result<()> {
     println!("## Cleaning summary\n");
     println!(
         "| | rows | quality |\n|---|---:|---:|\n| before | {} | {} |\n| after | {} | {} |",
-        delta.reports.a.rows_processed,
+        before.execution.rows_processed,
         show(quality.a),
-        delta.reports.b.rows_processed,
+        after.execution.rows_processed,
         show(quality.b),
     );
 
-    let dropped = delta.reports.a.rows_processed - delta.reports.b.rows_processed;
+    let dropped = before.execution.rows_processed - after.execution.rows_processed;
     let gained = quality
         .abs
         .map_or("n/a".to_string(), |change| format!("{change:+.1}"));

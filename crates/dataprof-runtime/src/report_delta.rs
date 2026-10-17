@@ -58,7 +58,7 @@ use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{MetricSemantics, ProfileReport};
 use crate::quality_gate::{
-    Evidence, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
+    Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
 };
 
 /// The same fact about each side of a comparison.
@@ -82,8 +82,8 @@ pub struct ReportReference {
     pub timestamp: Option<String>,
     /// The source identifier: a path, a query, or an in-memory label.
     pub source: String,
-    /// Rows the scan read.
-    pub rows_processed: usize,
+    /// Rows the scan read. `None` for a flat summary that did not record it.
+    pub rows_processed: Option<usize>,
     /// Whether the scan covered the whole source.
     pub evidence: Evidence,
 }
@@ -353,6 +353,19 @@ struct DimensionSide {
     evidence: Evidence,
 }
 
+/// One entry per column name, in order, holding the first profile of a
+/// repeated name. Most input paths refuse duplicate names, but a report
+/// rebuilt from a document can carry them, and the quality gate reads the
+/// first profile too, so the two never disagree about which one a name means.
+fn first_of_each_name(
+    columns: impl Iterator<Item = (String, Option<f64>)>,
+) -> Vec<(String, Option<f64>)> {
+    let mut seen = HashSet::new();
+    columns
+        .filter(|(name, _)| seen.insert(name.clone()))
+        .collect()
+}
+
 /// A number at its serialized precision; a non-finite one serializes as
 /// null, so it is no number at all.
 fn at_precision(value: Option<f64>) -> Option<f64> {
@@ -398,56 +411,82 @@ impl ReportSide {
                 id: Some(report.id.clone()),
                 timestamp: Some(report.timestamp.clone()),
                 source: report.source_identifier(),
-                rows_processed: report.execution.rows_processed,
+                rows_processed: Some(report.execution.rows_processed),
                 evidence: scan,
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
-            columns: report
-                .column_profiles
-                .iter()
-                .map(|column| {
-                    let pct = (column.total_count > 0)
-                        .then(|| column.null_count as f64 / column.total_count as f64 * 100.0);
-                    (column.name.clone(), at_precision(pct))
-                })
-                .collect(),
+            columns: first_of_each_name(report.column_profiles.iter().map(|column| {
+                let pct = (column.total_count > 0)
+                    .then(|| column.null_count as f64 / column.total_count as f64 * 100.0);
+                (column.name.clone(), at_precision(pct))
+            })),
             metric_semantics: report.metric_semantics.clone(),
         }
     }
 
     /// Read a flat summary document.
     ///
-    /// Fails when the document lacks a field the comparison reads, or holds
-    /// one of the wrong type.
+    /// A field an older release did not write reads as unrecorded: scan
+    /// coverage it does not state is `coverage_unrecorded`, never complete.
+    /// Fails when the document lacks `source` or `columns`, or holds a
+    /// field of the wrong type.
     pub fn from_summary_json(text: &str) -> serde_json::Result<Self> {
         let summary: Summary = serde_json::from_str(text)?;
         let execution = &summary.execution;
-        let scan = scan_coverage(
-            !execution.source_exhausted || execution.truncation_reason.is_some(),
-            execution.sampling_applied,
-            execution.error_count > 0,
+        let known_gap = scan_coverage(
+            execution.source_exhausted == Some(false) || execution.truncation_reason.is_some(),
+            execution.sampling_applied == Some(true),
+            execution.error_count.is_some_and(|count| count > 0),
         );
+        let recorded = execution.source_exhausted.is_some()
+            && execution.sampling_applied.is_some()
+            && execution.error_count.is_some();
+        // A recorded gap is named; otherwise an unrecorded fact is a gap of
+        // its own, because unknown coverage is not full coverage.
+        let scan = match known_gap {
+            Evidence::Complete if !recorded => Evidence::Incomplete {
+                reason: EvidenceGap::CoverageUnrecorded,
+            },
+            known => known,
+        };
         let quality = summary.quality.as_ref();
-        let assessed: Vec<QualityDimension> = quality
-            .map(|quality| {
-                quality
-                    .assessed_dimensions
-                    .iter()
-                    // A dimension a later release added is not weighed by
-                    // anything this build compares.
-                    .filter_map(|name| name.parse().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let evidence = |provenance| match quality {
-            Some(quality) => scan.and(sampled_component_evidence(
-                quality.sampled_dimensions.as_deref(),
-                &assessed,
-                provenance,
-            )),
-            None => scan,
+        // The dimensions the overall score weighs. An overall score always
+        // weighs at least one, so an empty list beside a score was not
+        // recorded: a missing list reads as empty here, as it does in the
+        // Python loader.
+        let assessed: Option<Vec<QualityDimension>> = quality.and_then(|quality| {
+            let parsed: Vec<QualityDimension> = quality
+                .assessed_dimensions
+                .iter()
+                // A dimension a later release added is not weighed by
+                // anything this build compares.
+                .filter_map(|name| name.parse().ok())
+                .collect();
+            (!(parsed.is_empty() && quality.overall_score.is_some())).then_some(parsed)
+        });
+        let evidence = |provenance| {
+            let Some(quality) = quality else {
+                return scan;
+            };
+            let sampled = quality.sampled_dimensions.as_deref();
+            let coverage = match (provenance, &assessed) {
+                // Without the weights, a sampled component may or may not
+                // reach the overall score; only "nothing was sampled" settles it.
+                (Provenance::Overall, None) if sampled.is_some_and(|s| s.is_empty()) => {
+                    Evidence::Complete
+                }
+                (Provenance::Overall, None) => Evidence::Incomplete {
+                    reason: EvidenceGap::CoverageUnrecorded,
+                },
+                (_, assessed) => sampled_component_evidence(
+                    sampled,
+                    assessed.as_deref().unwrap_or_default(),
+                    provenance,
+                ),
+            };
+            scan.and(coverage)
         };
         let dimensions = QualityDimension::all()
             .into_iter()
@@ -473,11 +512,12 @@ impl ReportSide {
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
-            columns: summary
-                .columns
-                .into_iter()
-                .map(|column| (column.name, at_precision(column.null_percentage)))
-                .collect(),
+            columns: first_of_each_name(
+                summary
+                    .columns
+                    .into_iter()
+                    .map(|column| (column.name, at_precision(column.null_percentage))),
+            ),
             metric_semantics: summary.metric_semantics,
         })
     }
@@ -497,11 +537,11 @@ struct Summary {
 
 #[derive(serde::Deserialize)]
 struct SummaryExecution {
-    rows_processed: usize,
-    source_exhausted: bool,
+    rows_processed: Option<usize>,
+    source_exhausted: Option<bool>,
     truncation_reason: Option<String>,
-    sampling_applied: bool,
-    error_count: usize,
+    sampling_applied: Option<bool>,
+    error_count: Option<usize>,
 }
 
 #[derive(serde::Deserialize)]

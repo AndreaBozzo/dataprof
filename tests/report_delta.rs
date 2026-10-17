@@ -141,7 +141,7 @@ fn a_truncated_side_says_so_on_every_number() {
     let delta = ReportDelta::between(&exact, &truncated);
     assert!(delta.reports.a.evidence.is_complete());
     assert_eq!(delta.reports.b.evidence.gap(), Some(EvidenceGap::Truncated));
-    assert_eq!(delta.reports.b.rows_processed, 50);
+    assert_eq!(delta.reports.b.rows_processed, Some(50));
     assert!(delta.quality_score.evidence.a.is_complete());
     assert_eq!(
         delta.quality_score.evidence.b.gap(),
@@ -194,15 +194,114 @@ fn a_summary_from_before_0_12_reads_as_unrecorded() {
 }
 
 #[test]
-fn a_summary_missing_a_field_the_comparison_reads_is_an_error() {
+fn a_summary_without_columns_is_an_error() {
     let report = profile(CLEAN);
     let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
-    summary["execution"]
-        .as_object_mut()
-        .unwrap()
-        .remove("source_exhausted");
+    summary.as_object_mut().unwrap().remove("columns");
     let error = ReportSide::from_summary_json(&summary.to_string()).unwrap_err();
-    assert!(error.to_string().contains("source_exhausted"), "{error}");
+    assert!(error.to_string().contains("columns"), "{error}");
+}
+
+/// The oldest flat summaries record only some of the execution fields. Python
+/// writes the rest as null; a summary from elsewhere can omit them.
+#[test]
+fn a_summary_that_did_not_record_its_scan_reads_as_unrecorded() {
+    let unrecorded = || Some(EvidenceGap::CoverageUnrecorded);
+    for execution in [
+        json!({"rows_processed": 5}),
+        json!({"rows_processed": 5, "source_exhausted": null, "sampling_applied": null, "error_count": null}),
+        json!({}),
+    ] {
+        let summary = json!({"source": "old.csv", "columns": [], "execution": execution});
+        let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let delta = ReportDelta::between_sides(&side, &side);
+        assert_eq!(delta.reports.a.evidence.gap(), unrecorded(), "{execution}");
+        assert_eq!(delta.quality_score.evidence.a.gap(), unrecorded());
+        assert!(delta.quality_score.abs.is_none());
+    }
+
+    let rows_only = json!({"source": "old.csv", "columns": [], "execution": {"rows_processed": 5}});
+    let side = ReportSide::from_summary_json(&rows_only.to_string()).unwrap();
+    assert_eq!(
+        ReportDelta::between_sides(&side, &side)
+            .reports
+            .a
+            .rows_processed,
+        Some(5)
+    );
+
+    // A recorded gap is still named over an unrecorded fact.
+    let truncated = json!({"source": "x", "columns": [], "execution": {"source_exhausted": false}});
+    let side = ReportSide::from_summary_json(&truncated.to_string()).unwrap();
+    assert_eq!(
+        ReportDelta::between_sides(&side, &side)
+            .reports
+            .a
+            .evidence
+            .gap(),
+        Some(EvidenceGap::Truncated)
+    );
+}
+
+/// Without the weights behind the overall score, a sampled component may
+/// reach it, so the score is not certified exact.
+#[test]
+fn an_overall_score_without_its_weights_is_not_certified() {
+    let report = profile(CLEAN);
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    summary["quality"]["sampled_dimensions"] = json!(["consistency"]);
+    for assessed in [None, Some(json!([]))] {
+        let quality = summary["quality"].as_object_mut().unwrap();
+        match &assessed {
+            None => {
+                quality.remove("assessed_dimensions");
+            }
+            Some(list) => {
+                quality.insert("assessed_dimensions".into(), list.clone());
+            }
+        }
+        let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let delta = ReportDelta::between_sides(&side, &side);
+        assert_eq!(
+            delta.quality_score.evidence.a.gap(),
+            Some(EvidenceGap::CoverageUnrecorded),
+            "assessed_dimensions = {assessed:?}"
+        );
+    }
+
+    // Nothing sampled settles it without the weights.
+    summary["quality"]["sampled_dimensions"] = json!([]);
+    let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    assert!(
+        ReportDelta::between_sides(&side, &side)
+            .quality_score
+            .evidence
+            .a
+            .is_complete()
+    );
+}
+
+/// A rebuilt report can repeat a column name. The delta lists it once and
+/// reads its first profile, as `QualityPolicy` does.
+#[test]
+fn a_repeated_column_name_is_listed_once_with_its_first_profile() {
+    let mut report = profile(CLEAN);
+    let mut first = report.column_profiles[1].clone();
+    let mut second = first.clone();
+    first.null_count = 0;
+    second.null_count = second.total_count;
+    report.column_profiles = vec![report.column_profiles[0].clone(), first, second];
+
+    let delta = document(&ReportDelta::between(&report, &report));
+    assert_eq!(delta["schema"]["common"], json!(["id", "amount"]));
+    let columns: Vec<&String> = delta["columns"].as_object().unwrap().keys().collect();
+    assert_eq!(columns, ["id", "amount"]);
+    assert_eq!(delta["columns"]["amount"]["null_pct_a"], json!(0.0));
+
+    let side = ReportSide::from_summary_json(&report.summary_json().unwrap()).unwrap();
+    let flat = document(&ReportDelta::between_sides(&side, &side));
+    assert_eq!(flat["schema"], delta["schema"]);
+    assert_eq!(flat["columns"], delta["columns"]);
 }
 
 #[test]

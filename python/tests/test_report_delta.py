@@ -123,3 +123,32 @@ def test_nothing_assessed_invents_no_number():
         assert delta["quality_score"]["rel_pct"] is None
         assert all(change["abs"] is None for change in delta["dimensions"].values())
         assert all(change["null_pct_delta"] is None for change in delta["columns"].values())
+
+
+def test_a_summary_that_records_only_its_row_count_still_compares():
+    """The oldest accepted flat summary records `rows_processed` and nothing
+    else about its scan, so its coverage is unrecorded, never complete."""
+    legacy = dp.ProfileReport.from_dict(
+        {"source": "old.csv", "columns": [], "execution": {"rows_processed": 5}}
+    )
+    unrecorded = {"coverage": "incomplete", "reason": "coverage_unrecorded"}
+    for delta in (legacy.compare(legacy), legacy.compare(dp.profile(CLEAN))):
+        assert delta["reports"]["a"]["rows_processed"] == 5
+        assert delta["reports"]["a"]["evidence"] == unrecorded
+        assert delta["quality_score"]["abs"] is None
+
+
+def test_a_repeated_column_name_reads_its_first_profile_as_check_does():
+    report = dp.profile(CLEAN)
+    document = json.loads(report.to_json())
+    first, second = dict(document["column_profiles"][1]), dict(document["column_profiles"][1])
+    first["null_count"] = 0
+    second["null_count"] = second["total_count"]
+    document["column_profiles"] = [document["column_profiles"][0], first, second]
+    rebuilt = dp.ProfileReport.from_dict(document)
+
+    delta = rebuilt.compare(rebuilt)
+    assert delta["schema"]["common"] == ["id", "amount"]
+    assert delta["columns"]["amount"]["null_pct_a"] == 0.0
+    observed = rebuilt.check(max_null_percentage={"amount": 50}).checks
+    assert [c.observed for c in observed if c.column == "amount"] == [0.0]

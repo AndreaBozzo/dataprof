@@ -169,10 +169,11 @@ pub enum EvidenceGap {
     /// Every row was scanned, but this metric was computed from a retained
     /// sample of them.
     QualitySampled,
-    /// The report does not record how its quality numbers were obtained, so
-    /// whether they cover every scanned row is unknown. Only reachable for a
-    /// report read back from a document written before dataprof recorded it;
-    /// a profiling run always records it. Unknown coverage is not full
+    /// The report does not record how its numbers were obtained: which quality
+    /// components were sampled, or, in a flat summary from an older release,
+    /// whether the scan read the whole source. Only reachable for a report
+    /// read back from a document written before dataprof recorded it; a
+    /// profiling run always records it. Unknown coverage is not full
     /// coverage, so a full-source requirement is left unevaluated.
     CoverageUnrecorded,
 }

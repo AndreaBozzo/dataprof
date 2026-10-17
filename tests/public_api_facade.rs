@@ -659,7 +659,7 @@ fn report_delta_fields_are_reachable_through_the_facade() {
             ..
         } = side;
         let _ = (id, timestamp, evidence);
-        source.len() + rows_processed
+        source.len() + rows_processed.unwrap_or(0)
     }
 
     fn delta(delta: &ReportDelta) -> usize {
