@@ -71,9 +71,17 @@ def _atomic_write(path: str, writer: _Callable[[str], None]) -> None:
         try:
             mode = _os.stat(path).st_mode & 0o777
         except FileNotFoundError:
-            umask = _os.umask(0)
-            _os.umask(umask)
-            mode = 0o666 & ~umask
+            mode_path = f"{temp_path}.mode"
+            mode_fd = _os.open(
+                mode_path,
+                _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL,
+                0o666,
+            )
+            try:
+                mode = _os.fstat(mode_fd).st_mode & 0o777
+            finally:
+                _os.close(mode_fd)
+                _os.unlink(mode_path)
 
         _os.chmod(temp_path, mode)
         _os.replace(temp_path, path)

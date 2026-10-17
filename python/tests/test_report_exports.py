@@ -543,6 +543,10 @@ class TestSaveFormats:
         assert path.read_bytes() == original
         assert list(tmp_path.glob(f".report{suffix}.*.tmp")) == []
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX file permissions are not available on Windows",
+    )
     def test_save_preserves_existing_file_permissions(self, report, tmp_path):
         path = tmp_path / "report.json"
         path.write_text("old report", encoding="utf-8")
@@ -566,7 +570,11 @@ class TestSaveFormats:
         target.write_text("old report", encoding="utf-8")
 
         path = tmp_path / "report.json"
-        path.symlink_to(target)
+
+        try:
+            path.symlink_to(target)
+        except OSError as exc:
+            pytest.skip(f"symlinks are not available: {exc}")
 
         report.save(path)
 
@@ -609,18 +617,17 @@ class TestSaveFormats:
         assert report.save(path) is report
         assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
 
-    def test_save_parquet(self, report):
+    def test_save_parquet(self, report, tmp_path):
         pytest.importorskip("pyarrow")
         pq = pytest.importorskip("pyarrow.parquet")
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-            path = f.name
-        try:
-            result = report.save(path)
-            assert result is report
-            table = pq.read_table(path)
-            assert table.num_rows == report.columns
-        finally:
-            os.unlink(path)
+
+        path = tmp_path / "report.parquet"
+
+        result = report.save(path)
+
+        assert result is report
+        table = pq.read_table(path)
+        assert table.num_rows == report.columns
 
 
 def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
