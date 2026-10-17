@@ -5,6 +5,8 @@ use dataprof_core::{ProgressEvent, ProgressSink};
 /// Engine-internal tracker that rate-limits event emission.
 pub(crate) struct ProgressTracker {
     sink: ProgressSink,
+    #[cfg(feature = "async-streaming")]
+    terminal_permit: Option<tokio::sync::mpsc::OwnedPermit<ProgressEvent>>,
     start_time: Instant,
     last_update: Instant,
     update_interval: Duration,
@@ -16,8 +18,12 @@ pub(crate) struct ProgressTracker {
 impl ProgressTracker {
     pub(crate) fn new(sink: ProgressSink, interval: Duration) -> Self {
         let now = Instant::now();
+        #[cfg(feature = "async-streaming")]
+        let terminal_permit = sink.reserve_terminal();
         Self {
             sink,
+            #[cfg(feature = "async-streaming")]
+            terminal_permit,
             start_time: now,
             last_update: now,
             update_interval: interval,
@@ -82,12 +88,18 @@ impl ProgressTracker {
 
     pub(crate) fn emit_finished(&mut self, truncated: bool) {
         let elapsed = Instant::now().duration_since(self.start_time);
-        self.emit(ProgressEvent::Finished {
+        let event = ProgressEvent::Finished {
             total_rows: self.total_rows,
             total_bytes: self.total_bytes,
             elapsed,
             truncated,
-        });
+        };
+        #[cfg(feature = "async-streaming")]
+        if let Some(permit) = self.terminal_permit.take() {
+            permit.send(event);
+            return;
+        }
+        self.emit(event);
     }
 
     fn emit(&self, event: ProgressEvent) {

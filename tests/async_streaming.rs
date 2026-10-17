@@ -715,7 +715,7 @@ async fn test_progress_channel_drained_after_profile_under_timeout() {
     );
 }
 
-/// A file route with progress channel must also deliver `Finished` event using the reserved permit.
+/// A facade-bracketed columnar file route must also deliver `Finished` using the reserved permit.
 #[test]
 fn test_progress_channel_file_route_receives_finished_event() {
     use std::io::Write;
@@ -729,6 +729,7 @@ fn test_progress_channel_file_route_receives_finished_event() {
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let report = Profiler::new()
+        .engine(dataprof::EngineType::Columnar)
         .progress_interval(Duration::ZERO)
         .progress_channel(tx)
         .analyze_file(tmp.path())
@@ -747,4 +748,74 @@ fn test_progress_channel_file_route_receives_finished_event() {
         finished_received,
         "Finished event must be delivered on file routes via reserved permit"
     );
+}
+
+/// Reusing a profiler must reserve fresh terminal capacity for every run.
+#[test]
+fn test_progress_channel_reused_profiler_receives_finished_each_run() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    for run in 1..=2 {
+        let report = profiler.analyze_file(tmp.path()).unwrap();
+        assert_eq!(report.execution.rows_processed, 100);
+
+        let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, dataprof::ProgressEvent::Finished { .. })),
+            "run {run} must receive a freshly reserved Finished event; got {events:?}"
+        );
+    }
+}
+
+/// Reusing a facade-bracketed file route must reserve fresh terminal capacity for every run.
+#[test]
+fn test_progress_channel_reused_columnar_file_route_receives_finished_each_run() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(tmp, "id,value").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{},val_{}", i, i).unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let profiler = Profiler::new()
+        .engine(dataprof::EngineType::Columnar)
+        .progress_interval(Duration::ZERO)
+        .progress_channel(tx);
+
+    for run in 1..=2 {
+        let report = profiler.analyze_file(tmp.path()).unwrap();
+        assert_eq!(report.execution.rows_processed, 100);
+
+        let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, dataprof::ProgressEvent::Finished { .. })),
+            "columnar run {run} must receive a freshly reserved Finished event; got {events:?}"
+        );
+    }
+}
+
+/// Preserve the public enum constructor accepted before gh #974.
+#[test]
+fn test_progress_sink_channel_variant_accepts_sender() {
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let _sink = dataprof::ProgressSink::Channel(tx);
 }
