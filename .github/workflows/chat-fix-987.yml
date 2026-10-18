@@ -1,0 +1,538 @@
+name: Chat fix 987
+
+on:
+  push:
+    branches:
+      - fix/pandas-container-row-identity-982
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: ${{ !contains(github.event.head_commit.message, '[chat-987-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pandas-container-row-identity-982
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Apply provenance-preserving patch
+        shell: bash
+        run: |
+          git checkout 4232d9211afa4ab7ce2b0781258065cabaac92b9 -- python/dataprof/__init__.py python/dataprof/interop.py
+          rm -f python/dataprof/_pandas_mixed.py
+
+          python - <<'PY'
+          from pathlib import Path
+
+          # --- Python pandas conversion: retain Arrow path and return fallback provenance. ---
+          path = Path('python/dataprof/_inputs.py')
+          text = path.read_text()
+          start = text.index('def _pandas_to_pyarrow_table(')
+          end = text.index('\n\ndef _columns_from_dict', start)
+          replacement = '''def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any) -> _Any:
+              """Convert a pandas DataFrame to a pyarrow Table, handling mixed object columns."""
+              table, _ = _pandas_to_pyarrow_table_with_containers(df, pyarrow)
+              return table
+
+
+          def _pandas_to_pyarrow_table_with_containers(
+              df: _Any, pyarrow: _Any
+          ) -> tuple[_Any, list[list[int]] | None]:
+              """Convert pandas to Arrow and retain container provenance for fallback cells.
+
+              The second return value is aligned with Arrow column order. It is present only
+              when a mixed object/category fallback stringified at least one dict or list.
+              Keeping this provenance separate lets row-signature tracking distinguish a real
+              container from a user string with the same JSON spelling without changing Arrow
+              column analysis for any column (#982).
+              """
+              try:
+                  return pyarrow.Table.from_pandas(df), None
+              except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
+                  if hasattr(df.columns, "is_unique") and not df.columns.is_unique:
+                      raise
+
+                  failing_cols: list[tuple[int, _Any]] = []
+                  for i in range(len(df.columns)):
+                      col = df.iloc[:, i]
+                      if col.dtype != object and getattr(col.dtype, "name", None) != "category":
+                          continue
+                      name = df.columns[i]
+                      try:
+                          pyarrow.Array.from_pandas(col)
+                      except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError):
+                          failing_cols.append((i, name))
+
+                  if not failing_cols:
+                      raise
+
+                  container_rows: list[list[int]] = [[] for _ in range(len(df.columns))]
+                  df_fixed = df.copy(deep=False)
+                  for column_index, name in failing_cols:
+                      col = df.iloc[:, column_index]
+                      try:
+                          converted: list[str | None] = []
+                          if hasattr(col, "isna"):
+                              missing = col.isna()
+                              values = zip(missing, col)
+                          else:
+                              values = ((False, value) for value in col)
+                          for row_index, (is_missing, value) in enumerate(values):
+                              if is_missing:
+                                  converted.append(None)
+                                  continue
+                              if _is_container(value):
+                                  container_rows[column_index].append(row_index)
+                              converted.append(_cell_to_str(value))
+                          df_fixed[name] = converted
+                      except Exception as exc:
+                          raise ValueError(
+                              f"pandas DataFrame: column {name!r} could not be converted for "
+                              f"profiling: {exc}"
+                          ) from exc
+
+                  try:
+                      table = pyarrow.Table.from_pandas(df_fixed)
+                  except Exception as exc:
+                      for _, name in failing_cols:
+                          try:
+                              pyarrow.Array.from_pandas(df_fixed[name])
+                          except (pyarrow.ArrowInvalid, pyarrow.ArrowTypeError) as col_exc:
+                              raise ValueError(
+                                  f"pandas DataFrame: column {name!r} could not be converted for "
+                                  f"profiling: {col_exc}"
+                              ) from col_exc
+                      raise ValueError(f"pandas DataFrame conversion failed: {exc}") from exc
+
+                  provenance = container_rows if any(container_rows) else None
+                  return table, provenance
+          '''
+          # The triple-quoted block is indented for YAML/Python readability; normalize it.
+          import textwrap
+          replacement = textwrap.dedent(replacement)
+          path.write_text(text[:start] + replacement + text[end:])
+
+          # --- Arrow row tracker: accept optional per-column global row positions. ---
+          path = Path('crates/dataprof-parquet/src/record_batch_analyzer.rs')
+          text = path.read_text()
+
+          old = '''    pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
+              if self.disabled {
+                  return;
+              }
+              if observe_batch_rows(&mut self.tracker, &mut self.completeness, batch).is_err() {
+                  self.disabled = true;
+              }
+          }
+          '''
+          new = '''    pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
+              self.observe_batch_inner(batch, None, 0);
+          }
+
+              fn observe_batch_with_container_rows(
+                  &mut self,
+                  batch: &RecordBatch,
+                  container_rows: &[Vec<usize>],
+                  row_offset: usize,
+              ) {
+                  self.observe_batch_inner(batch, Some(container_rows), row_offset);
+              }
+
+              fn observe_batch_inner(
+                  &mut self,
+                  batch: &RecordBatch,
+                  container_rows: Option<&[Vec<usize>]>,
+                  row_offset: usize,
+              ) {
+                  if self.disabled {
+                      return;
+                  }
+                  if observe_batch_rows(
+                      &mut self.tracker,
+                      &mut self.completeness,
+                      batch,
+                      container_rows,
+                      row_offset,
+                  )
+                  .is_err()
+                  {
+                      self.disabled = true;
+                  }
+              }
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit(f'BatchRowTracker target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''fn observe_batch_rows(
+              tracker: &mut RowUniquenessTracker,
+              completeness: &mut RowCompletenessTracker,
+              batch: &RecordBatch,
+          ) -> Result<()> {
+          '''
+          new = '''fn observe_batch_rows(
+              tracker: &mut RowUniquenessTracker,
+              completeness: &mut RowCompletenessTracker,
+              batch: &RecordBatch,
+              container_rows: Option<&[Vec<usize>]>,
+              row_offset: usize,
+          ) -> Result<()> {
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit(f'observe_batch_rows signature target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          segment_start = text.index('fn observe_batch_rows(')
+          segment_end = text.index('\nfn push_hex', segment_start)
+          segment = text[segment_start:segment_end]
+          old_loop = '        for (field, nulls) in fields.iter().zip(&nulls) {'
+          new_loop = '        for (column_index, (field, nulls)) in fields.iter().zip(&nulls).enumerate() {'
+          if segment.count(old_loop) != 1:
+              raise SystemExit(f'row field loop target count={segment.count(old_loop)}')
+          segment = segment.replace(old_loop, new_loop, 1)
+          old_push = '            row_signature.push_field(&value_buffer);'
+          new_push = '''            let is_container = container_rows
+                  .and_then(|columns| columns.get(column_index))
+                  .is_some_and(|rows| {
+                      rows.binary_search(&(row_offset + row_index)).is_ok()
+                  });
+              if is_container {
+                  row_signature.push_container_field(&value_buffer);
+              } else {
+                  row_signature.push_field(&value_buffer);
+              }'''
+          new_push = textwrap.dedent(new_push).rstrip()
+          # Restore the indentation expected inside the row loop.
+          new_push = '\n'.join('            ' + line if line else line for line in new_push.splitlines())
+          if segment.count(old_push) != 1:
+              raise SystemExit(f'row signature push target count={segment.count(old_push)}')
+          segment = segment.replace(old_push, new_push, 1)
+          text = text[:segment_start] + segment + text[segment_end:]
+
+          method_start = text.index('    pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {')
+          method_end = text.index('\n\n    pub fn total_rows', method_start)
+          old_method = text[method_start:method_end]
+          body = old_method
+          body = body.replace(
+              '    pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {',
+              '''    pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+                  self.process_batch_inner(batch, None, 0)
+              }
+
+              /// Process a batch while preserving Python-container provenance for row signatures.
+              ///
+              /// `container_rows` is aligned with batch columns and stores global source row
+              /// positions whose values were dict/list cells before pandas fallback stringified
+              /// them. Column analysis still consumes the Arrow arrays unchanged.
+              pub fn process_batch_with_container_rows(
+                  &mut self,
+                  batch: &RecordBatch,
+                  container_rows: &[Vec<usize>],
+                  row_offset: usize,
+              ) -> Result<()> {
+                  if container_rows.len() != batch.num_columns() {
+                      anyhow::bail!(
+                          "container provenance has {} columns for an Arrow batch with {} columns",
+                          container_rows.len(),
+                          batch.num_columns()
+                      );
+                  }
+                  self.process_batch_inner(batch, Some(container_rows), row_offset)
+              }
+
+              fn process_batch_inner(
+                  &mut self,
+                  batch: &RecordBatch,
+                  container_rows: Option<&[Vec<usize>]>,
+                  row_offset: usize,
+              ) -> Result<()> {''',
+              1,
+          )
+          body = body.replace(
+              '        self.row_tracker.observe_batch(batch);',
+              '''        if let Some(container_rows) = container_rows {
+                  self.row_tracker
+                      .observe_batch_with_container_rows(batch, container_rows, row_offset);
+              } else {
+                  self.row_tracker.observe_batch(batch);
+              }''',
+              1,
+          )
+          text = text[:method_start] + body + text[method_end:]
+          path.write_text(text)
+
+          # --- Python binding: keep native Arrow batches and thread provenance only to row tracking. ---
+          path = Path('crates/dataprof-python/src/arrow_export.rs')
+          text = path.read_text()
+          old = '    let batches = convert_dataframe_to_batches(py, &df, &source_library)?;'
+          new = '    let (batches, mut container_rows) = convert_dataframe_to_batches(py, &df, &source_library)?;'
+          if text.count(old) != 1:
+              raise SystemExit(f'dataframe conversion call target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          proj_start = text.index('    let batches = match options\n        .column_indices(&available_columns)')
+          proj_end = text.index('\n\n    let num_rows:', proj_start)
+          projection = '''    let selected_indices = options
+                  .column_indices(&available_columns)
+                  .map_err(|error| PyValueError::new_err(error.to_string()))?;
+              let batches = match selected_indices.as_deref() {
+                  Some(indices) => batches
+                      .into_iter()
+                      .map(|batch| {
+                          batch.project(indices).map_err(|error| {
+                              PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+                          })
+                      })
+                      .collect::<PyResult<Vec<_>>>()?,
+                  None => batches,
+              };
+              if let (Some(rows), Some(indices)) = (container_rows.take(), selected_indices.as_deref()) {
+                  container_rows = Some(indices.iter().map(|&index| rows[index].clone()).collect());
+              };
+          '''
+          projection = textwrap.dedent(projection).rstrip()
+          projection = '\n'.join('    ' + line if line else line for line in projection.splitlines())
+          text = text[:proj_start] + projection + text[proj_end:]
+
+          old = '''    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
+              for batch in &batches {
+                  analyze_imported_batch(&mut analyzer, batch)?;
+              }
+          '''
+          new = '''    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
+              let mut row_offset = 0usize;
+              for batch in &batches {
+                  if let Some(container_rows) = container_rows.as_deref() {
+                      analyze_imported_batch_with_container_rows(
+                          &mut analyzer,
+                          batch,
+                          container_rows,
+                          row_offset,
+                      )?;
+                  } else {
+                      analyze_imported_batch(&mut analyzer, batch)?;
+                  }
+                  row_offset += batch.num_rows();
+              }
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit(f'analyzer loop target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          conv_start = text.index('fn convert_dataframe_to_batches(')
+          conv_end = text.index('\n\n/// Convert a pandas DataFrame to its Arrow batches.', conv_start)
+          conversion = '''fn convert_dataframe_to_batches(
+              py: Python<'_>,
+              df: &Py<PyAny>,
+              source_library: &DataFrameLibrary,
+          ) -> PyResult<(Vec<RecordBatch>, Option<Vec<Vec<usize>>>)> {
+              let bound = df.bind(py);
+
+              match source_library {
+                  DataFrameLibrary::Pandas => convert_pandas_to_batches(py, bound),
+                  DataFrameLibrary::Polars => Ok((convert_polars_to_batches(py, bound)?, None)),
+                  DataFrameLibrary::PyArrow => Ok((import_batches_from_pyarrow(py, bound)?, None)),
+                  DataFrameLibrary::Custom(_) => {
+                      if bound.hasattr("__arrow_c_array__")? {
+                          Ok((import_batches_from_pyarrow(py, bound)?, None))
+                      } else {
+                          Err(PyTypeError::new_err(format!(
+                              "Unsupported DataFrame type: {}. Must implement Arrow PyCapsule protocol.",
+                              source_library
+                          )))
+                      }
+                  }
+              }
+          }
+          '''
+          conversion = textwrap.dedent(conversion).rstrip()
+          text = text[:conv_start] + conversion + text[conv_end:]
+
+          pandas_start = text.index('fn convert_pandas_to_batches(')
+          pandas_end = text.index('\n\n/// Convert a polars DataFrame to its Arrow batches.', pandas_start)
+          pandas_conversion = '''fn convert_pandas_to_batches(
+              py: Python<'_>,
+              df: &Bound<'_, PyAny>,
+          ) -> PyResult<(Vec<RecordBatch>, Option<Vec<Vec<usize>>>)> {
+              let pyarrow = py.import("pyarrow").map_err(|_| {
+                  PyRuntimeError::new_err(
+                      "pyarrow required for pandas DataFrames. Install with: pip install pyarrow",
+                  )
+              })?;
+
+              let inputs_mod = py.import("dataprof._inputs")?;
+              let converted = inputs_mod
+                  .getattr("_pandas_to_pyarrow_table_with_containers")?
+                  .call1((df, &pyarrow))?;
+              let (pa_table, container_rows): (Py<PyAny>, Option<Vec<Vec<usize>>>) =
+                  converted.extract()?;
+              let batches = import_batches_from_pyarrow(py, pa_table.bind(py))?;
+
+              if let Some(rows) = &container_rows {
+                  let column_count = batches.first().map_or(0, RecordBatch::num_columns);
+                  if rows.len() != column_count {
+                      return Err(PyRuntimeError::new_err(format!(
+                          "pandas container provenance has {} columns for an Arrow table with {} columns",
+                          rows.len(), column_count
+                      )));
+                  }
+              }
+
+              Ok((batches, container_rows))
+          }
+          '''
+          pandas_conversion = textwrap.dedent(pandas_conversion).rstrip()
+          text = text[:pandas_start] + pandas_conversion + text[pandas_end:]
+
+          helper_marker = '''fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatch) -> PyResult<()> {
+              for column in batch.columns() {
+                  validate_imported_array(&column.to_data())?;
+              }
+              analyzer
+                  .process_batch(batch)
+                  .map_err(crate::errors::analyzer_error_to_py)
+          }
+          '''
+          helper_add = '''fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatch) -> PyResult<()> {
+              for column in batch.columns() {
+                  validate_imported_array(&column.to_data())?;
+              }
+              analyzer
+                  .process_batch(batch)
+                  .map_err(crate::errors::analyzer_error_to_py)
+          }
+
+          fn analyze_imported_batch_with_container_rows(
+              analyzer: &mut RecordBatchAnalyzer,
+              batch: &RecordBatch,
+              container_rows: &[Vec<usize>],
+              row_offset: usize,
+          ) -> PyResult<()> {
+              for column in batch.columns() {
+                  validate_imported_array(&column.to_data())?;
+              }
+              analyzer
+                  .process_batch_with_container_rows(batch, container_rows, row_offset)
+                  .map_err(crate::errors::analyzer_error_to_py)
+          }
+          '''
+          helper_marker = textwrap.dedent(helper_marker)
+          helper_add = textwrap.dedent(helper_add)
+          if text.count(helper_marker) != 1:
+              raise SystemExit(f'analyze helper target count={text.count(helper_marker)}')
+          text = text.replace(helper_marker, helper_add, 1)
+          path.write_text(text)
+
+          # --- Regression tests: both public entrypoints, native-neighbor parity, max_rows. ---
+          Path('python/tests/test_pandas_container_identity.py').write_text('''"""Pandas fallback preserves container identity without changing Arrow column analysis."""
+
+          from __future__ import annotations
+
+          import dataprof as dp
+          import pytest
+
+          pd = pytest.importorskip("pandas", reason="pandas is required for pandas DataFrame tests")
+          pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
+
+
+          def _report(entrypoint: str, values: list[object], *, max_rows: int | None = None):
+              df = pd.DataFrame({"c": pd.Series(values, dtype=object)})
+              if entrypoint == "profile":
+                  return dp.profile(df, max_rows=max_rows)
+
+              from dataprof.interop import profile_dataframe
+
+              return dp.ProfileReport(profile_dataframe(df, max_rows=max_rows))
+
+
+          @pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+          def test_container_and_json_spelling_are_distinct_rows(entrypoint: str):
+              values = [{"x": 1}, '{"x":1}', [1, 2], "[1,2]"]
+              report = _report(entrypoint, values)
+              assert report.quality.uniqueness["duplicate_rows"] == 0
+
+
+          @pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+          def test_equal_containers_and_equal_strings_still_duplicate(entrypoint: str):
+              values = [{"x": 1}, {"x": 1}, '{"x":1}', '{"x":1}']
+              report = _report(entrypoint, values)
+              assert report.quality.uniqueness["duplicate_rows"] == 2
+
+
+          def test_arrow_compatible_container_column_needs_no_fallback_provenance():
+              from dataprof._inputs import _pandas_to_pyarrow_table_with_containers
+
+              df = pd.DataFrame({"c": pd.Series([[1, 2], [3, 4]], dtype=object)})
+              table, container_rows = _pandas_to_pyarrow_table_with_containers(df, pa)
+
+              assert container_rows is None
+              assert pa.types.is_list(table["c"].type)
+
+
+          def test_container_fallback_preserves_native_neighbor_profile():
+              clean = dp.profile(pd.DataFrame({"id": [1, 2, 3, 4]}))["id"]
+              df = pd.DataFrame(
+                  {
+                      "id": [1, 2, 3, 4],
+                      "c": pd.Series([{"x": 1}, '{"x":1}', [1, 2], "[1,2]"], dtype=object),
+                  }
+              )
+              mixed = dp.profile(df)["id"]
+
+              assert mixed.data_type == clean.data_type
+              assert mixed.null_count == clean.null_count
+              assert mixed.unique_count == clean.unique_count
+              assert mixed.mean == clean.mean
+              assert mixed.min == clean.min
+              assert mixed.max == clean.max
+
+
+          @pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+          def test_container_provenance_respects_max_rows(entrypoint: str):
+              values = [{"x": 1}, '{"x":1}', {"x": 1}, '{"x":1}']
+              report = _report(entrypoint, values, max_rows=2)
+
+              assert report.rows == 2
+              assert report.quality.uniqueness["duplicate_rows"] == 0
+          '''.replace('\n          ', '\n').lstrip())
+          PY
+
+          cargo fmt --all
+          git diff --check
+
+      - name: Test Rust row tracker
+        run: cargo test -p dataprof-parquet --features arrow record_batch_analyzer --lib
+
+      - name: Build Python test environment
+        run: |
+          uv sync
+          uv run maturin develop
+
+      - name: Run pandas regression tests
+        run: uv run pytest python/tests/test_pandas_container_identity.py python/tests/test_pandas_mixed_columns.py -q
+
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          rm .github/workflows/chat-fix-987.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(python): preserve container provenance in pandas fallback [chat-987-done]'
+          git push origin HEAD:fix/pandas-container-row-identity-982
