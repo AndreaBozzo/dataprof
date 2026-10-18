@@ -73,9 +73,7 @@ def test_container_identity_side_pass_honors_max_rows():
 def test_duplicate_repair_refreshes_quality_score():
     from dataprof._dataprof import profile_dataframe as native_profile_dataframe
 
-    df = pd.DataFrame(
-        {"c": pd.Series([{"x": 1}, '{"x":1}', [1, 2], "[1,2]"], dtype=object)}
-    )
+    df = pd.DataFrame({"c": pd.Series([{"x": 1}, '{"x":1}', [1, 2], "[1,2]"], dtype=object)})
     native = dp.ProfileReport(native_profile_dataframe(df, "dataframe", None, None))
     repaired = dp.profile(df)
 
