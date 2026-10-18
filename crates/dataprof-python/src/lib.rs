@@ -8,6 +8,7 @@ pub mod config;
 pub mod errors;
 pub mod partial;
 pub mod progress;
+mod row_identity;
 pub mod sampling;
 pub mod stop_condition;
 pub mod types;
@@ -30,6 +31,7 @@ pub use partial::{
     analyze_structure, infer_schema, quick_row_count,
 };
 pub use progress::PyProgressEvent;
+pub use row_identity::replace_row_duplicates;
 pub use sampling::PySamplingStrategy;
 pub use stop_condition::PyStopCondition;
 pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport, report_delta_json};
@@ -102,6 +104,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
     m.add_function(wrap_pyfunction!(profile_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(replace_row_duplicates, m)?)?;
 
     // Dependency-free columnar profiling (dict, list-of-dicts, decoded bytes)
     m.add_function(wrap_pyfunction!(profile_columns, m)?)?;
@@ -120,8 +123,8 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         m.add_function(wrap_pyfunction!(database_async::analyze_database_async, m)?)?;
         m.add_function(wrap_pyfunction!(database_async::test_connection_async, m)?)?;
-        m.add_function(wrap_pyfunction!(database_async::get_table_schema_async, m)?)?;
-        m.add_function(wrap_pyfunction!(database_async::count_table_rows_async, m)?)?;
+        m.add_function(wrap_pyfunction!(database_async::get_table_schema, m)?)?;
+        m.add_function(wrap_pyfunction!(database_async::count_table_rows, m)?)?;
     }
 
     // Async streaming functions (feature-gated)
