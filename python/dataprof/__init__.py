@@ -40,9 +40,13 @@ from ._gate import (
     QualityCheck as QualityCheck,
     QualityGateResult as QualityGateResult,
 )
+from ._pandas_mixed import _install_high_level_profile_dataframe
 from ._profiler import Profiler as Profiler
 from ._report import ProfileReport as ProfileReport
 from ._report_schema import REPORT_SCHEMA_VERSION as REPORT_SCHEMA_VERSION
+
+_install_high_level_profile_dataframe()
+del _install_high_level_profile_dataframe
 
 __all__ = [
     "Capabilities",

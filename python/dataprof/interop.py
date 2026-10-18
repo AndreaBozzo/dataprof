@@ -18,10 +18,20 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
     analyze_file as _analyze_file,
     analyze_parquet_to_arrow as _analyze_parquet_to_arrow,
     profile_arrow,
-    profile_dataframe,
 )
 
 from ._columns import column_to_dict
+from ._pandas_mixed import profile_dataframe as _profile_dataframe
+
+
+def profile_dataframe(
+    df: object,
+    name: str = "dataframe",
+    max_rows: int | None = None,
+    config: ProfilerConfig | None = None,
+) -> ProfileReport:
+    """Profile a DataFrame while preserving mixed-container row identity."""
+    return _profile_dataframe(df, name, max_rows, config)
 
 
 def _normalize_pathlike(path: str | _os.PathLike[str], *, arg_name: str = "path") -> str:
