@@ -17,18 +17,20 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 arrow = { workspace = true }
 bytes = { workspace = true, optional = true }
+csv = { workspace = true, optional = true }
 dataprof = { workspace = true, default-features = true }
 dataprof-core = { workspace = true }
 dataprof-parquet = { workspace = true, features = ["arrow"] }
 dataprof-runtime = { workspace = true }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true }
 
 [features]
 default = []
 python = []
-python-async = ["dep:bytes", "dep:pyo3-async-runtimes", "dataprof/async-streaming"]
+python-async = ["dep:bytes", "dep:csv", "dep:pyo3-async-runtimes", "dep:reqwest", "dataprof/async-streaming"]
 async-streaming = ["python-async", "dataprof/async-streaming"]
 parquet-async = ["async-streaming", "dataprof/parquet-async"]
 database = ["dataprof/database"]

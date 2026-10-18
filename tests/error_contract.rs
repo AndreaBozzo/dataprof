@@ -7,6 +7,23 @@ use std::io::Write;
 use dataprof::{DataProfilerError, EngineType, Profiler};
 
 #[test]
+fn streaming_error_remains_constructible_and_exhaustively_destructurable() {
+    let error = DataProfilerError::StreamingError {
+        message: "stream failed".into(),
+        suggestion: "retry".into(),
+    };
+    let DataProfilerError::StreamingError {
+        message,
+        suggestion,
+    } = error
+    else {
+        panic!("constructed a streaming error");
+    };
+    assert_eq!(message, "stream failed");
+    assert_eq!(suggestion, "retry");
+}
+
+#[test]
 fn missing_file_reports_the_real_path_not_unknown() {
     let path = "definitely/does/not/exist/sales.csv";
     let err = Profiler::new()

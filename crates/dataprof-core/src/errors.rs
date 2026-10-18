@@ -31,6 +31,13 @@ fn suggestion_line(suggestion: &str) -> String {
     }
 }
 
+fn io_diagnostic(message: &str, diagnostic: &Option<Box<DataProfilerError>>) -> String {
+    diagnostic
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("I/O error: {message}\nCheck file permissions and disk space"))
+}
+
 /// Redact credentials from a string before it enters an error message.
 ///
 /// Connection strings and driver errors can carry `scheme://user:password@host`.
@@ -112,12 +119,14 @@ pub enum DataProfilerError {
     #[error("Streaming processing failed: {message}{}", suggestion_line(.suggestion))]
     StreamingError { message: String, suggestion: String },
 
-    #[error("I/O error: {message}\nCheck file permissions and disk space")]
+    #[error("{}", io_diagnostic(.message, .diagnostic))]
     #[non_exhaustive]
     IoError {
         message: String,
         #[source]
         source: Option<ErrorSource>,
+        /// An existing diagnostic to preserve when retaining an I/O source.
+        diagnostic: Option<Box<DataProfilerError>>,
     },
 
     #[error(
@@ -427,6 +436,7 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: original.to_string(),
             source: Some(Box::new(original)),
+            diagnostic: None,
         }
     }
 
@@ -437,6 +447,7 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: message.to_string(),
             source: None,
+            diagnostic: None,
         }
     }
 
@@ -538,6 +549,23 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: message.into(),
             source: Some(Box::new(original)),
+            diagnostic: None,
+        }
+    }
+
+    /// Retain an I/O source without changing an existing, contextual diagnostic.
+    ///
+    /// Remote readers have transport-specific advice rather than the default
+    /// local-file permissions remedy. Keep that diagnostic verbatim while
+    /// making the originating error available through `Error::source`.
+    pub fn io_with_diagnostic<E>(diagnostic: DataProfilerError, original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::IoError {
+            message: original.to_string(),
+            source: Some(Box::new(original)),
+            diagnostic: Some(Box::new(diagnostic)),
         }
     }
 
@@ -575,6 +603,10 @@ impl DataProfilerError {
     /// the message) should read it here rather than parse the formatted output.
     pub fn suggestion(&self) -> Option<String> {
         match self {
+            DataProfilerError::IoError {
+                diagnostic: Some(diagnostic),
+                ..
+            } => diagnostic.suggestion(),
             DataProfilerError::CsvParsingError { suggestion, .. }
             | DataProfilerError::InvalidConfiguration { suggestion, .. }
             | DataProfilerError::InvalidSemanticHint { suggestion, .. }
@@ -671,6 +703,7 @@ impl From<anyhow::Error> for DataProfilerError {
             DataProfilerError::IoError {
                 message: error_str,
                 source,
+                diagnostic: None,
             }
         }
     }
@@ -696,6 +729,7 @@ impl From<std::io::Error> for DataProfilerError {
         DataProfilerError::IoError {
             message,
             source: Some(Box::new(err)),
+            diagnostic: None,
         }
     }
 }
@@ -728,6 +762,52 @@ impl From<serde_json::Error> for DataProfilerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contextual_io_error_preserves_diagnostic_suggestion_and_concrete_source() {
+        use std::error::Error as _;
+
+        let diagnostic = DataProfilerError::StreamingError {
+            message: "HTTP request failed: connection refused".into(),
+            suggestion: "Check the URL and network connectivity".into(),
+        };
+        let expected = diagnostic.to_string();
+        let suggestion = diagnostic.suggestion();
+        let error = DataProfilerError::io_with_diagnostic(
+            diagnostic,
+            std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+        );
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(error.suggestion(), suggestion);
+        assert_eq!(error.category(), "io");
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::ConnectionRefused
+        );
+    }
+
+    #[test]
+    fn ordinary_io_constructors_keep_their_original_diagnostic() {
+        let expected = "I/O error: disk failed\nCheck file permissions and disk space";
+        assert_eq!(
+            DataProfilerError::io_message("disk failed").to_string(),
+            expected
+        );
+        assert_eq!(
+            DataProfilerError::io_error(std::io::Error::other("disk failed")).to_string(),
+            expected
+        );
+        assert_eq!(
+            DataProfilerError::io_with_source("disk failed", std::io::Error::other("detail"))
+                .to_string(),
+            expected
+        );
+    }
 
     #[test]
     fn test_error_categorization() {

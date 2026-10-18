@@ -1330,13 +1330,13 @@ impl Profiler {
                 }
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
-                let response =
-                    reqwest::get(url)
-                        .await
-                        .map_err(|e| DataProfilerError::StreamingError {
-                            message: format!("HTTP request failed: {e}"),
-                            suggestion: "Check the URL and network connectivity".to_string(),
-                        })?;
+                let response = reqwest::get(url).await.map_err(|e| {
+                    let diagnostic = DataProfilerError::StreamingError {
+                        message: format!("HTTP request failed: {e}"),
+                        suggestion: "Check the URL and network connectivity".to_string(),
+                    };
+                    DataProfilerError::io_with_diagnostic(diagnostic, e)
+                })?;
 
                 let status = response.status();
                 if !status.is_success() {
