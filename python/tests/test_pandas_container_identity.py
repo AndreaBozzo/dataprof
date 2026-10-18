@@ -107,13 +107,15 @@ def test_arrow_compatible_container_column_keeps_native_path():
 def test_duplicate_only_native_helper_matches_full_column_profiler():
     from dataprof._dataprof import _count_container_aware_duplicates, profile_columns
 
-    columns = [
+    columns: list[tuple[str, list[str | None], list[int]]] = [
         ("id", ["a", "a", "b", "b", "b"], []),
         ("payload", ['{"x":1}'] * 5, [0, 2]),
     ]
     dedicated = _count_container_aware_duplicates(columns)
     original = profile_columns(columns, "example", None, None)
+    assert original.quality is not None
     uniqueness = original.quality.uniqueness
+    assert uniqueness is not None
 
     assert dedicated == (
         uniqueness["duplicate_rows"],
