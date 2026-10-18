@@ -76,8 +76,11 @@ jobs:
                   '.map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok()),',
                   '.map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok())\\n                    .collect::<Vec<_>>(),',
               ),
-              ('fields.push(Arc::new(Field::new(', 'fields.push(Field::new('),
-              ('field.is_nullable(),\\n            )));', 'field.is_nullable(),\\n            ));'),
+              (
+                  'let mut fields = Vec::with_capacity(batch.num_columns());',
+                  'let mut fields: Vec<Arc<Field>> = Vec::with_capacity(batch.num_columns());',
+              ),
+              ('fields.push(field.clone());', 'fields.push(Arc::new(field.clone()));'),
           ]
           for old, new in replacements:
               if text.count(old) != 1:
