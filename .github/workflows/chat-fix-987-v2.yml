@@ -39,6 +39,7 @@ jobs:
           from pathlib import Path
           path = Path('.github/chat_fix_987.py')
           text = path.read_text()
+
           old = 'text = replace_once(text, old_loop, new_loop, "analyzer loop")'
           new = '''profile_start = text.index("pub fn profile_dataframe(")
           profile_end = text.index("\\n/// Profile a PyArrow Table", profile_start)
@@ -46,7 +47,27 @@ jobs:
           profile = replace_once(profile, old_loop, new_loop, "dataframe analyzer loop")
           text = text[:profile_start] + profile + text[profile_end:]'''
           if text.count(old) != 1:
-              raise SystemExit(f'patch-script hotfix target count={text.count(old)}')
+              raise SystemExit(f'analyzer hotfix target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''text = replace_once(
+              text,
+              '    .with_row_duplicates(analyzer.row_duplicate_summary())',
+              '    .with_row_duplicates(row_duplicates)',
+              "row duplicate assembler",
+          )'''
+          new = '''profile_start = text.index("pub fn profile_dataframe(")
+          profile_end = text.index("\\n/// Profile a PyArrow Table", profile_start)
+          profile = text[profile_start:profile_end]
+          profile = replace_once(
+              profile,
+              '    .with_row_duplicates(analyzer.row_duplicate_summary())',
+              '    .with_row_duplicates(row_duplicates)',
+              "dataframe row duplicate assembler",
+          )
+          text = text[:profile_start] + profile + text[profile_end:]'''
+          if text.count(old) != 1:
+              raise SystemExit(f'row-summary hotfix target count={text.count(old)}')
           path.write_text(text.replace(old, new, 1))
           PY
           python .github/chat_fix_987.py
