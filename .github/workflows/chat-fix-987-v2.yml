@@ -35,6 +35,20 @@ jobs:
             crates/dataprof-python/src/arrow_export.rs \
             crates/dataprof-parquet/src/lib.rs
           rm -f python/dataprof/_pandas_mixed.py crates/dataprof-parquet/src/row_provenance.rs
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/chat_fix_987.py')
+          text = path.read_text()
+          old = 'text = replace_once(text, old_loop, new_loop, "analyzer loop")'
+          new = '''profile_start = text.index("pub fn profile_dataframe(")
+          profile_end = text.index("\\n/// Profile a PyArrow Table", profile_start)
+          profile = text[profile_start:profile_end]
+          profile = replace_once(profile, old_loop, new_loop, "dataframe analyzer loop")
+          text = text[:profile_start] + profile + text[profile_end:]'''
+          if text.count(old) != 1:
+              raise SystemExit(f'patch-script hotfix target count={text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
           python .github/chat_fix_987.py
           cargo fmt --all
           python -m py_compile python/dataprof/_inputs.py python/tests/test_pandas_container_identity.py
