@@ -53,7 +53,6 @@ pub fn count_container_aware_duplicates(
     Ok(summary.map(|s| (s.duplicate_rows, s.rows_checked, s.approximate)))
 }
 
-
 fn shift_interval(interval: &mut ScoreInterval, delta: f64) {
     interval.lower = (interval.lower + delta).clamp(0.0, 100.0);
     interval.upper = (interval.upper + delta).clamp(0.0, 100.0);
