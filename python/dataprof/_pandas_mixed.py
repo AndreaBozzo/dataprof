@@ -142,4 +142,4 @@ def _install_high_level_profile_dataframe() -> None:
     """Route ``dataprof.profile``'s DataFrame call through this adapter."""
     from . import _api
 
-    _api._profile_dataframe = profile_dataframe
+    setattr(_api, "_profile_dataframe", profile_dataframe)
