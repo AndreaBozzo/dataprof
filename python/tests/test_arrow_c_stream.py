@@ -110,8 +110,25 @@ def test_producer_failure_does_not_return_partial_report():
 
     with pytest.raises(RuntimeError, match="Arrow stream") as caught:
         dataprof.profile(StreamProducer(batches[0].schema, produce()))
+    assert "producer broke after first batch" in str(caught.value)
     assert caught.value.__cause__ is not None
     assert "producer broke after first batch" in str(caught.value.__cause__)
+
+
+def test_producer_first_line_is_visible_without_losing_full_cause():
+    batches = _batches()
+
+    def produce():
+        yield batches[0]
+        raise OSError("connection reset by peer\\nretry might be required")
+
+    with pytest.raises(RuntimeError, match="Arrow stream batch failed") as caught:
+        dataprof.profile(StreamProducer(batches[0].schema, produce()))
+
+    assert "connection reset by peer" in str(caught.value)
+    assert "retry might be required" not in str(caught.value)
+    assert caught.value.__cause__ is not None
+    assert "retry might be required" in str(caught.value.__cause__)
 
 
 @pytest.mark.parametrize(
