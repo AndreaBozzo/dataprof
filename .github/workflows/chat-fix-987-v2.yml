@@ -1,0 +1,63 @@
+name: Chat fix 987 v2
+
+on:
+  push:
+    branches:
+      - fix/pandas-container-row-identity-982
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: ${{ !contains(github.event.head_commit.message, '[chat-987-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pandas-container-row-identity-982
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Reset old attempt and apply patch
+        shell: bash
+        run: |
+          BASE=4232d9211afa4ab7ce2b0781258065cabaac92b9
+          git checkout "$BASE" -- \
+            python/dataprof/__init__.py \
+            python/dataprof/interop.py \
+            python/dataprof/_inputs.py \
+            crates/dataprof-python/src/arrow_export.rs \
+            crates/dataprof-parquet/src/lib.rs
+          rm -f python/dataprof/_pandas_mixed.py crates/dataprof-parquet/src/row_provenance.rs
+          python .github/chat_fix_987.py
+          cargo fmt --all
+          python -m py_compile python/dataprof/_inputs.py python/tests/test_pandas_container_identity.py
+          git diff --check
+
+      - name: Test provenance row tracker
+        run: cargo test -p dataprof-parquet --features arrow row_provenance --lib
+
+      - name: Build Python test environment
+        run: |
+          uv sync
+          uv run maturin develop
+
+      - name: Run pandas regression tests
+        run: uv run pytest python/tests/test_pandas_container_identity.py python/tests/test_pandas_mixed_columns.py -q
+
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          rm .github/workflows/chat-fix-987-v2.yml .github/chat_fix_987.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(python): preserve container provenance in pandas fallback [chat-987-done]'
+          git push origin HEAD:fix/pandas-container-row-identity-982
