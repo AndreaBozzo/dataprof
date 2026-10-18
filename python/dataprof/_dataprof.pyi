@@ -432,6 +432,7 @@ def profile_columns(
     source_format: str | None = None,
     source_bytes: int | None = None,
 ) -> ProfileReport: ...
+
 # Private native helpers used only by the mixed-pandas container identity adapter.
 def _count_container_aware_duplicates(
     columns: list[tuple[str, list[str | None], list[int]]],
@@ -442,7 +443,6 @@ def _replace_row_duplicates(
     rows_checked: int,
     approximate: bool,
 ) -> None: ...
-
 def profile_parquet_bytes(
     data: bytes,
     name: str,
