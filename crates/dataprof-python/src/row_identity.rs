@@ -1,7 +1,58 @@
 use dataprof::{QualityAssessment, QualityMetrics, ScoreBounds, ScoreInterval};
+use dataprof_runtime::{RowSignature, RowUniquenessTracker};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use super::columns::PyColumn;
 use super::types::PyProfileReport;
+
+/// Only compute full-row duplicate evidence from already-rendered columns.
+///
+/// Unlike profile_columns, this does not infer or aggregate statistics for a
+/// second throwaway report. It uses precisely the same tagged RowSignature
+/// and bounded cardinality estimator as the normal column profiler.
+#[pyfunction(name = "_count_container_aware_duplicates")]
+pub fn count_container_aware_duplicates(
+    py: Python<'_>,
+    columns: Vec<PyColumn>,
+) -> PyResult<Option<(usize, usize, bool)>> {
+    let Some((_, first, _)) = columns.first() else {
+        return Ok(None);
+    };
+    let rows = first.len();
+    if let Some((name, cells, _)) = columns.iter().find(|(_, cells, _)| cells.len() != rows) {
+        return Err(PyValueError::new_err(format!(
+            "duplicate signature: column {name:?} has {} cells, expected {rows}",
+            cells.len()
+        )));
+    }
+    if let Some((name, _, _)) = columns.iter().find(|(_, _, indices)| {
+        !indices.windows(2).all(|pair| pair[0] < pair[1])
+            || indices.last().is_some_and(|&last| last >= rows)
+    }) {
+        return Err(PyValueError::new_err(format!(
+            "duplicate signature: invalid container positions for column {name:?}"
+        )));
+    }
+    let summary = py.detach(|| {
+        let mut tracker = RowUniquenessTracker::default();
+        for row in 0..rows {
+            let mut signature = RowSignature::default();
+            for (_, cells, containers) in &columns {
+                let value = cells[row].as_deref().unwrap_or("");
+                if containers.binary_search(&row).is_ok() {
+                    signature.push_container_field(value);
+                } else {
+                    signature.push_field(value);
+                }
+            }
+            tracker.observe(signature.finish());
+        }
+        tracker.summary()
+    });
+    Ok(summary.map(|s| (s.duplicate_rows, s.rows_checked, s.approximate)))
+}
+
 
 fn shift_interval(interval: &mut ScoreInterval, delta: f64) {
     interval.lower = (interval.lower + delta).clamp(0.0, 100.0);
