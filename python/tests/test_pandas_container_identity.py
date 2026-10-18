@@ -102,3 +102,44 @@ def test_arrow_compatible_container_column_keeps_native_path():
     df = pd.DataFrame({"c": pd.Series([[1, 2], [3, 4]], dtype=object)})
 
     assert _pandas_container_fallback_columns(df) is None
+
+
+def test_duplicate_only_native_helper_matches_full_column_profiler():
+    from dataprof._dataprof import _count_container_aware_duplicates, profile_columns
+
+    columns = [
+        ("id", ["a", "a", "b", "b", "b"], []),
+        ("payload", ['{"x":1}'] * 5, [0, 2]),
+    ]
+    dedicated = _count_container_aware_duplicates(columns)
+    original = profile_columns(columns, "example", None, None)
+    uniqueness = original.quality.uniqueness
+
+    assert dedicated == (
+        uniqueness["duplicate_rows"],
+        uniqueness["rows_checked"],
+        uniqueness["duplicate_rows_approximate"],
+    )
+    assert dedicated == (1, 5, False)
+
+
+def test_duplicate_only_native_helper_handles_no_rows_or_columns():
+    from dataprof._dataprof import _count_container_aware_duplicates
+
+    assert _count_container_aware_duplicates([]) is None
+    assert _count_container_aware_duplicates([("payload", [], [])]) is None
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        [("a", ["x"], []), ("b", ["x", "y"], [])],
+        [("a", ["x", "y"], [1, 0])],
+        [("a", ["x"], [1])],
+    ],
+)
+def test_duplicate_only_native_helper_rejects_invalid_cell_metadata(columns):
+    from dataprof._dataprof import _count_container_aware_duplicates
+
+    with pytest.raises(ValueError, match="duplicate signature:"):
+        _count_container_aware_duplicates(columns)
