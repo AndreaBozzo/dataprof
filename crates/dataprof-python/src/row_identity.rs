@@ -108,8 +108,7 @@ pub fn replace_row_duplicates(
         old_approximate,
         approximate,
     );
-    report.inner.quality = Some(
-        QualityAssessment::new(new_metrics, confidence).with_score_bounds(bounds),
-    );
+    report.inner.quality =
+        Some(QualityAssessment::new(new_metrics, confidence).with_score_bounds(bounds));
     Ok(())
 }
