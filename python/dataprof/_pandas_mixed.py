@@ -5,10 +5,7 @@ from __future__ import annotations as _annotations
 from typing import Any as _Any
 
 from . import _dataprof as _native
-from ._dataprof import (
-    profile_columns as _profile_columns,
-    profile_dataframe as _native_profile_dataframe,
-)
+from ._dataprof import profile_dataframe as _native_profile_dataframe
 from ._inputs import _cell_to_str, _Column, _is_container
 
 
@@ -116,25 +113,14 @@ def profile_dataframe(
     if columns is None:
         return report
 
-    # Only the duplicate summary is consumed from this pass. It intentionally
-    # uses no caller config: columns were already row-limited above, and a
-    # projection must never enter here because native uniqueness is withheld
-    # for projected reports.
-    identity_report = _profile_columns(columns, name, None, None)
-    identity_quality = identity_report.quality
-    if identity_quality is None:
-        return report
-    uniqueness = identity_quality.uniqueness
-    if uniqueness is None:
+    # Only row signatures are required. Avoid running a second complete
+    # profile (per-column inference, statistics, and quality assessment).
+    # Full-row uniqueness was withheld by the native path for projections.
+    counts = _native._count_container_aware_duplicates(columns)
+    if counts is None:
         return report
 
-    replace = getattr(_native, "_replace_row_duplicates")
-    replace(
-        report,
-        uniqueness["duplicate_rows"],
-        uniqueness["rows_checked"],
-        uniqueness["duplicate_rows_approximate"],
-    )
+    _native._replace_row_duplicates(report, *counts)
     return report
 
 
