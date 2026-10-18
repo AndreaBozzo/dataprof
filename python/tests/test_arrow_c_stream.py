@@ -120,7 +120,7 @@ def test_producer_first_line_is_visible_without_losing_full_cause():
 
     def produce():
         yield batches[0]
-        raise OSError("connection reset by peer\\nretry might be required")
+        raise OSError("connection reset by peer\nretry might be required")
 
     with pytest.raises(RuntimeError, match="Arrow stream batch failed") as caught:
         dataprof.profile(StreamProducer(batches[0].schema, produce()))
