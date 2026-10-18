@@ -378,7 +378,10 @@ mod error_message_tests {
         let expected = "Arrow stream batch failed (error code 5)";
         assert_eq!(stream_error_message("batch", 5, None), expected);
         assert_eq!(stream_error_message("batch", 5, Some("")), expected);
-        assert_eq!(stream_error_message("batch", 5, Some("\nnext line")), expected);
+        assert_eq!(
+            stream_error_message("batch", 5, Some("\nnext line")),
+            expected
+        );
     }
 
     #[test]
