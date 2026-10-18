@@ -70,32 +70,21 @@ jobs:
               raise SystemExit(f'row-summary hotfix target count={text.count(old)}')
           text = text.replace(old, new, 1)
 
-          old = '''            let flags = BooleanArray::from_iter_values(
-              (0..batch.num_rows())
-                  .map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok()),
-          );'''
-          new = '''            let flags = BooleanArray::from(
-              (0..batch.num_rows())
-                  .map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok())
-                  .collect::<Vec<_>>(),
-          );'''
-          if text.count(old) != 1:
-              raise SystemExit(f'boolean-array hotfix target count={text.count(old)}')
-          text = text.replace(old, new, 1)
+          replacements = [
+              ('BooleanArray::from_iter_values(', 'BooleanArray::from('),
+              (
+                  '.map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok()),',
+                  '.map(|row_index| rows.binary_search(&(row_offset + row_index)).is_ok())\\n                    .collect::<Vec<_>>(),',
+              ),
+              ('fields.push(Arc::new(Field::new(', 'fields.push(Field::new('),
+              ('field.is_nullable(),\\n            )));', 'field.is_nullable(),\\n            ));'),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'Arrow 60 hotfix target {old!r} count={text.count(old)}')
+              text = text.replace(old, new, 1)
 
-          old = '''            fields.push(Arc::new(Field::new(
-              field.name(),
-              ArrowDataType::Struct(struct_fields),
-              field.is_nullable(),
-          )));'''
-          new = '''            fields.push(Field::new(
-              field.name(),
-              ArrowDataType::Struct(struct_fields),
-              field.is_nullable(),
-          ));'''
-          if text.count(old) != 1:
-              raise SystemExit(f'field-type hotfix target count={text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text)
           PY
           python .github/chat_fix_987.py
           cargo fmt --all
