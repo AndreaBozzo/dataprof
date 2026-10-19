@@ -497,6 +497,22 @@ its absence does not show that the defaults applied; the loader still reads an
 absent field as the defaults, as it did before. The canonical document from
 `to_json()` or JSON `save()` has kept custom weights since #714.
 
+## v1 additive change: default `score_weights` are written too
+
+Both dialects now write `score_weights` whatever the weights are, defaults
+included (`quality.metrics.score_weights` in the canonical document,
+`quality.score_weights` in the Python dialect). A stored `overall_score` is kept
+rather than recomputed, so a document that omits default weights only names
+the defaults of whichever release reads it; if a later release changed them,
+the score and its decoded weights would disagree (#749).
+
+The field stays optional in the schema, so stored v1 reports remain valid, and
+an absent field is still read as the defaults. The default weights have not
+changed since weights became configurable in 0.10, so on a canonical document
+an absent field did mean the defaults. On a flat summary written before 0.12 it
+does not, because those dropped custom weights; re-exporting such a summary
+with `to_dict()` keeps the field absent rather than claim the defaults.
+
 ## v1 additive change: `metric_semantics`
 
 Both dialects now carry a top-level `metric_semantics` object naming how the

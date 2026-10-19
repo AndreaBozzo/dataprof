@@ -82,6 +82,15 @@
         "inconsistent_precision_values": 1,
         "numeric_values_checked": 3
       },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
       "uniqueness": {
         "duplicate_rows": 0,
         "high_cardinality_warning": true,

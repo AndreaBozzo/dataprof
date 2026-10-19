@@ -270,10 +270,13 @@ pub struct QualityMetrics {
     /// reliable. Backwards-compatible: defaults to `false`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub low_sample_warning: bool,
-    /// Weights used to aggregate dimension scores. Default weights are omitted
-    /// from serialized reports; custom weights are retained for reproducible
-    /// score calculation after a round trip.
-    #[serde(default, skip_serializing_if = "QualityScoreWeights::is_default")]
+    /// Weights used to aggregate dimension scores. Always serialized, default
+    /// weights included: a stored overall score is kept rather than
+    /// recomputed, so the document has to say which weights produced it even
+    /// if a later release changes the defaults (#749). Documents written
+    /// before 0.13 omit default weights, so on those an absent field does not
+    /// show which weights applied.
+    #[serde(default)]
     pub score_weights: QualityScoreWeights,
 }
 
@@ -1563,12 +1566,13 @@ mod tests {
             ..QualityMetrics::default()
         };
 
-        let json = serde_json::to_string(&metrics).unwrap();
-        assert!(json.contains("completeness"));
-        assert!(!json.contains("consistency"));
-        assert!(!json.contains("uniqueness"));
-        assert!(!json.contains("accuracy"));
-        assert!(!json.contains("timeliness"));
+        // Top-level keys: `score_weights` names every dimension inside it.
+        let json = serde_json::to_value(&metrics).unwrap();
+        assert!(json.get("completeness").is_some());
+        assert!(json.get("consistency").is_none());
+        assert!(json.get("uniqueness").is_none());
+        assert!(json.get("accuracy").is_none());
+        assert!(json.get("timeliness").is_none());
     }
 
     #[test]
@@ -1579,7 +1583,7 @@ mod tests {
         let metrics = QualityMetrics::empty();
         assert!(metrics.assessed_dimensions().is_empty());
 
-        let json = serde_json::to_string(&metrics).unwrap();
+        let json = serde_json::to_value(&metrics).unwrap();
         for dimension in [
             "completeness",
             "consistency",
@@ -1590,7 +1594,7 @@ mod tests {
             "precision",
         ] {
             assert!(
-                !json.contains(dimension),
+                json.get(dimension).is_none(),
                 "{dimension} was serialized without having assessed anything: {json}"
             );
         }
@@ -1650,11 +1654,11 @@ mod tests {
             vec![QualityDimension::Completeness, QualityDimension::Validity]
         );
 
-        let json = serde_json::to_string(&metrics).unwrap();
-        assert!(json.contains("completeness"));
-        assert!(json.contains("validity"));
-        assert!(!json.contains("consistency"));
-        assert!(!json.contains("precision"));
+        let json = serde_json::to_value(&metrics).unwrap();
+        assert!(json.get("completeness").is_some());
+        assert!(json.get("validity").is_some());
+        assert!(json.get("consistency").is_none());
+        assert!(json.get("precision").is_none());
     }
 
     #[test]

@@ -1890,7 +1890,16 @@
         },
         "score_weights": {
           "$ref": "#/$defs/QualityScoreWeights",
-          "description": "Weights behind `overall_score`. Additive field, written as the\ncanonical document writes it: default weights are omitted. Summaries\nwritten before the field existed dropped custom weights too, so its\nabsence there does not show the defaults applied."
+          "default": {
+            "accuracy": 0.15,
+            "completeness": 0.25,
+            "consistency": 0.2,
+            "precision": 0.05,
+            "timeliness": 0.1,
+            "uniqueness": 0.15,
+            "validity": 0.1
+          },
+          "description": "Weights behind `overall_score`, always written as the canonical\ndocument writes them, default weights included (#749). Summaries\nwritten before 0.13 omitted default weights, and before the field\nexisted dropped custom ones too, so its absence there does not show\nwhich weights applied."
         },
         "timeliness": {
           "anyOf": [
@@ -2157,7 +2166,16 @@
         },
         "score_weights": {
           "$ref": "#/$defs/QualityScoreWeights",
-          "description": "Weights used to aggregate dimension scores. Default weights are omitted\nfrom serialized reports; custom weights are retained for reproducible\nscore calculation after a round trip."
+          "default": {
+            "accuracy": 0.15,
+            "completeness": 0.25,
+            "consistency": 0.2,
+            "precision": 0.05,
+            "timeliness": 0.1,
+            "uniqueness": 0.15,
+            "validity": 0.1
+          },
+          "description": "Weights used to aggregate dimension scores. Always serialized, default\nweights included: a stored overall score is kept rather than\nrecomputed, so the document has to say which weights produced it even\nif a later release changes the defaults (#749). Documents written\nbefore 0.13 omit default weights, so on those an absent field does not\nshow which weights applied."
         },
         "timeliness": {
           "anyOf": [

@@ -443,11 +443,12 @@ struct PythonQualityDocument {
     /// on documents written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     score_bounds: Option<dataprof_metrics::ScoreBounds>,
-    /// Weights behind `overall_score`. Additive field, written as the
-    /// canonical document writes it: default weights are omitted. Summaries
-    /// written before the field existed dropped custom weights too, so its
-    /// absence there does not show the defaults applied.
-    #[serde(default, skip_serializing_if = "QualityScoreWeights::is_default")]
+    /// Weights behind `overall_score`, always written as the canonical
+    /// document writes them, default weights included (#749). Summaries
+    /// written before 0.13 omitted default weights, and before the field
+    /// existed dropped custom ones too, so its absence there does not show
+    /// which weights applied.
+    #[serde(default)]
     score_weights: QualityScoreWeights,
     #[serde(skip_serializing_if = "Option::is_none")]
     completeness: Option<CompletenessMetrics>,
@@ -714,6 +715,9 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
             "sampled_dimensions",
         ),
         ("/$defs/QualityAssessment/required", "scores"),
+        // Written always since 0.13 (#749), omitted at the defaults before.
+        ("/$defs/QualityMetrics/required", "score_weights"),
+        ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
     ] {
@@ -722,6 +726,22 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
             .and_then(serde_json::Value::as_array_mut)
         {
             required.retain(|declared| declared.as_str() != Some(field));
+        }
+    }
+    // A definition left with nothing required carries no `required` list.
+    if let Some(definitions) = document
+        .pointer_mut("/$defs")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for definition in definitions.values_mut() {
+            if let Some(object) = definition.as_object_mut()
+                && object
+                    .get("required")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(Vec::is_empty)
+            {
+                object.remove("required");
+            }
         }
     }
 }
@@ -1272,7 +1292,7 @@ mod tests {
     /// The weights determine the aggregate score, so a summary that drops
     /// custom ones reloads with a score its weights no longer produce.
     #[test]
-    fn summary_keeps_custom_score_weights_and_omits_defaults() {
+    fn summary_names_its_score_weights_including_defaults() {
         let summary_quality = |weights| {
             let mut metrics = QualityMetrics::empty();
             metrics.score_weights = weights;
@@ -1306,11 +1326,11 @@ mod tests {
             summary_quality(custom)["score_weights"],
             serde_json::to_value(custom).unwrap()
         );
-        // Mirrors the canonical document, so default-weight summaries are unchanged.
-        assert!(
-            summary_quality(QualityScoreWeights::default())
-                .get("score_weights")
-                .is_none()
+        // Defaults too: a stored score has to name the weights behind it in
+        // case a later release changes the defaults (#749).
+        assert_eq!(
+            summary_quality(QualityScoreWeights::default())["score_weights"],
+            serde_json::to_value(QualityScoreWeights::default()).unwrap()
         );
     }
 

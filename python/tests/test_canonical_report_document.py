@@ -201,10 +201,15 @@ def test_custom_score_weights_survive_the_flat_summary():
     assert flat.to_dict() == summary
 
 
-def test_default_score_weights_stay_out_of_both_summaries():
-    summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
-    assert "score_weights" not in summary["quality"]
-    assert "score_weights" not in dataprof.ProfileReport.from_dict(summary).to_dict()["quality"]
+def test_default_score_weights_are_written_in_both_summaries():
+    # A stored score names the weights behind it, defaults included (#749).
+    report = dataprof.profile({"x": [1, None, 3]})
+    summary = report.to_dict()
+    assert report.quality is not None
+    weights = report.quality.score_weights
+    assert summary["quality"]["score_weights"] == weights
+    reexported = dataprof.ProfileReport.from_dict(summary).to_dict()
+    assert reexported["quality"]["score_weights"] == weights
 
 
 def _weights_through_both_readers(weights):
@@ -267,8 +272,9 @@ def test_malformed_flat_score_weights_are_rejected_not_defaulted(weights):
 
 
 def test_absent_flat_score_weights_are_the_defaults():
+    # A summary written before 0.13 omitted default weights.
     summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
-    assert "score_weights" not in summary["quality"]
+    del summary["quality"]["score_weights"]
     flat = dataprof.ProfileReport.from_dict(summary).quality
     live = dataprof.profile({"x": [1]}).quality
     assert flat is not None and live is not None
