@@ -40,7 +40,9 @@ use dataprof_core::{ColumnProfile, DataType, PatternCategory};
 use dataprof_metrics::QualityAssessment;
 
 use crate::profile_report::ProfileReport;
-use crate::quality_gate::quality_status_name;
+use crate::quality_gate::{
+    Evidence, EvidenceGap, Provenance, quality_status_name, sampled_component_evidence,
+};
 
 /// Default for [`FindingPolicy::null_heavy_percentage`]. Matches the
 /// `null-heavy` flag in the Python binding's `to_llm_context()`.
@@ -761,20 +763,26 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
 /// A count from the retained quality sample, or from a report that does not
 /// record where its counts came from, rules nothing out for the rows it did
 /// not see, so the rule is listed rather than read as clean. A nonzero count
-/// never reaches here: rows already witnessed stay witnessed. The component
-/// labels are the ones the quality gate resolves provenance by.
+/// never reaches here: rows already witnessed stay witnessed. Coverage is
+/// resolved by the quality gate's rule, so a finding and a check never
+/// disagree about one component.
 fn skip_unless_complete(
     out: &mut Collector,
     code: FindingCode,
     quality: &QualityAssessment,
-    component: &str,
+    component: &'static str,
 ) {
-    match quality.sampled_dimensions() {
-        None => out.skip_report(code, NotEvaluatedReason::Unrecorded),
-        Some(sampled) if sampled.iter().any(|label| label == component) => {
-            out.skip_report(code, NotEvaluatedReason::Sampled)
-        }
-        Some(_) => {}
+    let coverage = sampled_component_evidence(
+        quality.sampled_dimensions().as_deref(),
+        &quality.metrics.assessed_dimensions(),
+        Provenance::Component(component),
+    );
+    match coverage {
+        Evidence::Complete => {}
+        Evidence::Incomplete {
+            reason: EvidenceGap::QualitySampled,
+        } => out.skip_report(code, NotEvaluatedReason::Sampled),
+        Evidence::Incomplete { .. } => out.skip_report(code, NotEvaluatedReason::Unrecorded),
     }
 }
 

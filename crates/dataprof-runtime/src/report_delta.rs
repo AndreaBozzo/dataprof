@@ -58,8 +58,7 @@ use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{MetricSemantics, ProfileReport};
 use crate::quality_gate::{
-    Evidence, EvidenceGap, Provenance, dimension_components, sampled_component_evidence,
-    scan_coverage, scan_evidence,
+    Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
 };
 
 /// The same fact about each side of a comparison.
@@ -367,24 +366,6 @@ fn first_of_each_name(
         .collect()
 }
 
-/// The overall score's coverage when `sampled` names a component this build
-/// does not know: a dimension a later release added, whose weight is in the
-/// stored overall score. Nothing rules out that it reaches the score, so the
-/// score is not certified; `None` when every sampled label is known.
-fn unknown_component_coverage(sampled: Option<&[String]>) -> Option<Evidence> {
-    let known = |label: &String| {
-        QualityDimension::all()
-            .into_iter()
-            .flat_map(dimension_components)
-            .any(|component| component == label)
-    };
-    sampled
-        .is_some_and(|labels| !labels.iter().all(known))
-        .then_some(Evidence::Incomplete {
-            reason: EvidenceGap::CoverageUnrecorded,
-        })
-}
-
 /// A number at its serialized precision; a non-finite one serializes as
 /// null, so it is no number at all.
 fn at_precision(value: Option<f64>) -> Option<f64> {
@@ -434,8 +415,7 @@ impl ReportSide {
                 evidence: scan,
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
-            overall_evidence: unknown_component_coverage(sampled.clone().flatten().as_deref())
-                .map_or_else(|| evidence(Provenance::Overall), |gap| scan.and(gap)),
+            overall_evidence: evidence(Provenance::Overall),
             dimensions,
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
                 let pct = (column.total_count > 0)
@@ -482,7 +462,7 @@ impl ReportSide {
                 .iter()
                 // A dimension a later release added is dropped here: when it
                 // was sampled, its component label is unknown and
-                // `unknown_component_coverage` leaves the overall score
+                // `sampled_component_evidence` leaves the overall score
                 // unrecorded; when it was exact it changes no coverage.
                 .filter_map(|name| name.parse().ok())
                 .collect();
@@ -532,10 +512,7 @@ impl ReportSide {
                 evidence: scan,
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
-            overall_evidence: unknown_component_coverage(
-                quality.and_then(|quality| quality.sampled_dimensions.as_deref()),
-            )
-            .map_or_else(|| evidence(Provenance::Overall), |gap| scan.and(gap)),
+            overall_evidence: evidence(Provenance::Overall),
             dimensions,
             columns: first_of_each_name(
                 summary

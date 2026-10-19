@@ -1228,6 +1228,14 @@ pub(crate) fn dimension_components(dimension: QualityDimension) -> &'static [&'s
     }
 }
 
+/// Whether `label` names a component of a dimension this build knows.
+fn is_known(label: &str) -> bool {
+    QualityDimension::all()
+        .into_iter()
+        .flat_map(dimension_components)
+        .any(|component| *component == label)
+}
+
 /// Whether the number a check reads came from every scanned row or from a
 /// retained sample of them.
 ///
@@ -1249,7 +1257,9 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
 /// [`quality_evidence`] over the recorded facts it reads: the sampled
 /// component labels (`None` when the report did not record them) and the
 /// dimensions the overall score weighs. A report delta reads the same facts
-/// from a flat summary, which has no [`QualityAssessment`] behind it.
+/// from a flat summary, which has no [`QualityAssessment`] behind it, and
+/// findings read one component through it, so the gate, the delta and
+/// findings resolve coverage by one rule.
 pub(crate) fn sampled_component_evidence(
     sampled: Option<&[String]>,
     assessed: &[QualityDimension],
@@ -1260,6 +1270,15 @@ pub(crate) fn sampled_component_evidence(
             reason: EvidenceGap::CoverageUnrecorded,
         };
     };
+    // A sampled label this build does not know belongs to a dimension a
+    // later release added. Its weight is in the stored overall score, and
+    // its dimension was dropped when the report was read, so nothing here
+    // rules out that it reaches the score: the score is not certified.
+    if matches!(provenance, Provenance::Overall) && !sampled.iter().all(|label| is_known(label)) {
+        return Evidence::Incomplete {
+            reason: EvidenceGap::CoverageUnrecorded,
+        };
+    }
     let contains = |component: &str| sampled.iter().any(|label| label == component);
     let is_sampled = match provenance {
         // The overall score is a weighted average over the *assessed*
