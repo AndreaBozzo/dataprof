@@ -774,6 +774,7 @@ fn skip_unless_complete(
 ) {
     let coverage = sampled_component_evidence(
         quality.sampled_dimensions().as_deref(),
+        &quality.unlisted_components(),
         &quality.metrics.assessed_dimensions(),
         Provenance::Component(component),
     );

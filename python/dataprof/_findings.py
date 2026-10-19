@@ -507,10 +507,12 @@ def _skip_unless_complete(
     A count from the retained quality sample, or from a report that does not
     record where its counts came from, rules nothing out for the rows it did
     not see, so the rule is listed rather than read as clean. The component
-    labels are the ones the quality gate resolves provenance by.
+    labels are the ones the quality gate resolves provenance by, and so is
+    the order: a component with signal that neither recorded list names has
+    unrecorded coverage before anything is read as sampled.
     """
     sampled = report.quality_sampled_dimensions
-    if sampled is None:
+    if sampled is None or component in report._quality_unlisted_components:
         out.skip_report(code, {"reason": "unrecorded"})
     elif component in sampled:
         out.skip_report(code, {"reason": "sampled"})

@@ -1052,7 +1052,12 @@ answer the same way for such a report. The same holds for the overall score
 of a report written by a later release that sampled a dimension this release
 does not know: that dimension's weight is in the stored score, so
 `min_quality_score` and `compare()` both read it as `coverage_unrecorded`,
-while each known dimension keeps its own coverage.
+while each known dimension keeps its own coverage. A component the report
+computed but lists neither as exact nor as sampled has no recorded coverage
+either: `check()`, `compare()` and `findings()` read it, and any score that
+weighs it, as `coverage_unrecorded`. No release writes such a report; a
+flat `to_dict()` summary records no exact list, so it keeps reading a
+component that is not sampled as exact.
 
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
