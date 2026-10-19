@@ -321,6 +321,7 @@ fn serialization_is_deterministic_and_ordered() {
             "dimensions",
             "columns",
             "metric_semantics",
+            "configuration",
             "schema",
             "reports"
         ]
@@ -394,4 +395,157 @@ fn a_sampled_component_this_build_does_not_know_leaves_the_overall_unrecorded() 
             .gap(),
         Some(EvidenceGap::CoverageUnrecorded)
     );
+}
+
+/// A setting that moves a score on unchanged data is listed on both sides,
+/// so a policy can tell a configuration change from a change in the data.
+#[test]
+fn configuration_lists_each_setting_and_whether_the_sides_agree() {
+    let file = csv("v\n-3\n-1\n2\n4\n");
+    let plain = Profiler::new().analyze_file(file.path()).unwrap();
+    let hinted = Profiler::new()
+        .positive_columns(vec!["v".to_string()])
+        .analyze_file(file.path())
+        .unwrap();
+
+    let delta = ReportDelta::between(&plain, &hinted);
+    let hints = &delta.configuration.semantic_hints;
+    assert_eq!(hints.same, Some(false));
+    assert!(hints.a.as_ref().unwrap().positive_columns.is_empty());
+    assert_eq!(hints.b.as_ref().unwrap().positive_columns, ["v"]);
+    assert_eq!(delta.configuration.score_weights.same, Some(true));
+    // The definitions agree, so that check alone would call the drop a change
+    // in the data.
+    assert_eq!(delta.metric_semantics.comparable, Some(true));
+    assert!(delta.quality_score.abs.is_some_and(|abs| abs < 0.0));
+
+    let same = ReportDelta::between(&plain, &plain).configuration;
+    assert_eq!(
+        (same.score_weights.same, same.semantic_hints.same),
+        (Some(true), Some(true))
+    );
+
+    // A repeated temporal column is scanned twice and moves the score
+    // (#1004), so the repetition is a different configuration.
+    let dated = csv("old,new
+2001-01-01,2026-10-01
+2002-01-01,2026-10-02
+");
+    let temporal = |columns: &[&str]| {
+        Profiler::new()
+            .temporal_columns(columns.iter().map(|name| name.to_string()).collect())
+            .analyze_file(dated.path())
+            .unwrap()
+    };
+    let repeated = ReportDelta::between(
+        &temporal(&["old", "new"]),
+        &temporal(&["old", "old", "new"]),
+    );
+    assert_eq!(repeated.configuration.semantic_hints.same, Some(false));
+    assert_eq!(
+        repeated
+            .configuration
+            .semantic_hints
+            .b
+            .unwrap()
+            .temporal_columns,
+        ["new", "old", "old"]
+    );
+
+    // No public option sets weights; a document written elsewhere can.
+    let mut document = serde_json::to_value(&plain).unwrap();
+    document["quality"]["metrics"]["score_weights"] = json!({"completeness": 1.0});
+    let reweighted: ProfileReport = serde_json::from_value(document).unwrap();
+    let weights = ReportDelta::between(&plain, &reweighted)
+        .configuration
+        .score_weights;
+    assert_eq!(weights.same, Some(false));
+}
+
+/// What each era of flat summary records, and what it leaves unknown.
+#[test]
+fn a_summary_records_the_settings_its_release_recorded() {
+    let report = profile(CLEAN);
+    let current: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    let side = |edit: &dyn Fn(&mut Value)| {
+        let mut summary = current.clone();
+        edit(&mut summary);
+        let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        ReportDelta::between_sides(&side, &ReportSide::from_report(&report)).configuration
+    };
+
+    let mut wrong = Vec::new();
+    // (case, edit to the summary, weights same, hints same)
+    type Case<'a> = (&'a str, &'a dyn Fn(&mut Value), Option<bool>, Option<bool>);
+    let cases: [Case; 5] = [
+        ("as written", &|_| {}, Some(true), Some(true)),
+        (
+            "custom weights recorded",
+            &|summary| summary["quality"]["score_weights"] = json!({"completeness": 1.0}),
+            Some(false),
+            Some(true),
+        ),
+        (
+            // 0.12 omitted default weights and recorded metric_semantics.
+            "0.12: default weights omitted",
+            &|summary| {
+                summary["quality"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("score_weights");
+            },
+            Some(true),
+            Some(true),
+        ),
+        (
+            // 0.10 and 0.11 recorded neither, and could drop custom weights.
+            "0.11: no weights, no metric_semantics",
+            &|summary| {
+                summary["quality"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("score_weights");
+                summary.as_object_mut().unwrap().remove("metric_semantics");
+            },
+            None,
+            Some(true),
+        ),
+        (
+            "before 0.10: no schema_version",
+            &|summary| {
+                summary.as_object_mut().unwrap().remove("schema_version");
+            },
+            Some(true),
+            None,
+        ),
+    ];
+    for (case, edit, weights, hints) in cases {
+        let configuration = side(edit);
+        let got = (
+            configuration.score_weights.same,
+            configuration.semantic_hints.same,
+        );
+        if got != (weights, hints) {
+            wrong.push(format!(
+                "{case}: read {got:?}, expected {:?}",
+                (weights, hints)
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A canonical document from before schema versioning recorded no hints.
+#[test]
+fn a_document_from_before_0_10_leaves_its_hints_unrecorded() {
+    let report = profile(CLEAN);
+    let mut document = serde_json::to_value(&report).unwrap();
+    document.as_object_mut().unwrap().remove("schema_version");
+    let legacy: ProfileReport = serde_json::from_value(document).unwrap();
+    assert_eq!(legacy.schema_version, 0);
+
+    let hints = ReportDelta::between(&legacy, &report)
+        .configuration
+        .semantic_hints;
+    assert_eq!((hints.a.is_none(), hints.same), (true, None));
 }

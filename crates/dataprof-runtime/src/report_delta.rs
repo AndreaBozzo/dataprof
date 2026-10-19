@@ -29,6 +29,13 @@
 //!   both reports record every definition this build knows, with the same
 //!   values. A difference in a measurement whose definition changed between
 //!   releases is not a difference in the data.
+//! - **Configuration.** `configuration` lists each recorded setting that moves
+//!   a score on unchanged data (the score weights, the semantic hints) on both
+//!   sides, with `same`: `Some(true)` when both recorded it and agree,
+//!   `Some(false)` when they differ, `None` when either did not record it.
+//!   Configuration is not comparability: a score that moved under a different
+//!   setting may not reflect a change in the data. Each policy reads only the
+//!   settings it depends on.
 //!
 //! Nothing here decides whether a change is acceptable; that is a policy's
 //! job. A window-over-window comparison reuses the same vocabulary: `a` and
@@ -52,8 +59,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use dataprof_core::QualityDimension;
 use dataprof_core::serde_helpers::rounded_2;
+use dataprof_core::{QualityDimension, QualityScoreWeights, SemanticHintBinding, SemanticHintKind};
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{MetricSemantics, ProfileReport};
@@ -170,6 +177,84 @@ pub struct SemanticsComparison {
     pub comparable: Option<bool>,
 }
 
+/// One recorded setting on each side, and whether the two agree.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct SettingComparison<T> {
+    /// What `a` recorded, or `None` when it did not record the setting.
+    pub a: Option<T>,
+    /// What `b` recorded.
+    pub b: Option<T>,
+    /// `Some(true)` when both recorded the setting and it is the same,
+    /// `Some(false)` when it differs, `None` when either side did not
+    /// record it.
+    pub same: Option<bool>,
+}
+
+impl<T: PartialEq> SettingComparison<T> {
+    fn new(a: Option<T>, b: Option<T>) -> Self {
+        let same = match (&a, &b) {
+            (Some(left), Some(right)) => Some(left == right),
+            _ => None,
+        };
+        Self { a, b, same }
+    }
+}
+
+/// The semantic hints a report recorded, by the configuration field that
+/// carries each, read from its hint bindings.
+///
+/// Each list is sorted and keeps repetitions: a column named twice in
+/// `temporal_columns` is scanned twice and moves the timeliness score
+/// (#1004), so two reports that differ only by a repetition are not the same
+/// configuration.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct RecordedHints {
+    /// Columns named by `positive_columns`, sorted.
+    pub positive_columns: Vec<String>,
+    /// Columns named by `identifier_columns`, sorted.
+    pub identifier_columns: Vec<String>,
+    /// Columns named by `temporal_columns`, sorted.
+    pub temporal_columns: Vec<String>,
+    /// Columns named by `temporal_pairs`, sorted. A report records which
+    /// columns the pairs named, not which column pairs with which.
+    pub temporal_pair_columns: Vec<String>,
+}
+
+impl RecordedHints {
+    fn from_bindings(bindings: &[SemanticHintBinding]) -> Self {
+        let columns = |kind: SemanticHintKind| {
+            let mut names: Vec<String> = bindings
+                .iter()
+                .filter(|binding| binding.kind == kind)
+                .map(|binding| binding.column.clone())
+                .collect();
+            names.sort();
+            names
+        };
+        Self {
+            positive_columns: columns(SemanticHintKind::Positive),
+            identifier_columns: columns(SemanticHintKind::Identifier),
+            temporal_columns: columns(SemanticHintKind::Temporal),
+            temporal_pair_columns: columns(SemanticHintKind::TemporalPair),
+        }
+    }
+}
+
+/// The recorded settings that move a score on unchanged data, on each side.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct ConfigurationComparison {
+    /// The weights behind the overall score. `None` on a side with no quality
+    /// assessment, or on a flat summary written before 0.12, which could drop
+    /// custom weights.
+    pub score_weights: SettingComparison<QualityScoreWeights>,
+    /// The semantic hints. `None` on a side written before 0.10, which did
+    /// not record them.
+    pub semantic_hints: SettingComparison<RecordedHints>,
+}
+
 /// Which columns each side has.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[non_exhaustive]
@@ -199,6 +284,8 @@ pub struct ReportDelta {
     pub columns: Vec<ColumnChange>,
     /// Whether the two reports measured the same way.
     pub metric_semantics: SemanticsComparison,
+    /// The settings each report was profiled with that move its scores.
+    pub configuration: ConfigurationComparison,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
     /// Which two reports were compared.
@@ -292,6 +379,13 @@ impl ReportDelta {
                 b: b.metric_semantics.clone(),
                 comparable,
             },
+            configuration: ConfigurationComparison {
+                score_weights: SettingComparison::new(a.score_weights, b.score_weights),
+                semantic_hints: SettingComparison::new(
+                    a.semantic_hints.clone(),
+                    b.semantic_hints.clone(),
+                ),
+            },
             schema: SchemaChange {
                 added,
                 removed,
@@ -344,6 +438,8 @@ pub struct ReportSide {
     dimensions: Vec<DimensionSide>,
     columns: Vec<(String, Option<f64>)>,
     metric_semantics: Option<MetricSemantics>,
+    score_weights: Option<QualityScoreWeights>,
+    semantic_hints: Option<RecordedHints>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -427,6 +523,15 @@ impl ReportSide {
                 (column.name.clone(), at_precision(pct))
             })),
             metric_semantics: report.metric_semantics.clone(),
+            // The weights behind the score this build reports: recorded, or
+            // the defaults, which did not change from 0.10 (when weights
+            // became configurable) to 0.12, and which a document written
+            // before 0.10 has its scores recomputed with.
+            score_weights: quality.map(|assessment| assessment.metrics.score_weights),
+            // Bindings are recorded from 0.10 (schema version 1) on, and an
+            // empty list there means no hints were given.
+            semantic_hints: (report.schema_version >= 1)
+                .then(|| RecordedHints::from_bindings(&report.semantic_hint_bindings)),
         }
     }
 
@@ -528,6 +633,20 @@ impl ReportSide {
                     .into_iter()
                     .map(|column| (column.name, at_precision(column.null_percentage))),
             ),
+            // A 0.12 summary, the first to record `metric_semantics`, omitted
+            // only default weights; earlier ones could drop custom weights too.
+            score_weights: quality.and_then(|quality| {
+                quality.score_weights.or_else(|| {
+                    summary
+                        .metric_semantics
+                        .is_some()
+                        .then(QualityScoreWeights::default)
+                })
+            }),
+            semantic_hints: summary
+                .schema_version
+                .is_some_and(|version| version >= 1)
+                .then(|| RecordedHints::from_bindings(&summary.semantic_hint_bindings)),
             metric_semantics: summary.metric_semantics,
         })
     }
@@ -543,6 +662,11 @@ struct Summary {
     quality: Option<SummaryQuality>,
     #[serde(default)]
     metric_semantics: Option<MetricSemantics>,
+    /// Absent before 0.10, whose summaries did not record hints either.
+    #[serde(default)]
+    schema_version: Option<u32>,
+    #[serde(default)]
+    semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
 
 #[derive(serde::Deserialize)]
@@ -570,6 +694,10 @@ struct SummaryQuality {
     /// Absent in a summary written before dataprof recorded it, which reads
     /// as unrecorded coverage, never as "nothing was sampled".
     sampled_dimensions: Option<Vec<String>>,
+    /// Written whatever the weights since 0.13; a 0.12 summary omitted only
+    /// the defaults, and earlier ones did not record them.
+    #[serde(default)]
+    score_weights: Option<QualityScoreWeights>,
 }
 
 #[cfg(test)]

@@ -39,8 +39,9 @@ pub use quality_gate::{
 };
 pub use report_assembler::ReportAssembler;
 pub use report_delta::{
-    ColumnChange, DimensionChange, ReportDelta, ReportReference, ReportSide, SchemaChange,
-    ScoreChange, SemanticsComparison, Sides,
+    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
+    ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
+    Sides,
 };
 pub use streaming_stats::{
     RowCompletenessTracker, RowSignature, RowUniquenessTracker, StreamReservoirSampler,

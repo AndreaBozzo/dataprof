@@ -66,8 +66,9 @@ pub use dataprof_runtime::{
     UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
-    ColumnChange, DimensionChange, ReportDelta, ReportReference, ReportSide, SchemaChange,
-    ScoreChange, SemanticsComparison, Sides,
+    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
+    ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
+    Sides,
 };
 
 #[cfg(feature = "async-streaming")]
