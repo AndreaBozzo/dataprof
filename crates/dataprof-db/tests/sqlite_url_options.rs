@@ -96,6 +96,8 @@ async fn sqlite_explicit_url_default_env_child() {
     let path = dir.path().join("explicit-default-rwc.db");
     let mut connector = create_connector(DatabaseConfig {
         connection_string: sqlite_url(&path, "rwc"),
+        // Exercise environment loading even if DatabaseConfig defaults change.
+        load_credentials_from_env: true,
         ..Default::default()
     })
     .unwrap();
