@@ -242,17 +242,17 @@ impl AsyncStreamingProfiler {
         match format {
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {}
             _ => {
-                return Err(DataProfilerError::StreamingError {
-                    message: format!(
+                return Err(DataProfilerError::streaming_with_suggestion(
+                    format!(
                         "AsyncStreamingProfiler does not support {:?} format",
                         format
                     ),
-                    suggestion: format!(
+                    format!(
                         "This profiler streams CSV, JSON and JSONL; \
                          profile {:?} with the synchronous profiler instead",
                         format
                     ),
-                });
+                ));
             }
         }
 
@@ -279,9 +279,11 @@ impl AsyncStreamingProfiler {
                     Ok::<_, DataProfilerError>((data, count))
                 })
                 .await
-                .map_err(|error| DataProfilerError::StreamingError {
-                    message: format!("Row counter task failed: {error}"),
-                    suggestion: "Retry profiling the source".into(),
+                .map_err(|error| {
+                    DataProfilerError::streaming_with_suggestion(
+                        format!("Row counter task failed: {error}"),
+                        "Retry profiling the source",
+                    )
                 })??;
                 let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>> =
                     Box::pin(std::io::Cursor::new(data));
@@ -368,10 +370,10 @@ impl AsyncStreamingProfiler {
                 ReaderOutcome::default()
             }
             Err(join_err) => {
-                return Err(DataProfilerError::StreamingError {
-                    message: format!("Reader task panicked: {}", join_err),
-                    suggestion: String::new(),
-                });
+                return Err(DataProfilerError::streaming_error(&format!(
+                    "Reader task panicked: {}",
+                    join_err
+                )));
             }
         };
 
@@ -1094,13 +1096,12 @@ impl AsyncStreamingProfiler {
         let mut truncation_reason: Option<TruncationReason> = None;
 
         // First chunk is always headers
-        let header_chunk = rx
-            .recv()
-            .await
-            .ok_or_else(|| DataProfilerError::StreamingError {
-                message: "Stream ended before any data was received".to_string(),
-                suggestion: "Check that the source is reachable and not empty".to_string(),
-            })?;
+        let header_chunk = rx.recv().await.ok_or_else(|| {
+            DataProfilerError::streaming_with_suggestion(
+                "Stream ended before any data was received",
+                "Check that the source is reachable and not empty",
+            )
+        })?;
 
         total_bytes += header_chunk.bytes_read;
         // The header is source bytes read, as the file engine counts it, so a
@@ -1109,10 +1110,10 @@ impl AsyncStreamingProfiler {
         stop_eval.update(0, header_chunk.bytes_read, 0.0);
 
         if header_chunk.records.is_empty() {
-            return Err(DataProfilerError::StreamingError {
-                message: "Stream header chunk was empty".to_string(),
-                suggestion: "Check that the source is reachable and not empty".to_string(),
-            });
+            return Err(DataProfilerError::streaming_with_suggestion(
+                "Stream header chunk was empty",
+                "Check that the source is reachable and not empty",
+            ));
         }
 
         // decode-audit: impossible — `records` was checked non-empty above.

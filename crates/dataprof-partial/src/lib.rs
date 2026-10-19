@@ -649,10 +649,10 @@ fn infer_schema_from_reader<R: Read>(
         FileFormat::Json | FileFormat::Jsonl => {
             infer_schema_from_json_reader(BufReader::new(reader), format)
         }
-        FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet schema inference requires random access".into(),
-            suggestion: "Use infer_schema() with a file path instead".into(),
-        }),
+        FileFormat::Parquet => Err(DataProfilerError::streaming_with_suggestion(
+            "Parquet schema inference requires random access",
+            "Use infer_schema() with a file path instead",
+        )),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
         }),
@@ -739,10 +739,10 @@ fn count_from_reader<R: Read>(
                 relative_error: None,
             })
         }
-        FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet row counting requires random access".into(),
-            suggestion: "Use quick_row_count() with a file path instead".into(),
-        }),
+        FileFormat::Parquet => Err(DataProfilerError::streaming_with_suggestion(
+            "Parquet row counting requires random access",
+            "Use quick_row_count() with a file path instead",
+        )),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
         }),
@@ -1357,9 +1357,8 @@ pub async fn infer_schema_async<P: AsRef<Path> + Send + 'static>(
 ) -> Result<SchemaResult, DataProfilerError> {
     tokio::task::spawn_blocking(move || infer_schema(path))
         .await
-        .map_err(|e| DataProfilerError::StreamingError {
-            message: format!("Schema inference task failed: {}", e),
-            suggestion: String::new(),
+        .map_err(|e| {
+            DataProfilerError::streaming_error(&format!("Schema inference task failed: {}", e))
         })?
 }
 
@@ -1369,10 +1368,7 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
 ) -> Result<RowCountEstimate, DataProfilerError> {
     tokio::task::spawn_blocking(move || quick_row_count(path))
         .await
-        .map_err(|e| DataProfilerError::StreamingError {
-            message: format!("Row count task failed: {}", e),
-            suggestion: String::new(),
-        })?
+        .map_err(|e| DataProfilerError::streaming_error(&format!("Row count task failed: {}", e)))?
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,9 +1411,8 @@ pub async fn infer_schema_stream(
         infer_schema_from_reader(sync_reader, &format, has_header)
     })
     .await
-    .map_err(|e| DataProfilerError::StreamingError {
-        message: format!("Schema inference task failed: {}", e),
-        suggestion: String::new(),
+    .map_err(|e| {
+        DataProfilerError::streaming_error(&format!("Schema inference task failed: {}", e))
     })??;
 
     result.inference_time_ms = start.elapsed().as_millis();
@@ -1457,9 +1452,8 @@ pub async fn quick_row_count_stream(
 
     let mut result = tokio::task::spawn_blocking(move || count_from_reader(sync_reader, &format))
         .await
-        .map_err(|e| DataProfilerError::StreamingError {
-            message: format!("Row count task failed: {}", e),
-            suggestion: String::new(),
+        .map_err(|e| {
+            DataProfilerError::streaming_error(&format!("Row count task failed: {}", e))
         })??;
 
     result.count_time_ms = start.elapsed().as_millis();

@@ -31,13 +31,6 @@ fn suggestion_line(suggestion: &str) -> String {
     }
 }
 
-fn io_diagnostic(message: &str, diagnostic: &Option<Box<DataProfilerError>>) -> String {
-    diagnostic
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("I/O error: {message}\nCheck file permissions and disk space"))
-}
-
 /// Redact credentials from a string before it enters an error message.
 ///
 /// Connection strings and driver errors can carry `scheme://user:password@host`.
@@ -117,16 +110,20 @@ pub enum DataProfilerError {
     InvalidSemanticHint { message: String, suggestion: String },
 
     #[error("Streaming processing failed: {message}{}", suggestion_line(.suggestion))]
-    StreamingError { message: String, suggestion: String },
+    #[non_exhaustive]
+    StreamingError {
+        message: String,
+        suggestion: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
-    #[error("{}", io_diagnostic(.message, .diagnostic))]
+    #[error("I/O error: {message}\nCheck file permissions and disk space")]
     #[non_exhaustive]
     IoError {
         message: String,
         #[source]
         source: Option<ErrorSource>,
-        /// An existing diagnostic to preserve when retaining an I/O source.
-        diagnostic: Option<Box<DataProfilerError>>,
     },
 
     #[error(
@@ -420,9 +417,37 @@ impl DataProfilerError {
 
     /// Create streaming error with context
     pub fn streaming_error(message: &str) -> Self {
+        Self::streaming_with_suggestion(message, "")
+    }
+
+    /// Create a streaming error with an actionable suggestion and no source.
+    ///
+    /// An empty suggestion means there is no remedy to offer the caller.
+    pub fn streaming_with_suggestion(
+        message: impl Into<String>,
+        suggestion: impl Into<String>,
+    ) -> Self {
         DataProfilerError::StreamingError {
-            message: message.to_string(),
-            suggestion: String::new(),
+            message: message.into(),
+            suggestion: suggestion.into(),
+            source: None,
+        }
+    }
+
+    /// Create a streaming error that retains `original` without changing its
+    /// contextual message, suggestion, or streaming category.
+    pub fn streaming_with_source<E>(
+        message: impl Into<String>,
+        suggestion: impl Into<String>,
+        original: E,
+    ) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::StreamingError {
+            message: message.into(),
+            suggestion: suggestion.into(),
+            source: Some(Box::new(original)),
         }
     }
 
@@ -436,7 +461,6 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: original.to_string(),
             source: Some(Box::new(original)),
-            diagnostic: None,
         }
     }
 
@@ -447,7 +471,6 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: message.to_string(),
             source: None,
-            diagnostic: None,
         }
     }
 
@@ -549,23 +572,6 @@ impl DataProfilerError {
         DataProfilerError::IoError {
             message: message.into(),
             source: Some(Box::new(original)),
-            diagnostic: None,
-        }
-    }
-
-    /// Retain an I/O source without changing an existing, contextual diagnostic.
-    ///
-    /// Remote readers have transport-specific advice rather than the default
-    /// local-file permissions remedy. Keep that diagnostic verbatim while
-    /// making the originating error available through `Error::source`.
-    pub fn io_with_diagnostic<E>(diagnostic: DataProfilerError, original: E) -> Self
-    where
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        DataProfilerError::IoError {
-            message: original.to_string(),
-            source: Some(Box::new(original)),
-            diagnostic: Some(Box::new(diagnostic)),
         }
     }
 
@@ -603,10 +609,6 @@ impl DataProfilerError {
     /// the message) should read it here rather than parse the formatted output.
     pub fn suggestion(&self) -> Option<String> {
         match self {
-            DataProfilerError::IoError {
-                diagnostic: Some(diagnostic),
-                ..
-            } => diagnostic.suggestion(),
             DataProfilerError::CsvParsingError { suggestion, .. }
             | DataProfilerError::InvalidConfiguration { suggestion, .. }
             | DataProfilerError::InvalidSemanticHint { suggestion, .. }
@@ -703,7 +705,6 @@ impl From<anyhow::Error> for DataProfilerError {
             DataProfilerError::IoError {
                 message: error_str,
                 source,
-                diagnostic: None,
             }
         }
     }
@@ -729,7 +730,6 @@ impl From<std::io::Error> for DataProfilerError {
         DataProfilerError::IoError {
             message,
             source: Some(Box::new(err)),
-            diagnostic: None,
         }
     }
 }
@@ -762,34 +762,6 @@ impl From<serde_json::Error> for DataProfilerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn contextual_io_error_preserves_diagnostic_suggestion_and_concrete_source() {
-        use std::error::Error as _;
-
-        let diagnostic = DataProfilerError::StreamingError {
-            message: "HTTP request failed: connection refused".into(),
-            suggestion: "Check the URL and network connectivity".into(),
-        };
-        let expected = diagnostic.to_string();
-        let suggestion = diagnostic.suggestion();
-        let error = DataProfilerError::io_with_diagnostic(
-            diagnostic,
-            std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
-        );
-        assert_eq!(error.to_string(), expected);
-        assert_eq!(error.suggestion(), suggestion);
-        assert_eq!(error.category(), "io");
-        assert_eq!(
-            error
-                .source()
-                .unwrap()
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .kind(),
-            std::io::ErrorKind::ConnectionRefused
-        );
-    }
 
     #[test]
     fn ordinary_io_constructors_keep_their_original_diagnostic() {
@@ -829,14 +801,12 @@ mod tests {
 
     #[test]
     fn streaming_error_without_suggestion_prints_no_stale_advice() {
-        let err = DataProfilerError::StreamingError {
-            message: "Reader task panicked: boxed error".to_string(),
-            suggestion: String::new(),
-        };
+        let err = DataProfilerError::streaming_error("Reader task panicked: boxed error");
         let msg = err.to_string();
         assert!(msg.contains("Reader task panicked"));
         assert!(!msg.contains("chunk size"), "stale remedy leaked: {msg}");
         assert!(err.suggestion().is_none());
+        assert!(std::error::Error::source(&err).is_none());
         // No remedy means no line for one: an unconditional "\n{suggestion}"
         // leaves the message ending in a bare newline, which surfaces in Python
         // as a blank line under the error.
@@ -852,10 +822,10 @@ mod tests {
 
     #[test]
     fn streaming_error_with_suggestion_prints_the_remedy_exactly_once() {
-        let err = DataProfilerError::StreamingError {
-            message: "Parquet schema inference requires random access".to_string(),
-            suggestion: "Use infer_schema() with a file path instead".to_string(),
-        };
+        let err = DataProfilerError::streaming_with_suggestion(
+            "Parquet schema inference requires random access",
+            "Use infer_schema() with a file path instead",
+        );
         let msg = err.to_string();
         assert!(msg.contains("random access"), "{msg}");
         assert_eq!(

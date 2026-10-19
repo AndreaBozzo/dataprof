@@ -1130,9 +1130,8 @@ impl Profiler {
             .await
             // A JoinError means the blocking task panicked or was cancelled;
             // nothing the caller can change about the call avoids it.
-            .map_err(|e| DataProfilerError::StreamingError {
-                message: format!("Blocking task failed: {e}"),
-                suggestion: String::new(),
+            .map_err(|e| {
+                DataProfilerError::streaming_error(&format!("Blocking task failed: {e}"))
             })??;
             self.validate_semantic_hints(&report)?;
             Ok(report)
@@ -1196,13 +1195,12 @@ impl Profiler {
                         )
                     })
                     .await
-                    .map_err(|e| DataProfilerError::StreamingError {
+                    .map_err(|e| {
                         // A JoinError means the blocking task panicked or was
                         // cancelled; there is nothing the caller can change
                         // about the call to avoid it, so offer no remedy —
                         // the same answer the other JoinError sites give.
-                        message: format!("Blocking task failed: {e}"),
-                        suggestion: String::new(),
+                        DataProfilerError::streaming_error(&format!("Blocking task failed: {e}"))
                     })??;
                     self.validate_semantic_hints(&report)?;
                     Ok(report)
@@ -1331,19 +1329,19 @@ impl Profiler {
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
                 let response = reqwest::get(url).await.map_err(|e| {
-                    let diagnostic = DataProfilerError::StreamingError {
-                        message: format!("HTTP request failed: {e}"),
-                        suggestion: "Check the URL and network connectivity".to_string(),
-                    };
-                    DataProfilerError::io_with_diagnostic(diagnostic, e)
+                    DataProfilerError::streaming_with_source(
+                        format!("HTTP request failed: {e}"),
+                        "Check the URL and network connectivity",
+                        e,
+                    )
                 })?;
 
                 let status = response.status();
                 if !status.is_success() {
-                    return Err(DataProfilerError::StreamingError {
-                        message: format!("HTTP {status} for {url}"),
-                        suggestion: "Check that the URL is public and the server is up".to_string(),
-                    });
+                    return Err(DataProfilerError::streaming_with_suggestion(
+                        format!("HTTP {status} for {url}"),
+                        "Check that the URL is public and the server is up",
+                    ));
                 }
 
                 let size_hint = response.content_length();

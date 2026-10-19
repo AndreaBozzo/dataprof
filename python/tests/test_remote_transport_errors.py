@@ -197,7 +197,10 @@ def test_reset_while_reading_the_body_is_an_oserror(remote_server, extension):
     kwargs = {"csv_delimiter": ","} if extension == "csv" else {}
     with pytest.raises(OSError) as caught:
         _profile(f"{remote_server}/reset.{extension}", **kwargs)
-    assert list(_causes(caught.value)), "a read failure must retain its originating error"
+    messages = [str(cause) for cause in _causes(caught.value)]
+    assert messages, "a read failure must retain its originating error"
+    assert all(outer != inner for outer, inner in zip(messages, messages[1:])), messages
+    assert "(os error " in messages[-1], "deduplication must still reach the OS failure"
     if extension == "parquet":
         assert str(caught.value).startswith(
             "Analysis failed: Parquet processing failed: Failed to create Parquet stream builder: "

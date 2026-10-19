@@ -51,7 +51,10 @@ fn rust_cause_chain(err: &DataProfilerError) -> Option<PyErr> {
     let mut messages = Vec::new();
     let mut current = std::error::Error::source(err);
     while let Some(source) = current {
-        messages.push(source.to_string());
+        let text = source.to_string();
+        if messages.last() != Some(&text) {
+            messages.push(text);
+        }
         current = retained_source(source);
     }
     if messages.is_empty() {
@@ -139,16 +142,8 @@ fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
         DataProfilerError::ParquetError { .. } if is_transport_failure(err) => {
             PyIOError::new_err(format!("Analysis failed: {message}"))
         }
-        DataProfilerError::IoError {
-            diagnostic: Some(diagnostic),
-            ..
-        } => {
-            let original = analysis_error_to_py_uncaused(diagnostic);
-            if is_transport_failure(err) {
-                Python::attach(|py| PyIOError::new_err(original.value(py).to_string()))
-            } else {
-                original
-            }
+        DataProfilerError::StreamingError { .. } if is_transport_failure(err) => {
+            PyIOError::new_err(format!("Analysis failed: {message}"))
         }
         DataProfilerError::InvalidSemanticHint { .. }
         | DataProfilerError::InvalidConfiguration { .. }
