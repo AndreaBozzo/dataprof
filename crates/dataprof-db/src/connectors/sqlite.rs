@@ -69,11 +69,20 @@ impl DatabaseConnector for SqliteConnector {
     async fn connect(&mut self) -> Result<(), DataProfilerError> {
         #[cfg(feature = "sqlite")]
         {
-            let db_path = self.get_db_path()?;
-            let connection_string = if db_path == ":memory:" {
-                "sqlite::memory:".to_string()
+            // sqlx parses SQLite-specific URL options (mode, cache, immutable,
+            // vfs). Passing the original sqlite: URI through unchanged also
+            // preserves its absolute/relative path semantics (#912 / #839).
+            // Previously rebuilding the URL from get_db_path() silently
+            // dropped every query parameter, including mode=ro and mode=rwc.
+            let connection_string = if self.config.connection_string.starts_with("sqlite:") {
+                self.config.connection_string.clone()
             } else {
-                format!("sqlite://{}", db_path)
+                let db_path = self.get_db_path()?;
+                if db_path == ":memory:" {
+                    "sqlite::memory:".to_string()
+                } else {
+                    format!("sqlite://{}", db_path)
+                }
             };
 
             let pool = SqlitePoolOptions::new()

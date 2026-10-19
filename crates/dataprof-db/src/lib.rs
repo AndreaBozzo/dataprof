@@ -144,7 +144,10 @@ fn apply_environment_configuration(
                 .apply_to_connection_string(config.connection_string.clone(), database_type);
         }
 
-        if config.load_credentials_from_env {
+        if config.load_credentials_from_env && database_type != "sqlite" {
+            // Explicit SQLite targets are not credentials-bearing URLs. A
+            // generic DATABASE_URL for another engine must not replace the
+            // requested local path or strip its mode=ro/rwc options (#912).
             let credentials = DatabaseCredentials::from_environment(database_type);
             config.connection_string =
                 credentials.apply_to_connection_string(&config.connection_string);
