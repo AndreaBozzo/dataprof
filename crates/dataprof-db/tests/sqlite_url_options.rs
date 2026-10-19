@@ -83,3 +83,48 @@ async fn mode_ro_refuses_writes_to_existing_database() {
     );
     connector.disconnect().await.unwrap();
 }
+
+/// Execute inside a separate test process: DATABASE_URL is process-global and
+/// must not affect parallel database tests.
+#[tokio::test]
+async fn sqlite_explicit_url_default_env_child() {
+    if std::env::var_os("DATAPROF_SQLITE_ENV_CHILD").is_none() {
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("explicit-default-rwc.db");
+    let mut connector = create_connector(DatabaseConfig {
+        connection_string: sqlite_url(&path, "rwc"),
+        ..Default::default()
+    })
+    .unwrap();
+    connector.connect().await.unwrap();
+    assert!(path.exists(), "the requested SQLite path must be created");
+    assert!(connector.test_connection().await.unwrap());
+    connector.disconnect().await.unwrap();
+}
+
+#[test]
+fn explicit_sqlite_mode_survives_unrelated_database_url() {
+    let executable = std::env::current_exe().expect("locate Rust test executable");
+    let output = std::process::Command::new(executable)
+        .args([
+            "--exact",
+            "sqlite_explicit_url_default_env_child",
+            "--nocapture",
+        ])
+        .env("DATAPROF_SQLITE_ENV_CHILD", "1")
+        .env(
+            "DATABASE_URL",
+            "postgresql://unrelated:unrelated@127.0.0.1:1/unrelated_database",
+        )
+        .output()
+        .expect("execute isolated default-configuration regression");
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "an unrelated DATABASE_URL must not hijack an explicit SQLite target:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
