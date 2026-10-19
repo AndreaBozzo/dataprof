@@ -81,6 +81,9 @@ def remote_server():
             self.end_headers()
 
         def do_GET(self):
+            if self.path.startswith("/json-record-"):
+                self._json_record_response()
+                return
             if self.path.startswith("/invalid-http"):
                 self._invalid_http()
                 return
@@ -123,6 +126,40 @@ def remote_server():
                 self._reset()
                 return
             self.wfile.write(chunk)
+
+        def _json_record_response(self):
+            mode = self.path.removeprefix("/json-record-").removesuffix(".json")
+            prefix = b'[{"x":1},{"x":"second'
+            payload = b'[{"x":1},{"x":"second value"}]'
+            if mode == "syntax":
+                payload = b'[{"x":1},{"x":}]'
+            elif mode == "incomplete":
+                payload = prefix
+            self.send_response(200)
+            if mode == "malformed-chunk":
+                self.send_header("Transfer-Encoding", "chunked")
+            else:
+                self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if mode in {"valid", "syntax", "incomplete"}:
+                self.wfile.write(payload)
+                return
+            if mode == "malformed-chunk":
+                self.wfile.write(f"{len(prefix):X}\r\n".encode())
+                self.wfile.write(prefix + b"\r\n")
+            else:
+                self.wfile.write(prefix)
+            self.wfile.flush()
+            # The failure must occur inside the second JSON value, after a
+            # valid first record, rather than while reading response headers.
+            time.sleep(0.02)
+            if mode == "reset":
+                self._reset()
+            else:
+                if mode == "malformed-chunk":
+                    self.wfile.write(b"ZZ\r\n")
+                    self.wfile.flush()
+                self.close_connection = True
 
         def log_message(self, format, *args):
             return
@@ -234,3 +271,41 @@ def test_reachable_corrupt_parquet_keeps_its_decode_error(remote_server):
     )
     assert caught.value.__cause__ is not None
     assert str(caught.value.__cause__) == "Parquet error: Invalid Parquet file. Corrupt footer"
+
+
+@pytest.mark.parametrize("policy", ["skip", "strict"])
+def test_reset_inside_a_json_record_is_an_oserror_for_every_policy(remote_server, policy):
+    with pytest.raises(OSError) as caught:
+        _profile(f"{remote_server}/json-record-reset.json", jsonl_on_error=policy)
+
+    assert str(caught.value).startswith(
+        "JSON parsing failed: malformed JSON record: error decoding response body"
+    )
+    assert str(caught.value).endswith("\nVerify JSON format and encoding")
+    assert list(_causes(caught.value)), "the JSON decoder must retain the network failure"
+
+
+@pytest.mark.parametrize("policy", ["skip", "strict"])
+@pytest.mark.parametrize("mode", ["truncated", "malformed-chunk"])
+def test_protocol_read_errors_inside_json_are_not_skipped_or_oserrors(remote_server, policy, mode):
+    # These are HTTP framing failures, not a TCP reset. Preserve their prior
+    # strict-mode class while refusing to turn the failed read into a partial
+    # successful report under the default skip policy.
+    with pytest.raises(ValueError, match="error decoding response body"):
+        _profile(f"{remote_server}/json-record-{mode}.json", jsonl_on_error=policy)
+
+
+@pytest.mark.parametrize("policy", ["skip", "strict"])
+@pytest.mark.parametrize("mode", ["valid", "syntax", "incomplete"])
+def test_complete_http_body_preserves_json_record_policy(remote_server, policy, mode):
+    # Here Content-Length matches the actual bytes, including the case where
+    # the JSON document itself ends too soon. JSON EOF is not an I/O error.
+    url = f"{remote_server}/json-record-{mode}.json"
+    if mode != "valid" and policy == "strict":
+        with pytest.raises(ValueError, match="malformed JSON record"):
+            _profile(url, jsonl_on_error=policy)
+        return
+
+    report = _profile(url, jsonl_on_error=policy)
+    assert report.rows == (2 if mode == "valid" else 1)
+    assert report.error_count == (0 if mode == "valid" else 1)
