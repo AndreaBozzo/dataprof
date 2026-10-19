@@ -666,3 +666,14 @@ A report that records neither reads back with both unknown, and Python's
 and input path records the same values. The fields are additive and not
 `required`, so stored v1 reports remain valid; an explicit `null` is malformed,
 as for `text_length_unit`.
+
+## v1 additive change: `temporal_pair` hint kind
+
+`SemanticHintKind`, the `kind` of a `semantic_hint_bindings` entry, gains the
+value `temporal_pair` in both dialects. Each column named by a `temporal_pairs`
+entry is recorded once with this kind.
+
+The enum gains a value, so stored v1 reports remain valid. A reader built
+before this change rejects a report that contains the new value, as it would
+any enum value it does not know. Consumers matching on `kind` must accept
+`temporal_pair`.

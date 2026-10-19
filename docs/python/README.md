@@ -665,7 +665,8 @@ raises `ValueError` listing the unmatched names and the available columns; a
 `positive_columns` hint on a column with no numeric values, or a
 `temporal_columns` hint on a column with no dates, is likewise rejected. A
 `temporal_pairs` entry is checked the same way: a missing column, or a column
-with no dates, raises `ValueError` naming `temporal_pairs`.
+with no dates, raises `ValueError` naming `temporal_pairs`, as does a pair that
+names one column twice or that is also declared in the reverse order.
 `report.semantic_hint_bindings` records how each hint bound — `column`, `kind`,
 `checked_values`, `matched_values`, and `exact` (whether the counts covered
 every row or a sample). Each column of a declared pair is recorded once, with

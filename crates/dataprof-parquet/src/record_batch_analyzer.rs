@@ -503,14 +503,12 @@ impl RecordBatchAnalyzer {
             .collect();
         dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
 
+        let pair_columns = self.semantic_hints.temporal_pair_columns();
         for field in schema.fields() {
             let column_name = field.name().to_string();
             let positive_hint = self.semantic_hints.is_positive_column(&column_name);
             let temporal_hint = self.semantic_hints.is_temporal_column(&column_name)
-                || self
-                    .semantic_hints
-                    .temporal_pair_columns()
-                    .contains(&column_name.as_str());
+                || pair_columns.contains(&column_name.as_str());
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
                 entry.insert(ColumnAnalyzer::with_value_hints(
