@@ -152,10 +152,25 @@ pub(crate) struct BatchRowTracker {
 
 impl BatchRowTracker {
     pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
+        self.observe_batch_with_container_markers(batch, &[]);
+    }
+
+    fn observe_batch_with_container_markers(
+        &mut self,
+        batch: &RecordBatch,
+        container_markers: &[Option<&[bool]>],
+    ) {
         if self.disabled {
             return;
         }
-        if observe_batch_rows(&mut self.tracker, &mut self.completeness, batch).is_err() {
+        if observe_batch_rows(
+            &mut self.tracker,
+            &mut self.completeness,
+            batch,
+            container_markers,
+        )
+        .is_err()
+        {
             self.disabled = true;
         }
     }
@@ -303,6 +318,7 @@ fn observe_batch_rows(
     tracker: &mut RowUniquenessTracker,
     completeness: &mut RowCompletenessTracker,
     batch: &RecordBatch,
+    container_markers: &[Option<&[bool]>],
 ) -> Result<()> {
     use arrow::datatypes::DataType as ArrowDataType;
     use arrow::util::display::{ArrayFormatter, FormatOptions};
@@ -365,9 +381,10 @@ fn observe_batch_rows(
     for row_index in 0..batch.num_rows() {
         let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
-        for (field, nulls) in fields.iter().zip(&nulls) {
+        for (column_index, (field, nulls)) in fields.iter().zip(&nulls).enumerate() {
             value_buffer.clear();
-            if !nulls.as_ref().is_some_and(|nulls| nulls.is_null(row_index)) {
+            let is_null = nulls.as_ref().is_some_and(|nulls| nulls.is_null(row_index));
+            if !is_null {
                 match field {
                     FieldText::Null => {}
                     FieldText::Display(formatter) => {
@@ -378,7 +395,20 @@ fn observe_batch_rows(
                     FieldText::Rows(rows) => push_hex(&mut value_buffer, rows.row(row_index)),
                 }
             }
-            row_signature.push_field(&value_buffer);
+            // A mixed pandas column may have needed text fallback for a
+            // container beside a scalar. Preserve that distinction using the
+            // same tag as the record path, without changing any Arrow value
+            // or adding a synthetic report column.
+            if !is_null
+                && container_markers
+                    .get(column_index)
+                    .and_then(|markers| *markers)
+                    .is_some_and(|markers| markers[row_index])
+            {
+                row_signature.push_container_field(&value_buffer);
+            } else {
+                row_signature.push_field(&value_buffer);
+            }
             // Arrow nulls already render empty here, and the null-like tokens
             // are the same ones the column analyzers count, so the record
             // count and the cell counts describe one definition of null. A
@@ -522,11 +552,45 @@ impl RecordBatchAnalyzer {
     }
 
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        self.process_batch_with_container_markers(batch, &[])
+    }
+
+    /// Process a batch whose text columns may hold serialized containers.
+    ///
+    /// Markers follow the batch's column order and row offsets. An empty slice
+    /// means no markers; otherwise it must have one entry per column, with
+    /// each present entry holding one flag per row of a string column. A true
+    /// flag tags a non-null cell as a container in the row signature. Column
+    /// statistics and completeness still see the original Arrow values.
+    pub fn process_batch_with_container_markers(
+        &mut self,
+        batch: &RecordBatch,
+        container_markers: &[Option<&[bool]>],
+    ) -> Result<()> {
+        anyhow::ensure!(
+            container_markers.is_empty() || container_markers.len() == batch.num_columns(),
+            "container markers must match the batch's column count"
+        );
+        for (column_index, markers) in container_markers.iter().enumerate() {
+            if let Some(markers) = markers {
+                anyhow::ensure!(
+                    markers.len() == batch.num_rows(),
+                    "container markers for column {column_index} must match the batch's row count"
+                );
+                anyhow::ensure!(
+                    sampling_can_decide_type(&logical_arrow_type(
+                        batch.column(column_index).data_type()
+                    )),
+                    "container markers for column {column_index} require a string column"
+                );
+            }
+        }
         if self.column_order.is_empty() {
             self.initialize_schema(batch.schema().as_ref())?;
         }
         self.total_rows += batch.num_rows();
-        self.row_tracker.observe_batch(batch);
+        self.row_tracker
+            .observe_batch_with_container_markers(batch, container_markers);
 
         for (column_index, column) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
@@ -1530,6 +1594,116 @@ mod tests {
     use arrow::record_batch::RecordBatch;
     use dataprof_core::ColumnStats;
     use std::sync::Arc;
+
+    #[test]
+    fn container_markers_preserve_arrow_columns_and_record_signatures_across_batches() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, true),
+            Field::new("payload", ArrowDataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![
+                    Some(7),
+                    Some(7),
+                    Some(7),
+                    Some(7),
+                    None,
+                    None,
+                ])),
+                Arc::new(StringArray::from(vec![
+                    Some(r#"{"x":1}"#),
+                    Some(r#"{"x":1}"#),
+                    Some(r#"{"x":1}"#),
+                    Some(r#"{"x":1}"#),
+                    None,
+                    None,
+                ])),
+            ],
+        )
+        .unwrap();
+        let markers = [true, false, true, false, false, false];
+        let mut marked = RecordBatchAnalyzer::new();
+        for (offset, length) in [(0, 1), (1, 3), (4, 2)] {
+            marked
+                .process_batch_with_container_markers(
+                    &batch.slice(offset, length),
+                    &[None, Some(&markers[offset..offset + length])],
+                )
+                .unwrap();
+        }
+        let rows = marked.row_duplicate_summary().unwrap();
+        assert_eq!(rows.rows_checked, 6);
+        assert_eq!(rows.duplicate_rows, 3);
+        assert!(!rows.approximate);
+        let completeness = marked.row_completeness_summary().unwrap();
+        assert_eq!(completeness.complete_rows, 4);
+        assert_eq!(completeness.rows_checked, 6);
+
+        let mut plain = RecordBatchAnalyzer::new();
+        plain.process_batch(&batch).unwrap();
+        assert_eq!(plain.row_duplicate_summary().unwrap().duplicate_rows, 4);
+        assert_eq!(
+            serde_json::to_value(marked.to_profiles(false, false, None)).unwrap(),
+            serde_json::to_value(plain.to_profiles(false, false, None)).unwrap(),
+            "container markers must not change the Arrow column profiles"
+        );
+
+        // Seed the record path's signature, then feed the Arrow rows into the
+        // same tracker: the marked first row must match that existing record.
+        // A second marker column could separate scalar/container values but
+        // would give their signatures a different encoding across input paths.
+        let mut signature = RowSignature::default();
+        signature.push_field("7");
+        signature.push_container_field(r#"{"x":1}"#);
+        let mut tracker = RowUniquenessTracker::default();
+        tracker.observe(signature.finish());
+        observe_batch_rows(
+            &mut tracker,
+            &mut RowCompletenessTracker::default(),
+            &batch,
+            &[None, Some(&markers)],
+        )
+        .unwrap();
+        assert_eq!(tracker.duplicate_rows(), 4);
+    }
+
+    #[test]
+    fn invalid_container_markers_fail_before_mutating_the_analyzer() {
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![
+                Field::new("id", ArrowDataType::Int64, false),
+                Field::new("payload", ArrowDataType::Utf8, false),
+            ])),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 1])),
+                Arc::new(StringArray::from(vec!["{}", "{}"])),
+            ],
+        )
+        .unwrap();
+        let markers = [true, false];
+        let invalid: [&[Option<&[bool]>]; 3] = [
+            &[Some(&markers)],
+            &[None, Some(&markers[..1])],
+            &[Some(&markers), None],
+        ];
+        let mut analyzer = RecordBatchAnalyzer::new();
+        for markers in invalid {
+            assert!(
+                analyzer
+                    .process_batch_with_container_markers(&batch, markers)
+                    .is_err()
+            );
+            assert_eq!(analyzer.total_rows(), 0);
+            assert!(analyzer.row_duplicate_summary().is_none());
+            assert!(analyzer.to_profiles(false, false, None).is_empty());
+        }
+        analyzer
+            .process_batch_with_container_markers(&batch, &[None, Some(&markers)])
+            .unwrap();
+        assert_eq!(analyzer.row_duplicate_summary().unwrap().duplicate_rows, 0);
+    }
 
     #[test]
     fn named_time_zones_are_resolved_with_their_dst_rules() {

@@ -63,10 +63,6 @@ KNOWN: dict[tuple[str, str, str], str] = {
     },
     ("epoch_nanoseconds", "*", "quartiles.iqr"): "#877",
     ("uint64_edge", "*", "quartiles.iqr"): "#877",
-    # The pandas mixed-object fallback renders a container as the text a
-    # string can spell, so the two sign one row.
-    ("container_vs_its_text", "pandas", "duplicate_rows"): "#982",
-    ("container_and_text_repeats", "pandas", "duplicate_rows"): "#982",
 }
 
 Route = tuple[str, Callable[[], dp.ProfileReport]]
