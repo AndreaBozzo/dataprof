@@ -44,6 +44,16 @@ pub fn read_json_record<R: BufRead>(
     Ok(match Value::deserialize(&mut deserializer) {
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        Err(err) if err.is_io() => {
+            // A failed read is not a malformed record that the caller can
+            // skip. Recover the original I/O wrapper: serde's Error::source
+            // skips it, hiding concrete transport causes from Python.
+            let message = format!("JSON record read failed: {err}");
+            return Err(DataProfilerError::json_parsing_with_source(
+                message,
+                std::io::Error::from(err),
+            ));
+        }
         Err(err) => JsonRecord::Malformed(err),
     })
 }
@@ -235,5 +245,50 @@ pub fn read_jsonl_line(line: &str) -> JsonRecord {
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
         Err(err) => JsonRecord::Malformed(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+    use std::io::{self, BufReader, Cursor, Read};
+
+    #[derive(Debug)]
+    struct LocalReadFailure;
+
+    impl std::fmt::Display for LocalReadFailure {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("local read failure")
+        }
+    }
+
+    impl std::error::Error for LocalReadFailure {}
+
+    impl Read for LocalReadFailure {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, Self))
+        }
+    }
+
+    #[test]
+    fn json_record_read_failure_keeps_the_original_io_source() {
+        let mut reader = BufReader::new(Cursor::new(b"{\"x\":\"").chain(LocalReadFailure));
+
+        let error = read_json_record(&mut reader, b'{')
+            .err()
+            .expect("a read failure must abort before a caller can skip a malformed record");
+
+        assert!(
+            error
+                .to_string()
+                .contains("JSON record read failed: local read failure")
+        );
+        let source = error
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .expect("the original I/O error must survive serde's wrapper");
+        assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
+        assert!(source.get_ref().unwrap().is::<LocalReadFailure>());
     }
 }

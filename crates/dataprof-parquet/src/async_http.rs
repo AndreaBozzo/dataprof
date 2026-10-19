@@ -60,6 +60,33 @@ fn object_changed(detail: String) -> parquet::errors::ParquetError {
     parquet::errors::ParquetError::External(Box::new(ObjectChanged { detail }))
 }
 
+/// A ranged request's diagnostic and original failure, kept together while
+/// crossing the Parquet reader interface instead of stringifying the source.
+#[derive(Debug)]
+struct HttpReadError {
+    message: String,
+    source: reqwest::Error,
+}
+
+impl std::fmt::Display for HttpReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for HttpReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+fn http_read_error(context: &str, source: reqwest::Error) -> parquet::errors::ParquetError {
+    parquet::errors::ParquetError::External(Box::new(HttpReadError {
+        message: format!("{context}: {source}"),
+        source,
+    }))
+}
+
 // decode-audit: no-data — an absent or non-text `ETag` is no validator; the
 // read is then unpinned, as it is for a server that sends none.
 fn etag_from_headers(headers: &header::HeaderMap) -> Option<String> {
@@ -81,6 +108,12 @@ fn read_error(url: &str, context: &str, error: parquet::errors::ParquetError) ->
     while let Some(current) = cause {
         if let Some(changed) = current.downcast_ref::<ObjectChanged>() {
             return DataProfilerError::source_changed(url, changed.detail.clone());
+        }
+        if let Some(http) = current.downcast_ref::<HttpReadError>() {
+            // `External` has a different Display prefix from the old `General`
+            // error. Keep the original diagnostic while retaining the source.
+            let message = format!("{context}: Parquet error: {}", http.message);
+            return DataProfilerError::parquet_with_source(message, error);
         }
         cause = current.source();
     }
@@ -278,9 +311,11 @@ impl AsyncFileReader for HttpParquetReader {
                 parquet::errors::ParquetError::General(format!("invalid request: {}", e))
             })?;
 
-            let res = self.client.execute(req).await.map_err(|e| {
-                parquet::errors::ParquetError::General(format!("network err: {}", e))
-            })?;
+            let res = self
+                .client
+                .execute(req)
+                .await
+                .map_err(|e| http_read_error("network err", e))?;
 
             // A 412 says the object changed only when `If-Match` was sent.
             if let Some(etag) = if_match
@@ -311,12 +346,10 @@ impl AsyncFileReader for HttpParquetReader {
                 )));
             }
 
-            let bytes = res.bytes().await.map_err(|e| {
-                parquet::errors::ParquetError::General(format!(
-                    "failed to fetch byte body from http stream: {}",
-                    e
-                ))
-            })?;
+            let bytes = res
+                .bytes()
+                .await
+                .map_err(|e| http_read_error("failed to fetch byte body from http stream", e))?;
 
             Ok(bytes)
         })

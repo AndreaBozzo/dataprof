@@ -1073,12 +1073,14 @@ dependencies = [
  "anyhow",
  "arrow",
  "bytes",
+ "csv",
  "dataprof",
  "dataprof-core",
  "dataprof-parquet",
  "dataprof-runtime",
  "pyo3",
  "pyo3-async-runtimes",
+ "reqwest",
  "serde_json",
 ]
 

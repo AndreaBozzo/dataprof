@@ -2,9 +2,40 @@
 //! category, a real source path (never `'unknown'`), and an honest
 //! supported-format claim. Guards the #373 product-error work.
 
-use std::io::Write;
+use std::{error::Error as _, io::Write};
 
 use dataprof::{DataProfilerError, EngineType, Profiler};
+
+#[test]
+fn streaming_errors_keep_category_suggestion_and_original_source() {
+    let message = "HTTP request failed: connection refused";
+    let suggestion = "Check the URL and network connectivity";
+    let plain = DataProfilerError::streaming_with_suggestion(message, suggestion);
+    let caused = DataProfilerError::streaming_with_source(
+        message,
+        suggestion,
+        std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+    );
+
+    for error in [&plain, &caused] {
+        assert_eq!(error.category(), "streaming");
+        assert_eq!(error.suggestion().as_deref(), Some(suggestion));
+        assert_eq!(
+            error.to_string(),
+            format!("Streaming processing failed: {message}\n{suggestion}")
+        );
+    }
+    assert!(plain.source().is_none());
+    assert_eq!(
+        caused
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::ConnectionRefused
+    );
+}
 
 #[test]
 fn missing_file_reports_the_real_path_not_unknown() {
