@@ -20,7 +20,17 @@ SAMPLED = {"coverage": "incomplete", "reason": "quality_sampled"}
 COMPLETE = {"coverage": "complete"}
 
 
-def _reloaded(exact: list[str], sampled: list[str]) -> dp.ProfileReport:
+# Every component this build knows, listed as a profiling run lists them when
+# the quality sample feeds every dimension it can.
+EXACT = ["completeness", "key_uniqueness", "duplicate_rows"]
+SAMPLED_COMPONENTS = ["consistency", "accuracy", "timeliness", "validity", "precision"]
+
+
+def _reloaded(extra_exact: list[str], extra_sampled: list[str]) -> dp.ProfileReport:
+    return _with_confidence(EXACT + extra_exact, SAMPLED_COMPONENTS + extra_sampled)
+
+
+def _with_confidence(exact: list[str], sampled: list[str]) -> dp.ProfileReport:
     document = json.loads(dp.profile(DATA).to_json())
     document["quality"]["confidence"] = {
         "Mixed": {
@@ -40,11 +50,11 @@ def _evidence(result: dp.QualityGateResult, code: str) -> dict:
 @pytest.mark.parametrize(
     ("exact", "sampled", "overall"),
     [
-        (["completeness"], ["future_dimension"], UNRECORDED),
-        (["completeness"], ["consistency"], SAMPLED),
-        (["completeness", "future_dimension"], [], COMPLETE),
+        ([], [], SAMPLED),
+        ([], ["future_dimension"], UNRECORDED),
+        (["future_dimension"], [], SAMPLED),
     ],
-    ids=["unknown-sampled", "known-sampled", "unknown-exact"],
+    ids=["as-written", "unknown-sampled", "unknown-exact"],
 )
 def test_check_and_compare_resolve_component_coverage_alike(exact, sampled, overall):
     report = _reloaded(exact, sampled)
@@ -66,7 +76,8 @@ def test_check_and_compare_resolve_component_coverage_alike(exact, sampled, over
 
 
 def test_an_unknown_sampled_component_makes_a_full_source_minimum_inconclusive():
-    report = _reloaded(["completeness"], ["future_dimension"])
+    # Every known component is exact, so only the unknown one can withhold it.
+    report = _with_confidence(EXACT + SAMPLED_COMPONENTS, ["future_dimension"])
 
     assert report.check(min_quality_score=10).verdict == "inconclusive"
     assert report.check(min_quality_score=10, scope="observed").verdict == "pass"
