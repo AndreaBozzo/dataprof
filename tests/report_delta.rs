@@ -425,6 +425,33 @@ fn configuration_lists_each_setting_and_whether_the_sides_agree() {
         (Some(true), Some(true))
     );
 
+    // A repeated temporal column is scanned twice and moves the score
+    // (#1004), so the repetition is a different configuration.
+    let dated = csv("old,new
+2001-01-01,2026-10-01
+2002-01-01,2026-10-02
+");
+    let temporal = |columns: &[&str]| {
+        Profiler::new()
+            .temporal_columns(columns.iter().map(|name| name.to_string()).collect())
+            .analyze_file(dated.path())
+            .unwrap()
+    };
+    let repeated = ReportDelta::between(
+        &temporal(&["old", "new"]),
+        &temporal(&["old", "old", "new"]),
+    );
+    assert_eq!(repeated.configuration.semantic_hints.same, Some(false));
+    assert_eq!(
+        repeated
+            .configuration
+            .semantic_hints
+            .b
+            .unwrap()
+            .temporal_columns,
+        ["new", "old", "old"]
+    );
+
     // No public option sets weights; a document written elsewhere can.
     let mut document = serde_json::to_value(&plain).unwrap();
     document["quality"]["metrics"]["score_weights"] = json!({"completeness": 1.0});

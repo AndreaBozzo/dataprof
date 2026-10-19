@@ -180,6 +180,20 @@ def test_configuration_tells_a_setting_change_from_a_data_change():
     assert delta["configuration"]["score_weights"]["same"] is True
 
 
+def test_a_repeated_temporal_column_is_a_different_configuration():
+    # Scanned twice, it moves the timeliness score on unchanged data (#1004).
+    data = {
+        "old": ["2001-01-01", "2002-01-01", "2003-01-01", "2026-10-01"],
+        "new": ["2026-10-01", "2026-10-02", "2026-10-03", "2099-01-01"],
+    }
+    once = dp.profile(data, temporal_columns=["old", "new"])
+    twice = dp.profile(data, temporal_columns=["old", "old", "new"])
+    hints = once.compare(twice)["configuration"]["semantic_hints"]
+
+    assert hints["same"] is False
+    assert hints["b"]["temporal_columns"] == ["new", "old", "old"]
+
+
 def test_a_0_11_baseline_leaves_its_weights_unrecorded():
     text = (FIXTURES / "legacy_0_11_non_ascii.summary.json").read_text(encoding="utf-8")
     baseline = dp.ProfileReport.from_dict(json.loads(text))

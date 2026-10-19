@@ -203,6 +203,11 @@ impl<T: PartialEq> SettingComparison<T> {
 
 /// The semantic hints a report recorded, by the configuration field that
 /// carries each, read from its hint bindings.
+///
+/// Each list is sorted and keeps repetitions: a column named twice in
+/// `temporal_columns` is scanned twice and moves the timeliness score
+/// (#1004), so two reports that differ only by a repetition are not the same
+/// configuration.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[non_exhaustive]
 pub struct RecordedHints {
@@ -226,7 +231,6 @@ impl RecordedHints {
                 .map(|binding| binding.column.clone())
                 .collect();
             names.sort();
-            names.dedup();
             names
         };
         Self {
