@@ -684,34 +684,15 @@ impl RecordBatchAnalyzer {
 
     /// Exact value-driven semantic-hint evidence over every processed batch.
     pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
-        let positive = self
-            .semantic_hints
-            .positive_columns
+        self.semantic_hints
             .iter()
-            .filter_map(|column| {
+            .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
+            .filter_map(|(kind, column)| {
                 self.column_analyzers
                     .get(column)
-                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::Positive))
-            });
-        let temporal = self
-            .semantic_hints
-            .temporal_columns
-            .iter()
-            .filter_map(|column| {
-                self.column_analyzers
-                    .get(column)
-                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::Temporal))
-            });
-        let pairs = self
-            .semantic_hints
-            .temporal_pair_columns()
-            .into_iter()
-            .filter_map(|column| {
-                self.column_analyzers
-                    .get(column)
-                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::TemporalPair))
-            });
-        positive.chain(temporal).chain(pairs).collect()
+                    .map(|analyzer| analyzer.hint_binding(column, kind))
+            })
+            .collect()
     }
 }
 

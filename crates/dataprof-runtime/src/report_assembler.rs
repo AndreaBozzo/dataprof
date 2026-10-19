@@ -245,8 +245,12 @@ impl ReportAssembler {
         }
 
         let mut bindings = Vec::new();
-        for column in &self.semantic_hints.identifier_columns {
-            if let Some(profile) = self.columns.iter().find(|c| &c.name == column) {
+        for (_, column) in self
+            .semantic_hints
+            .iter()
+            .filter(|(kind, _)| *kind == SemanticHintKind::Identifier)
+        {
+            if let Some(profile) = self.columns.iter().find(|c| c.name == column) {
                 let checked = profile.total_count.saturating_sub(profile.null_count);
                 let matched = if profile.data_type == DataType::Identifier {
                     checked
@@ -254,7 +258,7 @@ impl ReportAssembler {
                     0
                 };
                 bindings.push(SemanticHintBinding {
-                    column: column.clone(),
+                    column: column.to_string(),
                     kind: SemanticHintKind::Identifier,
                     checked_values: checked,
                     matched_values: matched,

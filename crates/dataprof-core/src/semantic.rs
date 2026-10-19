@@ -133,8 +133,8 @@ impl SemanticHints {
         columns
     }
 
-    /// Every `(kind, column_name)` pair across the hint lists, with each column
-    /// of a declared pair listed once.
+    /// Every `(kind, column_name)` pair once, preserving the first occurrence
+    /// within each hint list. A column may still carry different hint kinds.
     pub fn iter(&self) -> impl Iterator<Item = (SemanticHintKind, &str)> {
         let positive = self
             .positive_columns
@@ -152,7 +152,12 @@ impl SemanticHints {
             .temporal_pair_columns()
             .into_iter()
             .map(|c| (SemanticHintKind::TemporalPair, c));
-        positive.chain(identifier).chain(temporal).chain(pairs)
+        let mut seen = std::collections::HashSet::new();
+        positive
+            .chain(identifier)
+            .chain(temporal)
+            .chain(pairs)
+            .filter(move |&(kind, column)| seen.insert((kind.field_name(), column)))
     }
 
     /// Fail loudly when a hint names a column that is not in the schema.

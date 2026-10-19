@@ -81,7 +81,7 @@ use crate::types::{
     PrecisionMetrics, QualityDimension, QualityMetrics, RowCompletenessSummary,
     RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
-use dataprof_core::SemanticHints;
+use dataprof_core::{SemanticHintKind, SemanticHints};
 use std::collections::HashMap;
 
 /// Engine for calculating comprehensive data quality metrics.
@@ -154,7 +154,11 @@ impl MetricsCalculator {
         column_profiles: &[ColumnProfile],
         semantic_hints: &SemanticHints,
     ) -> Vec<String> {
-        let mut columns = semantic_hints.temporal_columns.clone();
+        let mut columns: Vec<String> = semantic_hints
+            .iter()
+            .filter(|(kind, _)| *kind == SemanticHintKind::Temporal)
+            .map(|(_, column)| column.to_string())
+            .collect();
         for (start, end) in &semantic_hints.temporal_pairs {
             for name in [start, end] {
                 if !columns.contains(name) {
