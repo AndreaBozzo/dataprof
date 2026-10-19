@@ -282,7 +282,7 @@ def test_reset_inside_a_json_record_is_an_oserror_for_every_policy(remote_server
         _profile(f"{remote_server}/json-record-reset.json", jsonl_on_error=policy)
 
     assert str(caught.value).startswith(
-        "JSON parsing failed: malformed JSON record: error decoding response body"
+        "JSON parsing failed: JSON record read failed: error decoding response body"
     )
     assert str(caught.value).endswith("\nVerify JSON format and encoding")
     assert list(_causes(caught.value)), "the JSON decoder must retain the network failure"
