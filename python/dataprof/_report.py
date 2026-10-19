@@ -1050,6 +1050,15 @@ class ProfileReport:
           does not, which includes every report written before 0.12. Only
           ``True`` means a difference in a measurement, such as a text
           length, is a difference in the data.
+        - ``configuration``: the recorded settings that move a score on
+          unchanged data, ``score_weights`` and ``semantic_hints`` (the
+          columns named by ``positive_columns``, ``identifier_columns``,
+          ``temporal_columns`` and ``temporal_pairs``). Each has ``a``,
+          ``b`` and ``same``: ``True`` when both sides recorded it and
+          agree, ``False`` when they differ, ``None`` when either did not
+          record it (weights on a summary saved before 0.12, hints before 0.10).
+          A score that moved under a different setting may not reflect a change
+          in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
           for a flat summary), ``source``, ``rows_processed`` and the scan's
           ``evidence``.
@@ -1076,7 +1085,13 @@ class ProfileReport:
         # provenance one records), so it crosses as the summary it exports.
         if self._native_report is not None:
             return self._native_report
-        return _json.dumps(self._legacy_summary())
+        summary = self._legacy_summary()
+        if self._schema_version == 0:
+            # The export names the current schema version, but a summary from
+            # before 0.10 recorded no hints: without the version the delta
+            # reads them as unrecorded rather than as "none given".
+            del summary["schema_version"]
+        return _json.dumps(summary)
 
     @classmethod
     def from_dict(cls, data: dict[str, _Any]) -> ProfileReport:

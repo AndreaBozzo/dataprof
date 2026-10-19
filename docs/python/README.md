@@ -1239,9 +1239,16 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
   is a change in the data. Text lengths counted UTF-8 bytes through 0.11, so
   across that boundary a changed `max_length` on non-ASCII text can be the
   unit rather than the data. `comparable` covers how dataprof measures, not
-  how each report was configured: profile both sides with the same options
-  (`metrics`, `positive_columns`, `temporal_columns`, ...) before reading a
-  change as drift.
+  how each report was configured.
+- **Configuration.** `configuration` lists the recorded settings that move a
+  score on unchanged data: `score_weights`, and `semantic_hints` (the columns
+  named by `positive_columns`, `identifier_columns`, `temporal_columns` and
+  `temporal_pairs`). Each has `a`, `b` and `same`, which is `None` when a side
+  did not record the setting: weights on a summary saved before 0.12, hints
+  on one saved before 0.10. A score that moved while `same` is `False` may
+  reflect the setting rather than the data. Settings not recorded here, such
+  as `metrics` and the timeliness reference date, still need the same
+  options on both sides.
 
 Either side may be a report loaded from a flat `to_dict()` summary, including
 one saved before 0.12; its `id` and `timestamp` are `None`, and coverage it
