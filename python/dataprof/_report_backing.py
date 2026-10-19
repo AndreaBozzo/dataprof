@@ -251,6 +251,10 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
         read_scores[dim] = float(score) if score is not None else None
     values["dimension_scores"] = read_scores
     values["score_weights"] = _read_score_weights(document)
+    # Whether the summary named its weights. Before 0.12 a summary dropped
+    # custom weights, so the defaults filled in above may not be the ones
+    # behind its stored score, and a re-export must not claim they are.
+    values["score_weights_recorded"] = "score_weights" in document
     return _MappingAccessor(values)
 
 

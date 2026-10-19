@@ -484,18 +484,35 @@ analyzed empty source.
 The Python dialect's `quality` object now carries `score_weights`, the relative
 weights behind `overall_score`, with the same rule the Rust dialect applies to
 `quality.metrics.score_weights`: custom weights are written and default weights
-are omitted (#760).
+are omitted (#760). The next section supersedes the omission: since 0.13 both
+dialects write default weights too.
 
 Previously the summary dropped them, so a report assessed with custom weights
 came back from `ProfileReport.from_dict(report.to_dict())` with the default
 weights next to an `overall_score` those defaults did not produce.
 
 The field is additive and not `required`: stored v1 reports remain valid.
-Summaries of reports that use the default weights are unchanged. A summary
+Summaries of reports that used the default weights were unchanged by #760. A summary
 written before this change omits the field whatever weights were used, so there
 its absence does not show that the defaults applied; the loader still reads an
 absent field as the defaults, as it did before. The canonical document from
 `to_json()` or JSON `save()` has kept custom weights since #714.
+
+## v1 additive change: default `score_weights` are written too
+
+Both dialects now write `score_weights` whatever the weights are, defaults
+included (`quality.metrics.score_weights` in the canonical document,
+`quality.score_weights` in the Python dialect). A stored `overall_score` is kept
+rather than recomputed, so a document that omits default weights only names
+the defaults of whichever release reads it; if a later release changed them,
+the score and its decoded weights would disagree (#749).
+
+The field stays optional in the schema, so stored v1 reports remain valid, and
+an absent field is still read as the defaults. The default weights have not
+changed since weights became configurable in 0.10, so on a canonical document
+an absent field did mean the defaults. On a flat summary written before 0.12 it
+does not, because those dropped custom weights; re-exporting such a summary
+with `to_dict()` keeps the field absent rather than claim the defaults.
 
 ## v1 additive change: `metric_semantics`
 

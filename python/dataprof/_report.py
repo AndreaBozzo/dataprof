@@ -36,7 +36,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _report_from_dict
+from ._report_backing import _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -484,10 +484,11 @@ class ProfileReport:
             bounds = self.quality_score_bounds
             if bounds is not None:
                 quality_dict["score_bounds"] = bounds
-            # Written as the Rust summary writes it: defaults are omitted.
-            weights = q.score_weights
-            if weights != _DEFAULT_SCORE_WEIGHTS:
-                quality_dict["score_weights"] = dict(weights)
+            # The Rust summary always names the weights behind its score
+            # (#749). A summary that did not record them keeps them absent:
+            # the defaults the loader filled in would be a guess.
+            if q._accessor.get("score_weights_recorded"):
+                quality_dict["score_weights"] = dict(q.score_weights)
             for dimension in _QUALITY_DIMENSIONS:
                 values = getattr(q, dimension)
                 if values is not None:
