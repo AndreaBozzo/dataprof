@@ -1002,6 +1002,37 @@ impl QualityAssessment {
         }
     }
 
+    /// Components this assessment computed with signal that its recorded
+    /// confidence lists neither as exact nor as sampled.
+    ///
+    /// Every release that records these lists (0.6 onward) names each such
+    /// component in one of the two; this one does so by the same test
+    /// [`Self::component_labels`] applies, and earlier ones listed both
+    /// uniqueness components unconditionally. So a report this build or an
+    /// earlier one wrote returns an empty list. A non-empty list
+    /// comes from a document written another way, by a later release or by
+    /// hand, and the coverage of what it names is not recorded (#749). Only
+    /// [`MetricConfidence::Mixed`] lists components; the other variants
+    /// answer for every component at once.
+    pub fn unlisted_components(&self) -> Vec<String> {
+        let MetricConfidence::Mixed {
+            exact_dimensions,
+            sampled_dimensions,
+            ..
+        } = &self.confidence
+        else {
+            return Vec::new();
+        };
+        QualityDimension::all()
+            .into_iter()
+            .filter(|dimension| self.metrics.supports_dimension(*dimension))
+            .flat_map(|dimension| self.component_labels(dimension))
+            .filter(|label| {
+                !exact_dimensions.contains(label) && !sampled_dimensions.contains(label)
+            })
+            .collect()
+    }
+
     /// The component labels a dimension contributes, skipping components that
     /// were computed but carry no signal.
     fn component_labels(&self, dimension: QualityDimension) -> Vec<String> {

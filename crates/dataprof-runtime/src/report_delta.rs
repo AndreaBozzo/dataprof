@@ -382,11 +382,15 @@ impl ReportSide {
         let assessed = quality
             .map(|assessment| assessment.metrics.assessed_dimensions())
             .unwrap_or_default();
+        let unlisted = quality
+            .map(|assessment| assessment.unlisted_components())
+            .unwrap_or_default();
         // No assessment means no score for evidence to describe; the scan's
         // coverage is all there is to say.
         let evidence = |provenance| match &sampled {
             Some(sampled) => scan.and(sampled_component_evidence(
                 sampled.as_deref(),
+                &unlisted,
                 &assessed,
                 provenance,
             )),
@@ -482,8 +486,12 @@ impl ReportSide {
                 (Provenance::Overall, None) => Evidence::Incomplete {
                     reason: EvidenceGap::CoverageUnrecorded,
                 },
+                // A flat summary records no exact list, so no component can
+                // be found missing from both: "not sampled" reads as exact
+                // until the summary records one.
                 (_, assessed) => sampled_component_evidence(
                     sampled,
+                    &[],
                     assessed.as_deref().unwrap_or_default(),
                     provenance,
                 ),

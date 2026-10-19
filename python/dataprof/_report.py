@@ -393,6 +393,17 @@ class ProfileReport:
         return self._report.schema_version
 
     @property
+    def _quality_unlisted_components(self) -> list[str]:
+        """Components computed with signal that the recorded confidence lists
+        neither as exact nor as sampled, so their coverage is unrecorded.
+
+        Private: findings read it to resolve coverage as the Rust gate does.
+        Empty for every report a release wrote, and for a flat summary, which
+        records no exact list.
+        """
+        return list(self._report.quality_unlisted_components)
+
+    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 

@@ -1249,19 +1249,23 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
     };
     sampled_component_evidence(
         quality.sampled_dimensions().as_deref(),
+        &quality.unlisted_components(),
         &quality.metrics.assessed_dimensions(),
         provenance,
     )
 }
 
 /// [`quality_evidence`] over the recorded facts it reads: the sampled
-/// component labels (`None` when the report did not record them) and the
-/// dimensions the overall score weighs. A report delta reads the same facts
+/// component labels (`None` when the report did not record them), the
+/// components computed with signal that neither list names
+/// ([`QualityAssessment::unlisted_components`]), and the dimensions the
+/// overall score weighs. A report delta reads the same facts
 /// from a flat summary, which has no [`QualityAssessment`] behind it, and
 /// findings read one component through it, so the gate, the delta and
 /// findings resolve coverage by one rule.
 pub(crate) fn sampled_component_evidence(
     sampled: Option<&[String]>,
+    unlisted: &[String],
     assessed: &[QualityDimension],
     provenance: Provenance,
 ) -> Evidence {
@@ -1279,24 +1283,33 @@ pub(crate) fn sampled_component_evidence(
             reason: EvidenceGap::CoverageUnrecorded,
         };
     }
-    let contains = |component: &str| sampled.iter().any(|label| label == component);
-    let is_sampled = match provenance {
-        // The overall score is a weighted average over the *assessed*
-        // dimensions, so a sampled dimension the weights exclude does not
-        // reach it. Reporting the aggregate as sampled because of one would
-        // withhold a verdict the number does not depend on.
+    // The components the number reads. The overall score is a weighted
+    // average over the *assessed* dimensions, so a sampled dimension the
+    // weights exclude does not reach it. Reporting the aggregate as sampled
+    // because of one would withhold a verdict the number does not depend on.
+    let reads: Vec<&str> = match provenance {
         Provenance::Overall => assessed
             .iter()
             .copied()
             .flat_map(dimension_components)
-            .any(|component| contains(component)),
-        Provenance::Dimension(dimension) => dimension_components(dimension)
-            .iter()
             .copied()
-            .any(contains),
-        Provenance::Component(component) => contains(component),
+            .collect(),
+        Provenance::Dimension(dimension) => dimension_components(dimension).to_vec(),
+        Provenance::Component(component) => vec![component],
     };
-    if is_sampled {
+    let any_in = |labels: &[String]| {
+        reads
+            .iter()
+            .any(|component| labels.iter().any(|label| label == component))
+    };
+    // A component with signal that neither list names has no recorded
+    // coverage, and unknown coverage is a larger gap than a sample.
+    if any_in(unlisted) {
+        return Evidence::Incomplete {
+            reason: EvidenceGap::CoverageUnrecorded,
+        };
+    }
+    if any_in(sampled) {
         Evidence::Incomplete {
             reason: EvidenceGap::QualitySampled,
         }

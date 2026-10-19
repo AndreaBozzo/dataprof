@@ -375,6 +375,9 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if quality is not None else None
     )
+    # A flat summary records no exact list, so no component can be found
+    # missing from both lists: "not sampled" reads as exact, as in Rust.
+    values["quality_unlisted_components"] = []
     values["quality_score_bounds"] = (
         _read_field(
             quality,

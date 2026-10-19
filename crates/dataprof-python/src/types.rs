@@ -1102,6 +1102,19 @@ impl PyProfileReport {
             .and_then(QualityAssessment::sampled_dimensions)
     }
 
+    /// Components computed with signal that the recorded confidence lists
+    /// neither as exact nor as sampled, so their coverage is unrecorded. Empty
+    /// for every report a release wrote; read by the Python findings, which
+    /// resolve coverage as the Rust gate does.
+    #[getter]
+    fn quality_unlisted_components(&self) -> Vec<String> {
+        self.inner
+            .quality
+            .as_ref()
+            .map(QualityAssessment::unlisted_components)
+            .unwrap_or_default()
+    }
+
     /// Where the whole-source quality scores lie, when some were computed
     /// over a retained sample of the scanned rows.
     ///
