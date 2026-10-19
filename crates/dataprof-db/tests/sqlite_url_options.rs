@@ -18,7 +18,11 @@ fn sqlite_url(path: &std::path::Path, mode: &str) -> String {
     // sqlx accepts sqlite:///abs/path on Unix and sqlite:///C:/path on
     // Windows. A slash is preserved rather than trimming URL path segments.
     let path = path.to_string_lossy().replace('\\', "/");
-    let prefix = if cfg!(windows) { "sqlite:///" } else { "sqlite://" };
+    let prefix = if cfg!(windows) {
+        "sqlite:///"
+    } else {
+        "sqlite://"
+    };
     format!("{prefix}{path}?mode={mode}")
 }
 
