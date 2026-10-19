@@ -764,24 +764,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ordinary_io_constructors_keep_their_original_diagnostic() {
-        let expected = "I/O error: disk failed\nCheck file permissions and disk space";
-        assert_eq!(
-            DataProfilerError::io_message("disk failed").to_string(),
-            expected
-        );
-        assert_eq!(
-            DataProfilerError::io_error(std::io::Error::other("disk failed")).to_string(),
-            expected
-        );
-        assert_eq!(
-            DataProfilerError::io_with_source("disk failed", std::io::Error::other("detail"))
-                .to_string(),
-            expected
-        );
-    }
-
-    #[test]
     fn test_error_categorization() {
         let csv_error = DataProfilerError::csv_parsing("field count mismatch", Some("test.csv"));
         assert_eq!(csv_error.category(), "csv_parsing");

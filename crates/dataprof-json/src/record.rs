@@ -48,7 +48,7 @@ pub fn read_json_record<R: BufRead>(
             // A failed read is not a malformed record that the caller can
             // skip. Recover the original I/O wrapper: serde's Error::source
             // skips it, hiding concrete transport causes from Python.
-            let message = format!("malformed JSON record: {err}");
+            let message = format!("JSON record read failed: {err}");
             return Err(DataProfilerError::json_parsing_with_source(
                 message,
                 std::io::Error::from(err),
@@ -282,7 +282,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("malformed JSON record: local read failure")
+                .contains("JSON record read failed: local read failure")
         );
         let source = error
             .source()
