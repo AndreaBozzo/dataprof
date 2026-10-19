@@ -2175,7 +2175,7 @@
             "uniqueness": 0.15,
             "validity": 0.1
           },
-          "description": "Weights used to aggregate dimension scores. Always serialized, default\nweights included: a stored overall score is kept rather than\nrecomputed, so the document has to say which weights produced it even\nif a later release changes the defaults (#749). Documents written\nbefore 0.13 omit default weights, so on those an absent field does not\nshow which weights applied."
+          "description": "Weights used to aggregate dimension scores. Always serialized, default\nweights included: a stored overall score is kept rather than\nrecomputed, so the document has to say which weights produced it even\nif a later release changes the defaults (#749). Documents written\nbefore 0.13 omit default weights; the defaults did not change between\n0.10, when weights became configurable, and 0.12, so on those an absent\nfield means the defaults. (The flat summary differs: before 0.12 it\ndropped custom weights too.)"
         },
         "timeliness": {
           "anyOf": [

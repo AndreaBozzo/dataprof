@@ -274,8 +274,10 @@ pub struct QualityMetrics {
     /// weights included: a stored overall score is kept rather than
     /// recomputed, so the document has to say which weights produced it even
     /// if a later release changes the defaults (#749). Documents written
-    /// before 0.13 omit default weights, so on those an absent field does not
-    /// show which weights applied.
+    /// before 0.13 omit default weights; the defaults did not change between
+    /// 0.10, when weights became configurable, and 0.12, so on those an absent
+    /// field means the defaults. (The flat summary differs: before 0.12 it
+    /// dropped custom weights too.)
     #[serde(default)]
     pub score_weights: QualityScoreWeights,
 }
