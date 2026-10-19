@@ -202,12 +202,26 @@ fn stream_error(py: Python<'_>, stream: &mut ArrowArrayStream, stage: &str, stat
             )
         }
     });
-    let error =
-        PyRuntimeError::new_err(format!("Arrow stream {stage} failed (error code {status})"));
+    let error = PyRuntimeError::new_err(stream_error_message(stage, status, message.as_deref()));
     if let Some(message) = message {
         error.set_cause(py, Some(PyRuntimeError::new_err(message)));
     }
     error
+}
+
+/// Keep the original producer error as __cause__, but put its first line in
+/// the top-level exception too: schedulers and logs often print only str(exc).
+/// No producer message (or an empty first line) preserves the old error text.
+fn stream_error_message(stage: &str, status: i32, producer_message: Option<&str>) -> String {
+    let prefix = format!("Arrow stream {stage} failed (error code {status})");
+    match producer_message
+        .and_then(|message| message.lines().next())
+        .map(str::trim)
+        .filter(|first_line| !first_line.is_empty())
+    {
+        Some(first_line) => format!("{prefix}: {first_line}"),
+        None => prefix,
+    }
 }
 
 fn reject_nested(data_type: &DataType, name: &str) -> PyResult<()> {
@@ -353,4 +367,36 @@ pub(crate) fn profile_stream(
     let report = assembler.build();
     crate::errors::validate_report_hints(&report, hints, include_quality)?;
     Ok(PyProfileReport::new(report))
+}
+
+#[cfg(test)]
+mod error_message_tests {
+    use super::stream_error_message;
+
+    #[test]
+    fn stream_error_without_producer_message_preserves_original_text() {
+        let expected = "Arrow stream batch failed (error code 5)";
+        assert_eq!(stream_error_message("batch", 5, None), expected);
+        assert_eq!(stream_error_message("batch", 5, Some("")), expected);
+        assert_eq!(
+            stream_error_message("batch", 5, Some("\nnext line")),
+            expected
+        );
+    }
+
+    #[test]
+    fn stream_error_includes_only_first_line_of_producer_message() {
+        assert_eq!(
+            stream_error_message(
+                "batch",
+                5,
+                Some("IOError: connection reset by peer\ntraceback: private detail")
+            ),
+            "Arrow stream batch failed (error code 5): IOError: connection reset by peer"
+        );
+        assert_eq!(
+            stream_error_message("schema", 22, Some("permission denied\r\nsecond line")),
+            "Arrow stream schema failed (error code 22): permission denied"
+        );
+    }
 }
