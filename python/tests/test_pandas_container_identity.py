@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Sequence
 from decimal import Decimal
@@ -96,6 +97,71 @@ def test_duplicate_repair_refreshes_quality_score():
     assert native_score is not None
     assert repaired_score is not None
     assert repaired_score > native_score
+
+
+@pytest.mark.slow
+def test_container_identity_spill_does_not_claim_exact_quality():
+    # The native fallback folds each container/string pair into one row. The
+    # repaired identities cross the 1,000,000-distinct-row exact-set limit,
+    # while the original report still has exact duplicate provenance.
+    pairs = 500_001
+    df = pd.DataFrame(
+        {
+            "neighbor": pd.RangeIndex(pairs).repeat(2),
+            "payload": pd.Series([{"x": 1}, '{"x":1}'] * pairs, dtype=object),
+        }
+    )
+
+    report = dp.profile(df, quality_dimensions=["uniqueness"])
+
+    assert _uniqueness(report)["duplicate_rows_approximate"] is True
+    assert report.quality_sampled_dimensions == ["duplicate_rows"]
+    confidence = json.loads(report.to_json())["quality"]["confidence"]["Mixed"]
+    assert confidence["exact_dimensions"] == []
+    # Without a bound for the repaired sketch, its high point estimate cannot
+    # establish either a whole-source dimension or overall score floor.
+    assert (
+        report.check(min_quality_score=90, min_dimension_scores={"uniqueness": 90}).verdict
+        == "inconclusive"
+    )
+
+
+def test_duplicate_replacement_preserves_other_quality_provenance_and_bounds():
+    from dataprof._dataprof import _replace_row_duplicates, profile_dataframe
+
+    # This small report already has Mixed confidence from the 10,000-value
+    # quality reservoir. Exercise both state transitions at the native helper
+    # boundary without multiplying the million-row public-path fixture.
+    df = pd.DataFrame({"id": range(10_001), "value": ["ok"] * 10_001})
+    config = dp.ProfilerConfig(quality_dimensions=["completeness", "consistency", "uniqueness"])
+    native = profile_dataframe(df, "dataframe", None, config)
+    report = dp.ProfileReport(native)
+    original = json.loads(report.to_json())["quality"]
+    original_confidence = original["confidence"]["Mixed"]
+    original_bounds = original["score_bounds"]
+
+    _replace_row_duplicates(native, 0, len(df), True)
+
+    updated = json.loads(report.to_json())["quality"]
+    confidence = updated["confidence"]["Mixed"]
+    assert confidence["sample_size"] == original_confidence["sample_size"]
+    assert confidence["exact_dimensions"] == ["completeness", "key_uniqueness"]
+    assert confidence["sampled_dimensions"] == ["consistency", "duplicate_rows"]
+    assert updated["metrics"]["completeness"] == original["metrics"]["completeness"]
+    assert updated["metrics"]["consistency"] == original["metrics"]["consistency"]
+    assert updated["scores"] == original["scores"]
+    assert updated["score_bounds"]["overall_score"] is None
+    for dimension, interval in original_bounds["dimension_scores"].items():
+        assert updated["score_bounds"]["dimension_scores"][dimension] == (
+            None if dimension == "uniqueness" else interval
+        )
+
+    _replace_row_duplicates(native, 0, len(df), False)
+
+    restored = json.loads(report.to_json())["quality"]
+    assert restored["confidence"] == original["confidence"]
+    assert restored["metrics"] == original["metrics"]
+    assert report.check(min_dimension_scores={"uniqueness": 90}).verdict == "pass"
 
 
 def test_arrow_compatible_container_column_keeps_native_path():

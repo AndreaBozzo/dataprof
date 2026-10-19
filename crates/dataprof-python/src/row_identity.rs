@@ -1,4 +1,4 @@
-use dataprof::{QualityAssessment, QualityMetrics, ScoreBounds, ScoreInterval};
+use dataprof::{MetricConfidence, QualityAssessment, QualityMetrics, ScoreBounds, ScoreInterval};
 use dataprof_parquet::record_batch_analyzer::count_batch_row_duplicates;
 use pyo3::prelude::*;
 
@@ -85,9 +85,9 @@ fn adjusted_score_bounds(
 /// container-aware row-signature pass can recover the correct duplicate count,
 /// while this helper keeps every native Arrow column profile and every other
 /// quality component from the original report. Rebuilding the assessment also
-/// invalidates cached scores derived from the old duplicate count; score bounds
-/// are shifted when the duplicate component remains exact and conservatively
-/// withheld when an approximate count makes that impossible.
+/// invalidates cached scores derived from the old duplicate count and updates
+/// its exact/approximate provenance; score bounds are shifted when the duplicate
+/// component remains exact and conservatively withheld otherwise.
 #[pyfunction(name = "_replace_row_duplicates")]
 pub fn replace_row_duplicates(
     mut report: PyRefMut<'_, PyProfileReport>,
@@ -114,7 +114,7 @@ pub fn replace_row_duplicates(
     let old_metrics = quality.metrics.clone();
     let old_approximate = current.duplicate_rows_approximate;
     let old_bounds = quality.score_bounds().cloned();
-    let confidence = quality.confidence.clone();
+    let mut confidence = quality.confidence.clone();
     let mut new_metrics = quality.metrics;
 
     let uniqueness = new_metrics
@@ -124,6 +124,31 @@ pub fn replace_row_duplicates(
     uniqueness.duplicate_rows = duplicate_rows;
     uniqueness.rows_checked = rows_checked;
     uniqueness.duplicate_rows_approximate = approximate;
+
+    // The Arrow profile already has Mixed confidence before its row tracker
+    // can spill: its quality reservoir is smaller than the exact-row limit.
+    // Container markers can cross that limit when the original rows did not.
+    if let MetricConfidence::Mixed {
+        exact_dimensions,
+        sampled_dimensions,
+        ..
+    } = &mut confidence
+    {
+        let (components, other_components) = if approximate {
+            (sampled_dimensions, exact_dimensions)
+        } else {
+            (exact_dimensions, sampled_dimensions)
+        };
+        other_components.retain(|component| component != "duplicate_rows");
+        if rows_checked == 0 {
+            components.retain(|component| component != "duplicate_rows");
+        } else if !components
+            .iter()
+            .any(|component| component == "duplicate_rows")
+        {
+            components.push("duplicate_rows".to_string());
+        }
+    }
 
     let bounds = adjusted_score_bounds(
         old_bounds,
