@@ -26,7 +26,7 @@ use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, to_ffi};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyCapsule;
+use pyo3::types::{PyCapsule, PyDict};
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, EngineType,
@@ -390,7 +390,10 @@ pub fn profile_dataframe(
     // path does: a chunked frame has more than one batch, and concatenating
     // them here would both allocate for rows the row limit is about to discard
     // and peak at roughly twice the input.
-    let batches = convert_dataframe_to_batches(py, &df, &source_library)?;
+    let ImportedDataFrame {
+        batches,
+        mut container_markers,
+    } = convert_dataframe_to_batches(py, &df, &source_library)?;
 
     // Optionally limit rows before analysis
     let (batches, truncated) = limit_batches(batches, effective_max_rows);
@@ -400,18 +403,33 @@ pub fn profile_dataframe(
         .iter()
         .map(|field| field.name().clone())
         .collect::<Vec<_>>();
+    let mut column_markers = if container_markers.is_empty() {
+        Vec::new()
+    } else {
+        (0..available_columns.len())
+            .map(|index| container_markers.remove(&index))
+            .collect::<Vec<_>>()
+    };
     let batches = match options
         .column_indices(&available_columns)
         .map_err(|error| PyValueError::new_err(error.to_string()))?
     {
-        Some(indices) => batches
-            .into_iter()
-            .map(|batch| {
-                batch.project(&indices).map_err(|error| {
-                    PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+        Some(indices) => {
+            if !column_markers.is_empty() {
+                column_markers = indices
+                    .iter()
+                    .map(|&index| column_markers[index].take())
+                    .collect();
+            }
+            batches
+                .into_iter()
+                .map(|batch| {
+                    batch.project(&indices).map_err(|error| {
+                        PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+                    })
                 })
-            })
-            .collect::<PyResult<Vec<_>>>()?,
+                .collect::<PyResult<Vec<_>>>()?
+        }
         None => batches,
     };
 
@@ -424,8 +442,15 @@ pub fn profile_dataframe(
 
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
+    let mut row_offset = 0;
     for batch in &batches {
-        analyze_imported_batch(&mut analyzer, batch)?;
+        let end = row_offset + batch.num_rows();
+        let batch_markers = column_markers
+            .iter()
+            .map(|markers| markers.as_ref().map(|markers| &markers[row_offset..end]))
+            .collect::<Vec<_>>();
+        analyze_imported_batch(&mut analyzer, batch, &batch_markers)?;
+        row_offset = end;
     }
 
     let locale = options.locale();
@@ -569,7 +594,7 @@ pub fn profile_arrow(
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     for batch in &batches {
-        analyze_imported_batch(&mut analyzer, batch)?;
+        analyze_imported_batch(&mut analyzer, batch, &[])?;
     }
 
     let locale = options.locale();
@@ -908,6 +933,13 @@ fn limit_batches(batches: Vec<RecordBatch>, max_rows: Option<usize>) -> (Vec<Rec
     (kept, false)
 }
 
+struct ImportedDataFrame {
+    batches: Vec<RecordBatch>,
+    /// Original column positions and full-frame row flags, before limits or
+    /// projection. Only pandas columns that needed text fallback have entries.
+    container_markers: HashMap<usize, Vec<bool>>,
+}
+
 /// Convert a DataFrame to the sequence of Arrow batches backing it.
 ///
 /// A frame carrying several Arrow chunks yields several batches. Both library
@@ -918,11 +950,11 @@ fn convert_dataframe_to_batches(
     py: Python<'_>,
     df: &Py<PyAny>,
     source_library: &DataFrameLibrary,
-) -> PyResult<Vec<RecordBatch>> {
+) -> PyResult<ImportedDataFrame> {
     let bound = df.bind(py);
 
-    match source_library {
-        DataFrameLibrary::Pandas => convert_pandas_to_batches(py, bound),
+    let batches = match source_library {
+        DataFrameLibrary::Pandas => return convert_pandas_to_batches(py, bound),
         DataFrameLibrary::Polars => convert_polars_to_batches(py, bound),
         DataFrameLibrary::PyArrow => import_batches_from_pyarrow(py, bound),
         DataFrameLibrary::Custom(_) => {
@@ -940,14 +972,18 @@ fn convert_dataframe_to_batches(
                 )))
             }
         }
-    }
+    }?;
+    Ok(ImportedDataFrame {
+        batches,
+        container_markers: HashMap::new(),
+    })
 }
 
 /// Convert a pandas DataFrame to its Arrow batches.
 ///
 /// An Arrow-backed frame whose columns are chunked exports as several batches,
 /// which is why this returns the whole sequence rather than `to_batches()[0]`.
-fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
+fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<ImportedDataFrame> {
     let pyarrow = py.import("pyarrow").map_err(|_| {
         PyRuntimeError::new_err(
             "pyarrow required for pandas DataFrames. Install with: pip install pyarrow",
@@ -956,11 +992,32 @@ fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
 
     // Convert pandas to pyarrow Table, falling back to string arrays for mixed object columns (#976)
     let inputs_mod = py.import("dataprof._inputs")?;
-    let pa_table = inputs_mod
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("container_markers", true)?;
+    let (pa_table, container_markers): (Py<PyAny>, HashMap<usize, Vec<bool>>) = inputs_mod
         .getattr("_pandas_to_pyarrow_table")?
-        .call1((df, &pyarrow))?;
+        .call((df, &pyarrow), Some(&kwargs))?
+        .extract()?;
 
-    import_batches_from_pyarrow(py, &pa_table)
+    let batches = import_batches_from_pyarrow(py, pa_table.bind(py))?;
+    let num_columns = batches[0].num_columns();
+    let num_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
+    for (&column_index, markers) in &container_markers {
+        if column_index >= num_columns {
+            return Err(PyValueError::new_err(format!(
+                "container marker column {column_index} is outside the Arrow table schema"
+            )));
+        }
+        if markers.len() != num_rows {
+            return Err(PyValueError::new_err(format!(
+                "container markers for column {column_index} must match the Arrow table's row count"
+            )));
+        }
+    }
+    Ok(ImportedDataFrame {
+        batches,
+        container_markers,
+    })
 }
 
 /// Convert a polars DataFrame to its Arrow batches.
@@ -985,7 +1042,7 @@ fn convert_polars_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
 /// A Table keeps its chunking rather than being flattened here: the caller
 /// analyzes batch by batch, so a large chunked Table never has to exist as one
 /// contiguous RecordBatch.
-pub(super) fn import_batches_from_pyarrow(
+fn import_batches_from_pyarrow(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<RecordBatch>> {
@@ -1221,12 +1278,16 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
 ///
 /// The corollary is deliberate: corruption in rows beyond `max_rows` is not
 /// reported, because those rows are never read.
-fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatch) -> PyResult<()> {
+fn analyze_imported_batch(
+    analyzer: &mut RecordBatchAnalyzer,
+    batch: &RecordBatch,
+    container_markers: &[Option<&[bool]>],
+) -> PyResult<()> {
     for column in batch.columns() {
         validate_imported_array(&column.to_data())?;
     }
     analyzer
-        .process_batch(batch)
+        .process_batch_with_container_markers(batch, container_markers)
         .map_err(crate::errors::analyzer_error_to_py)
 }
 
@@ -1234,7 +1295,7 @@ fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatc
 ///
 /// The input is invalid, so this is a `ValueError`, the same class the CSV and
 /// JSON paths raise for malformed data.
-pub(super) fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
+fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
     array_data.validate_full().map_err(|e| {
         PyValueError::new_err(format!(
             "Arrow data received over the C Data Interface violates the Arrow \

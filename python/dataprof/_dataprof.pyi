@@ -416,7 +416,10 @@ def analyze_file(path: str, config: ProfilerConfig | None) -> ProfileReport: ...
 def list_patterns(locale: str | None = None) -> list[dict[str, Any]]: ...
 def report_delta_json(a: ProfileReport | str, b: ProfileReport | str) -> str: ...
 def profile_dataframe(
-    df: Any, name: str, max_rows: int | None, config: ProfilerConfig | None
+    df: Any,
+    name: str = "dataframe",
+    max_rows: int | None = None,
+    config: ProfilerConfig | None = None,
 ) -> ProfileReport: ...
 def profile_arrow(
     source: Any, name: str, max_rows: int | None, config: ProfilerConfig | None
@@ -432,17 +435,6 @@ def profile_columns(
     source_format: str | None = None,
     source_bytes: int | None = None,
 ) -> ProfileReport: ...
-
-# Private native helpers used only by the mixed-pandas container identity adapter.
-def _count_container_aware_duplicates(
-    table: object,
-) -> tuple[int, int, bool] | None: ...
-def _replace_row_duplicates(
-    report: ProfileReport,
-    duplicate_rows: int,
-    rows_checked: int,
-    approximate: bool,
-) -> None: ...
 def profile_parquet_bytes(
     data: bytes,
     name: str,

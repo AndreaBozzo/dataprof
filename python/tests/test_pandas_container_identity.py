@@ -66,7 +66,7 @@ def test_fallback_does_not_retype_neighboring_native_columns():
     assert _uniqueness(report)["duplicate_rows"] == 0
 
 
-def test_container_identity_side_pass_honors_max_rows():
+def test_container_identity_honors_max_rows():
     df = pd.DataFrame(
         {
             "c": pd.Series(
@@ -83,27 +83,11 @@ def test_container_identity_side_pass_honors_max_rows():
     assert _uniqueness(report)["duplicate_rows"] == 0
 
 
-def test_duplicate_repair_refreshes_quality_score():
-    from dataprof._dataprof import profile_dataframe as native_profile_dataframe
-
-    df = pd.DataFrame({"c": pd.Series([{"x": 1}, '{"x":1}', [1, 2], "[1,2]"], dtype=object)})
-    native = dp.ProfileReport(native_profile_dataframe(df, "dataframe", None, None))
-    repaired = dp.profile(df)
-
-    assert _uniqueness(native)["duplicate_rows"] == 2
-    assert _uniqueness(repaired)["duplicate_rows"] == 0
-    native_score = native.quality_score
-    repaired_score = repaired.quality_score
-    assert native_score is not None
-    assert repaired_score is not None
-    assert repaired_score > native_score
-
-
 @pytest.mark.slow
-def test_container_identity_spill_does_not_claim_exact_quality():
-    # The native fallback folds each container/string pair into one row. The
-    # repaired identities cross the 1,000,000-distinct-row exact-set limit,
-    # while the original report still has exact duplicate provenance.
+def test_container_identity_spill_preserves_provenance_and_certified_bounds():
+    # Container-aware identities cross the 1,000,000-distinct-row exact-set
+    # limit. The report must derive its provenance and bounds from that sketch,
+    # even though collapsing each container/string pair would stay exact.
     pairs = 500_001
     df = pd.DataFrame(
         {
@@ -116,106 +100,22 @@ def test_container_identity_spill_does_not_claim_exact_quality():
 
     assert _uniqueness(report)["duplicate_rows_approximate"] is True
     assert report.quality_sampled_dimensions == ["duplicate_rows"]
-    confidence = json.loads(report.to_json())["quality"]["confidence"]["Mixed"]
+    quality = json.loads(report.to_json())["quality"]
+    confidence = quality["confidence"]["Mixed"]
     assert confidence["exact_dimensions"] == []
-    # Without a bound for the repaired sketch, its high point estimate cannot
-    # establish either a whole-source dimension or overall score floor.
+    # Before spilling, the exact set already certified more than a million
+    # distinct rows. Keep that real floor together with the approximate flag;
+    # the point estimate alone still cannot establish perfect uniqueness.
+    interval = quality["score_bounds"]["dimension_scores"]["uniqueness"]
+    assert 90 <= interval["lower"] < interval["upper"] == 100
     assert (
         report.check(min_quality_score=90, min_dimension_scores={"uniqueness": 90}).verdict
+        == "pass"
+    )
+    assert (
+        report.check(min_quality_score=100, min_dimension_scores={"uniqueness": 100}).verdict
         == "inconclusive"
     )
-
-
-def test_duplicate_replacement_preserves_other_quality_provenance_and_bounds():
-    from dataprof._dataprof import _replace_row_duplicates, profile_dataframe
-
-    # This small report already has Mixed confidence from the 10,000-value
-    # quality reservoir. Exercise both state transitions at the native helper
-    # boundary without multiplying the million-row public-path fixture.
-    df = pd.DataFrame({"id": range(10_001), "value": ["ok"] * 10_001})
-    config = dp.ProfilerConfig(quality_dimensions=["completeness", "consistency", "uniqueness"])
-    native = profile_dataframe(df, "dataframe", None, config)
-    report = dp.ProfileReport(native)
-    original = json.loads(report.to_json())["quality"]
-    original_confidence = original["confidence"]["Mixed"]
-    original_bounds = original["score_bounds"]
-
-    _replace_row_duplicates(native, 0, len(df), True)
-
-    updated = json.loads(report.to_json())["quality"]
-    confidence = updated["confidence"]["Mixed"]
-    assert confidence["sample_size"] == original_confidence["sample_size"]
-    assert confidence["exact_dimensions"] == ["completeness", "key_uniqueness"]
-    assert confidence["sampled_dimensions"] == ["consistency", "duplicate_rows"]
-    assert updated["metrics"]["completeness"] == original["metrics"]["completeness"]
-    assert updated["metrics"]["consistency"] == original["metrics"]["consistency"]
-    assert updated["scores"] == original["scores"]
-    assert updated["score_bounds"]["overall_score"] is None
-    for dimension, interval in original_bounds["dimension_scores"].items():
-        assert updated["score_bounds"]["dimension_scores"][dimension] == (
-            None if dimension == "uniqueness" else interval
-        )
-
-    _replace_row_duplicates(native, 0, len(df), False)
-
-    restored = json.loads(report.to_json())["quality"]
-    assert restored["confidence"] == original["confidence"]
-    assert restored["metrics"] == original["metrics"]
-    assert report.check(min_dimension_scores={"uniqueness": 90}).verdict == "pass"
-
-
-def test_arrow_compatible_container_column_keeps_native_path():
-    from dataprof._pandas_mixed import _pandas_container_fallback_table
-
-    df = pd.DataFrame({"c": pd.Series([[1, 2], [3, 4]], dtype=object)})
-
-    assert _pandas_container_fallback_table(df) is None
-
-
-def test_duplicate_only_native_helper_matches_full_column_profiler():
-    from dataprof._dataprof import _count_container_aware_duplicates, profile_columns
-
-    columns: list[tuple[str, list[str | None], list[int]]] = [
-        ("id", ["a", "a", "b", "b", "b"], []),
-        ("payload", ['{"x":1}'] * 5, [0, 2]),
-    ]
-    table = pa.table(
-        {
-            "id": columns[0][1],
-            "payload": columns[1][1],
-            "payload_container": [True, False, True, False, False],
-        }
-    )
-    dedicated = _count_container_aware_duplicates(table)
-    original = profile_columns(columns, "example", None, None)
-    assert original.quality is not None
-    uniqueness = original.quality.uniqueness
-    assert uniqueness is not None
-
-    assert dedicated == (
-        uniqueness["duplicate_rows"],
-        uniqueness["rows_checked"],
-        uniqueness["duplicate_rows_approximate"],
-    )
-    assert dedicated == (1, 5, False)
-
-
-def test_duplicate_only_native_helper_handles_no_rows_or_columns():
-    from dataprof._dataprof import _count_container_aware_duplicates
-
-    assert _count_container_aware_duplicates(pa.table({})) is None
-    assert _count_container_aware_duplicates(pa.table({"payload": []})) is None
-
-
-@pytest.mark.parametrize(
-    "table",
-    [None, {}, []],
-)
-def test_duplicate_only_native_helper_rejects_non_table_sources(table):
-    from dataprof._dataprof import _count_container_aware_duplicates
-
-    with pytest.raises(TypeError, match="Expected a pyarrow Table or RecordBatch"):
-        _count_container_aware_duplicates(table)
 
 
 @pytest.mark.parametrize("entrypoint", ["profile", "interop"])
@@ -292,22 +192,6 @@ def test_fallback_markers_do_not_collide_with_source_columns():
     assert _uniqueness(report)["duplicate_rows"] == 1
 
 
-def test_fallback_checks_no_container_values_beyond_the_row_cap(monkeypatch):
-    from dataprof import _pandas_mixed
-
-    omitted = {"beyond": "the row cap"}
-    df = pd.DataFrame({"c": pd.Series(["a", "b", omitted], dtype=object)})
-    is_container = _pandas_mixed._is_container
-
-    def check_analyzed_value(value):
-        assert value is not omitted, "container detection visited an unanalyzed row"
-        return is_container(value)
-
-    monkeypatch.setattr(_pandas_mixed, "_is_container", check_analyzed_value)
-
-    assert _pandas_mixed._pandas_container_fallback_table(df, 2) is None
-
-
 @pytest.mark.skipif(sys.maxsize < (1 << 63) - 1, reason="requires a 64-bit native row cap")
 @pytest.mark.parametrize("entrypoint", ["profile", "interop"])
 def test_fallback_accepts_row_caps_larger_than_arrow_slice_length(entrypoint):
@@ -323,3 +207,128 @@ def test_fallback_accepts_row_caps_larger_than_arrow_slice_length(entrypoint):
 
     assert report.rows == 2
     assert _uniqueness(report)["duplicate_rows"] == 0
+
+
+@pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+def test_mixed_frame_serializes_fallback_cells_once(entrypoint):
+    rendered = []
+
+    class Scalar:
+        def __str__(self):
+            rendered.append("scalar")
+            return "scalar"
+
+    df = pd.DataFrame({"payload": pd.Series([{"x": 1}, '{"x":1}', Scalar()], dtype=object)})
+    if entrypoint == "profile":
+        report = dp.profile(df)
+    else:
+        from dataprof.interop import profile_dataframe
+
+        report = dp.ProfileReport(profile_dataframe(df))
+
+    assert _uniqueness(report)["duplicate_rows"] == 0
+    assert rendered == ["scalar"]
+
+
+def test_native_dataframe_counts_container_identity_before_report_assembly():
+    from dataprof._dataprof import profile_dataframe
+
+    df = pd.DataFrame({"payload": pd.Series([{"x": 1}, '{"x":1}', [1, 2], "[1,2]"], dtype=object)})
+    report = dp.ProfileReport(profile_dataframe(df))
+
+    assert _uniqueness(report)["duplicate_rows"] == 0
+
+
+def test_exact_duplicate_bounds_use_container_aware_counts():
+    values = [
+        {"x": row // 2 % 7} if row % 2 == 0 else '{"x":' + str(row // 2 % 7) + "}"
+        for row in range(20_000)
+    ]
+    report = dp.profile(
+        pd.DataFrame({"payload": pd.Series(values, dtype=object)}),
+        quality_dimensions=["completeness", "consistency", "uniqueness"],
+    )
+    quality = json.loads(report.to_json())["quality"]
+
+    assert _uniqueness(report)["duplicate_rows"] == 20_000 - 14
+    assert _uniqueness(report)["duplicate_rows_approximate"] is False
+    assert quality["score_bounds"]["dimension_scores"]["uniqueness"] == {
+        "lower": 0.07,
+        "upper": 0.07,
+    }
+    confidence = quality["confidence"]["Mixed"]
+    assert "duplicate_rows" in confidence["exact_dimensions"]
+    assert confidence["sampled_dimensions"] == ["consistency"]
+
+
+def test_arrow_compatible_containers_keep_native_types_without_fallback_markers():
+    from dataprof._inputs import _pandas_to_pyarrow_table
+
+    df = pd.DataFrame({"payload": pd.Series([[1, 2], [3, 4]], dtype=object)})
+    table, markers = _pandas_to_pyarrow_table(df, pa, container_markers=True)
+
+    assert pa.types.is_list(table.schema.field("payload").type)
+    assert markers == {}
+    assert isinstance(_pandas_to_pyarrow_table(df, pa), pa.Table)
+
+
+def test_fallback_metadata_uses_original_column_positions_and_missing_values():
+    from dataprof._inputs import _pandas_to_pyarrow_table
+
+    df = pd.DataFrame(
+        {
+            "native": [1, 2, 3, 4],
+            "mixed": pd.Series([1, "missing", None, 4], dtype=object),
+            "payload": pd.Series([{"x": 1}, '{"x":1}', [1, 2], pd.NA], dtype=object),
+        }
+    )
+    table, markers = _pandas_to_pyarrow_table(df, pa, container_markers=True)
+
+    assert table.column_names == list(df.columns)
+    assert pa.types.is_integer(table.schema.field("native").type)
+    assert table["payload"].to_pylist() == ['{"x":1}', '{"x":1}', "[1,2]", None]
+    assert markers == {2: [True, False, True, False]}
+    assert df["payload"].iloc[0] == {"x": 1}
+    assert df["mixed"].iloc[0] == 1
+
+
+@pytest.mark.parametrize("max_rows", [None, 3, 5])
+def test_container_flags_follow_arrow_batch_offsets_and_partial_final_batch(max_rows):
+    from dataprof._inputs import _pandas_to_pyarrow_table
+
+    df = pd.DataFrame(
+        {
+            "neighbor": pd.Series(
+                pd.arrays.ArrowExtensionArray(pa.chunked_array([[1, 1], [1, 1], [1, 1]]))
+            ),
+            "payload": pd.Series(
+                [{"x": 1}, '{"x":1}', {"x": 1}, '{"x":1}', '{"x":1}', {"x": 1}],
+                dtype=object,
+            ),
+        }
+    )
+    assert [batch.num_rows for batch in _pandas_to_pyarrow_table(df, pa).to_batches()] == [2, 2, 2]
+
+    report = dp.profile(df, max_rows=max_rows)
+
+    rows = max_rows or 6
+    assert report.rows == rows
+    assert report["neighbor"].data_type == "integer"
+    assert _uniqueness(report)["rows_checked"] == rows
+    assert _uniqueness(report)["duplicate_rows"] == rows - 2
+
+
+def test_projected_fallback_column_preserves_native_report_contract():
+    df = pd.DataFrame(
+        {
+            "omitted": [1, 1, 1],
+            "payload": pd.Series([{"x": 1}, '{"x":1}', {"x": 1}], dtype=object),
+            "other": [True, False, True],
+        }
+    )
+    report = dp.profile(df, max_rows=2, columns=["payload"])
+
+    assert list(report) == ["payload"]
+    assert report.rows == 2
+    assert report.quality is not None
+    assert report.quality.uniqueness is None

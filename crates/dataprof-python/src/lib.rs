@@ -8,7 +8,6 @@ pub mod config;
 pub mod errors;
 pub mod partial;
 pub mod progress;
-mod row_identity;
 pub mod sampling;
 pub mod stop_condition;
 pub mod types;
@@ -31,7 +30,6 @@ pub use partial::{
     analyze_structure, infer_schema, quick_row_count,
 };
 pub use progress::PyProgressEvent;
-pub use row_identity::{count_container_aware_duplicates, replace_row_duplicates};
 pub use sampling::PySamplingStrategy;
 pub use stop_condition::PyStopCondition;
 pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport, report_delta_json};
@@ -104,8 +102,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
     m.add_function(wrap_pyfunction!(profile_arrow, m)?)?;
-    m.add_function(wrap_pyfunction!(replace_row_duplicates, m)?)?;
-    m.add_function(wrap_pyfunction!(count_container_aware_duplicates, m)?)?;
 
     // Dependency-free columnar profiling (dict, list-of-dicts, decoded bytes)
     m.add_function(wrap_pyfunction!(profile_columns, m)?)?;
