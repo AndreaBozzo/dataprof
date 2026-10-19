@@ -200,6 +200,16 @@ impl BatchRowTracker {
     }
 }
 
+/// Count duplicates with the same Arrow row encoding as full profiling, without
+/// constructing per-column analyzers or computing a second set of statistics.
+pub fn count_batch_row_duplicates(batches: &[RecordBatch]) -> Option<RowDuplicateSummary> {
+    let mut tracker = BatchRowTracker::default();
+    for batch in batches {
+        tracker.observe_batch(batch);
+    }
+    tracker.summary()
+}
+
 /// Each column's distinct-count estimator, in column order rather than the
 /// map's hash order, so a tie between equal sets always spills the same one.
 pub(crate) fn in_column_order<'a, A>(

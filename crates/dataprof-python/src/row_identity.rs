@@ -1,55 +1,30 @@
 use dataprof::{QualityAssessment, QualityMetrics, ScoreBounds, ScoreInterval};
-use dataprof_runtime::{RowSignature, RowUniquenessTracker};
-use pyo3::exceptions::PyValueError;
+use dataprof_parquet::record_batch_analyzer::count_batch_row_duplicates;
 use pyo3::prelude::*;
 
-use super::columns::PyColumn;
+use super::arrow_export::{import_batches_from_pyarrow, validate_imported_array};
 use super::types::PyProfileReport;
 
-/// Only compute full-row duplicate evidence from already-rendered columns.
+/// Only compute full-row duplicate evidence from a container-marked Arrow table.
 ///
-/// Unlike profile_columns, this does not infer or aggregate statistics for a
-/// second throwaway report. It uses precisely the same tagged RowSignature
-/// and bounded cardinality estimator as the normal column profiler.
+/// The extra boolean columns distinguish containers from strings spelling their
+/// JSON. All original columns retain their native Arrow row encoding, including
+/// numeric coercion, timestamp normalization, nested values, and sorted maps.
+/// No per-column statistics or second throwaway report are computed.
 #[pyfunction(name = "_count_container_aware_duplicates")]
 pub fn count_container_aware_duplicates(
     py: Python<'_>,
-    columns: Vec<PyColumn>,
+    table: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(usize, usize, bool)>> {
-    let Some((_, first, _)) = columns.first() else {
-        return Ok(None);
-    };
-    let rows = first.len();
-    if let Some((name, cells, _)) = columns.iter().find(|(_, cells, _)| cells.len() != rows) {
-        return Err(PyValueError::new_err(format!(
-            "duplicate signature: column {name:?} has {} cells, expected {rows}",
-            cells.len()
-        )));
-    }
-    if let Some((name, _, _)) = columns.iter().find(|(_, _, indices)| {
-        !indices.windows(2).all(|pair| pair[0] < pair[1])
-            || indices.last().is_some_and(|&last| last >= rows)
-    }) {
-        return Err(PyValueError::new_err(format!(
-            "duplicate signature: invalid container positions for column {name:?}"
-        )));
-    }
-    let summary = py.detach(|| {
-        let mut tracker = RowUniquenessTracker::default();
-        for row in 0..rows {
-            let mut signature = RowSignature::default();
-            for (_, cells, containers) in &columns {
-                let value = cells[row].as_deref().unwrap_or("");
-                if containers.binary_search(&row).is_ok() {
-                    signature.push_container_field(value);
-                } else {
-                    signature.push_field(value);
-                }
-            }
-            tracker.observe(signature.finish());
+    let batches = import_batches_from_pyarrow(py, table)?;
+    // Keep the same C Data Interface validation as the native profiling path
+    // before the row tracker dereferences imported Arrow buffers.
+    for batch in &batches {
+        for column in batch.columns() {
+            validate_imported_array(&column.to_data())?;
         }
-        tracker.summary()
-    });
+    }
+    let summary = py.detach(|| count_batch_row_duplicates(&batches));
     Ok(summary.map(|s| (s.duplicate_rows, s.rows_checked, s.approximate)))
 }
 
@@ -65,9 +40,7 @@ fn adjusted_score_bounds(
     old_approximate: bool,
     new_approximate: bool,
 ) -> Option<ScoreBounds> {
-    let Some(bounds) = bounds.as_mut() else {
-        return None;
-    };
+    let bounds = bounds.as_mut()?;
 
     let old_uniqueness = old_metrics.uniqueness_score();
     let new_uniqueness = new_metrics.uniqueness_score();
@@ -75,22 +48,23 @@ fn adjusted_score_bounds(
         return Some(bounds.clone());
     }
 
-    if !old_approximate && !new_approximate {
-        if let (Some(old_score), Some(new_score)) = (old_uniqueness, new_uniqueness) {
-            let delta = new_score - old_score;
-            if let Some(Some(interval)) = bounds.dimension_scores.get_mut("uniqueness") {
-                shift_interval(interval, delta);
-            }
-
-            if let (Some(old_overall), Some(new_overall), Some(interval)) = (
-                old_metrics.overall_score(),
-                new_metrics.overall_score(),
-                bounds.overall_score.as_mut(),
-            ) {
-                shift_interval(interval, new_overall - old_overall);
-            }
-            return Some(bounds.clone());
+    if !old_approximate
+        && !new_approximate
+        && let (Some(old_score), Some(new_score)) = (old_uniqueness, new_uniqueness)
+    {
+        let delta = new_score - old_score;
+        if let Some(Some(interval)) = bounds.dimension_scores.get_mut("uniqueness") {
+            shift_interval(interval, delta);
         }
+
+        if let (Some(old_overall), Some(new_overall), Some(interval)) = (
+            old_metrics.overall_score(),
+            new_metrics.overall_score(),
+            bounds.overall_score.as_mut(),
+        ) {
+            shift_interval(interval, new_overall - old_overall);
+        }
+        return Some(bounds.clone());
     }
 
     // An approximate duplicate count has no usable floor in QualityMetrics,

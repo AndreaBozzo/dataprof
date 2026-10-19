@@ -985,7 +985,7 @@ fn convert_polars_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
 /// A Table keeps its chunking rather than being flattened here: the caller
 /// analyzes batch by batch, so a large chunked Table never has to exist as one
 /// contiguous RecordBatch.
-fn import_batches_from_pyarrow(
+pub(super) fn import_batches_from_pyarrow(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<Vec<RecordBatch>> {
@@ -1234,7 +1234,7 @@ fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatc
 ///
 /// The input is invalid, so this is a `ValueError`, the same class the CSV and
 /// JSON paths raise for malformed data.
-fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
+pub(super) fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
     array_data.validate_full().map_err(|e| {
         PyValueError::new_err(format!(
             "Arrow data received over the C Data Interface violates the Arrow \

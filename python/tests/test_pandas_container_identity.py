@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
+from decimal import Decimal
 
 import dataprof as dp
 import pytest
 
 pd = pytest.importorskip("pandas", reason="pandas is required for pandas DataFrame tests")
-pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
+pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
 
 
 def _report(entrypoint: str, values: Sequence[object]) -> dp.ProfileReport:
@@ -97,11 +99,11 @@ def test_duplicate_repair_refreshes_quality_score():
 
 
 def test_arrow_compatible_container_column_keeps_native_path():
-    from dataprof._pandas_mixed import _pandas_container_fallback_columns
+    from dataprof._pandas_mixed import _pandas_container_fallback_table
 
     df = pd.DataFrame({"c": pd.Series([[1, 2], [3, 4]], dtype=object)})
 
-    assert _pandas_container_fallback_columns(df) is None
+    assert _pandas_container_fallback_table(df) is None
 
 
 def test_duplicate_only_native_helper_matches_full_column_profiler():
@@ -111,7 +113,14 @@ def test_duplicate_only_native_helper_matches_full_column_profiler():
         ("id", ["a", "a", "b", "b", "b"], []),
         ("payload", ['{"x":1}'] * 5, [0, 2]),
     ]
-    dedicated = _count_container_aware_duplicates(columns)
+    table = pa.table(
+        {
+            "id": columns[0][1],
+            "payload": columns[1][1],
+            "payload_container": [True, False, True, False, False],
+        }
+    )
+    dedicated = _count_container_aware_duplicates(table)
     original = profile_columns(columns, "example", None, None)
     assert original.quality is not None
     uniqueness = original.quality.uniqueness
@@ -128,20 +137,123 @@ def test_duplicate_only_native_helper_matches_full_column_profiler():
 def test_duplicate_only_native_helper_handles_no_rows_or_columns():
     from dataprof._dataprof import _count_container_aware_duplicates
 
-    assert _count_container_aware_duplicates([]) is None
-    assert _count_container_aware_duplicates([("payload", [], [])]) is None
+    assert _count_container_aware_duplicates(pa.table({})) is None
+    assert _count_container_aware_duplicates(pa.table({"payload": []})) is None
 
 
 @pytest.mark.parametrize(
-    "columns",
-    [
-        [("a", ["x"], []), ("b", ["x", "y"], [])],
-        [("a", ["x", "y"], [1, 0])],
-        [("a", ["x"], [1])],
-    ],
+    "table",
+    [None, {}, []],
 )
-def test_duplicate_only_native_helper_rejects_invalid_cell_metadata(columns):
+def test_duplicate_only_native_helper_rejects_non_table_sources(table):
     from dataprof._dataprof import _count_container_aware_duplicates
 
-    with pytest.raises(ValueError, match="duplicate signature:"):
-        _count_container_aware_duplicates(columns)
+    with pytest.raises(TypeError, match="Expected a pyarrow Table or RecordBatch"):
+        _count_container_aware_duplicates(table)
+
+
+@pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+@pytest.mark.parametrize("max_rows", [None, 2])
+@pytest.mark.parametrize(
+    "neighbors",
+    [
+        [1, 1.0, 1],
+        [Decimal("1.0"), Decimal("1.00"), Decimal("1.0")],
+        [
+            pd.Timestamp("2020-01-01 00:00Z"),
+            pd.Timestamp("2020-01-01 01:00+01:00"),
+            pd.Timestamp("2020-01-01 00:00Z"),
+        ],
+        [{"id": 1}, {"id": 1, "optional": None}, {"id": 1}],
+    ],
+    ids=["numeric-coercion", "decimal-scale", "timezone", "struct-schema"],
+)
+def test_fallback_preserves_native_neighbor_row_identity(entrypoint, max_rows, neighbors):
+    from dataprof._dataprof import profile_dataframe as native_profile_dataframe
+
+    df = pd.DataFrame(
+        {
+            "neighbor": pd.Series(neighbors, dtype=object),
+            "payload": pd.Series([{"x": 1}, {"x": 1}, '{"x":1}'], dtype=object),
+        }
+    )
+    # Arrow gives the first two neighboring cells one logical value, even
+    # though their original Python spellings differ. Correcting the payload
+    # must preserve this real duplicate, with or without the row cap.
+    native = dp.ProfileReport(native_profile_dataframe(df.iloc[:2], "dataframe", None, None))
+    assert _uniqueness(native)["duplicate_rows"] == 1
+
+    if entrypoint == "profile":
+        report = dp.profile(df, max_rows=max_rows)
+    else:
+        from dataprof.interop import profile_dataframe
+
+        report = dp.ProfileReport(profile_dataframe(df, max_rows=max_rows))
+
+    assert _uniqueness(report)["duplicate_rows"] == 1
+    assert _uniqueness(report)["rows_checked"] == (max_rows or 3)
+
+
+def test_fallback_preserves_native_map_equality():
+    # Arrow maps have no entry-order semantics. Re-stringifying Python lists
+    # of key/value pairs would incorrectly separate the first two rows.
+    values = [
+        [("a", 1), ("b", 2)],
+        [("b", 2), ("a", 1)],
+        [("a", 1), ("b", 2)],
+    ]
+    df = pd.DataFrame(
+        {
+            "mapping": pd.Series(values, dtype=pd.ArrowDtype(pa.map_(pa.string(), pa.int64()))),
+            "payload": pd.Series([{"x": 1}, {"x": 1}, '{"x":1}'], dtype=object),
+        }
+    )
+
+    assert _uniqueness(dp.profile(df))["duplicate_rows"] == 1
+
+
+def test_fallback_markers_do_not_collide_with_source_columns():
+    df = pd.DataFrame(
+        {
+            "__dataprof_container_0": ["same"] * 3,
+            "payload": pd.Series([{"x": 1}, {"x": 1}, '{"x":1}'], dtype=object),
+        }
+    )
+
+    report = dp.profile(df)
+
+    assert list(report) == list(df.columns)
+    assert _uniqueness(report)["duplicate_rows"] == 1
+
+
+def test_fallback_checks_no_container_values_beyond_the_row_cap(monkeypatch):
+    from dataprof import _pandas_mixed
+
+    omitted = {"beyond": "the row cap"}
+    df = pd.DataFrame({"c": pd.Series(["a", "b", omitted], dtype=object)})
+    is_container = _pandas_mixed._is_container
+
+    def check_analyzed_value(value):
+        assert value is not omitted, "container detection visited an unanalyzed row"
+        return is_container(value)
+
+    monkeypatch.setattr(_pandas_mixed, "_is_container", check_analyzed_value)
+
+    assert _pandas_mixed._pandas_container_fallback_table(df, 2) is None
+
+
+@pytest.mark.skipif(sys.maxsize < (1 << 63) - 1, reason="requires a 64-bit native row cap")
+@pytest.mark.parametrize("entrypoint", ["profile", "interop"])
+def test_fallback_accepts_row_caps_larger_than_arrow_slice_length(entrypoint):
+    # The native binding accepts usize, while Arrow slice lengths use signed
+    # int64. A cap beyond the input still means analyze the entire small frame.
+    df = pd.DataFrame({"payload": pd.Series([{"x": 1}, '{"x":1}'], dtype=object)})
+    if entrypoint == "profile":
+        report = dp.profile(df, max_rows=1 << 63)
+    else:
+        from dataprof.interop import profile_dataframe
+
+        report = dp.ProfileReport(profile_dataframe(df, max_rows=1 << 63))
+
+    assert report.rows == 2
+    assert _uniqueness(report)["duplicate_rows"] == 0

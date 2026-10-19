@@ -6,7 +6,7 @@ from typing import Any as _Any
 
 from . import _dataprof as _native
 from ._dataprof import profile_dataframe as _native_profile_dataframe
-from ._inputs import _cell_to_str, _Column, _is_container
+from ._inputs import _is_container, _pandas_to_pyarrow_table
 
 
 def _effective_max_rows(max_rows: int | None, config: _Any) -> int | None:
@@ -18,17 +18,18 @@ def _effective_max_rows(max_rows: int | None, config: _Any) -> int | None:
     return getattr(config, "max_rows", None)
 
 
-def _pandas_container_fallback_columns(
+def _pandas_container_fallback_table(
     df: _Any,
     row_limit: int | None = None,
-) -> list[_Column] | None:
-    """Return container-aware rows only when pandas needs the mixed fallback.
+) -> _Any:
+    """Mark fallback containers without changing native Arrow row identity.
 
-    Arrow remains the source of every column profile. This helper is only a
-    side-channel for full-row duplicate signatures when an object/category
-    column contains a real dict/list *and* Arrow cannot represent that column
-    without #976's string fallback. ``row_limit`` bounds the extra materialized
-    pass to the rows the native profiler will actually analyze.
+    Only object/category columns needing #976's fallback get a boolean marker
+    distinguishing a real dict/list from a string spelling its JSON. Every
+    original Arrow column remains unchanged, so the duplicate pass preserves
+    native numeric, temporal, and nested equality in neighboring columns.
+    ``row_limit`` bounds marker materialization and the duplicate scan. Arrow
+    conversion still considers the full source, as the native profiler does.
     """
     source_module = type(df).__module__ or ""
     if not source_module.startswith("pandas"):
@@ -40,54 +41,35 @@ def _pandas_container_fallback_columns(
         # Preserve the native binding's canonical "pyarrow required" error.
         return None
 
-    needs_container_fallback = False
+    markers: list[list[bool]] = []
     for index in range(len(df.columns)):
         col = df.iloc[:, index]
         if col.dtype != object and getattr(col.dtype, "name", None) != "category":
             continue
 
-        missing = col.isna() if hasattr(col, "isna") else [False] * len(col)
-        has_container = any(
-            not bool(is_missing) and _is_container(value)
-            for is_missing, value in zip(missing, col, strict=True)
-        )
-        if not has_container:
+        analyzed = col if row_limit is None else col.iloc[:row_limit]
+        if not any(_is_container(value) for value in analyzed):
             continue
 
         try:
             pa.Array.from_pandas(col)
         except (pa.ArrowInvalid, pa.ArrowTypeError):
-            needs_container_fallback = True
-            break
+            markers.append([_is_container(value) for value in analyzed])
 
-    if not needs_container_fallback:
+    if not markers:
         return None
 
-    columns: list[_Column] = []
-    for index in range(len(df.columns)):
-        raw_name = df.columns[index]
-        name = str(raw_name)
-        col = df.iloc[:, index]
-        if row_limit is not None:
-            col = col.iloc[:row_limit]
-        try:
-            missing = col.isna() if hasattr(col, "isna") else [False] * len(col)
-            cells: list[str | None] = []
-            containers: list[int] = []
-            for row, (is_missing, value) in enumerate(zip(missing, col, strict=True)):
-                if bool(is_missing):
-                    cells.append(None)
-                    continue
-                if _is_container(value):
-                    containers.append(row)
-                cells.append(_cell_to_str(value))
-            columns.append((name, cells, containers))
-        except Exception as exc:
-            raise ValueError(
-                f"pandas DataFrame: column {raw_name!r} could not be converted for profiling: {exc}"
-            ) from exc
-
-    return columns
+    table = _pandas_to_pyarrow_table(df, pa)
+    if row_limit is not None:
+        table = table.slice(0, min(row_limit, table.num_rows))
+    names = set(table.column_names)
+    for index, marker in enumerate(markers):
+        name = f"__dataprof_container_{index}"
+        while name in names:
+            name = "_" + name
+        names.add(name)
+        table = table.append_column(name, pa.array(marker, type=pa.bool_()))
+    return table
 
 
 def profile_dataframe(
@@ -109,14 +91,14 @@ def profile_dataframe(
         return report
 
     row_limit = _effective_max_rows(max_rows, config)
-    columns = _pandas_container_fallback_columns(df, row_limit)
-    if columns is None:
+    table = _pandas_container_fallback_table(df, row_limit)
+    if table is None:
         return report
 
     # Only row signatures are required. Avoid running a second complete
     # profile (per-column inference, statistics, and quality assessment).
     # Full-row uniqueness was withheld by the native path for projections.
-    counts = _native._count_container_aware_duplicates(columns)
+    counts = _native._count_container_aware_duplicates(table)
     if counts is None:
         return report
 

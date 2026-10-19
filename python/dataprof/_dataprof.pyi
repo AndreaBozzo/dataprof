@@ -435,7 +435,7 @@ def profile_columns(
 
 # Private native helpers used only by the mixed-pandas container identity adapter.
 def _count_container_aware_duplicates(
-    columns: list[tuple[str, list[str | None], list[int]]],
+    table: object,
 ) -> tuple[int, int, bool] | None: ...
 def _replace_row_duplicates(
     report: ProfileReport,
