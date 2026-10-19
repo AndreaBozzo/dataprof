@@ -1048,7 +1048,11 @@ A report loaded from a document written before dataprof recorded this says
 nothing about how its numbers were obtained. Unknown coverage is a third answer
 rather than "nothing was sampled", so `quality_sampled_dimensions` is `None`
 and a full-source check reports `coverage_unrecorded`. Both language layers
-answer the same way for such a report.
+answer the same way for such a report. The same holds for the overall score
+of a report written by a later release that sampled a dimension this release
+does not know: that dimension's weight is in the stored score, so
+`min_quality_score` and `compare()` both read it as `coverage_unrecorded`,
+while each known dimension keeps its own coverage.
 
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
