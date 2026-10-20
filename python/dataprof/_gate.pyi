@@ -18,6 +18,8 @@ class QualityCheck:
     dimension: str | None
     observed: float | int | None
     reason: dict[str, Any] | None
+    bounds: dict[str, Any] | None
+    baseline: dict[str, Any] | None
 
     def __init__(
         self,
@@ -31,6 +33,8 @@ class QualityCheck:
         dimension: str | None = ...,
         observed: float | int | None = ...,
         reason: dict[str, Any] | None = ...,
+        bounds: dict[str, Any] | None = ...,
+        baseline: dict[str, Any] | None = ...,
     ) -> None: ...
     @property
     def is_violation(self) -> bool: ...
@@ -43,6 +47,7 @@ class QualityGateResult:
     scope: str
     evidence: dict[str, Any]
     checks: tuple[QualityCheck, ...]
+    baseline: dict[str, Any] | None
 
     def __init__(
         self,
@@ -50,6 +55,7 @@ class QualityGateResult:
         scope: str,
         evidence: dict[str, Any],
         checks: tuple[QualityCheck, ...] = ...,
+        baseline: dict[str, Any] | None = ...,
     ) -> None: ...
     @property
     def passed(self) -> bool: ...
@@ -80,6 +86,10 @@ class _Policy:
         max_duplicate_rows: int | None,
         require_metrics: Sequence[str] | None,
         scope: str,
+        baseline: Any = ...,
+        max_quality_score_drop: float | None = ...,
+        max_dimension_score_drops: Mapping[str, float] | None = ...,
+        max_null_percentage_increase: Mapping[str, float] | float | None = ...,
     ) -> None: ...
     # Takes the report's runtime object, or `None` for a report restored
     # from a flat summary, which the gate refuses.

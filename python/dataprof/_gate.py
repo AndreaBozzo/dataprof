@@ -74,6 +74,10 @@ class QualityCheck:
     #: ``confidence_level``. A ``full_source`` requirement is decided on this
     #: interval rather than on ``observed``.
     bounds: dict[str, _Any] | None = None
+    #: The baseline's side of a rule about change: its ``observed`` value,
+    #: its ``evidence``, and ``change``, this check's ``observed`` minus the
+    #: baseline's in points. ``None`` on every other rule.
+    baseline: dict[str, _Any] | None = None
 
     @property
     def is_violation(self) -> bool:
@@ -94,6 +98,8 @@ class QualityCheck:
         document["evidence"] = dict(self.evidence)
         if self.bounds is not None:
             document["bounds"] = dict(self.bounds)
+        if self.baseline is not None:
+            document["baseline"] = dict(self.baseline)
         document["status"] = self.status
         if self.reason is not None:
             document.update(self.reason)
@@ -125,6 +131,10 @@ class QualityGateResult:
     scope: str
     evidence: dict[str, _Any]
     checks: tuple[QualityCheck, ...] = _field(default_factory=tuple)
+    #: When the policy was evaluated against a baseline: ``reports``, with the
+    #: baseline as ``a`` and this report as ``b``, and ``schema``, the columns
+    #: ``added``, ``removed`` and ``common``. ``None`` otherwise.
+    baseline: dict[str, _Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -154,12 +164,15 @@ class QualityGateResult:
 
     def to_dict(self) -> dict[str, _Any]:
         """The result as a JSON-ready document, as the Rust layer writes it."""
-        return {
+        document: dict[str, _Any] = {
             "verdict": self.verdict,
             "scope": self.scope,
             "evidence": dict(self.evidence),
             "checks": [check.to_dict() for check in self.checks],
         }
+        if self.baseline is not None:
+            document["baseline"] = dict(self.baseline)
+        return document
 
     def to_json(self, indent: int = 2) -> str:
         """The result as a JSON string."""
@@ -246,6 +259,10 @@ class _Policy:
         max_duplicate_rows: int | None,
         require_metrics: _Sequence[str] | None,
         scope: str,
+        baseline: _RustProfileReport | str | None = None,
+        max_quality_score_drop: float | None = None,
+        max_dimension_score_drops: _Mapping[str, float] | None = None,
+        max_null_percentage_increase: _Mapping[str, float] | float | None = None,
     ) -> None:
         if scope not in _SCOPES:
             raise _PolicyFieldError(
@@ -292,6 +309,48 @@ class _Policy:
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
 
+        self.max_quality_score_drop = (
+            None
+            if max_quality_score_drop is None
+            else _percentage("max_quality_score_drop", None, max_quality_score_drop)
+        )
+
+        self.max_dimension_score_drops: dict[str, float] = {}
+        for name, value in (max_dimension_score_drops or {}).items():
+            dimension = _dimension_name(name, setting="max_dimension_score_drops")
+            self.max_dimension_score_drops[dimension] = _percentage(
+                "max_dimension_score_drop",
+                dimension,
+                value,
+                policy_key="max_dimension_score_drops",
+            )
+
+        self.max_null_percentage_increase: dict[str, float] = {}
+        self.max_null_percentage_increase_any: float | None = None
+        if isinstance(max_null_percentage_increase, _Mapping):
+            for column, value in max_null_percentage_increase.items():
+                limit = _percentage(
+                    "max_null_percentage_increase",
+                    None if column == "*" else str(column),
+                    value,
+                )
+                if column == "*":
+                    self.max_null_percentage_increase_any = limit
+                else:
+                    self.max_null_percentage_increase[str(column)] = limit
+        elif max_null_percentage_increase is not None:
+            self.max_null_percentage_increase_any = _percentage(
+                "max_null_percentage_increase", None, max_null_percentage_increase
+            )
+
+        self.baseline = baseline
+        if baseline is None and self._has_change_rules():
+            raise _PolicyFieldError(
+                "baseline",
+                "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
+                "max_null_percentage_increase) needs a baseline report to compare against",
+            )
+
         self.require_quality = False
         self.require_dimensions: set[str] = set()
         for metric in require_metrics or ():
@@ -309,8 +368,17 @@ class _Policy:
             or self.max_duplicate_rows is not None
             or self.require_quality
             or self.require_dimensions
+            or self._has_change_rules()
         ):
             raise ValueError("check() states no requirement; a gate must check something")
+
+    def _has_change_rules(self) -> bool:
+        return (
+            self.max_quality_score_drop is not None
+            or bool(self.max_dimension_score_drops)
+            or bool(self.max_null_percentage_increase)
+            or self.max_null_percentage_increase_any is not None
+        )
 
     # -- evaluation ---------------------------------------------------------
 
@@ -338,6 +406,11 @@ class _Policy:
                 require_quality=self.require_quality,
                 require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,
+                baseline=self.baseline,
+                max_quality_score_drop=self.max_quality_score_drop,
+                max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
+                max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
+                max_null_percentage_increase_any=self.max_null_percentage_increase_any,
             )
         )
         return _result_from_document(document)
@@ -354,6 +427,7 @@ _CHECK_FIELDS = (
     "scope",
     "evidence",
     "bounds",
+    "baseline",
     "status",
     "message",
 )
@@ -370,6 +444,7 @@ def _check_from_document(document: dict[str, _Any]) -> QualityCheck:
         scope=document["scope"],
         evidence=document["evidence"],
         bounds=document.get("bounds"),
+        baseline=document.get("baseline"),
         status=document["status"],
         reason=reason or None,
         message=document["message"],
@@ -382,4 +457,5 @@ def _result_from_document(document: dict[str, _Any]) -> QualityGateResult:
         scope=document["scope"],
         evidence=document["evidence"],
         checks=tuple(_check_from_document(check) for check in document["checks"]),
+        baseline=document.get("baseline"),
     )

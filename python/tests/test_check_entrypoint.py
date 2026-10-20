@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import dataprof as dp
@@ -272,7 +273,7 @@ def test_capped_input_respects_evidence_scope(source: Path, scope: str, code: in
 
 
 def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path):
-    policy = {
+    policy: dict[str, Any] = {
         "min_rows": 1,
         "min_quality_score": 0,
         "min_dimension_scores": {"completeness": 0},

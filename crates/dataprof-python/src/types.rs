@@ -1276,6 +1276,11 @@ impl PyProfileReport {
         require_quality = false,
         require_dimensions = Vec::new(),
         scope = "full_source",
+        baseline = None,
+        max_quality_score_drop = None,
+        max_dimension_score_drops = Vec::new(),
+        max_null_percentage_increase = Vec::new(),
+        max_null_percentage_increase_any = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn quality_gate_json(
@@ -1289,6 +1294,11 @@ impl PyProfileReport {
         require_quality: bool,
         require_dimensions: Vec<String>,
         scope: &str,
+        baseline: Option<DeltaInput<'_>>,
+        max_quality_score_drop: Option<f64>,
+        max_dimension_score_drops: Vec<(String, f64)>,
+        max_null_percentage_increase: Vec<(String, f64)>,
+        max_null_percentage_increase_any: Option<f64>,
     ) -> PyResult<String> {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
         let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
@@ -1317,9 +1327,23 @@ impl PyProfileReport {
         for name in &require_dimensions {
             policy = policy.require_dimension(dimension(name)?);
         }
-        let result = policy
-            .evaluate(&self.inner)
-            .map_err(|e| value_error(e.to_string()))?;
+        if let Some(points) = max_quality_score_drop {
+            policy = policy.max_quality_score_drop(points);
+        }
+        for (name, points) in &max_dimension_score_drops {
+            policy = policy.max_dimension_score_drop(dimension(name)?, *points);
+        }
+        for (column, points) in max_null_percentage_increase {
+            policy = policy.max_null_percentage_increase(column, points);
+        }
+        if let Some(points) = max_null_percentage_increase_any {
+            policy = policy.max_null_percentage_increase_any(points);
+        }
+        let result = match baseline {
+            Some(baseline) => policy.evaluate_against(&self.inner, &baseline.side("check()")?),
+            None => policy.evaluate(&self.inner),
+        }
+        .map_err(|e| value_error(e.to_string()))?;
         serde_json::to_string(&result).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
         })
@@ -1353,12 +1377,13 @@ pub enum DeltaInput<'py> {
 }
 
 impl DeltaInput<'_> {
-    fn side(&self) -> PyResult<dataprof::ReportSide> {
+    /// The side the delta reads; `caller` names the API in the error.
+    fn side(&self, caller: &str) -> PyResult<dataprof::ReportSide> {
         match self {
             Self::Native(report) => Ok(dataprof::ReportSide::from_report(&report.inner)),
             Self::Summary(text) => dataprof::ReportSide::from_summary_json(text).map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!(
-                    "compare(): the flat summary cannot be compared: {e}"
+                    "{caller}: the flat summary cannot be compared: {e}"
                 ))
             }),
         }
@@ -1369,7 +1394,7 @@ impl DeltaInput<'_> {
 /// JSON. `ProfileReport.compare()` converts it into the dict it returns.
 #[pyfunction]
 pub fn report_delta_json(a: DeltaInput<'_>, b: DeltaInput<'_>) -> PyResult<String> {
-    let delta = dataprof::ReportDelta::between_sides(&a.side()?, &b.side()?);
+    let delta = dataprof::ReportDelta::between_sides(&a.side("compare()")?, &b.side("compare()")?);
     serde_json::to_string(&delta).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
     })

@@ -942,6 +942,10 @@ if not result.passed:
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
+| `baseline` | `ProfileReport` | A saved report to measure change from; the three rules below need one |
+| `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
+| `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
+| `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A policy that cannot be evaluated as written -- a threshold
@@ -1059,6 +1063,51 @@ weighs it, as `coverage_unrecorded`. No release writes such a report; a
 flat `to_dict()` summary records no exact list, so it keeps reading a
 component that is not sampled as exact.
 
+**Rules about change (0.13+).** With `baseline=`, a gate also judges how far
+this report moved from a saved one, read through the same delta `compare()`
+returns, at the serialized precision on both sides:
+
+```python
+baseline = dp.ProfileReport.load("baseline.json")
+result = dp.profile("daily_drop.csv").check(
+    baseline=baseline,
+    max_quality_score_drop=2,
+    max_null_percentage_increase={"customer_id": 0, "*": 5},
+)
+```
+
+A change is decided only when both reports measured the same thing the same
+way. Otherwise the rule is unevaluated, with one of these reasons:
+
+- `not_in_baseline`: the baseline did not assess the score, did not profile
+  the column, or read no values for it;
+- `schema_changed`, for a score, when the two reports profiled different
+  columns. A dataset-level score has the column set as its subject, so a
+  column that appeared or vanished changes what is measured. A column's own
+  rule is not affected and still decides the verdict, and a new column gets a
+  rule only when the policy names it: `"*"` covers the columns both reports
+  have;
+- `definition_not_comparable`, with the `metric_semantics` key the rule
+  depends on (`null_tokens` for every rule, `pattern_match_count` also for
+  validity and the overall score), when the two reports do not both record it
+  identically. A baseline saved before 0.13 records neither;
+- `setting_changed` or `setting_unrecorded`, with the setting, when a setting
+  that moves the score on unchanged data differs or is not recorded on a side:
+  the score weights for the overall score, `identifier_columns` for every
+  score but completeness, `positive_columns` for accuracy, and
+  `temporal_columns` and `temporal_pairs` for timeliness. The overall score
+  reads them all;
+- `evidence_incomplete`, under `scope="full_source"`, when either side does
+  not cover its whole source.
+
+Each such check carries `baseline`, holding the baseline's `observed` value,
+its `evidence`, and `change` (this report minus the baseline, in points), and
+its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
+drop or `change_at_most` for an increase. `result.baseline` names both reports
+(`a` is the baseline) and the `schema` change between them. The baseline may be
+loaded from a flat `to_dict()` summary; what it did not record reads as
+unrecorded.
+
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
 
@@ -1173,8 +1222,9 @@ from the policy file. Without `--json`, errors
 go to stderr and stdout stays empty. `--help` prints usage to stdout and lists
 every flag and code. `--version` prints `dataprof <version>` to stdout and exits 0.
 
-Baseline-relative gates await support in `ProfileReport.check()`.
-`--baseline PATH` currently exits `3` with an explicit unsupported-operation
+`ProfileReport.check(baseline=...)` evaluates rules about change, and the
+entrypoint does not pass them through yet: a policy file naming one is refused
+as an unknown key, and `--baseline PATH` exits `3` with an explicit unsupported-operation
 message, whether or not the path exists. It never ignores the requested
 comparison or substitutes an absolute check.
 

@@ -257,6 +257,11 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "require_quality": False,
             "require_dimensions": [],
             "scope": "full_source",
+            "baseline": None,
+            "max_quality_score_drop": None,
+            "max_dimension_score_drops": [],
+            "max_null_percentage_increase": [],
+            "max_null_percentage_increase_any": None,
         }
     ]
     expected = report.check(max_null_percentage={"customer_id": 10, "*": 20})
