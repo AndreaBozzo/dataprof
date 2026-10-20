@@ -60,25 +60,12 @@ fn drift_policy() -> QualityPolicy {
 }
 
 #[test]
-fn unchanged_data_passes_every_change_rule_that_can_be_decided() {
+fn unchanged_data_passes_every_change_rule() {
     let baseline = profile(CLEAN);
     let report = profile(CLEAN);
     let result = against(&drift_policy(), &report, &baseline);
 
-    // The overall score reads the locale, which no report records yet
-    // (#1010); every other rule is decided and met.
-    assert!(matches!(
-        reason(&result.checks[0]),
-        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "locale"
-    ));
-    assert!(
-        result.checks[1..]
-            .iter()
-            .all(|check| check.status == CheckStatus::Passed),
-        "{:#?}",
-        result.checks
-    );
-    assert_eq!(result.verdict, Verdict::Inconclusive);
+    assert_eq!(result.verdict, Verdict::Pass, "{:#?}", result.checks);
     let codes: Vec<_> = result
         .checks
         .iter()
@@ -584,13 +571,14 @@ fn order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same() {
         CheckStatus::Passed
     );
 
-    // Validity reads the pattern locale, which no report records (#1010).
+    // Validity reads the pattern locale, which both reports record (#1010);
+    // `pattern_locale_record.rs` covers a locale that differs.
     let policy = QualityPolicy::new().max_dimension_score_drop(QualityDimension::Validity, 100.0);
     let emails = profile("email\na@example.com\nb@example.com\n");
-    assert!(matches!(
-        reason(&against(&policy, &emails, &emails).checks[0]),
-        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "locale"
-    ));
+    assert_eq!(
+        against(&policy, &emails, &emails).checks[0].status,
+        CheckStatus::Passed
+    );
 }
 
 #[test]

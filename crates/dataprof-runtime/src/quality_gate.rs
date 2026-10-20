@@ -78,13 +78,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension, QualityScoreWeights};
+use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 
 use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
 use crate::report_delta::{
-    ColumnChange, RecordedHints, ReportDelta, ReportReference, ReportSide, SchemaChange,
-    SettingComparison, Sides,
+    ColumnChange, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference, ReportSide,
+    SchemaChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -1386,14 +1386,7 @@ impl QualityPolicy {
                 delta.metric_semantics.b.as_ref(),
                 score_definitions(dimension),
             )
-            .or_else(|| {
-                setting_gap(
-                    &delta.configuration.score_weights,
-                    &delta.configuration.semantic_hints,
-                    identifiers,
-                    dimension,
-                )
-            })
+            .or_else(|| setting_gap(&delta.configuration, identifiers, dimension))
         };
         if let Some(reason) = reason {
             return not_evaluated_change(check, reason, subject);
@@ -1653,18 +1646,18 @@ fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
 /// also reads the positive hint, timeliness the temporal ones, and validity
 /// the locale, which ranks the detected patterns it scores.
 fn setting_gap(
-    weights: &SettingComparison<QualityScoreWeights>,
-    hints: &SettingComparison<RecordedHints>,
+    configuration: &ConfigurationComparison,
     identifiers: &Sides<Option<&[String]>>,
     dimension: Option<QualityDimension>,
 ) -> Option<NotEvaluated> {
+    let hints = &configuration.semantic_hints;
     let reads = |dimensions: &[QualityDimension]| {
         dimension.is_none_or(|dimension| dimensions.contains(&dimension))
     };
     let hint = |columns: HintColumns| {
         agreement(hints.a.as_ref().map(columns), hints.b.as_ref().map(columns))
     };
-    let weights = match weights.same {
+    let recorded = |same: Option<bool>| match same {
         Some(true) => Agreement::Same,
         Some(false) => Agreement::Changed,
         None => Agreement::Unrecorded,
@@ -1683,7 +1676,11 @@ fn setting_gap(
         other => other,
     };
     let settings = [
-        ("score_weights", dimension.is_none(), weights),
+        (
+            "score_weights",
+            dimension.is_none(),
+            recorded(configuration.score_weights.same),
+        ),
         (
             "identifier_columns",
             dimension != Some(QualityDimension::Completeness),
@@ -1705,11 +1702,10 @@ fn setting_gap(
             reads(&[QualityDimension::Timeliness]),
             pairs,
         ),
-        // No report records the locale yet (#1010).
         (
-            "locale",
+            "pattern_locale",
             reads(&[QualityDimension::Validity]),
-            Agreement::Unrecorded,
+            recorded(configuration.pattern_locale.same),
         ),
     ];
     settings

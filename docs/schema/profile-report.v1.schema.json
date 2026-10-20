@@ -33,6 +33,19 @@
       ],
       "type": "object"
     },
+    "AnalysisSettings": {
+      "description": "The analysis settings a report was profiled with that move its scores on\nunchanged data and are recorded nowhere else in it.\n\n[`MetricSemantics`] records how a release defines its measurements; this\nrecords what the caller chose. The score weights live in the quality\nassessment and the semantic hints in the hint bindings, so they are not\nrepeated here. Later releases add fields, which older readers ignore, and a\nfield missing from a stored report means the release did not record it.",
+      "properties": {
+        "pattern_locale": {
+          "$ref": "#/$defs/PatternLocale",
+          "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
+        }
+      },
+      "required": [
+        "pattern_locale"
+      ],
+      "type": "object"
+    },
     "BooleanStats": {
       "description": "Statistics for boolean columns.",
       "properties": {
@@ -1158,6 +1171,46 @@
         }
       ]
     },
+    "PatternLocale": {
+      "description": "The locale a report's detected patterns were ranked with: `none`, or the\nISO 3166-1 alpha-2 code of a [`Locale`] the pattern catalogue supports.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No locale: patterns were ranked without a locale preference.",
+          "type": "string"
+        },
+        {
+          "const": "CA",
+          "description": "Canada.",
+          "type": "string"
+        },
+        {
+          "const": "DE",
+          "description": "Germany.",
+          "type": "string"
+        },
+        {
+          "const": "FR",
+          "description": "France.",
+          "type": "string"
+        },
+        {
+          "const": "GB",
+          "description": "United Kingdom.",
+          "type": "string"
+        },
+        {
+          "const": "IT",
+          "description": "Italy.",
+          "type": "string"
+        },
+        {
+          "const": "US",
+          "description": "United States.",
+          "type": "string"
+        }
+      ]
+    },
     "PatternMatchCount": {
       "description": "What a pattern's `match_count` counts, as recorded in a report's metric\nsemantics.\n\nOnly the current definition has a value. Through 0.12 the count was every\nvalue the regular expression matched, whether or not the pattern's validator\naccepted it, and those releases recorded no definition.",
       "oneOf": [
@@ -1198,6 +1251,10 @@
     "ProfileReport": {
       "description": "Complete profiling report for a data source.\n\nContains column-level statistics, execution metadata, and an optional\nQuality assessment informed by ISO 8000/25012 concepts. This is the primary output of all\nprofiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,\n`Profiler::profile_stream`, etc.).",
       "properties": {
+        "analysis_settings": {
+          "$ref": "#/$defs/AnalysisSettings",
+          "description": "The analysis settings it was profiled with; see [`AnalysisSettings`].\n\nEvery report a profiling run assembles records them. `None` is a\ndocument written before dataprof recorded them, or a report built\ndirectly with [`ProfileReport::new`]: the settings are unknown, not the\ndefaults. Additive field."
+        },
         "column_profiles": {
           "description": "Column-level profiling results",
           "items": {
@@ -1689,6 +1746,9 @@
     },
     "PythonProfileReportDocument": {
       "properties": {
+        "analysis_settings": {
+          "$ref": "#/$defs/AnalysisSettings"
+        },
         "columns": {
           "items": {
             "$ref": "#/$defs/PythonColumnDocument"

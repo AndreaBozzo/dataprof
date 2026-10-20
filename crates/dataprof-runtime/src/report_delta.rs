@@ -30,7 +30,8 @@
 //!   values. A difference in a measurement whose definition changed between
 //!   releases is not a difference in the data.
 //! - **Configuration.** `configuration` lists each recorded setting that moves
-//!   a score on unchanged data (the score weights, the semantic hints) on both
+//!   a score on unchanged data (the score weights, the semantic hints, the
+//!   pattern locale) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
@@ -63,7 +64,7 @@ use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{QualityDimension, QualityScoreWeights, SemanticHintBinding, SemanticHintKind};
 use serde::ser::{SerializeMap, Serializer};
 
-use crate::profile_report::{MetricSemantics, ProfileReport};
+use crate::profile_report::{AnalysisSettings, MetricSemantics, PatternLocale, ProfileReport};
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
 };
@@ -253,6 +254,9 @@ pub struct ConfigurationComparison {
     /// The semantic hints. `None` on a side written before 0.10, which did
     /// not record them.
     pub semantic_hints: SettingComparison<RecordedHints>,
+    /// The locale detected patterns were ranked with, which the validity
+    /// score reads. `None` on a side written before dataprof recorded it.
+    pub pattern_locale: SettingComparison<PatternLocale>,
 }
 
 /// Which columns each side has.
@@ -385,6 +389,7 @@ impl ReportDelta {
                     a.semantic_hints.clone(),
                     b.semantic_hints.clone(),
                 ),
+                pattern_locale: SettingComparison::new(a.pattern_locale, b.pattern_locale),
             },
             schema: SchemaChange {
                 added,
@@ -444,6 +449,7 @@ pub struct ReportSide {
     /// [`RecordedHints`] sorts away. The first one present is the key the
     /// uniqueness score reads, so the quality gate compares this order.
     identifier_order: Option<Vec<String>>,
+    pattern_locale: Option<PatternLocale>,
 }
 
 /// The identifier hint's columns in binding order, the order they were given.
@@ -547,6 +553,9 @@ impl ReportSide {
                 .then(|| RecordedHints::from_bindings(&report.semantic_hint_bindings)),
             identifier_order: (report.schema_version >= 1)
                 .then(|| identifier_order(&report.semantic_hint_bindings)),
+            pattern_locale: report
+                .analysis_settings
+                .map(|settings| settings.pattern_locale),
         }
     }
 
@@ -673,6 +682,9 @@ impl ReportSide {
                 .is_some_and(|version| version >= 1)
                 .then(|| identifier_order(&summary.semantic_hint_bindings)),
             metric_semantics: summary.metric_semantics,
+            pattern_locale: summary
+                .analysis_settings
+                .map(|settings| settings.pattern_locale),
         })
     }
 }
@@ -692,6 +704,10 @@ struct Summary {
     schema_version: Option<u32>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
+    /// Absent before 0.13. An explicit null is malformed, as in the
+    /// canonical reader and Python's `from_dict()`.
+    #[serde(default, deserialize_with = "crate::profile_report::present_value")]
+    analysis_settings: Option<AnalysisSettings>,
 }
 
 #[derive(serde::Deserialize)]

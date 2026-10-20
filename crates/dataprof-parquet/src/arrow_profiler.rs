@@ -657,7 +657,7 @@ impl ArrowProfiler {
         .with_row_completeness(row_tracker.completeness_summary());
 
         if !MetricPack::include_quality(packs) {
-            assembler = assembler.skip_quality();
+            assembler = assembler.record_analysis_settings(&options).skip_quality();
         } else {
             assembler = assembler
                 .with_quality_data(sample_columns)

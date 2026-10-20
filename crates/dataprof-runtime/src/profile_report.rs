@@ -1,6 +1,7 @@
 use dataprof_core::{
-    ColumnProfile, DataSource, ExecutionMetadata, NullTokenSet, PatternMatchCount,
-    QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, Locale, NullTokenSet,
+    PatternMatchCount, QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator,
+    TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -126,7 +127,7 @@ pub struct MetricSemantics {
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
 /// when present, must carry a value: `Option<T>` alone reads `null` as `None`.
-fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(crate) fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: serde::Deserialize<'de>,
@@ -160,6 +161,92 @@ impl MetricSemantics {
             && null_tokens.is_some()
             && pattern_match_count.is_some()
             && shape_moments.is_some()
+    }
+}
+
+/// The locale a report's detected patterns were ranked with: `none`, or the
+/// ISO 3166-1 alpha-2 code of a [`Locale`] the pattern catalogue supports.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub enum PatternLocale {
+    /// No locale: patterns were ranked without a locale preference.
+    #[serde(rename = "none")]
+    Unset,
+    /// Canada.
+    #[serde(rename = "CA")]
+    Ca,
+    /// Germany.
+    #[serde(rename = "DE")]
+    De,
+    /// France.
+    #[serde(rename = "FR")]
+    Fr,
+    /// United Kingdom.
+    #[serde(rename = "GB")]
+    Gb,
+    /// Italy.
+    #[serde(rename = "IT")]
+    It,
+    /// United States.
+    #[serde(rename = "US")]
+    Us,
+}
+
+impl From<Option<Locale>> for PatternLocale {
+    fn from(locale: Option<Locale>) -> Self {
+        match locale {
+            None => Self::Unset,
+            Some(Locale::Ca) => Self::Ca,
+            Some(Locale::De) => Self::De,
+            Some(Locale::Fr) => Self::Fr,
+            Some(Locale::Gb) => Self::Gb,
+            Some(Locale::It) => Self::It,
+            Some(Locale::Us) => Self::Us,
+        }
+    }
+}
+
+impl PatternLocale {
+    /// The locale, or `None` when patterns were ranked without one.
+    pub fn locale(self) -> Option<Locale> {
+        match self {
+            Self::Unset => None,
+            Self::Ca => Some(Locale::Ca),
+            Self::De => Some(Locale::De),
+            Self::Fr => Some(Locale::Fr),
+            Self::Gb => Some(Locale::Gb),
+            Self::It => Some(Locale::It),
+            Self::Us => Some(Locale::Us),
+        }
+    }
+}
+
+/// The analysis settings a report was profiled with that move its scores on
+/// unchanged data and are recorded nowhere else in it.
+///
+/// [`MetricSemantics`] records how a release defines its measurements; this
+/// records what the caller chose. The score weights live in the quality
+/// assessment and the semantic hints in the hint bindings, so they are not
+/// repeated here. Later releases add fields, which older readers ignore, and a
+/// field missing from a stored report means the release did not record it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct AnalysisSettings {
+    /// The locale detected patterns were ranked with, which the validity
+    /// score reads.
+    pub pattern_locale: PatternLocale,
+}
+
+impl AnalysisSettings {
+    /// The settings `options` profile with.
+    pub fn from_options(options: &AnalysisOptions) -> Self {
+        Self {
+            pattern_locale: options.locale().into(),
+        }
     }
 }
 
@@ -222,6 +309,15 @@ pub struct ProfileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "MetricSemantics")]
     pub metric_semantics: Option<MetricSemantics>,
+    /// The analysis settings it was profiled with; see [`AnalysisSettings`].
+    ///
+    /// Every report a profiling run assembles records them. `None` is a
+    /// document written before dataprof recorded them, or a report built
+    /// directly with [`ProfileReport::new`]: the settings are unknown, not the
+    /// defaults. Additive field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "AnalysisSettings")]
+    pub analysis_settings: Option<AnalysisSettings>,
 }
 
 fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -263,6 +359,9 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "MetricSemantics")]
     metric_semantics: Option<MetricSemantics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "AnalysisSettings")]
+    analysis_settings: Option<AnalysisSettings>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -636,6 +735,7 @@ impl PythonProfileReportDocument {
             quality_status: report.quality_status.clone(),
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
             metric_semantics: report.metric_semantics.clone(),
+            analysis_settings: report.analysis_settings,
         })
     }
 }
@@ -806,7 +906,16 @@ impl ProfileReport {
             quality,
             semantic_hint_bindings: Vec::new(),
             metric_semantics: Some(MetricSemantics::current()),
+            // Only the assembler knows the options a report was profiled
+            // with; it records them through `with_analysis_settings`.
+            analysis_settings: None,
         }
+    }
+
+    /// Record the analysis settings the report was profiled with.
+    pub(crate) fn with_analysis_settings(mut self, settings: Option<AnalysisSettings>) -> Self {
+        self.analysis_settings = settings;
+        self
     }
 
     /// Record what happened to the quality computation.
@@ -908,6 +1017,8 @@ struct ProfileReportFields {
     semantic_hint_bindings: Vec<SemanticHintBinding>,
     #[serde(default)]
     metric_semantics: Option<MetricSemantics>,
+    #[serde(default)]
+    analysis_settings: Option<AnalysisSettings>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -931,6 +1042,7 @@ impl From<ProfileReportFields> for ProfileReport {
             quality: fields.quality,
             semantic_hint_bindings: fields.semantic_hint_bindings,
             metric_semantics: fields.metric_semantics,
+            analysis_settings: fields.analysis_settings,
         }
     }
 }
@@ -982,6 +1094,12 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
         if value.get("metric_semantics") == Some(&serde_json::Value::Null) {
             return Err(D::Error::custom(
                 "report metric_semantics must be an object; an explicit null is malformed,                  not a document written before the field existed",
+            ));
+        }
+        if value.get("analysis_settings") == Some(&serde_json::Value::Null) {
+            return Err(D::Error::custom(
+                "report analysis_settings must be an object; an explicit null is malformed, \
+                 not a document written before the field existed",
             ));
         }
         let report = ProfileReportFields::deserialize(value)

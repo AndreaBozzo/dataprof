@@ -308,6 +308,24 @@ class ProfileReport:
         return None if semantics is None else dict(semantics)
 
     @property
+    def analysis_settings(self) -> dict[str, str] | None:
+        """The analysis settings this report was profiled with that move a
+        score on unchanged data and are recorded nowhere else in it.
+
+        Currently ``{"pattern_locale": ...}``: the locale detected patterns
+        were ranked with, which the validity score reads, as its ISO 3166-1
+        alpha-2 code (``"IT"``), or ``"none"`` when no locale was given.
+        :meth:`compare` lists it under ``configuration``, and a baseline
+        ``check()`` decides a validity or overall drop only when both reports
+        agree on it.
+
+        ``None`` for a report loaded from a document written before dataprof
+        recorded them: the settings are unknown, not the defaults.
+        """
+        settings = self._report.analysis_settings
+        return None if settings is None else dict(settings)
+
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
         """Per-column evidence of how each semantic hint bound to the data.
 
@@ -533,6 +551,9 @@ class ProfileReport:
         semantics = self.metric_semantics
         if semantics is not None:
             document["metric_semantics"] = semantics
+        settings = self.analysis_settings
+        if settings is not None:
+            document["analysis_settings"] = settings
         return document
 
     def to_json(self, indent: int = 2) -> str:
@@ -1090,12 +1111,14 @@ class ProfileReport:
           ``True`` means a difference in a measurement, such as a text
           length, is a difference in the data.
         - ``configuration``: the recorded settings that move a score on
-          unchanged data, ``score_weights`` and ``semantic_hints`` (the
+          unchanged data, ``score_weights``, ``semantic_hints`` (the
           columns named by ``positive_columns``, ``identifier_columns``,
-          ``temporal_columns`` and ``temporal_pairs``). Each has ``a``,
-          ``b`` and ``same``: ``True`` when both sides recorded it and
-          agree, ``False`` when they differ, ``None`` when either did not
-          record it (weights on a summary saved before 0.12, hints before 0.10).
+          ``temporal_columns`` and ``temporal_pairs``) and ``pattern_locale``
+          (see :attr:`analysis_settings`). Each has ``a``, ``b`` and
+          ``same``: ``True`` when both sides recorded it and agree, ``False``
+          when they differ, ``None`` when either did not record it (weights
+          on a summary saved before 0.12, hints before 0.10, the locale
+          before 0.13).
           A score that moved under a different setting may not reflect a change
           in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``

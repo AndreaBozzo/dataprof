@@ -3,7 +3,8 @@ use std::io::Read;
 use std::path::Path;
 
 use dataprof_core::{
-    ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, TruncationReason,
+    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
+    TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -379,7 +380,10 @@ pub fn analyze_csv_file(
         execution = execution.with_truncation(reason);
     }
 
+    // This path takes no analysis options: it profiles with the defaults,
+    // so it records them rather than leaving its settings unknown.
     Ok(ReportAssembler::new(file_source, execution)
+        .with_analysis_options(&AnalysisOptions::default())
         .columns(column_profiles)
         .with_quality_data(sample_columns)
         .with_row_duplicates(column_stats.row_duplicate_summary())

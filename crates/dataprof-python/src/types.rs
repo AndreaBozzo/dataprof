@@ -1217,6 +1217,25 @@ impl PyProfileReport {
         Ok(Some(dict))
     }
 
+    /// The analysis settings the report was profiled with, as a dict such as
+    /// ``{"pattern_locale": "IT"}``, where ``"none"`` means no locale.
+    ///
+    /// None for a report loaded from a document written before dataprof
+    /// recorded them: the settings are unknown, not the defaults.
+    #[getter]
+    fn analysis_settings<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(settings) = &self.inner.analysis_settings else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        // The serialized spelling, so Python reads what the document holds.
+        let locale = serde_json::to_value(settings.pattern_locale).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
+        })?;
+        dict.set_item("pattern_locale", locale.as_str())?;
+        Ok(Some(dict))
+    }
+
     /// Per-column semantic-hint binding evidence.
     ///
     /// Empty unless positive/identifier/temporal hints were supplied. Each entry

@@ -295,6 +295,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
+| `analysis_settings` | `dict[str, str] \| None` | The settings it was profiled with that move a score and are recorded nowhere else: `{"pattern_locale": "IT"}`, or `"none"` when no locale was given; `None` for a report written before 0.13, whose settings are unknown |
 | `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
@@ -1100,11 +1101,11 @@ unevaluated, with one of these reasons:
   the score weights for the overall score, `identifier_columns` (in the order
   given, since the first one present is the uniqueness key) for every score
   but completeness, `positive_columns` for accuracy, `temporal_columns` and
-  `temporal_pairs` for timeliness, and the pattern `locale` for validity. The
+  `temporal_pairs` for timeliness, and `pattern_locale` for validity. The
   overall score reads them all. A report records which columns the pairs named
-  but not which column pairs with which, and does not record the locale yet
-  (#1010), so a non-empty `temporal_pairs` and the locale read as
-  `setting_unrecorded` until they are;
+  but not which column pairs with which, so a non-empty `temporal_pairs` reads
+  as `setting_unrecorded`, and so does the locale on a report saved before
+  0.13, which did not record it;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
   not cover its whole source.
 
@@ -1299,11 +1300,12 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
   unit rather than the data. `comparable` covers how dataprof measures, not
   how each report was configured.
 - **Configuration.** `configuration` lists the recorded settings that move a
-  score on unchanged data: `score_weights`, and `semantic_hints` (the columns
+  score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
-  `temporal_pairs`). Each has `a`, `b` and `same`, which is `None` when a side
-  did not record the setting: weights on a summary saved before 0.12, hints
-  on one saved before 0.10. A score that moved while `same` is `False` may
+  `temporal_pairs`), and `pattern_locale` (see `analysis_settings`). Each has
+  `a`, `b` and `same`, which is `None` when a side did not record the
+  setting: weights on a summary saved before 0.12, hints on one saved before
+  0.10, the locale on one saved before 0.13. A score that moved while `same` is `False` may
   reflect the setting rather than the data. Settings not recorded here, such
   as `metrics` and the timeliness reference date, still need the same
   options on both sides.
