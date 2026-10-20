@@ -18,38 +18,20 @@ pub struct ValueHintBindingAccumulator {
 
 impl ValueHintBindingAccumulator {
     pub fn new(hints: &SemanticHints) -> Self {
-        let positive = hints.positive_columns.iter().map(|column| BindingCounter {
-            binding: SemanticHintBinding {
-                column: column.clone(),
-                kind: SemanticHintKind::Positive,
-                checked_values: 0,
-                matched_values: 0,
-                exact: true,
-            },
-        });
-        let temporal = hints.temporal_columns.iter().map(|column| BindingCounter {
-            binding: SemanticHintBinding {
-                column: column.clone(),
-                kind: SemanticHintKind::Temporal,
-                checked_values: 0,
-                matched_values: 0,
-                exact: true,
-            },
-        });
-        let pairs = hints
-            .temporal_pair_columns()
-            .into_iter()
-            .map(|column| BindingCounter {
+        let counters = hints
+            .iter()
+            .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
+            .map(|(kind, column)| BindingCounter {
                 binding: SemanticHintBinding {
                     column: column.to_string(),
-                    kind: SemanticHintKind::TemporalPair,
+                    kind,
                     checked_values: 0,
                     matched_values: 0,
                     exact: true,
                 },
             });
         Self {
-            counters: positive.chain(temporal).chain(pairs).collect(),
+            counters: counters.collect(),
         }
     }
 

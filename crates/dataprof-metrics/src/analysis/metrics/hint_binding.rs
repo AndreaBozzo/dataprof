@@ -30,31 +30,11 @@ pub fn compute_value_hint_bindings(
 ) -> Vec<SemanticHintBinding> {
     let mut bindings = Vec::new();
 
-    for column in &hints.positive_columns {
-        if let Some(values) = data.get(column) {
-            // Mirror accuracy.rs: a value counts if it parses as f64.
-            let (checked, matched) = count_matches(values, SemanticHintKind::Positive);
-            bindings.push(binding(
-                column,
-                SemanticHintKind::Positive,
-                checked,
-                matched,
-                exact,
-            ));
-        }
-    }
-
-    let temporal = hints
-        .temporal_columns
+    for (kind, column) in hints
         .iter()
-        .map(|column| (SemanticHintKind::Temporal, column.as_str()));
-    let pairs = hints
-        .temporal_pair_columns()
-        .into_iter()
-        .map(|column| (SemanticHintKind::TemporalPair, column));
-    for (kind, column) in temporal.chain(pairs) {
+        .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
+    {
         if let Some(values) = data.get(column) {
-            // Mirror timeliness.rs: a value counts as a date if a year parses.
             let (checked, matched) = count_matches(values, kind);
             bindings.push(binding(column, kind, checked, matched, exact));
         }

@@ -425,8 +425,8 @@ fn configuration_lists_each_setting_and_whether_the_sides_agree() {
         (Some(true), Some(true))
     );
 
-    // A repeated temporal column is scanned twice and moves the score
-    // (#1004), so the repetition is a different configuration.
+    // A repeated temporal column counts once (#1004), so freshly profiled
+    // reports record the same effective configuration and score.
     let dated = csv("old,new
 2001-01-01,2026-10-01
 2002-01-01,2026-10-02
@@ -441,7 +441,7 @@ fn configuration_lists_each_setting_and_whether_the_sides_agree() {
         &temporal(&["old", "new"]),
         &temporal(&["old", "old", "new"]),
     );
-    assert_eq!(repeated.configuration.semantic_hints.same, Some(false));
+    assert_eq!(repeated.configuration.semantic_hints.same, Some(true));
     assert_eq!(
         repeated
             .configuration
@@ -449,7 +449,7 @@ fn configuration_lists_each_setting_and_whether_the_sides_agree() {
             .b
             .unwrap()
             .temporal_columns,
-        ["new", "old", "old"]
+        ["new", "old"]
     );
 
     // No public option sets weights; a document written elsewhere can.
