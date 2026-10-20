@@ -704,7 +704,9 @@ struct Summary {
     schema_version: Option<u32>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
-    #[serde(default)]
+    /// Absent before 0.13. An explicit null is malformed, as in the
+    /// canonical reader and Python's `from_dict()`.
+    #[serde(default, deserialize_with = "crate::profile_report::present_value")]
     analysis_settings: Option<AnalysisSettings>,
 }
 

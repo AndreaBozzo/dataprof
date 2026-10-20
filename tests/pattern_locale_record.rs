@@ -6,8 +6,9 @@
 use std::io::Write;
 
 use dataprof::{
-    CheckCode, CheckStatus, EngineType, Locale, NotEvaluated, PatternLocale, ProfileReport,
-    Profiler, QualityDimension, QualityPolicy, ReportDelta, ReportSide, analyze_csv_file,
+    CheckCode, CheckStatus, EngineType, Locale, MetricPack, NotEvaluated, PatternLocale,
+    ProfileReport, Profiler, QualityDimension, QualityPolicy, ReportDelta, ReportSide,
+    analyze_csv_file,
 };
 use serde_json::{Value, json};
 
@@ -44,12 +45,21 @@ fn every_engine_and_file_format_records_the_locale() {
         ("jsonl", jsonl.path(), None),
     ];
     let mut wrong = Vec::new();
-    for (name, path, engine) in &routes {
+    // Without the quality pack the engines take another branch, which must
+    // record the settings too: patterns are still ranked.
+    let packs = [None, Some(vec![MetricPack::Schema, MetricPack::Patterns])];
+    for ((name, path, engine), packs) in routes
+        .iter()
+        .flat_map(|route| packs.iter().map(move |packs| (route, packs)))
+    {
         for (locale, expected) in [
             (None, PatternLocale::Unset),
             (Some(Locale::It), PatternLocale::It),
         ] {
             let mut profiler = Profiler::new();
+            if let Some(packs) = packs {
+                profiler = profiler.metric_packs(packs.clone());
+            }
             if let Some(engine) = engine {
                 profiler = profiler.engine(*engine);
             }
@@ -58,7 +68,7 @@ fn every_engine_and_file_format_records_the_locale() {
             }
             let got = recorded(&profiler.analyze_file(path).unwrap());
             if got != Some(expected) {
-                wrong.push(format!("{name} with {locale:?}: {got:?}"));
+                wrong.push(format!("{name} {packs:?} with {locale:?}: {got:?}"));
             }
         }
     }
@@ -153,8 +163,12 @@ fn the_delta_and_the_gate_compare_the_locale() {
     assert_eq!(same(&unset, &profile(None)), Some(true));
     assert_eq!(same(&unset, &italian), Some(false));
     assert_eq!(same(&legacy, &unset), None);
-    // A flat summary carries it too.
+    // A flat summary carries it too, and an explicit null there is as
+    // malformed as in the canonical document.
     let flat = ReportSide::from_summary_json(&italian.summary_json().unwrap()).unwrap();
+    let mut null: Value = serde_json::from_str(&italian.summary_json().unwrap()).unwrap();
+    null["analysis_settings"] = Value::Null;
+    assert!(ReportSide::from_summary_json(&null.to_string()).is_err());
     assert_eq!(
         ReportDelta::between_sides(&flat, &ReportSide::from_report(&italian))
             .configuration

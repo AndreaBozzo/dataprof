@@ -141,7 +141,7 @@ impl ReportAssembler {
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
         self.skip = (!options.include_quality()).then_some(QualityAnalysisStatus::NotRequested);
         self.semantic_hints = options.semantic_hints().clone();
-        self.analysis_settings = Some(AnalysisSettings::from_options(options));
+        self = self.record_analysis_settings(options);
         self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
         if options.has_column_projection() && self.skip.is_none() {
             // Completeness and uniqueness both contain row-level measurements.
@@ -164,6 +164,17 @@ impl ReportAssembler {
             }
             self.requested_dimensions = Some(dimensions);
         }
+        self
+    }
+
+    /// Record the settings `options` profile with, which every report
+    /// carries whether or not quality is computed.
+    ///
+    /// [`with_analysis_options`](Self::with_analysis_options) does this
+    /// itself. A caller that skips quality and so applies nothing else from
+    /// the options calls it on its own.
+    pub fn record_analysis_settings(mut self, options: &AnalysisOptions) -> Self {
+        self.analysis_settings = Some(AnalysisSettings::from_options(options));
         self
     }
 

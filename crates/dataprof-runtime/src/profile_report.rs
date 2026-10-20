@@ -127,7 +127,7 @@ pub struct MetricSemantics {
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
 /// when present, must carry a value: `Option<T>` alone reads `null` as `None`.
-fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(crate) fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: serde::Deserialize<'de>,

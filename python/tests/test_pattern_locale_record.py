@@ -29,15 +29,23 @@ def _routes(tmp_path: Path) -> dict[str, Any]:
         "csv columnar": (str(csv), "columnar"),
         "jsonl": str(jsonl),
     }
-    pa = pytest.importorskip("pyarrow")
-    routes["arrow"] = pa.table(EMAILS)
-    import pyarrow.parquet as pq
-
-    parquet = tmp_path / "emails.parquet"
-    pq.write_table(pa.table(EMAILS), parquet)
-    routes["parquet"] = str(parquet)
-    pd = pytest.importorskip("pandas")
-    routes["pandas"] = pd.DataFrame(EMAILS)
+    # Optional packages add routes; without them the core routes still run.
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError:
+        pass
+    else:
+        routes["arrow"] = pa.table(EMAILS)
+        parquet = tmp_path / "emails.parquet"
+        pq.write_table(pa.table(EMAILS), parquet)
+        routes["parquet"] = str(parquet)
+    try:
+        import pandas as pd
+    except ImportError:
+        pass
+    else:
+        routes["pandas"] = pd.DataFrame(EMAILS)
     return routes
 
 
@@ -50,11 +58,14 @@ def _profile(source: Any, **options: Any) -> dp.ProfileReport:
 
 def test_every_input_path_records_the_locale(tmp_path: Path):
     wrong = []
+    # Without the quality pack the engines take another branch, which must
+    # record the settings too: patterns are still ranked.
     for name, source in _routes(tmp_path).items():
-        for options, expected in (({}, "none"), ({"locale": "it"}, "IT")):
-            settings = _profile(source, **options).analysis_settings
-            if settings != {"pattern_locale": expected}:
-                wrong.append((name, options, settings))
+        for packs in ({}, {"metrics": ["schema", "patterns"]}):
+            for options, expected in (({}, "none"), ({"locale": "it"}, "IT")):
+                settings = _profile(source, **packs, **options).analysis_settings
+                if settings != {"pattern_locale": expected}:
+                    wrong.append((name, packs, options, settings))
     assert wrong == []
 
 
