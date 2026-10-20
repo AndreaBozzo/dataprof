@@ -7,8 +7,8 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
 ### Prerequisites
 
 - **Rust 1.96** or later ([install](https://rustup.rs/)). This is the MSRV; CI
-  lints and tests on a pinned 1.98, so reproduce clippy failures with
-  `cargo +1.98 clippy` instead of your default toolchain
+  lints and tests on the toolchain in `rust-toolchain.toml`, which rustup
+  installs and uses for `cargo` in this checkout on its own
 - **Cargo** (comes with Rust)
 - **Python 3.10** or later
 - **uv** for Python dependency and test commands ([install](https://docs.astral.sh/uv/))
@@ -61,7 +61,7 @@ formatting with `ruff format --check`; locally you want the rewriting form
 below:
 
 ```bash
-# Rust. CI pins 1.98; use `cargo +1.98` if your default toolchain differs.
+# Rust. rustup runs the toolchain rust-toolchain.toml pins, as CI does.
 cargo fmt --all
 cargo clippy --all --all-targets -- -D warnings
 python .github/scripts/check_decode_audit.py
@@ -84,10 +84,12 @@ Two Rust versions are in play and they do different jobs.
 - **1.96 is the MSRV**, declared once as `rust-version` in the root
   `Cargo.toml` and inherited by every workspace package. It is a promise to
   downstream crates: the published libraries compile on it.
-- **1.98 is the pinned development toolchain** (`.github/actions/setup-rust`,
-  and the release build). Formatting, clippy and the test suites run there.
-  Clippy gains lints with every release, so an older compiler must not decide
-  what the lint gate accepts.
+- **The development toolchain is pinned in `rust-toolchain.toml`**, read by
+  rustup locally, by `.github/actions/setup-rust` in CI and by the release
+  build. Formatting, clippy and the test suites run there. Clippy gains lints
+  with every release, so the pin moves deliberately: bump `channel` in that
+  file and fix the new lints in the same change, so no unrelated PR goes red
+  the day a Rust release lands.
 
 The MSRV is verified by compilation, not by declaration:
 
@@ -117,8 +119,11 @@ Two scope choices worth knowing:
   the job.
 
 Raising the MSRV is a deliberate, separate change: bump `rust-version` in
-`Cargo.toml`, the `dtolnay/rust-toolchain@` pins on the two MSRV jobs, and the
-version stated in `README.md`, `AGENTS.md` and this file. The script fails
+`Cargo.toml`, the `dtolnay/rust-toolchain@` pins and `RUSTUP_TOOLCHAIN` on the
+two MSRV jobs and the release metadata step, and the version stated in
+`README.md`, `AGENTS.md` and this file. `RUSTUP_TOOLCHAIN` is what keeps those
+jobs on the MSRV: rust-toolchain.toml outranks the default toolchain an install
+step sets. The script fails
 loudly if the toolchain pin and `rust-version` drift apart.
 
 ### Python interpreters and release wheels

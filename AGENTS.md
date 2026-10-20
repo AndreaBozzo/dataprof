@@ -28,12 +28,12 @@ Keep changes within that identity.
 
 Prerequisites: Rust 1.96+, Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
-1.96 is the MSRV (`rust-version` in `Cargo.toml`). CI lints and tests on a
-**pinned Rust 1.98**; see `.github/actions/setup-rust`. Clippy gates the build
-with `-D warnings` and every Rust release adds lints, so a local toolchain that
-differs from 1.98 can pass here and still fail CI, or the reverse. When clippy
-disagrees with CI, check `rustc --version` first and reproduce with
-`cargo +1.98 clippy`.
+1.96 is the MSRV (`rust-version` in `Cargo.toml`). CI lints and tests on the
+toolchain pinned in `rust-toolchain.toml`, and rustup reads that file, so plain
+`cargo` in this checkout runs the same compiler as CI. Clippy gates the build
+with `-D warnings` and every Rust release adds lints; a `cargo +<version>`
+command or a `RUSTUP_TOOLCHAIN` variable overrides the file, so when clippy
+disagrees with CI, check `rustc --version` first.
 
 The MSRV itself is enforced by compilation, not by the declaration: the `MSRV
 Compile Gate` job runs `cargo check --locked --lib` over every published feature
