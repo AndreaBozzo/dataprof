@@ -209,15 +209,13 @@ fn stream_error(py: Python<'_>, stream: &mut ArrowArrayStream, stage: &str, stat
     error
 }
 
-/// Keep the original producer error as __cause__, but put its first line in
+/// Keep the original producer error as __cause__, but put its first non-empty line in
 /// the top-level exception too: schedulers and logs often print only str(exc).
-/// No producer message (or an empty first line) preserves the old error text.
+/// No producer message (or an entirely blank message) preserves the old error text.
 fn stream_error_message(stage: &str, status: i32, producer_message: Option<&str>) -> String {
     let prefix = format!("Arrow stream {stage} failed (error code {status})");
     match producer_message
-        .and_then(|message| message.lines().next())
-        .map(str::trim)
-        .filter(|first_line| !first_line.is_empty())
+        .and_then(|message| message.lines().map(str::trim).find(|line| !line.is_empty()))
     {
         Some(first_line) => format!("{prefix}: {first_line}"),
         None => prefix,
@@ -379,13 +377,13 @@ mod error_message_tests {
         assert_eq!(stream_error_message("batch", 5, None), expected);
         assert_eq!(stream_error_message("batch", 5, Some("")), expected);
         assert_eq!(
-            stream_error_message("batch", 5, Some("\nnext line")),
+            stream_error_message("batch", 5, Some("\n \t\r\n")),
             expected
         );
     }
 
     #[test]
-    fn stream_error_includes_only_first_line_of_producer_message() {
+    fn stream_error_includes_only_first_nonempty_line_of_producer_message() {
         assert_eq!(
             stream_error_message(
                 "batch",
@@ -396,6 +394,18 @@ mod error_message_tests {
         );
         assert_eq!(
             stream_error_message("schema", 22, Some("permission denied\r\nsecond line")),
+            "Arrow stream schema failed (error code 22): permission denied"
+        );
+        assert_eq!(
+            stream_error_message("batch", 5, Some("\nnext line")),
+            "Arrow stream batch failed (error code 5): next line"
+        );
+        assert_eq!(
+            stream_error_message(
+                "schema",
+                22,
+                Some(" \r\n\t\n permission denied \r\nsecond line")
+            ),
             "Arrow stream schema failed (error code 22): permission denied"
         );
     }
