@@ -644,6 +644,10 @@ class ProfileReport:
         max_duplicate_rows: int | None = None,
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
+        baseline: ProfileReport | None = None,
+        max_quality_score_drop: float | None = None,
+        max_dimension_score_drops: _Mapping[str, float] | None = None,
+        max_null_percentage_increase: _Mapping[str, float] | float | None = None,
     ) -> _QualityGateResult:
         """Evaluate a quality policy against this report.
 
@@ -690,14 +694,45 @@ class ProfileReport:
                 ``"observed"`` states them about whatever the metrics actually
                 measured, which is always evaluable and says nothing about the
                 rows that were not read.
+            baseline: A saved report to measure change from, such as
+                yesterday's run. The rules about change below need one; the
+                other rules ignore it. It may be loaded from a flat
+                ``to_dict()`` summary, which leaves what it did not record
+                unrecorded.
+            max_quality_score_drop: How many points the overall score may
+                fall below the baseline's, 0-100.
+            max_dimension_score_drops: The same per ISO 25012 dimension.
+            max_null_percentage_increase: How many points a column's null
+                percentage may rise above the baseline's, 0-100. A mapping
+                keyed by column name, where ``"*"`` sets the limit for every
+                other column both reports profiled; a bare number is the same
+                as ``{"*": number}``. A column only this report has is checked
+                only when named.
+
+        A rule about change is decided only when both reports measured the
+        same thing the same way. Otherwise it is unevaluated, with the reason
+        in the check: ``not_in_baseline``; ``schema_changed`` for a score
+        when the column sets differ (a column's own rule still decides);
+        ``definition_not_comparable`` for a ``metric_semantics`` key the rule
+        depends on; ``setting_changed`` or ``setting_unrecorded`` for a
+        setting that moves the score on unchanged data, such as a semantic
+        hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
+        side does not cover its whole source. ``result.baseline`` names both
+        reports and how their columns differ.
 
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
-                outside 0-100, an unknown dimension name, or no requirement at
-                all. A misconfigured gate is not a failing dataset. Also raised
-                for a report loaded from a flat ``to_dict()`` summary, which
-                the Rust gate cannot read.
+                outside 0-100, an unknown dimension name, a rule about change
+                without a baseline, or no requirement at all. A misconfigured
+                gate is not a failing dataset. Also raised for a report loaded
+                from a flat ``to_dict()`` summary, which the Rust gate cannot
+                read; the baseline may be one.
+            TypeError: ``baseline`` is not a :class:`ProfileReport`.
         """
+        if baseline is not None and not isinstance(baseline, ProfileReport):
+            raise TypeError(
+                f"baseline must be a dataprof ProfileReport, got {type(baseline).__name__}"
+            )
         return _Policy(
             min_rows=min_rows,
             min_quality_score=min_quality_score,
@@ -706,6 +741,10 @@ class ProfileReport:
             max_duplicate_rows=max_duplicate_rows,
             require_metrics=require_metrics,
             scope=scope,
+            baseline=None if baseline is None else baseline._delta_input(),
+            max_quality_score_drop=max_quality_score_drop,
+            max_dimension_score_drops=max_dimension_score_drops,
+            max_null_percentage_increase=max_null_percentage_increase,
         ).evaluate(self._native_report)
 
     def findings(

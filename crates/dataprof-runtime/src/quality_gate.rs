@@ -26,6 +26,32 @@
 //!
 //! `Fail` wins over `Inconclusive`: a witnessed violation is a decision.
 //!
+//! # Baseline-relative rules
+//!
+//! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
+//! [`ReportDelta`] between it and the report, and evaluates rules about change:
+//! how far the overall score or a dimension score may drop, and how far a
+//! column's null percentage may rise, in points. A change is decided only when
+//! both sides measured the same thing the same way. Otherwise the rule is left
+//! unevaluated, naming what differs:
+//!
+//! - a value the baseline does not carry ([`NotEvaluated::NotInBaseline`]);
+//! - for a score, a different column set ([`NotEvaluated::SchemaChanged`]).
+//!   A dataset-level score has the columns as its subject, so a column that
+//!   appeared or vanished changes what is measured, not how good it is. A
+//!   column's own rules stay decisive, and a new column has no baseline rule
+//!   until a policy names it;
+//! - for the overall score, a different set of assessed dimensions
+//!   ([`NotEvaluated::DimensionsChanged`]), since it averages those;
+//! - a measurement definition the rule depends on that the two sides do not
+//!   both record identically ([`NotEvaluated::DefinitionNotComparable`]);
+//! - a setting that moves the score on unchanged data, such as the score
+//!   weights or a semantic hint, that differs or that either side did not
+//!   record ([`NotEvaluated::SettingChanged`],
+//!   [`NotEvaluated::SettingUnrecorded`]);
+//! - under [`PolicyScope::FullSource`], evidence on either side that does not
+//!   cover the whole source.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -51,10 +77,15 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
+use dataprof_core::serde_helpers::rounded_2;
+use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension, QualityScoreWeights};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 
-use crate::profile_report::{ProfileReport, QualityAnalysisStatus};
+use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
+use crate::report_delta::{
+    ColumnChange, RecordedHints, ReportDelta, ReportReference, ReportSide, SchemaChange,
+    SettingComparison, Sides,
+};
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
 /// thresholds compared against them.
@@ -83,6 +114,10 @@ pub enum PolicyError {
     /// The policy states no requirement at all. An empty policy passes every
     /// report, which is never what a gate is for.
     NoRequirements,
+    /// The policy states a rule about change, and was evaluated without a
+    /// baseline to measure the change from. Use
+    /// [`QualityPolicy::evaluate_against`].
+    BaselineRequired,
 }
 
 impl fmt::Display for PolicyError {
@@ -105,6 +140,11 @@ impl fmt::Display for PolicyError {
             Self::NoRequirements => write!(
                 f,
                 "policy states no requirement; a gate must check something"
+            ),
+            Self::BaselineRequired => write!(
+                f,
+                "policy states a rule about change, which needs a baseline report to compare \
+                 against"
             ),
         }
     }
@@ -250,6 +290,15 @@ pub enum CheckCode {
     MaxDuplicateRows,
     /// A metric must have been analyzed at all.
     RequireMetric,
+    /// The overall quality score may drop at most the threshold's number of
+    /// points below the baseline's.
+    MaxQualityScoreDrop,
+    /// One dimension score may drop at most the threshold's number of points
+    /// below the baseline's.
+    MaxDimensionScoreDrop,
+    /// A column's null percentage may rise at most the threshold's number of
+    /// points above the baseline's.
+    MaxNullPercentageIncrease,
 }
 
 impl fmt::Display for CheckCode {
@@ -261,6 +310,9 @@ impl fmt::Display for CheckCode {
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
             Self::RequireMetric => write!(f, "require_metric"),
+            Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
+            Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
+            Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
         }
     }
 }
@@ -275,7 +327,7 @@ impl fmt::Display for CheckCode {
 pub enum MetricValue {
     /// A count of rows or values.
     Count(usize),
-    /// A 0..=100 percentage or score.
+    /// A 0..=100 percentage or score, or a change in one, in points.
     Percentage(#[serde(serialize_with = "dataprof_core::serde_helpers::round_2")] f64),
 }
 
@@ -309,6 +361,19 @@ pub enum Expectation {
     },
     /// The metric must have been analyzed. No number is compared.
     Analyzed,
+    /// The change from the baseline, `observed` minus the baseline's value,
+    /// must be at least `value` points. A permitted drop is a negative value.
+    #[non_exhaustive]
+    ChangeAtLeast {
+        /// The threshold, in points.
+        value: MetricValue,
+    },
+    /// The change from the baseline must be at most `value` points.
+    #[non_exhaustive]
+    ChangeAtMost {
+        /// The threshold, in points.
+        value: MetricValue,
+    },
 }
 
 impl fmt::Display for Expectation {
@@ -317,6 +382,8 @@ impl fmt::Display for Expectation {
             Self::AtLeast { value } => write!(f, "at least {value}"),
             Self::AtMost { value } => write!(f, "at most {value}"),
             Self::Analyzed => write!(f, "analyzed"),
+            Self::ChangeAtLeast { value } => write!(f, "a change of at least {value}"),
+            Self::ChangeAtMost { value } => write!(f, "a change of at most {value}"),
         }
     }
 }
@@ -351,6 +418,40 @@ pub enum NotEvaluated {
     EvidenceIncomplete {
         /// The gap between the evidence and the requirement's scope.
         gap: EvidenceGap,
+    },
+    /// The baseline carries no value to measure a change from: it did not
+    /// assess the metric, did not profile the column, or read no values for
+    /// it.
+    NotInBaseline,
+    /// The two reports profiled different column sets, and the requirement
+    /// is about a dataset-level score, whose subject is the column set. The
+    /// result's `baseline.schema` names the columns that differ.
+    SchemaChanged,
+    /// The overall score averages a different set of assessed dimensions on
+    /// each side, because a dimension was requested, or had something to
+    /// assess, on one side only.
+    DimensionsChanged,
+    /// A measurement definition the requirement depends on is not recorded
+    /// identically on both sides: one side predates the record, or the two
+    /// differ. Either way the same data may measure differently.
+    #[non_exhaustive]
+    DefinitionNotComparable {
+        /// The `metric_semantics` key.
+        definition: String,
+    },
+    /// A setting that moves the score on unchanged data differs between the
+    /// two reports.
+    #[non_exhaustive]
+    SettingChanged {
+        /// The configuration field that differs.
+        setting: String,
+    },
+    /// A setting that moves the score on unchanged data is not recorded on
+    /// at least one side, so it cannot be shown to be the same.
+    #[non_exhaustive]
+    SettingUnrecorded {
+        /// The configuration field that is unrecorded.
+        setting: String,
     },
 }
 
@@ -396,6 +497,10 @@ pub struct Check {
     /// otherwise not evaluated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bounds: Option<CheckBounds>,
+    /// The baseline's side of a rule about change. Absent on every other
+    /// rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BaselineReading>,
     /// Passed, failed, or not evaluated.
     #[serde(flatten)]
     pub status: CheckStatus,
@@ -421,6 +526,31 @@ impl Check {
             _ => None,
         }
     }
+}
+
+/// What the baseline said about the metric a rule about change reads.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct BaselineReading {
+    /// The baseline's value, or `None` when it carries none.
+    pub observed: Option<MetricValue>,
+    /// Whether the data behind the baseline's value covers its whole source.
+    pub evidence: Evidence,
+    /// The check's `observed` minus the baseline's, in points, at the
+    /// report's serialized precision. `None` when either side has no value.
+    pub change: Option<MetricValue>,
+}
+
+/// The two reports a baseline-relative evaluation compared, and how their
+/// column sets differ.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct BaselineComparison {
+    /// `a` is the baseline and `b` the report evaluated, as in a
+    /// [`ReportDelta`] between them.
+    pub reports: Sides<ReportReference>,
+    /// Columns added, removed and shared.
+    pub schema: SchemaChange,
 }
 
 /// The interval a sampled score was decided on.
@@ -475,6 +605,10 @@ pub struct GateResult {
     pub evidence: Evidence,
     /// Every requirement, in evaluation order.
     pub checks: Vec<Check>,
+    /// The reports compared, when the policy was evaluated against a
+    /// baseline. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BaselineComparison>,
 }
 
 impl GateResult {
@@ -526,6 +660,10 @@ pub struct QualityPolicy {
     max_null_percentage_any: Option<f64>,
     max_duplicate_rows: Option<usize>,
     require_metrics: Vec<RequiredMetric>,
+    max_quality_score_drop: Option<f64>,
+    max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
+    max_null_percentage_increase: BTreeMap<String, f64>,
+    max_null_percentage_increase_any: Option<f64>,
     scope: PolicyScope,
 }
 
@@ -596,6 +734,41 @@ impl QualityPolicy {
         self
     }
 
+    /// Allow the overall quality score to drop at most `points` (0..=100)
+    /// below the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_quality_score_drop(mut self, points: f64) -> Self {
+        self.max_quality_score_drop = Some(points);
+        self
+    }
+
+    /// Allow one dimension's score to drop at most `points` (0..=100) below
+    /// the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_dimension_score_drop(mut self, dimension: QualityDimension, points: f64) -> Self {
+        self.max_dimension_score_drops
+            .insert(dimension.to_string(), (dimension, points));
+        self
+    }
+
+    /// Allow the named column's null percentage to rise at most `points`
+    /// (0..=100) above the baseline's. Takes precedence over
+    /// [`max_null_percentage_increase_any`](Self::max_null_percentage_increase_any)
+    /// for that column. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_null_percentage_increase(mut self, column: impl Into<String>, points: f64) -> Self {
+        self.max_null_percentage_increase
+            .insert(column.into(), points);
+        self
+    }
+
+    /// Allow every other column both reports profiled to have its null
+    /// percentage rise at most `points` (0..=100) above the baseline's. A
+    /// column only the evaluated report has is not covered: it has no
+    /// baseline, and gets a rule only when the policy names it. Needs
+    /// [`evaluate_against`](Self::evaluate_against).
+    pub fn max_null_percentage_increase_any(mut self, points: f64) -> Self {
+        self.max_null_percentage_increase_any = Some(points);
+        self
+    }
+
     /// Set what the requirements are statements about. Defaults to
     /// [`PolicyScope::FullSource`].
     pub fn scope(mut self, scope: PolicyScope) -> Self {
@@ -624,6 +797,26 @@ impl QualityPolicy {
         if let Some(max) = self.max_null_percentage_any {
             check_percentage(CheckCode::MaxNullPercentage, None, max)?;
         }
+        if let Some(points) = self.max_quality_score_drop {
+            check_percentage(CheckCode::MaxQualityScoreDrop, None, points)?;
+        }
+        for (dimension, points) in self.max_dimension_score_drops.values() {
+            check_percentage(
+                CheckCode::MaxDimensionScoreDrop,
+                Some(dimension.to_string()),
+                *points,
+            )?;
+        }
+        for (column, points) in &self.max_null_percentage_increase {
+            check_percentage(
+                CheckCode::MaxNullPercentageIncrease,
+                Some(column.clone()),
+                *points,
+            )?;
+        }
+        if let Some(points) = self.max_null_percentage_increase_any {
+            check_percentage(CheckCode::MaxNullPercentageIncrease, None, points)?;
+        }
         if self.is_empty() {
             return Err(PolicyError::NoRequirements);
         }
@@ -638,16 +831,91 @@ impl QualityPolicy {
             && self.max_null_percentage_any.is_none()
             && self.max_duplicate_rows.is_none()
             && self.require_metrics.is_empty()
+            && !self.has_change_rules()
+    }
+
+    /// Whether the policy states a rule about change from a baseline.
+    fn has_change_rules(&self) -> bool {
+        self.max_quality_score_drop.is_some()
+            || !self.max_dimension_score_drops.is_empty()
+            || !self.max_null_percentage_increase.is_empty()
+            || self.max_null_percentage_increase_any.is_some()
     }
 
     /// Evaluate the policy against a report.
     ///
     /// Returns the structured outcome. The report is not modified, nothing is
     /// printed, and the process is not exited: what to do about a failing gate
-    /// is the caller's decision.
+    /// is the caller's decision. A policy with a rule about change is a
+    /// [`PolicyError::BaselineRequired`] here; use
+    /// [`evaluate_against`](Self::evaluate_against).
     pub fn evaluate(&self, report: &ProfileReport) -> Result<GateResult, PolicyError> {
         self.validate()?;
+        if self.has_change_rules() {
+            return Err(PolicyError::BaselineRequired);
+        }
+        let checks = self.absolute_checks(report);
+        Ok(GateResult {
+            verdict: verdict_of(&checks),
+            scope: self.scope,
+            evidence: scan_evidence(&report.execution),
+            checks,
+            baseline: None,
+        })
+    }
 
+    /// Evaluate the policy against a report and a baseline it is compared
+    /// with.
+    ///
+    /// Every requirement is evaluated as [`evaluate`](Self::evaluate) does,
+    /// then each rule about change, in a fixed order: the overall score, the
+    /// dimensions in [`QualityDimension::all`] order, then the named columns
+    /// in name order and every other shared column in the baseline's order.
+    /// The baseline may come from a flat summary, which leaves what it did
+    /// not record unrecorded. See the [module docs](self) for when a change
+    /// is decided.
+    pub fn evaluate_against(
+        &self,
+        report: &ProfileReport,
+        baseline: &ReportSide,
+    ) -> Result<GateResult, PolicyError> {
+        self.validate()?;
+        let current = ReportSide::from_report(report);
+        let delta = ReportDelta::between_sides(baseline, &current);
+        let identifiers = Sides {
+            a: baseline.identifier_order(),
+            b: current.identifier_order(),
+        };
+        let mut checks = self.absolute_checks(report);
+        if let Some(points) = self.max_quality_score_drop {
+            checks.push(self.score_drop_check(report, &delta, &identifiers, None, points));
+        }
+        for dimension in QualityDimension::all() {
+            if let Some((_, points)) = self.max_dimension_score_drops.get(&dimension.to_string()) {
+                checks.push(self.score_drop_check(
+                    report,
+                    &delta,
+                    &identifiers,
+                    Some(dimension),
+                    *points,
+                ));
+            }
+        }
+        checks.extend(self.null_increase_checks(&delta));
+        Ok(GateResult {
+            verdict: verdict_of(&checks),
+            scope: self.scope,
+            evidence: scan_evidence(&report.execution),
+            checks,
+            baseline: Some(BaselineComparison {
+                reports: delta.reports,
+                schema: delta.schema,
+            }),
+        })
+    }
+
+    /// The requirements about the report alone, in their fixed order.
+    fn absolute_checks(&self, report: &ProfileReport) -> Vec<Check> {
         let scan = scan_evidence(&report.execution);
         let mut checks = Vec::new();
 
@@ -669,13 +937,7 @@ impl QualityPolicy {
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
         }
-
-        Ok(GateResult {
-            verdict: verdict_of(&checks),
-            scope: self.scope,
-            evidence: scan,
-            checks,
-        })
+        checks
     }
 
     /// Decide a comparison whose observed value is an average or a ratio.
@@ -725,6 +987,7 @@ impl QualityPolicy {
             scope: self.scope,
             evidence: Evidence::Complete,
             bounds: None,
+            baseline: None,
             status: if analyzed {
                 CheckStatus::Passed
             } else {
@@ -768,6 +1031,7 @@ impl QualityPolicy {
             scope: self.scope,
             evidence: scan,
             bounds: None,
+            baseline: None,
             status,
             message: message.to_string(),
         }
@@ -788,6 +1052,7 @@ impl QualityPolicy {
                 Provenance::Overall,
             )),
             bounds: None,
+            baseline: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -830,6 +1095,7 @@ impl QualityPolicy {
                 Provenance::Dimension(dimension),
             )),
             bounds: None,
+            baseline: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -947,6 +1213,7 @@ impl QualityPolicy {
             scope: self.scope,
             evidence: scan,
             bounds: None,
+            baseline: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -997,6 +1264,7 @@ impl QualityPolicy {
                 Provenance::Component("duplicate_rows"),
             )),
             bounds: None,
+            baseline: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -1046,6 +1314,416 @@ impl QualityPolicy {
         .to_string();
         check
     }
+
+    /// How far a score may drop below the baseline's. Both sides are read
+    /// from the delta, at their serialized precision, so the decision is the
+    /// one a saved report and its baseline document reproduce.
+    fn score_drop_check(
+        &self,
+        report: &ProfileReport,
+        delta: &ReportDelta,
+        identifiers: &Sides<Option<&[String]>>,
+        dimension: Option<QualityDimension>,
+        points: f64,
+    ) -> Check {
+        let (code, change, subject) = match dimension {
+            None => (
+                CheckCode::MaxQualityScoreDrop,
+                &delta.quality_score,
+                "the overall quality score",
+            ),
+            Some(dimension) => (
+                CheckCode::MaxDimensionScoreDrop,
+                &delta
+                    .dimensions
+                    .iter()
+                    .find(|change| change.dimension == dimension)
+                    .expect("a delta lists every dimension this build knows")
+                    .score,
+                "this dimension's score",
+            ),
+        };
+        let mut check = Check {
+            code,
+            column: None,
+            dimension,
+            // `0.0 - points`, not `-points`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            expected: Expectation::ChangeAtLeast {
+                value: MetricValue::Percentage(0.0 - points),
+            },
+            observed: change.b.map(MetricValue::Percentage),
+            scope: self.scope,
+            evidence: change.evidence.b,
+            bounds: None,
+            baseline: Some(baseline_reading(change.a, change.evidence.a, change.abs)),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        if report.quality.is_none() {
+            return unavailable_quality(check, report);
+        }
+        let schema_changed = !delta.schema.added.is_empty() || !delta.schema.removed.is_empty();
+        // The overall score averages the dimensions that had something to
+        // assess, so a dimension scored on one side only changes the average
+        // itself, whatever the data did.
+        let dimensions_changed = dimension.is_none()
+            && delta
+                .dimensions
+                .iter()
+                .any(|change| change.score.a.is_some() != change.score.b.is_some());
+        let reason = if change.b.is_none() {
+            Some(NotEvaluated::NotAssessed)
+        } else if change.a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if schema_changed {
+            Some(NotEvaluated::SchemaChanged)
+        } else if dimensions_changed {
+            Some(NotEvaluated::DimensionsChanged)
+        } else {
+            definition_gap(
+                delta.metric_semantics.a.as_ref(),
+                delta.metric_semantics.b.as_ref(),
+                score_definitions(dimension),
+            )
+            .or_else(|| {
+                setting_gap(
+                    &delta.configuration.score_weights,
+                    &delta.configuration.semantic_hints,
+                    identifiers,
+                    dimension,
+                )
+            })
+        };
+        if let Some(reason) = reason {
+            return not_evaluated_change(check, reason, subject);
+        }
+        let change_points = change
+            .abs
+            .expect("a delta has a change whenever both sides have a score");
+        // Both sides and their change are at the serialized precision, so the
+        // allowance is too: the decision is the one the document shows.
+        check.status =
+            self.decide_change(&change.evidence, change_points >= 0.0 - rounded_2(points));
+        check.message = match check.status {
+            CheckStatus::Passed => {
+                format!("{subject} dropped no more than allowed from the baseline")
+            }
+            CheckStatus::Failed => format!("{subject} dropped more than allowed from the baseline"),
+            CheckStatus::NotEvaluated(_) => evidence_message(subject),
+        };
+        check
+    }
+
+    /// One check per named column, in name order, then one per other column
+    /// both reports profiled, in the baseline's order. A column only the
+    /// evaluated report has gets no rule unless the policy names it.
+    fn null_increase_checks(&self, delta: &ReportDelta) -> Vec<Check> {
+        let mut checks = Vec::new();
+        for (column, points) in &self.max_null_percentage_increase {
+            checks.push(self.null_increase_check(delta, column, *points));
+        }
+        if let Some(points) = self.max_null_percentage_increase_any {
+            for column in &delta.schema.common {
+                if !self.max_null_percentage_increase.contains_key(column) {
+                    checks.push(self.null_increase_check(delta, column, points));
+                }
+            }
+        }
+        checks
+    }
+
+    /// How far a column's null percentage may rise above the baseline's.
+    /// Null counts accumulate over every scanned row, so each side's scan
+    /// coverage is its evidence, and only the null-token definition can make
+    /// the same data count differently. A column's own rule does not depend on
+    /// the rest of the column set.
+    fn null_increase_check(&self, delta: &ReportDelta, column: &str, points: f64) -> Check {
+        let change = delta.columns.iter().find(|change| change.name == column);
+        let (null_pct_a, null_pct_b, null_pct_delta) = change.map_or(
+            (None, None, None),
+            |ColumnChange {
+                 null_pct_a,
+                 null_pct_b,
+                 null_pct_delta,
+                 ..
+             }| (*null_pct_a, *null_pct_b, *null_pct_delta),
+        );
+        let named = |names: &[String]| names.iter().any(|name| name == column);
+        let in_report = named(&delta.schema.common) || named(&delta.schema.added);
+        let in_baseline = named(&delta.schema.common) || named(&delta.schema.removed);
+        let evidence = Sides {
+            a: delta.reports.a.evidence,
+            b: delta.reports.b.evidence,
+        };
+        let mut check = Check {
+            code: CheckCode::MaxNullPercentageIncrease,
+            column: Some(column.to_string()),
+            dimension: None,
+            expected: Expectation::ChangeAtMost {
+                value: MetricValue::Percentage(points),
+            },
+            observed: null_pct_b.map(MetricValue::Percentage),
+            scope: self.scope,
+            evidence: evidence.b,
+            bounds: None,
+            baseline: Some(baseline_reading(null_pct_a, evidence.a, null_pct_delta)),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let reason = if !in_report {
+            Some(NotEvaluated::ColumnNotProfiled)
+        } else if !in_baseline {
+            Some(NotEvaluated::NotInBaseline)
+        } else if null_pct_b.is_none() {
+            Some(NotEvaluated::NotAssessed)
+        } else if null_pct_a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else {
+            definition_gap(
+                delta.metric_semantics.a.as_ref(),
+                delta.metric_semantics.b.as_ref(),
+                &[Definition::NullTokens],
+            )
+        };
+        let subject = "this column's null percentage";
+        if let Some(reason) = reason {
+            return not_evaluated_change(check, reason, subject);
+        }
+        let change_points =
+            null_pct_delta.expect("a delta has a change whenever both sides have a value");
+        check.status = self.decide_change(&evidence, change_points <= rounded_2(points));
+        check.message = match check.status {
+            CheckStatus::Passed => {
+                format!("{subject} rose no more than allowed above the baseline")
+            }
+            CheckStatus::Failed => format!("{subject} rose more than allowed above the baseline"),
+            CheckStatus::NotEvaluated(_) => evidence_message(subject),
+        };
+        check
+    }
+
+    /// Decide a change between two averages or ratios. Under
+    /// [`PolicyScope::FullSource`] a side computed over part of its source
+    /// bounds nothing about the rest, so either side's gap leaves the rule
+    /// unevaluated, the evaluated report's named first.
+    fn decide_change(&self, evidence: &Sides<Evidence>, satisfied: bool) -> CheckStatus {
+        match (self.scope, evidence.b.gap().or(evidence.a.gap())) {
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ if satisfied => CheckStatus::Passed,
+            _ => CheckStatus::Failed,
+        }
+    }
+}
+
+fn baseline_reading(
+    observed: Option<f64>,
+    evidence: Evidence,
+    change: Option<f64>,
+) -> BaselineReading {
+    BaselineReading {
+        observed: observed.map(MetricValue::Percentage),
+        evidence,
+        change: change.map(MetricValue::Percentage),
+    }
+}
+
+/// Leave a rule about change unevaluated, with a fixed sentence naming why.
+fn not_evaluated_change(mut check: Check, reason: NotEvaluated, subject: &str) -> Check {
+    check.message = match &reason {
+        NotEvaluated::NotAssessed if check.column.is_some() => {
+            "no values were read for this column".to_string()
+        }
+        NotEvaluated::NotAssessed => format!("{subject} was not assessed in this report"),
+        NotEvaluated::ColumnNotProfiled => "this column has no profile in the report".to_string(),
+        NotEvaluated::NotInBaseline => format!("the baseline carries no value for {subject}"),
+        NotEvaluated::SchemaChanged => format!(
+            "the two reports profiled different columns, so {subject} has a different subject \
+             on each side"
+        ),
+        NotEvaluated::DimensionsChanged => {
+            format!("{subject} averages a different set of assessed dimensions on each side")
+        }
+        NotEvaluated::DefinitionNotComparable { .. } => format!(
+            "a measurement definition {subject} depends on is not recorded identically in both \
+             reports"
+        ),
+        NotEvaluated::SettingChanged { .. } => format!(
+            "a setting that moves {subject} on unchanged data differs between the two reports"
+        ),
+        NotEvaluated::SettingUnrecorded { .. } => format!(
+            "a setting that moves {subject} on unchanged data is not recorded in both reports"
+        ),
+        NotEvaluated::QualityUnavailable { .. } => {
+            "the report carries no quality assessment".to_string()
+        }
+        NotEvaluated::EvidenceIncomplete { .. } => evidence_message(subject),
+    };
+    check.status = CheckStatus::NotEvaluated(reason);
+    check
+}
+
+fn evidence_message(subject: &str) -> String {
+    format!(
+        "{subject} was computed over part of the source on at least one side, which bounds \
+         nothing about the rest"
+    )
+}
+
+/// A recorded measurement definition a rule about change depends on.
+#[derive(Debug, Clone, Copy)]
+enum Definition {
+    /// The text values counted as null, behind every null count and so every
+    /// score.
+    NullTokens,
+    /// What a pattern match counts, behind the validity score.
+    PatternMatchCount,
+}
+
+impl Definition {
+    fn key(self) -> &'static str {
+        match self {
+            Self::NullTokens => "null_tokens",
+            Self::PatternMatchCount => "pattern_match_count",
+        }
+    }
+
+    /// Whether both sides recorded the definition, with the same value.
+    fn same(self, a: &MetricSemantics, b: &MetricSemantics) -> bool {
+        fn agree<T: PartialEq>(a: &Option<T>, b: &Option<T>) -> bool {
+            a.is_some() && a == b
+        }
+        match self {
+            Self::NullTokens => agree(&a.null_tokens, &b.null_tokens),
+            Self::PatternMatchCount => agree(&a.pattern_match_count, &b.pattern_match_count),
+        }
+    }
+}
+
+/// The definitions a score reads. Text length and the shape-moment estimator
+/// feed no score.
+fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definition] {
+    match dimension {
+        None | Some(QualityDimension::Validity) => {
+            &[Definition::NullTokens, Definition::PatternMatchCount]
+        }
+        Some(_) => &[Definition::NullTokens],
+    }
+}
+
+/// The first definition the two sides do not both record identically.
+fn definition_gap(
+    a: Option<&MetricSemantics>,
+    b: Option<&MetricSemantics>,
+    definitions: &[Definition],
+) -> Option<NotEvaluated> {
+    definitions
+        .iter()
+        .find(|definition| !a.zip(b).is_some_and(|(a, b)| definition.same(a, b)))
+        .map(|definition| NotEvaluated::DefinitionNotComparable {
+            definition: definition.key().to_string(),
+        })
+}
+
+/// Reads one hint list out of a report's recorded hints.
+type HintColumns = fn(&RecordedHints) -> &Vec<String>;
+
+/// How one setting compares across the two sides.
+#[derive(Debug, Clone, Copy)]
+enum Agreement {
+    Same,
+    Changed,
+    Unrecorded,
+}
+
+fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
+    match (a, b) {
+        (Some(a), Some(b)) if a == b => Agreement::Same,
+        (Some(_), Some(_)) => Agreement::Changed,
+        _ => Agreement::Unrecorded,
+    }
+}
+
+/// The first setting a score reads that the two sides do not both record
+/// identically. The overall score reads every setting. A dimension reads the
+/// identifier hint, which retypes its columns and names the key uniqueness
+/// reads, except completeness, which counts nulls whatever the type. Accuracy
+/// also reads the positive hint, timeliness the temporal ones, and validity
+/// the locale, which ranks the detected patterns it scores.
+fn setting_gap(
+    weights: &SettingComparison<QualityScoreWeights>,
+    hints: &SettingComparison<RecordedHints>,
+    identifiers: &Sides<Option<&[String]>>,
+    dimension: Option<QualityDimension>,
+) -> Option<NotEvaluated> {
+    let reads = |dimensions: &[QualityDimension]| {
+        dimension.is_none_or(|dimension| dimensions.contains(&dimension))
+    };
+    let hint = |columns: HintColumns| {
+        agreement(hints.a.as_ref().map(columns), hints.b.as_ref().map(columns))
+    };
+    let weights = match weights.same {
+        Some(true) => Agreement::Same,
+        Some(false) => Agreement::Changed,
+        None => Agreement::Unrecorded,
+    };
+    // A report records which columns the pairs named, not which column pairs
+    // with which, so only two empty pair lists are known to agree.
+    let pairs = match hint(|hints| &hints.temporal_pair_columns) {
+        Agreement::Same
+            if hints
+                .a
+                .as_ref()
+                .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
+        {
+            Agreement::Unrecorded
+        }
+        other => other,
+    };
+    let settings = [
+        ("score_weights", dimension.is_none(), weights),
+        (
+            "identifier_columns",
+            dimension != Some(QualityDimension::Completeness),
+            // In the order given: the first one present is the key.
+            agreement(identifiers.a, identifiers.b),
+        ),
+        (
+            "positive_columns",
+            reads(&[QualityDimension::Accuracy]),
+            hint(|hints| &hints.positive_columns),
+        ),
+        (
+            "temporal_columns",
+            reads(&[QualityDimension::Timeliness]),
+            hint(|hints| &hints.temporal_columns),
+        ),
+        (
+            "temporal_pairs",
+            reads(&[QualityDimension::Timeliness]),
+            pairs,
+        ),
+        // No report records the locale yet (#1010).
+        (
+            "locale",
+            reads(&[QualityDimension::Validity]),
+            Agreement::Unrecorded,
+        ),
+    ];
+    settings
+        .into_iter()
+        .filter(|(_, read, _)| *read)
+        .find_map(|(setting, _, agreement)| match agreement {
+            Agreement::Same => None,
+            Agreement::Changed => Some(NotEvaluated::SettingChanged {
+                setting: setting.to_string(),
+            }),
+            Agreement::Unrecorded => Some(NotEvaluated::SettingUnrecorded {
+                setting: setting.to_string(),
+            }),
+        })
 }
 
 fn check_percentage(

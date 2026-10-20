@@ -440,6 +440,19 @@ pub struct ReportSide {
     metric_semantics: Option<MetricSemantics>,
     score_weights: Option<QualityScoreWeights>,
     semantic_hints: Option<RecordedHints>,
+    /// The `identifier_columns` hint in the order it was given, which
+    /// [`RecordedHints`] sorts away. The first one present is the key the
+    /// uniqueness score reads, so the quality gate compares this order.
+    identifier_order: Option<Vec<String>>,
+}
+
+/// The identifier hint's columns in binding order, the order they were given.
+fn identifier_order(bindings: &[SemanticHintBinding]) -> Vec<String> {
+    bindings
+        .iter()
+        .filter(|binding| binding.kind == SemanticHintKind::Identifier)
+        .map(|binding| binding.column.clone())
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -532,7 +545,15 @@ impl ReportSide {
             // empty list there means no hints were given.
             semantic_hints: (report.schema_version >= 1)
                 .then(|| RecordedHints::from_bindings(&report.semantic_hint_bindings)),
+            identifier_order: (report.schema_version >= 1)
+                .then(|| identifier_order(&report.semantic_hint_bindings)),
         }
+    }
+
+    /// The identifier hint in the order it was given, or `None` when the side
+    /// did not record its hints.
+    pub(crate) fn identifier_order(&self) -> Option<&[String]> {
+        self.identifier_order.as_deref()
     }
 
     /// Read a flat summary document.
@@ -647,6 +668,10 @@ impl ReportSide {
                 .schema_version
                 .is_some_and(|version| version >= 1)
                 .then(|| RecordedHints::from_bindings(&summary.semantic_hint_bindings)),
+            identifier_order: summary
+                .schema_version
+                .is_some_and(|version| version >= 1)
+                .then(|| identifier_order(&summary.semantic_hint_bindings)),
             metric_semantics: summary.metric_semantics,
         })
     }

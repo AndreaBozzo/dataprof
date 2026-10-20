@@ -58,12 +58,12 @@ pub use dataprof_parquet::{
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
-    Check, CheckBounds, CheckCode, CheckStatus, DEFAULT_MIXED_TYPES_PERCENTAGE,
-    DEFAULT_NULL_HEAVY_PERCENTAGE, Evidence, EvidenceGap, EvidenceValue, Expectation, Finding,
-    FindingCode, FindingPolicy, FindingPolicyError, FindingsResult, GateResult, MetricSemantics,
-    MetricValue, NotEvaluated, NotEvaluatedReason, PolicyError, PolicyScope, ProfileReport,
-    QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Severity,
-    UnevaluatedRule, Verdict,
+    BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus,
+    DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE, Evidence, EvidenceGap,
+    EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy, FindingPolicyError,
+    FindingsResult, GateResult, MetricSemantics, MetricValue, NotEvaluated, NotEvaluatedReason,
+    PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy,
+    REPORT_SCHEMA_VERSION, RequiredMetric, Severity, UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
     ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,

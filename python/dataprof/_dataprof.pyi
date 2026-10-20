@@ -408,6 +408,11 @@ class ProfileReport:
         require_quality: bool = ...,
         require_dimensions: list[str] = ...,
         scope: str = ...,
+        baseline: ProfileReport | str | None = ...,
+        max_quality_score_drop: float | None = ...,
+        max_dimension_score_drops: list[tuple[str, float]] = ...,
+        max_null_percentage_increase: list[tuple[str, float]] = ...,
+        max_null_percentage_increase_any: float | None = ...,
     ) -> str: ...
     def summary_json(self) -> str: ...
     def to_json(self) -> str: ...
