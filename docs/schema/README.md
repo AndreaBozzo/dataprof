@@ -694,3 +694,25 @@ The enum gains a value, so stored v1 reports remain valid. A reader built
 before this change rejects a report that contains the new value, as it would
 any enum value it does not know. Consumers matching on `kind` must accept
 `temporal_pair`.
+
+## v1 additive change: `analysis_settings`
+
+Both dialects gain a top-level `analysis_settings` object recording the
+settings a report was profiled with that move its scores on unchanged data and
+are recorded nowhere else in it (#1010). It has one field so far:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `pattern_locale` | `"none"`, `"CA"`, `"DE"`, `"FR"`, `"GB"`, `"IT"`, `"US"` | the locale detected patterns were ranked with, which the validity score reads; `"none"` when no locale was given |
+
+`metric_semantics` records how a release defines its measurements;
+`analysis_settings` records what the caller chose. Score weights live in the
+quality assessment and semantic hints in the hint bindings, so neither is
+repeated here.
+
+The object is absent from documents written before 0.13, whose settings are
+unknown rather than the defaults, and from a report built directly with
+`ProfileReport::new` rather than through a profiling run. An explicit `null`,
+an object without `pattern_locale`, and an unknown locale value are malformed.
+A field a later release adds is ignored by this reader. Stored v1 reports
+remain valid.

@@ -31,7 +31,8 @@ pub use profile_builder::{
 #[doc(hidden)]
 pub use profile_report::profile_report_schema_document;
 pub use profile_report::{
-    MetricSemantics, ProfileReport, QualityAnalysisStatus, REPORT_SCHEMA_VERSION,
+    AnalysisSettings, MetricSemantics, PatternLocale, ProfileReport, QualityAnalysisStatus,
+    REPORT_SCHEMA_VERSION,
 };
 pub use quality_gate::{
     BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Evidence,

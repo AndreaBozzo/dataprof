@@ -50,7 +50,7 @@ def test_the_shape_is_the_frozen_contract():
         "null_pct_delta": -50.0,
     }
     assert set(delta["metric_semantics"]) == {"a", "b", "comparable"}
-    assert list(delta["configuration"]) == ["score_weights", "semantic_hints"]
+    assert list(delta["configuration"]) == ["score_weights", "semantic_hints", "pattern_locale"]
     for setting in delta["configuration"].values():
         assert set(setting) == {"a", "b", "same"}
     assert set(delta["configuration"]["semantic_hints"]["a"]) == {

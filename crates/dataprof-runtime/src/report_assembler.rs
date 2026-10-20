@@ -16,7 +16,7 @@ use dataprof_metrics::{
     RowDuplicateSummary, analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
 };
 
-use crate::{ProfileReport, QualityAnalysisStatus};
+use crate::{AnalysisSettings, ProfileReport, QualityAnalysisStatus};
 
 /// Builder for constructing a [`ProfileReport`].
 pub struct ReportAssembler {
@@ -33,6 +33,8 @@ pub struct ReportAssembler {
     exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
     row_completeness: Option<RowCompletenessSummary>,
+    /// What the caller profiled with, once `with_analysis_options` saw it.
+    analysis_settings: Option<AnalysisSettings>,
     /// Test seam for the failure branch. No input path can currently make
     /// `MetricsCalculator` return `Err`: both of its error constructions sit
     /// behind an emptiness check that has already returned by then. The branch
@@ -57,6 +59,7 @@ impl ReportAssembler {
             exact_value_hint_bindings: None,
             row_duplicates: None,
             row_completeness: None,
+            analysis_settings: None,
             #[cfg(test)]
             forced_quality_failure: None,
         }
@@ -138,6 +141,7 @@ impl ReportAssembler {
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
         self.skip = (!options.include_quality()).then_some(QualityAnalysisStatus::NotRequested);
         self.semantic_hints = options.semantic_hints().clone();
+        self.analysis_settings = Some(AnalysisSettings::from_options(options));
         self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
         if options.has_column_projection() && self.skip.is_none() {
             // Completeness and uniqueness both contain row-level measurements.
@@ -209,6 +213,7 @@ impl ReportAssembler {
         ProfileReport::new(self.source, self.columns, self.execution, quality)
             .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
+            .with_analysis_settings(self.analysis_settings)
     }
 
     /// Keep container columns out of every value-level quality check.

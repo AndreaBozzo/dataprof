@@ -37,16 +37,12 @@ def _reason(check):
     return None if check.reason is None else check.reason["reason"]
 
 
-def test_unchanged_data_passes_every_change_rule_that_can_be_decided():
+def test_unchanged_data_passes_every_change_rule():
     baseline = dp.profile(CLEAN)
     report = dp.profile(CLEAN)
     result = report.check(baseline=baseline, **DRIFT)
 
-    # The overall score reads the locale, which no report records yet
-    # (#1010); every other rule is decided and met.
-    assert result.checks[0].reason == {"reason": "setting_unrecorded", "setting": "locale"}
-    assert all(check.status == "passed" for check in result.checks[1:]), result.to_dict()
-    assert result.verdict == "inconclusive"
+    assert result.verdict == "pass", result.to_dict()
     assert [(check.code, check.column) for check in result.checks] == [
         ("max_quality_score_drop", None),
         ("max_dimension_score_drop", None),
@@ -334,10 +330,11 @@ def test_order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same():
     unpaired = dp.profile(dates)
     assert unpaired.check(baseline=unpaired, **policy).checks[0].status == "passed"
 
-    # Validity reads the pattern locale, which no report records (#1010).
+    # Validity reads the pattern locale, which both reports record (#1010);
+    # test_pattern_locale_record.py covers a locale that differs.
     emails = dp.profile({"email": ["a@example.com", "b@example.com"]})
     result = emails.check(baseline=emails, max_dimension_score_drops={"validity": 100})
-    assert result.checks[0].reason == {"reason": "setting_unrecorded", "setting": "locale"}
+    assert result.checks[0].status == "passed"
 
 
 def test_an_allowance_is_compared_at_the_serialized_precision():

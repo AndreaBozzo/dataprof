@@ -301,6 +301,33 @@ _METRIC_SEMANTICS = {
 }
 
 
+#: The values `analysis_settings.pattern_locale` may hold, as the Rust
+#: `PatternLocale` serializes them: no locale, or a supported locale's code.
+_PATTERN_LOCALES = ("none", "CA", "DE", "FR", "GB", "IT", "US")
+
+
+def _read_analysis_settings(document: dict[str, Any]) -> dict[str, str] | None:
+    """Read `analysis_settings` as the Rust reader reads `AnalysisSettings`.
+
+    A missing key is a document written before dataprof recorded it, so the
+    settings are unknown: None, never the defaults. Unknown settings from a
+    later writer are ignored; a malformed or missing `pattern_locale` is an
+    error, as it is in Rust.
+    """
+    if "analysis_settings" not in document:
+        return None
+    settings = document["analysis_settings"]
+    if not isinstance(settings, dict):
+        raise ValueError(f"from_dict(): 'analysis_settings' must be a mapping, got {settings!r}.")
+    locale = settings.get("pattern_locale")
+    if locale not in _PATTERN_LOCALES:
+        raise ValueError(
+            "from_dict(): 'analysis_settings.pattern_locale' must be one of "
+            f"{', '.join(_PATTERN_LOCALES)}, got {locale!r}."
+        )
+    return {"pattern_locale": locale}
+
+
 def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
     """Read `metric_semantics` as the Rust reader reads `MetricSemantics`.
 
@@ -364,6 +391,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
         )
     )
     values["metric_semantics"] = _read_metric_semantics(document)
+    values["analysis_settings"] = _read_analysis_settings(document)
     quality = _read_field(
         document,
         "quality",
