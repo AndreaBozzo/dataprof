@@ -6,7 +6,7 @@ contributor builds do not compile libFuzzer.
 
 ## Deterministic smoke test (including Windows)
 
-From the repository root, using the pinned contributor toolchain (Rust 1.98):
+From the repository root, using the toolchain `rust-toolchain.toml` pins:
 
 ```sh
 cargo test --manifest-path fuzz/Cargo.toml --locked --test smoke

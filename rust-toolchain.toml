@@ -1,0 +1,9 @@
+# The development toolchain: formatting, clippy, tests and release builds.
+# rustup reads this file, so `cargo` in this checkout runs the same compiler
+# as CI. Clippy gains lints with every Rust release, so the version is bumped
+# deliberately, with the lint fixes in the same change; see
+# docs/CONTRIBUTING.md. The MSRV is separate: `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

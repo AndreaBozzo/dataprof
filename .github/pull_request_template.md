@@ -19,7 +19,7 @@ test result: ok. 156 passed; 0 failed
 <details>
 <summary>Commands by area (expand for the usual ones)</summary>
 
-**Rust** — CI pins Rust 1.98, so prefer `cargo +1.98` when your local toolchain differs:
+**Rust** — `rust-toolchain.toml` pins the toolchain CI uses, and rustup applies it locally:
 
 ```bash
 cargo test -p <crate-you-changed>

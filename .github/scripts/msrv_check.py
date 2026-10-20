@@ -2,7 +2,7 @@
 
 `rust-version` in the root `Cargo.toml` is the single source of truth for the
 minimum supported Rust version. Before this gate existed nothing compiled
-against it: ordinary CI installs the pinned 1.98 toolchain, and the one 1.96 job
+against it: ordinary CI installs the toolchain rust-toolchain.toml pins, and the one 1.96 job
 in `release.yml` ran `cargo metadata --no-deps`, which parses manifests without
 touching a line of source. A newer standard-library API, language feature or
 dependency MSRV could pass every gate and still break a downstream build on the

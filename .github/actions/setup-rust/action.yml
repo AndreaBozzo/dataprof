@@ -21,14 +21,26 @@ inputs:
 runs:
   using: composite
   steps:
-    # This ref pins a Rust version. Under `@stable`, every open PR went red the
-    # day a Rust release landed, because a new clippy lint fires on code that
-    # was already merged (1.98 did this with `clippy::drain_collect`). Bump it
-    # deliberately, in step with the versions in `release.yml` and AGENTS.md.
+    # The version comes from rust-toolchain.toml, which local `cargo` reads too.
+    # Under `@stable`, every open PR went red the day a Rust release landed,
+    # because a new clippy lint fires on code that was already merged (1.98 did
+    # this with `clippy::drain_collect`), so the file pins it.
+    - name: Read the pinned toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        channel=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)
+        if [ -z "$channel" ]; then
+          echo "::error::no channel in rust-toolchain.toml"
+          exit 1
+        fi
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
     - name: Install Rust toolchain
       id: rust-install
-      uses: dtolnay/rust-toolchain@1.98
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
       continue-on-error: true
@@ -41,7 +53,7 @@ runs:
       run: |
         echo "Primary Rust installation failed, trying manual installation..."
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-          sh -s -- -y --default-toolchain 1.98
+          sh -s -- -y --default-toolchain ${{ steps.toolchain.outputs.channel }}
         source ~/.cargo/env
         if [ -n "${{ inputs.components }}" ]; then
           rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')
