@@ -41,6 +41,10 @@ fn check<'a>(result: &'a GateResult, code: CheckCode, subject: Option<&str>) -> 
         .unwrap_or_else(|| panic!("no {code} check for {subject:?}"))
 }
 
+fn names(values: &[&str]) -> Vec<String> {
+    values.iter().map(|name| (*name).to_string()).collect()
+}
+
 fn reason(check: &Check) -> Option<&NotEvaluated> {
     check.not_evaluated()
 }
@@ -56,12 +60,25 @@ fn drift_policy() -> QualityPolicy {
 }
 
 #[test]
-fn unchanged_data_passes_every_change_rule() {
+fn unchanged_data_passes_every_change_rule_that_can_be_decided() {
     let baseline = profile(CLEAN);
     let report = profile(CLEAN);
     let result = against(&drift_policy(), &report, &baseline);
 
-    assert_eq!(result.verdict, Verdict::Pass, "{:#?}", result.checks);
+    // The overall score reads the locale, which no report records yet
+    // (#1010); every other rule is decided and met.
+    assert!(matches!(
+        reason(&result.checks[0]),
+        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "locale"
+    ));
+    assert!(
+        result.checks[1..]
+            .iter()
+            .all(|check| check.status == CheckStatus::Passed),
+        "{:#?}",
+        result.checks
+    );
+    assert_eq!(result.verdict, Verdict::Inconclusive);
     let codes: Vec<_> = result
         .checks
         .iter()
@@ -422,7 +439,7 @@ fn partial_evidence_on_either_side_is_unevaluated_under_full_source_only() {
         .analyze_file(file.path())
         .unwrap();
     let policy = QualityPolicy::new()
-        .max_quality_score_drop(100.0)
+        .max_dimension_score_drop(QualityDimension::Completeness, 100.0)
         .max_null_percentage_increase_any(0.0);
 
     for (report, baseline) in [(&truncated, &exact), (&exact, &truncated)] {
@@ -492,7 +509,8 @@ fn the_document_keeps_the_absolute_shape_and_adds_the_baseline() {
         serde_json::to_string(&relative["checks"][0]["expected"]).unwrap(),
         r#"{"comparison":"change_at_least","value":0.0}"#
     );
-    let keys: Vec<_> = relative["checks"][0]
+    // The completeness rule, which is decided.
+    let keys: Vec<_> = relative["checks"][1]
         .as_object()
         .unwrap()
         .keys()
@@ -501,7 +519,106 @@ fn the_document_keeps_the_absolute_shape_and_adds_the_baseline() {
     assert_eq!(
         keys,
         [
-            "code", "expected", "observed", "scope", "evidence", "baseline", "status", "message"
+            "code",
+            "dimension",
+            "expected",
+            "observed",
+            "scope",
+            "evidence",
+            "baseline",
+            "status",
+            "message"
         ]
     );
+}
+
+#[test]
+fn the_overall_score_needs_the_same_assessed_dimensions() {
+    // Same column, but only the dated side has anything for timeliness.
+    let undated = profile("d\nabc\nxyz\n");
+    let dated = profile("d\n2026-01-01\n2026-01-02\n");
+    let result = against(
+        &QualityPolicy::new().max_quality_score_drop(100.0),
+        &dated,
+        &undated,
+    );
+    assert_eq!(
+        reason(&result.checks[0]),
+        Some(&NotEvaluated::DimensionsChanged)
+    );
+}
+
+#[test]
+fn order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same() {
+    let keys = csv("a,b\n1,1\n2,1\n3,2\n");
+    let ordered = |columns: &[&str]| {
+        Profiler::new()
+            .identifier_columns(names(columns))
+            .analyze_file(keys.path())
+            .unwrap()
+    };
+    let policy = QualityPolicy::new().max_dimension_score_drop(QualityDimension::Uniqueness, 100.0);
+    // The first identifier present is the uniqueness key, so order matters.
+    let reordered = against(&policy, &ordered(&["b", "a"]), &ordered(&["a", "b"]));
+    assert!(matches!(
+        reason(&reordered.checks[0]),
+        Some(NotEvaluated::SettingChanged { setting, .. }) if setting == "identifier_columns"
+    ));
+    let same = against(&policy, &ordered(&["a", "b"]), &ordered(&["a", "b"]));
+    assert_eq!(same.checks[0].status, CheckStatus::Passed);
+
+    // A report records which columns the pairs named, not the pairing.
+    let dates = csv("start,end\n2026-01-01,2026-01-02\n2026-01-03,2026-01-04\n");
+    let paired = Profiler::new()
+        .temporal_pairs(vec![("start".to_string(), "end".to_string())])
+        .analyze_file(dates.path())
+        .unwrap();
+    let policy = QualityPolicy::new().max_dimension_score_drop(QualityDimension::Timeliness, 100.0);
+    assert!(matches!(
+        reason(&against(&policy, &paired, &paired).checks[0]),
+        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "temporal_pairs"
+    ));
+    let unpaired = Profiler::new().analyze_file(dates.path()).unwrap();
+    assert_eq!(
+        against(&policy, &unpaired, &unpaired).checks[0].status,
+        CheckStatus::Passed
+    );
+
+    // Validity reads the pattern locale, which no report records (#1010).
+    let policy = QualityPolicy::new().max_dimension_score_drop(QualityDimension::Validity, 100.0);
+    let emails = profile("email\na@example.com\nb@example.com\n");
+    assert!(matches!(
+        reason(&against(&policy, &emails, &emails).checks[0]),
+        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "locale"
+    ));
+}
+
+#[test]
+fn an_allowance_is_compared_at_the_serialized_precision() {
+    // One null in 10,000 values moves the null percentage and completeness
+    // by exactly 0.01 points.
+    let rows: String = (1..10_000).map(|i| format!("{i}\n")).collect();
+    let baseline = profile(&format!("v\n0\n{rows}"));
+    let with_null = profile(&format!("v\nNA\n{rows}"));
+    let decide = |points: f64| {
+        let result = against(
+            &QualityPolicy::new()
+                .max_dimension_score_drop(QualityDimension::Completeness, points)
+                .max_null_percentage_increase("v", points),
+            &with_null,
+            &baseline,
+        );
+        serde_json::to_value(&result.checks).unwrap()
+    };
+    // 0.006 serializes as 0.01, the change it is compared with.
+    let checks = decide(0.006);
+    for check in checks.as_array().unwrap() {
+        assert_eq!(check["status"], json!("passed"), "{check:#}");
+        assert_eq!(check["baseline"]["change"].as_f64().unwrap().abs(), 0.01);
+        assert_eq!(check["expected"]["value"].as_f64().unwrap().abs(), 0.01);
+    }
+    for check in decide(0.004).as_array().unwrap() {
+        assert_eq!(check["status"], json!("failed"), "{check:#}");
+        assert_eq!(check["expected"]["value"].as_f64().unwrap().abs(), 0.0);
+    }
 }

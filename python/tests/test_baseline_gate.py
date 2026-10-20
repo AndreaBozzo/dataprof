@@ -37,12 +37,16 @@ def _reason(check):
     return None if check.reason is None else check.reason["reason"]
 
 
-def test_unchanged_data_passes_every_change_rule():
+def test_unchanged_data_passes_every_change_rule_that_can_be_decided():
     baseline = dp.profile(CLEAN)
     report = dp.profile(CLEAN)
     result = report.check(baseline=baseline, **DRIFT)
 
-    assert result.verdict == "pass", result.to_dict()
+    # The overall score reads the locale, which no report records yet
+    # (#1010); every other rule is decided and met.
+    assert result.checks[0].reason == {"reason": "setting_unrecorded", "setting": "locale"}
+    assert all(check.status == "passed" for check in result.checks[1:]), result.to_dict()
+    assert result.verdict == "inconclusive"
     assert [(check.code, check.column) for check in result.checks] == [
         ("max_quality_score_drop", None),
         ("max_dimension_score_drop", None),
@@ -223,7 +227,10 @@ def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(t
     path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))
     exact = dp.profile(str(path))
     truncated = dp.profile(str(path), max_rows=50)
-    policy: dict[str, Any] = {"max_quality_score_drop": 100, "max_null_percentage_increase": 0}
+    policy: dict[str, Any] = {
+        "max_dimension_score_drops": {"completeness": 100},
+        "max_null_percentage_increase": 0,
+    }
 
     for report, baseline in ((truncated, exact), (exact, truncated)):
         result = report.check(baseline=baseline, **policy)
@@ -277,8 +284,10 @@ def test_the_document_keeps_the_absolute_shape_and_adds_the_baseline():
     assert json.dumps(document["checks"][0]["expected"]) == (
         '{"comparison": "change_at_least", "value": 0.0}'
     )
-    assert list(document["checks"][0]) == [
+    # The completeness rule, which is decided.
+    assert list(document["checks"][1]) == [
         "code",
+        "dimension",
         "expected",
         "observed",
         "scope",
@@ -287,3 +296,72 @@ def test_the_document_keeps_the_absolute_shape_and_adds_the_baseline():
         "status",
         "message",
     ]
+
+
+def test_the_overall_score_needs_the_same_assessed_dimensions():
+    # Same column, but only the dated side has anything for timeliness.
+    undated = dp.profile({"d": ["abc", "xyz"]})
+    dated = dp.profile({"d": ["2026-01-01", "2026-01-02"]})
+    result = dated.check(baseline=undated, max_quality_score_drop=100)
+    assert result.checks[0].reason == {"reason": "dimensions_changed"}
+
+
+def test_order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same():
+    keys = {"a": [1, 2, 3], "b": [1, 1, 2]}
+    policy: dict[str, Any] = {"max_dimension_score_drops": {"uniqueness": 100}}
+
+    # The first identifier present is the uniqueness key, so order matters.
+    reordered = dp.profile(keys, identifier_columns=["b", "a"]).check(
+        baseline=dp.profile(keys, identifier_columns=["a", "b"]), **policy
+    )
+    assert reordered.checks[0].reason == {
+        "reason": "setting_changed",
+        "setting": "identifier_columns",
+    }
+    same = dp.profile(keys, identifier_columns=["a", "b"]).check(
+        baseline=dp.profile(keys, identifier_columns=["a", "b"]), **policy
+    )
+    assert same.checks[0].status == "passed"
+
+    # A report records which columns the pairs named, not the pairing.
+    dates = {"start": ["2026-01-01", "2026-01-03"], "end": ["2026-01-02", "2026-01-04"]}
+    policy = {"max_dimension_score_drops": {"timeliness": 100}}
+    paired = dp.profile(dates, temporal_pairs=[("start", "end")])
+    assert paired.check(baseline=paired, **policy).checks[0].reason == {
+        "reason": "setting_unrecorded",
+        "setting": "temporal_pairs",
+    }
+    unpaired = dp.profile(dates)
+    assert unpaired.check(baseline=unpaired, **policy).checks[0].status == "passed"
+
+    # Validity reads the pattern locale, which no report records (#1010).
+    emails = dp.profile({"email": ["a@example.com", "b@example.com"]})
+    result = emails.check(baseline=emails, max_dimension_score_drops={"validity": 100})
+    assert result.checks[0].reason == {"reason": "setting_unrecorded", "setting": "locale"}
+
+
+def test_an_allowance_is_compared_at_the_serialized_precision():
+    # One null in 10,000 values is a change of exactly 0.01 points.
+    values = list(range(10_000))
+    baseline = dp.profile({"v": values})
+    with_null = dp.profile({"v": [None, *values[1:]]})
+
+    def decide(points: float) -> list[dp.QualityCheck]:
+        return list(
+            with_null.check(
+                baseline=baseline,
+                max_dimension_score_drops={"completeness": points},
+                max_null_percentage_increase={"v": points},
+            ).checks
+        )
+
+    # 0.006 serializes as 0.01, the change it is compared with; completeness
+    # drops by the same 0.01.
+    for check in decide(0.006):
+        assert check.status == "passed", check.to_dict()
+        assert check.baseline is not None
+        assert abs(check.baseline["change"]) == 0.01
+        assert abs(check.expected["value"]) == 0.01
+    for check in decide(0.004):
+        assert check.status == "failed", check.to_dict()
+        assert abs(check.expected["value"]) == 0.0

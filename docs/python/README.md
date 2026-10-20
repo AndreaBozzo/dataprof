@@ -1076,8 +1076,10 @@ result = dp.profile("daily_drop.csv").check(
 )
 ```
 
-A change is decided only when both reports measured the same thing the same
-way. Otherwise the rule is unevaluated, with one of these reasons:
+The allowance is compared at the same 2-decimal precision as the change, so
+the decision matches the numbers the result shows. A change is decided only
+when both reports measured the same thing the same way. Otherwise the rule is
+unevaluated, with one of these reasons:
 
 - `not_in_baseline`: the baseline did not assess the score, did not profile
   the column, or read no values for it;
@@ -1087,16 +1089,22 @@ way. Otherwise the rule is unevaluated, with one of these reasons:
   rule is not affected and still decides the verdict, and a new column gets a
   rule only when the policy names it: `"*"` covers the columns both reports
   have;
+- `dimensions_changed`, for the overall score, when a dimension was assessed
+  on one side only, since the overall score averages the assessed ones;
 - `definition_not_comparable`, with the `metric_semantics` key the rule
   depends on (`null_tokens` for every rule, `pattern_match_count` also for
   validity and the overall score), when the two reports do not both record it
   identically. A baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
-  the score weights for the overall score, `identifier_columns` for every
-  score but completeness, `positive_columns` for accuracy, and
-  `temporal_columns` and `temporal_pairs` for timeliness. The overall score
-  reads them all;
+  the score weights for the overall score, `identifier_columns` (in the order
+  given, since the first one present is the uniqueness key) for every score
+  but completeness, `positive_columns` for accuracy, `temporal_columns` and
+  `temporal_pairs` for timeliness, and the pattern `locale` for validity. The
+  overall score reads them all. A report records which columns the pairs named
+  but not which column pairs with which, and does not record the locale yet
+  (#1010), so a non-empty `temporal_pairs` and the locale read as
+  `setting_unrecorded` until they are;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
   not cover its whole source.
 

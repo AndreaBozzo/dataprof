@@ -41,6 +41,8 @@
 //!   appeared or vanished changes what is measured, not how good it is. A
 //!   column's own rules stay decisive, and a new column has no baseline rule
 //!   until a policy names it;
+//! - for the overall score, a different set of assessed dimensions
+//!   ([`NotEvaluated::DimensionsChanged`]), since it averages those;
 //! - a measurement definition the rule depends on that the two sides do not
 //!   both record identically ([`NotEvaluated::DefinitionNotComparable`]);
 //! - a setting that moves the score on unchanged data, such as the score
@@ -75,6 +77,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension, QualityScoreWeights};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 
@@ -424,6 +427,10 @@ pub enum NotEvaluated {
     /// is about a dataset-level score, whose subject is the column set. The
     /// result's `baseline.schema` names the columns that differ.
     SchemaChanged,
+    /// The overall score averages a different set of assessed dimensions on
+    /// each side, because a dimension was requested, or had something to
+    /// assess, on one side only.
+    DimensionsChanged,
     /// A measurement definition the requirement depends on is not recorded
     /// identically on both sides: one side predates the record, or the two
     /// differ. Either way the same data may measure differently.
@@ -873,14 +880,25 @@ impl QualityPolicy {
         baseline: &ReportSide,
     ) -> Result<GateResult, PolicyError> {
         self.validate()?;
-        let delta = ReportDelta::between_sides(baseline, &ReportSide::from_report(report));
+        let current = ReportSide::from_report(report);
+        let delta = ReportDelta::between_sides(baseline, &current);
+        let identifiers = Sides {
+            a: baseline.identifier_order(),
+            b: current.identifier_order(),
+        };
         let mut checks = self.absolute_checks(report);
         if let Some(points) = self.max_quality_score_drop {
-            checks.push(self.score_drop_check(report, &delta, None, points));
+            checks.push(self.score_drop_check(report, &delta, &identifiers, None, points));
         }
         for dimension in QualityDimension::all() {
             if let Some((_, points)) = self.max_dimension_score_drops.get(&dimension.to_string()) {
-                checks.push(self.score_drop_check(report, &delta, Some(dimension), *points));
+                checks.push(self.score_drop_check(
+                    report,
+                    &delta,
+                    &identifiers,
+                    Some(dimension),
+                    *points,
+                ));
             }
         }
         checks.extend(self.null_increase_checks(&delta));
@@ -1304,6 +1322,7 @@ impl QualityPolicy {
         &self,
         report: &ProfileReport,
         delta: &ReportDelta,
+        identifiers: &Sides<Option<&[String]>>,
         dimension: Option<QualityDimension>,
         points: f64,
     ) -> Check {
@@ -1345,12 +1364,22 @@ impl QualityPolicy {
             return unavailable_quality(check, report);
         }
         let schema_changed = !delta.schema.added.is_empty() || !delta.schema.removed.is_empty();
+        // The overall score averages the dimensions that had something to
+        // assess, so a dimension scored on one side only changes the average
+        // itself, whatever the data did.
+        let dimensions_changed = dimension.is_none()
+            && delta
+                .dimensions
+                .iter()
+                .any(|change| change.score.a.is_some() != change.score.b.is_some());
         let reason = if change.b.is_none() {
             Some(NotEvaluated::NotAssessed)
         } else if change.a.is_none() {
             Some(NotEvaluated::NotInBaseline)
         } else if schema_changed {
             Some(NotEvaluated::SchemaChanged)
+        } else if dimensions_changed {
+            Some(NotEvaluated::DimensionsChanged)
         } else {
             definition_gap(
                 delta.metric_semantics.a.as_ref(),
@@ -1361,6 +1390,7 @@ impl QualityPolicy {
                 setting_gap(
                     &delta.configuration.score_weights,
                     &delta.configuration.semantic_hints,
+                    identifiers,
                     dimension,
                 )
             })
@@ -1371,7 +1401,10 @@ impl QualityPolicy {
         let change_points = change
             .abs
             .expect("a delta has a change whenever both sides have a score");
-        check.status = self.decide_change(&change.evidence, change_points >= 0.0 - points);
+        // Both sides and their change are at the serialized precision, so the
+        // allowance is too: the decision is the one the document shows.
+        check.status =
+            self.decide_change(&change.evidence, change_points >= 0.0 - rounded_2(points));
         check.message = match check.status {
             CheckStatus::Passed => {
                 format!("{subject} dropped no more than allowed from the baseline")
@@ -1459,7 +1492,7 @@ impl QualityPolicy {
         }
         let change_points =
             null_pct_delta.expect("a delta has a change whenever both sides have a value");
-        check.status = self.decide_change(&evidence, change_points <= points);
+        check.status = self.decide_change(&evidence, change_points <= rounded_2(points));
         check.message = match check.status {
             CheckStatus::Passed => {
                 format!("{subject} rose no more than allowed above the baseline")
@@ -1510,6 +1543,9 @@ fn not_evaluated_change(mut check: Check, reason: NotEvaluated, subject: &str) -
             "the two reports profiled different columns, so {subject} has a different subject \
              on each side"
         ),
+        NotEvaluated::DimensionsChanged => {
+            format!("{subject} averages a different set of assessed dimensions on each side")
+        }
         NotEvaluated::DefinitionNotComparable { .. } => format!(
             "a measurement definition {subject} depends on is not recorded identically in both \
              reports"
@@ -1594,65 +1630,97 @@ fn definition_gap(
 /// Reads one hint list out of a report's recorded hints.
 type HintColumns = fn(&RecordedHints) -> &Vec<String>;
 
+/// How one setting compares across the two sides.
+#[derive(Debug, Clone, Copy)]
+enum Agreement {
+    Same,
+    Changed,
+    Unrecorded,
+}
+
+fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
+    match (a, b) {
+        (Some(a), Some(b)) if a == b => Agreement::Same,
+        (Some(_), Some(_)) => Agreement::Changed,
+        _ => Agreement::Unrecorded,
+    }
+}
+
 /// The first setting a score reads that the two sides do not both record
-/// identically. The overall score reads the weights and every hint. A
-/// dimension reads the identifier hint, which retypes its columns, except
-/// completeness, which counts nulls whatever the type; accuracy also reads
-/// the positive hint, and timeliness the temporal ones.
+/// identically. The overall score reads every setting. A dimension reads the
+/// identifier hint, which retypes its columns and names the key uniqueness
+/// reads, except completeness, which counts nulls whatever the type. Accuracy
+/// also reads the positive hint, timeliness the temporal ones, and validity
+/// the locale, which ranks the detected patterns it scores.
 fn setting_gap(
     weights: &SettingComparison<QualityScoreWeights>,
     hints: &SettingComparison<RecordedHints>,
+    identifiers: &Sides<Option<&[String]>>,
     dimension: Option<QualityDimension>,
 ) -> Option<NotEvaluated> {
     let reads = |dimensions: &[QualityDimension]| {
         dimension.is_none_or(|dimension| dimensions.contains(&dimension))
     };
-    if dimension.is_none() {
-        match weights.same {
-            Some(true) => {}
-            Some(false) => {
-                return Some(NotEvaluated::SettingChanged {
-                    setting: "score_weights".to_string(),
-                });
-            }
-            None => {
-                return Some(NotEvaluated::SettingUnrecorded {
-                    setting: "score_weights".to_string(),
-                });
-            }
+    let hint = |columns: HintColumns| {
+        agreement(hints.a.as_ref().map(columns), hints.b.as_ref().map(columns))
+    };
+    let weights = match weights.same {
+        Some(true) => Agreement::Same,
+        Some(false) => Agreement::Changed,
+        None => Agreement::Unrecorded,
+    };
+    // A report records which columns the pairs named, not which column pairs
+    // with which, so only two empty pair lists are known to agree.
+    let pairs = match hint(|hints| &hints.temporal_pair_columns) {
+        Agreement::Same
+            if hints
+                .a
+                .as_ref()
+                .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
+        {
+            Agreement::Unrecorded
         }
-    }
-    let hint_settings: [(&str, HintColumns, bool); 4] = [
+        other => other,
+    };
+    let settings = [
+        ("score_weights", dimension.is_none(), weights),
         (
             "identifier_columns",
-            |hints| &hints.identifier_columns,
             dimension != Some(QualityDimension::Completeness),
+            // In the order given: the first one present is the key.
+            agreement(identifiers.a, identifiers.b),
         ),
         (
             "positive_columns",
-            |hints| &hints.positive_columns,
             reads(&[QualityDimension::Accuracy]),
+            hint(|hints| &hints.positive_columns),
         ),
         (
             "temporal_columns",
-            |hints| &hints.temporal_columns,
             reads(&[QualityDimension::Timeliness]),
+            hint(|hints| &hints.temporal_columns),
         ),
         (
             "temporal_pairs",
-            |hints| &hints.temporal_pair_columns,
             reads(&[QualityDimension::Timeliness]),
+            pairs,
+        ),
+        // No report records the locale yet (#1010).
+        (
+            "locale",
+            reads(&[QualityDimension::Validity]),
+            Agreement::Unrecorded,
         ),
     ];
-    hint_settings
+    settings
         .into_iter()
-        .filter(|(_, _, read)| *read)
-        .find_map(|(setting, columns, _)| match (&hints.a, &hints.b) {
-            (Some(a), Some(b)) if columns(a) == columns(b) => None,
-            (Some(_), Some(_)) => Some(NotEvaluated::SettingChanged {
+        .filter(|(_, read, _)| *read)
+        .find_map(|(setting, _, agreement)| match agreement {
+            Agreement::Same => None,
+            Agreement::Changed => Some(NotEvaluated::SettingChanged {
                 setting: setting.to_string(),
             }),
-            _ => Some(NotEvaluated::SettingUnrecorded {
+            Agreement::Unrecorded => Some(NotEvaluated::SettingUnrecorded {
                 setting: setting.to_string(),
             }),
         })
