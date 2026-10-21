@@ -808,3 +808,23 @@ def test_version_flag():
 def test_verdict_summary_includes_version(source: Path):
     result = run_check(source, "--max-null", "*=100")
     assert f"dataprof {dp.__version__}" in result.stderr
+
+
+def test_a_required_column_is_a_policy_key_and_a_flag(source: Path, tmp_path: Path):
+    # `note` is not in the source, and a CSV header lists every column.
+    policy = tmp_path / "columns.json"
+    policy.write_text(json.dumps({"require_columns": ["id", "note"]}), encoding="utf-8")
+    from_file = run_check(source, "--policy", policy, "--json")
+    from_flags = run_check(source, "--require-column", "id", "--require-column", "note", "--json")
+    expected = dp.profile_file(source).check(require_columns=["id", "note"]).to_dict()
+    for result in (from_file, from_flags):
+        assert result.returncode == 1, result.stderr
+        assert json.loads(result.stdout) == expected
+
+    policy.write_text(json.dumps({"require_columns": "id"}), encoding="utf-8")
+    refused = run_check(source, "--policy", policy, "--json")
+    assert refused.returncode == 3
+    assert "require_columns must be a JSON array of names" in refused.stdout
+    # The baseline rules need a baseline the entrypoint does not take yet.
+    policy.write_text(json.dumps({"forbid_added_columns": True}), encoding="utf-8")
+    assert run_check(source, "--policy", policy, "--json").returncode == 3

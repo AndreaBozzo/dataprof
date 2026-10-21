@@ -62,7 +62,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataType, QualityDimension, QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
+    DataSource, DataType, FileFormat, QualityDimension, QualityScoreWeights, SemanticHintBinding,
+    SemanticHintKind,
 };
 use serde::ser::{SerializeMap, Serializer};
 
@@ -465,6 +466,9 @@ pub struct ReportSide {
     pattern_locale: Option<PatternLocale>,
     /// Which columns the side profiled, `None` when it did not record it.
     column_selection: Option<ColumnSelection>,
+    /// Whether the source declares its columns up front, so the column set
+    /// does not depend on how many rows were read.
+    schema_declared: bool,
 }
 
 /// The identifier hint's columns in binding order, the order they were given.
@@ -610,6 +614,7 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.columns.clone()),
+            schema_declared: declares_schema(&report.data_source),
         }
     }
 
@@ -622,6 +627,19 @@ impl ReportSide {
     /// Which columns the side profiled, or `None` when it did not record it.
     pub(crate) fn column_selection(&self) -> Option<&ColumnSelection> {
         self.column_selection.as_ref()
+    }
+
+    /// Whether the side's column set covers its whole source. A source that
+    /// declares its columns up front (a CSV header, a Parquet schema, a
+    /// DataFrame, a query result) lists them however few rows were read;
+    /// otherwise the columns are the keys of the records read, and only a scan
+    /// of every record covers the source.
+    pub(crate) fn schema_evidence(&self) -> Evidence {
+        if self.schema_declared {
+            Evidence::Complete
+        } else {
+            self.reference.evidence
+        }
     }
 
     /// The side's columns, one per name, in its order.
@@ -751,6 +769,12 @@ impl ReportSide {
                 .as_ref()
                 .map(|settings| settings.pattern_locale),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
+            // A summary records the kind of source but not a file's format,
+            // so only the kinds that always declare their columns count.
+            schema_declared: matches!(
+                summary.source_type,
+                Some(SummarySourceType::Dataframe | SummarySourceType::Query)
+            ),
         })
     }
 }
@@ -760,6 +784,9 @@ impl ReportSide {
 #[derive(serde::Deserialize)]
 struct Summary {
     source: String,
+    /// Absent from a summary that did not record it, which declares nothing.
+    #[serde(default)]
+    source_type: Option<SummarySourceType>,
     execution: SummaryExecution,
     columns: Vec<SummaryColumn>,
     quality: Option<SummaryQuality>,
@@ -774,6 +801,30 @@ struct Summary {
     /// canonical reader and Python's `from_dict()`.
     #[serde(default, deserialize_with = "crate::profile_report::present_value")]
     analysis_settings: Option<AnalysisSettings>,
+}
+
+/// A flat summary's `source_type`. A kind a later release adds declares
+/// nothing this build can rely on.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SummarySourceType {
+    Dataframe,
+    Query,
+    #[serde(other)]
+    Other,
+}
+
+/// Whether a source declares its columns up front. A JSON, JSONL or stream
+/// source has the keys of the records read, and a format this build does not
+/// know declares nothing it can rely on.
+fn declares_schema(source: &DataSource) -> bool {
+    match source {
+        DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
+            matches!(format, FileFormat::Csv | FileFormat::Parquet)
+        }
+        DataSource::DataFrame { .. } | DataSource::Query { .. } => true,
+        DataSource::Stream { .. } => false,
+    }
 }
 
 #[derive(serde::Deserialize)]

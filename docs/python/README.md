@@ -947,6 +947,9 @@ if not result.passed:
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
+| `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
+| `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A policy that cannot be evaluated as written -- a threshold
@@ -1117,6 +1120,37 @@ drop or `change_at_most` for an increase. `result.baseline` names both reports
 loaded from a flat `to_dict()` summary; what it did not record reads as
 unrecorded.
 
+**Rules about the column set (0.13+).** `require_columns` names columns the
+report must have, and needs no baseline. With a baseline,
+`forbid_removed_columns=True` requires every baseline column and
+`forbid_added_columns=True` allows no new one:
+
+```python
+result = dp.profile("orders.csv").check(
+    baseline=baseline,
+    require_columns=["order_id", "customer_id"],
+    forbid_removed_columns=True,
+    forbid_added_columns=True,
+)
+```
+
+Each makes one check per column: per name for `require_columns`, per baseline
+column for `forbid_removed_columns`, per column of this report for
+`forbid_added_columns`, with `expected` `{"comparison": "present"}` or
+`{"comparison": "in_baseline"}`. A missing column fails only when the side
+without it shows its source lacks it: it recorded its column selection
+(`analysis_settings["columns"]`, from 0.13), the selection included the column,
+and its column set covers the whole source. A CSV header, a Parquet schema, a
+DataFrame or a query result lists every column however few rows were read, so
+a capped CSV run still decides; for JSON, JSONL and `dataprof.asyncio` streams
+the columns are the keys of the records read, so only a scan of every record
+decides under `scope="full_source"`. A flat `to_dict()` summary records the
+kind of source but not a file's format, so a summary baseline of a file
+decides only when its scan was complete. Otherwise the check is unevaluated,
+with `setting_changed` or `setting_unrecorded` on the setting `columns`,
+`column_not_profiled` for a required column the run did not select, or
+`evidence_incomplete`.
+
 `result.baseline["diagnostics"]` lists the schema changes from the baseline,
 whatever the policy states, at most one per column: the baseline's columns in
 order, then the added ones. A diagnostic is a warning and never moves the
@@ -1242,8 +1276,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
-entries; the last occurrence of a repeated mapping key wins.
+`--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
+to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).

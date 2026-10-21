@@ -1317,6 +1317,9 @@ impl PyProfileReport {
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
         max_null_percentage_increase_any = None,
+        require_columns = Vec::new(),
+        forbid_removed_columns = false,
+        forbid_added_columns = false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn quality_gate_json(
@@ -1335,6 +1338,9 @@ impl PyProfileReport {
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
         max_null_percentage_increase_any: Option<f64>,
+        require_columns: Vec<String>,
+        forbid_removed_columns: bool,
+        forbid_added_columns: bool,
     ) -> PyResult<String> {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
         let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
@@ -1374,6 +1380,15 @@ impl PyProfileReport {
         }
         if let Some(points) = max_null_percentage_increase_any {
             policy = policy.max_null_percentage_increase_any(points);
+        }
+        if !require_columns.is_empty() {
+            policy = policy.require_columns(require_columns);
+        }
+        if forbid_removed_columns {
+            policy = policy.forbid_removed_columns();
+        }
+        if forbid_added_columns {
+            policy = policy.forbid_added_columns();
         }
         let result = match baseline {
             Some(baseline) => policy.evaluate_against(&self.inner, &baseline.side("check()")?),
