@@ -1137,7 +1137,9 @@ For an added or removed column, the side without it says why, from its
 column it selected and this one was not in what it read: for CSV and Parquet
 the source's header or schema, for JSON and JSONL the keys of the records read,
 so a scan that did not reach the end (the `evidence` of `reports.a` or
-`reports.b`) may have missed a key that appears later. With `"reason":
+`reports.b`) may have missed a key that appears later. The async reader
+(`dataprof.asyncio`) also drops a key first seen after its first chunk, even
+on a complete scan, until #1020 is fixed. With `"reason":
 "setting_changed"` and `"setting": "columns"`, its `columns=` selection left
 the column out; `setting_unrecorded` when it was saved before 0.13, which did
 not record the selection.
