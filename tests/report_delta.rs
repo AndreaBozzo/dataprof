@@ -194,6 +194,26 @@ fn a_summary_from_before_0_12_reads_as_unrecorded() {
 }
 
 #[test]
+fn flat_summary_null_recorded_fields_fail_but_absence_is_legacy() {
+    let report = profile(CLEAN);
+    let complete: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    for field in ["metric_semantics", "schema_version", "analysis_settings"] {
+        let mut malformed = complete.clone();
+        malformed[field] = Value::Null;
+        let error = ReportSide::from_summary_json(&malformed.to_string()).unwrap_err();
+        assert!(
+            error.to_string().contains(field),
+            "{field}: error must name the null field, got {error}"
+        );
+
+        let mut legacy = complete.clone();
+        legacy.as_object_mut().unwrap().remove(field);
+        ReportSide::from_summary_json(&legacy.to_string())
+            .unwrap_or_else(|error| panic!("absent {field} should remain valid: {error}"));
+    }
+}
+
+#[test]
 fn a_summary_without_columns_is_an_error() {
     let report = profile(CLEAN);
     let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
