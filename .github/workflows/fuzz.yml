@@ -83,7 +83,7 @@ jobs:
       - name: Restore last scheduled corpus (per target)
         if: github.event_name == 'schedule'
         id: evolved-corpus
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: fuzz/corpus/${{ matrix.target }}
           # Cache keys are immutable. A new run ID saves new mutations; the
@@ -118,6 +118,12 @@ jobs:
           cargo fuzz run "$FUZZ_TARGET" --features fuzzing -- \
             "${budget[@]}" -max_len=4096 -timeout=10 -rss_limit_mb=1024 -seed="$seed"
           git diff --exit-code -- fuzz/Cargo.lock
+      - name: Save evolved corpus after scheduled campaign
+        if: always() && github.event_name == 'schedule'
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: scheduled-fuzz-${{ matrix.target }}-${{ github.run_id }}
       - name: Retain crash inputs and evolved corpus
         if: always()
         uses: actions/upload-artifact@v7
