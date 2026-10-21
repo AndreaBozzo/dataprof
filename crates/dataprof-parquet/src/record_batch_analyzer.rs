@@ -1043,8 +1043,13 @@ impl ColumnAnalyzer {
                 if value_f64.is_finite() {
                     self.update_numeric_stats(value_f64);
                 }
-                self.cardinality.insert_owned(value.to_string());
-                self.offer_sample(&value.to_string());
+                // The promoted value, not the shortest Float32 text: median and
+                // mode come from these samples, so they must read the number the
+                // exact aggregates read. A Float32 column then profiles like its
+                // lossless Float64 promotion (#1041).
+                let text = value_f64.to_string();
+                self.offer_sample(&text);
+                self.cardinality.insert_owned(text);
             }
         }
         Ok(())
@@ -1570,7 +1575,9 @@ impl ColumnAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float64Array, Int64Array, StringArray, TimestampMicrosecondArray};
+    use arrow::array::{
+        Float32Array, Float64Array, Int64Array, StringArray, TimestampMicrosecondArray,
+    };
     use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use dataprof_core::ColumnStats;
@@ -1804,6 +1811,40 @@ mod tests {
                 .iter()
                 .all(|profile| profile.unique_count_is_approximate == Some(false))
         );
+    }
+
+    #[test]
+    fn float32_column_profiles_like_its_float64_promotion() {
+        // 1.23495f32 is 1.2349499464035034 as f64, but its shortest text is
+        // "1.23495": median and mode used to come from that text and round to
+        // 1.235 while min, max and mean said 1.2349 (#1041).
+        let values = [1.23495f32, 1.23495, 1.23495, 1.23495, -1.23495, 0.1, 3.0];
+        let profile = |data_type: ArrowDataType, column: Arc<dyn arrow::array::Array>| {
+            let schema = Arc::new(Schema::new(vec![Field::new("v", data_type, true)]));
+            let batch = RecordBatch::try_new(schema, vec![column]).unwrap();
+            let mut analyzer = RecordBatchAnalyzer::new();
+            analyzer.process_batch(&batch).unwrap();
+            serde_json::to_value(analyzer.to_profiles(false, false, None)).unwrap()
+        };
+        let narrow = profile(
+            ArrowDataType::Float32,
+            Arc::new(Float32Array::from(values.to_vec())),
+        );
+        let promoted = profile(
+            ArrowDataType::Float64,
+            Arc::new(Float64Array::from(
+                values.iter().map(|&v| v as f64).collect::<Vec<_>>(),
+            )),
+        );
+        assert_eq!(narrow, promoted);
+
+        let constant = profile(
+            ArrowDataType::Float32,
+            Arc::new(Float32Array::from(vec![1.23495f32; 4])),
+        );
+        let stats = &constant[0]["stats"];
+        assert_eq!(stats["median"], stats["min"], "{stats}");
+        assert_eq!(stats["mode"], stats["max"], "{stats}");
     }
 
     #[test]
