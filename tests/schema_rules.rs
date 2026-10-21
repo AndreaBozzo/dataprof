@@ -416,6 +416,24 @@ fn a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns() {
             outcome(CheckCode::ForbidAddedColumn, "", "column_not_profiled"),
         ]
     );
+    // A column the projection did profile and the baseline lacks is still
+    // witnessed as new: the failure decides beside the unevaluated check.
+    // Against a baseline that profiled every column of a source without it.
+    let widened = policy
+        .evaluate_against(
+            &profile(&orders, |p| p.columns(names(&["id", "note"]))),
+            &ReportSide::from_report(&profile(&file(".csv", NO_NOTE), |p| p)),
+        )
+        .unwrap();
+    assert_eq!(widened.verdict, Verdict::Fail, "{:#?}", widened.checks);
+    assert_eq!(
+        outcomes(&widened),
+        [
+            outcome(CheckCode::ForbidAddedColumn, "id", "passed"),
+            outcome(CheckCode::ForbidAddedColumn, "note", "failed"),
+            outcome(CheckCode::ForbidAddedColumn, "", "column_not_profiled"),
+        ]
+    );
     // A report saved before the selection was recorded cannot show it
     // selected every column.
     assert_eq!(

@@ -450,8 +450,8 @@ pub enum NotEvaluated {
     /// The report holds no profile for the named column, and its column
     /// selection does not show the source lacks it: the run's `columns=`
     /// selection left it out, or the report predates the record of its
-    /// selection. On a check with no column, the run's selection left some
-    /// source columns out.
+    /// selection. On a check with no column, the run profiled a `columns=`
+    /// selection, which may have left source columns out.
     ColumnNotProfiled,
     /// The requirement asks about the full source, the evidence does not reach
     /// that far, and nothing observed settles it regardless.
@@ -1910,8 +1910,8 @@ impl QualityPolicy {
     ) -> Check {
         let message = match &reason {
             NotEvaluated::ColumnNotProfiled => {
-                "the run's column selection left source columns out, and one of them may be a \
-                 column the baseline lacked"
+                "the run profiled a column selection, which may have left out a source column \
+                 the baseline lacked"
             }
             NotEvaluated::SettingUnrecorded { .. } => {
                 "the report does not record which columns it selected, so its columns may not \

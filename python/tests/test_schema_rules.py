@@ -168,3 +168,13 @@ def test_a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns():
     ]
     observed = incoming.check(baseline=baseline, forbid_added_columns=True, scope="observed")
     assert observed.verdict == "pass"
+    # A selected column the baseline lacks is still witnessed as new.
+    widened = dp.profile({"id": [1], "extra": [2], "more": [3]}, columns=["id", "extra"])
+    assert widened.check(baseline=baseline, forbid_added_columns=True).verdict == "fail"
+    # Saved before the selection was recorded: it cannot show every column.
+    unrecorded = _without_settings(dp.profile({"id": [1], "extra": [2]}))
+    assert _outcomes(unrecorded.check(baseline=baseline, forbid_added_columns=True))[-1] == (
+        "forbid_added_column",
+        None,
+        "setting_unrecorded:columns",
+    )
