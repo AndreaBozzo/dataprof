@@ -279,11 +279,26 @@ mod tests {
             Ok(_) => panic!("URL with username must be rejected"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("username (alice)"), "should name the found username: {err}");
-        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
-        assert!(err.contains("sqlite://relative/path.db"), "should name supported forms: {err}");
-        assert!(err.contains("sqlite::memory:"), "should name supported forms: {err}");
-        assert!(err.contains("bare file path"), "should name supported forms: {err}");
+        assert!(
+            err.contains("username (alice)"),
+            "should name the found username: {err}"
+        );
+        assert!(
+            err.contains("sqlite:///absolute/path.db"),
+            "should name supported forms: {err}"
+        );
+        assert!(
+            err.contains("sqlite://relative/path.db"),
+            "should name supported forms: {err}"
+        );
+        assert!(
+            err.contains("sqlite::memory:"),
+            "should name supported forms: {err}"
+        );
+        assert!(
+            err.contains("bare file path"),
+            "should name supported forms: {err}"
+        );
     }
 
     #[test]
@@ -298,7 +313,10 @@ mod tests {
         };
         assert!(err.contains("password"), "should name password: {err}");
         assert!(!err.contains("s3cret"), "password must not leak: {err}");
-        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
+        assert!(
+            err.contains("sqlite:///absolute/path.db"),
+            "should name supported forms: {err}"
+        );
     }
 
     #[test]
@@ -311,8 +329,14 @@ mod tests {
             Ok(_) => panic!("URL with port must be rejected"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("port 5432"), "should name the found port: {err}");
-        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
+        assert!(
+            err.contains("port 5432"),
+            "should name the found port: {err}"
+        );
+        assert!(
+            err.contains("sqlite:///absolute/path.db"),
+            "should name supported forms: {err}"
+        );
     }
 
     #[test]
@@ -325,7 +349,10 @@ mod tests {
             Ok(_) => panic!("URL with credentials and port must be rejected"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("username (user)"), "should name username: {err}");
+        assert!(
+            err.contains("username (user)"),
+            "should name username: {err}"
+        );
         assert!(err.contains("password"), "should name password: {err}");
         assert!(err.contains("port 5432"), "should name port: {err}");
         assert!(!err.contains("secret"), "password must not leak: {err}");
