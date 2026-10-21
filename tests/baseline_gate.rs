@@ -658,11 +658,11 @@ fn a_schema_change_is_a_diagnostic_and_moves_no_verdict() {
         [
             "this column held values in the baseline, and every value read for it in the report \
              is null",
-            // Absence and projection look the same in a report.
-            "the baseline profiled a column the report has no profile for; a report does not \
-             record whether a column left the source or was not selected",
-            "the report profiled a column the baseline did not, so the baseline has nothing to \
-             measure its change from",
+            // Both sides profiled every column, so a missing one was not in
+            // the source that side read.
+            "the baseline profiled a column the report did not find in its source",
+            "the report profiled a column the baseline did not find in its source, so the \
+             baseline has nothing to measure its change from",
         ]
     );
     let document = serde_json::to_value(&result).unwrap();

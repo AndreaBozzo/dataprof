@@ -223,8 +223,51 @@ impl PatternLocale {
     }
 }
 
-/// The analysis settings a report was profiled with that move its scores on
-/// unchanged data and are recorded nowhere else in it.
+/// Which of the source's columns a run profiled.
+///
+/// A projection that names a column the source lacks is refused before
+/// profiling, so a report with [`ColumnSelection::All`] that has no profile
+/// for a column shows the source has no such column, and one with
+/// [`ColumnSelection::Listed`] shows only that the caller did not select it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "selection", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ColumnSelection {
+    /// Every column of the source.
+    All,
+    /// Only the named columns.
+    #[non_exhaustive]
+    Listed {
+        /// The names as the caller gave them.
+        names: Vec<String>,
+    },
+}
+
+impl ColumnSelection {
+    /// The selection `options` profile with.
+    pub fn from_options(options: &AnalysisOptions) -> Self {
+        match options.columns() {
+            None => Self::All,
+            Some(names) => Self::Listed {
+                names: names.to_vec(),
+            },
+        }
+    }
+
+    /// Whether the selection includes `column`, which a source that has the
+    /// column profiles.
+    pub fn includes(&self, column: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Listed { names } => names.iter().any(|name| name == column),
+        }
+    }
+}
+
+/// The analysis settings a report was profiled with that change what its
+/// scores measure on unchanged data and are recorded nowhere else in it.
 ///
 /// [`MetricSemantics`] records how a release defines its measurements; this
 /// records what the caller chose. The score weights live in the quality
@@ -232,13 +275,17 @@ impl PatternLocale {
 /// repeated here. Later releases add fields, which older readers ignore, and a
 /// field missing from a stored report means the release did not record it.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[non_exhaustive]
 pub struct AnalysisSettings {
     /// The locale detected patterns were ranked with, which the validity
     /// score reads.
     pub pattern_locale: PatternLocale,
+    /// The columns the run profiled. A dataset-level score has the column
+    /// set as its subject, and a report without a column's profile needs this
+    /// to tell a column the source lacks from one that was not selected.
+    pub columns: ColumnSelection,
 }
 
 impl AnalysisSettings {
@@ -246,6 +293,7 @@ impl AnalysisSettings {
     pub fn from_options(options: &AnalysisOptions) -> Self {
         Self {
             pattern_locale: options.locale().into(),
+            columns: ColumnSelection::from_options(options),
         }
     }
 }
@@ -735,7 +783,7 @@ impl PythonProfileReportDocument {
             quality_status: report.quality_status.clone(),
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
             metric_semantics: report.metric_semantics.clone(),
-            analysis_settings: report.analysis_settings,
+            analysis_settings: report.analysis_settings.clone(),
         })
     }
 }

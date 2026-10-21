@@ -66,7 +66,9 @@ use dataprof_core::{
 };
 use serde::ser::{SerializeMap, Serializer};
 
-use crate::profile_report::{AnalysisSettings, MetricSemantics, PatternLocale, ProfileReport};
+use crate::profile_report::{
+    AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
+};
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
 };
@@ -461,6 +463,8 @@ pub struct ReportSide {
     /// uniqueness score reads, so the quality gate compares this order.
     identifier_order: Option<Vec<String>>,
     pattern_locale: Option<PatternLocale>,
+    /// Which columns the side profiled, `None` when it did not record it.
+    column_selection: Option<ColumnSelection>,
 }
 
 /// The identifier hint's columns in binding order, the order they were given.
@@ -600,7 +604,12 @@ impl ReportSide {
                 .then(|| identifier_order(&report.semantic_hint_bindings)),
             pattern_locale: report
                 .analysis_settings
+                .as_ref()
                 .map(|settings| settings.pattern_locale),
+            column_selection: report
+                .analysis_settings
+                .as_ref()
+                .map(|settings| settings.columns.clone()),
         }
     }
 
@@ -608,6 +617,11 @@ impl ReportSide {
     /// did not record its hints.
     pub(crate) fn identifier_order(&self) -> Option<&[String]> {
         self.identifier_order.as_deref()
+    }
+
+    /// Which columns the side profiled, or `None` when it did not record it.
+    pub(crate) fn column_selection(&self) -> Option<&ColumnSelection> {
+        self.column_selection.as_ref()
     }
 
     /// The side's columns, one per name, in its order.
@@ -734,7 +748,9 @@ impl ReportSide {
             metric_semantics: summary.metric_semantics,
             pattern_locale: summary
                 .analysis_settings
+                .as_ref()
                 .map(|settings| settings.pattern_locale),
+            column_selection: summary.analysis_settings.map(|settings| settings.columns),
         })
     }
 }

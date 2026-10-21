@@ -308,16 +308,21 @@ class ProfileReport:
         return None if semantics is None else dict(semantics)
 
     @property
-    def analysis_settings(self) -> dict[str, str] | None:
-        """The analysis settings this report was profiled with that move a
-        score on unchanged data and are recorded nowhere else in it.
+    def analysis_settings(self) -> dict[str, _Any] | None:
+        """The analysis settings this report was profiled with that change
+        what a score measures on unchanged data and are recorded nowhere else
+        in it.
 
-        Currently ``{"pattern_locale": ...}``: the locale detected patterns
-        were ranked with, which the validity score reads, as its ISO 3166-1
-        alpha-2 code (``"IT"``), or ``"none"`` when no locale was given.
-        :meth:`compare` lists it under ``configuration``, and a baseline
-        ``check()`` decides a validity or overall drop only when both reports
-        agree on it.
+        ``pattern_locale`` is the locale detected patterns were ranked with,
+        which the validity score reads, as its ISO 3166-1 alpha-2 code
+        (``"IT"``), or ``"none"`` when no locale was given. :meth:`compare`
+        lists it under ``configuration``, and a baseline ``check()`` decides
+        a validity or overall drop only when both reports agree on it.
+
+        ``columns`` is the column selection: ``{"selection": "all"}``, or
+        ``{"selection": "listed", "names": [...]}`` for a ``columns=``
+        projection, in the order given. A baseline ``check()`` reads it to
+        tell a column the source lacks from one that was not selected.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded them: the settings are unknown, not the defaults.

@@ -34,15 +34,20 @@
       "type": "object"
     },
     "AnalysisSettings": {
-      "description": "The analysis settings a report was profiled with that move its scores on\nunchanged data and are recorded nowhere else in it.\n\n[`MetricSemantics`] records how a release defines its measurements; this\nrecords what the caller chose. The score weights live in the quality\nassessment and the semantic hints in the hint bindings, so they are not\nrepeated here. Later releases add fields, which older readers ignore, and a\nfield missing from a stored report means the release did not record it.",
+      "description": "The analysis settings a report was profiled with that change what its\nscores measure on unchanged data and are recorded nowhere else in it.\n\n[`MetricSemantics`] records how a release defines its measurements; this\nrecords what the caller chose. The score weights live in the quality\nassessment and the semantic hints in the hint bindings, so they are not\nrepeated here. Later releases add fields, which older readers ignore, and a\nfield missing from a stored report means the release did not record it.",
       "properties": {
+        "columns": {
+          "$ref": "#/$defs/ColumnSelection",
+          "description": "The columns the run profiled. A dataset-level score has the column\nset as its subject, and a report without a column's profile needs this\nto tell a column the source lacks from one that was not selected."
+        },
         "pattern_locale": {
           "$ref": "#/$defs/PatternLocale",
           "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
         }
       },
       "required": [
-        "pattern_locale"
+        "pattern_locale",
+        "columns"
       ],
       "type": "object"
     },
@@ -158,6 +163,45 @@
         "patterns"
       ],
       "type": "object"
+    },
+    "ColumnSelection": {
+      "description": "Which of the source's columns a run profiled.\n\nA projection that names a column the source lacks is refused before\nprofiling, so a report with [`ColumnSelection::All`] that has no profile\nfor a column shows the source has no such column, and one with\n[`ColumnSelection::Listed`] shows only that the caller did not select it.",
+      "oneOf": [
+        {
+          "description": "Every column of the source.",
+          "properties": {
+            "selection": {
+              "const": "all",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Only the named columns.",
+          "properties": {
+            "names": {
+              "description": "The names as the caller gave them.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "selection": {
+              "const": "listed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "names"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ColumnStats": {
       "description": "Type-specific statistics for a column, determined by the inferred data type.",
