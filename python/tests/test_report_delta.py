@@ -120,9 +120,9 @@ def test_identity_accessors_match_delta_for_native_reloaded_and_flat(tmp_path: P
     import pytest
 
     with pytest.raises(AttributeError):
-        report.id = "forged"
+        setattr(report, "id", "forged")
     with pytest.raises(AttributeError):
-        report.timestamp = "2020-01-01T00:00:00Z"
+        setattr(report, "timestamp", "2020-01-01T00:00:00Z")
 
 
 def test_a_0_11_baseline_reads_as_unrecorded(tmp_path: Path):
