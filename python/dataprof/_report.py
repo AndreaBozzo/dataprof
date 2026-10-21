@@ -133,6 +133,16 @@ class ProfileReport:
     # -- Property accessors --
 
     @property
+    def id(self) -> str | None:
+        """Canonical report identifier, or None for a flat legacy summary."""
+        return self._report.id
+
+    @property
+    def timestamp(self) -> str | None:
+        """Canonical creation timestamp, or None when not recorded."""
+        return self._report.timestamp
+
+    @property
     def source(self) -> str:
         return self._report.source
 
