@@ -570,11 +570,14 @@ pub struct BaselineComparison {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DiagnosticCode {
-    /// The report profiled a column the baseline did not.
+    /// The report profiled a column the baseline did not. Without a reason,
+    /// the baseline profiled every column it selected that its source had,
+    /// and this was not among them.
     ColumnAdded,
-    /// The baseline profiled a column the report did not. A report does not
-    /// record whether a column left the source or was not selected, so this
-    /// does not say the source lost it.
+    /// The baseline profiled a column the report did not. Without a reason,
+    /// the report's selection included it, so it was not in what the report
+    /// read. With one, the report's column selection left it out or was not
+    /// recorded.
     ColumnRemoved,
     /// The column holds values on both sides and its inferred type differs.
     /// A column whose values are all null on a side establishes no type there.
@@ -627,10 +630,10 @@ pub struct Diagnostic {
 /// two reports. A diagnostic carrying one may not reflect a change in the
 /// data.
 ///
-/// Only the `identifier_columns` hint is read today: it is the one setting
-/// that sets a column's type, and the `identifier` type comes from nothing
-/// else. An input path that types the same data differently is not
-/// recorded, so it cannot be named here (#906).
+/// Two settings are read: `columns`, the column selection, on an added or
+/// removed column, and `identifier_columns` on a type change to or from
+/// `identifier`, the one type a setting assigns. An input path that types the
+/// same data differently is not recorded, so it cannot be named here (#906).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -1684,23 +1687,48 @@ fn schema_diagnostics(
         .iter()
         .filter_map(|change| {
             let column = change.name.as_str();
+            // The side without the column decides whether its source lacks
+            // it: a selection that includes the column would have profiled it
+            // or refused to run, so the column is not in what that side read.
+            let unselected = |side: &ReportSide| match side.column_selection() {
+                Some(selection) if selection.includes(column) => None,
+                Some(_) => Some(SettingDifference::SettingChanged {
+                    setting: "columns".to_string(),
+                }),
+                None => Some(SettingDifference::SettingUnrecorded {
+                    setting: "columns".to_string(),
+                }),
+            };
             if added.contains(column) {
-                return Some(diagnostic(
-                    DiagnosticCode::ColumnAdded,
-                    column,
-                    None,
-                    "the report profiled a column the baseline did not, so the baseline has \
-                     nothing to measure its change from",
-                ));
+                let setting = unselected(baseline);
+                let message = match setting {
+                    None => {
+                        "the report profiled a column the baseline did not find in its source, \
+                         so the baseline has nothing to measure its change from"
+                    }
+                    Some(_) => {
+                        "the report profiled a column the baseline has no profile for, and the \
+                         baseline's column selection is not shown to include it"
+                    }
+                };
+                return Some(Diagnostic {
+                    setting,
+                    ..diagnostic(DiagnosticCode::ColumnAdded, column, None, message)
+                });
             }
             if removed.contains(column) {
-                return Some(diagnostic(
-                    DiagnosticCode::ColumnRemoved,
-                    column,
-                    None,
-                    "the baseline profiled a column the report has no profile for; a report does \
-                     not record whether a column left the source or was not selected",
-                ));
+                let setting = unselected(current);
+                let message = match setting {
+                    None => "the baseline profiled a column the report did not find in its source",
+                    Some(_) => {
+                        "the baseline profiled a column the report has no profile for, and the \
+                         report's column selection is not shown to include it"
+                    }
+                };
+                return Some(Diagnostic {
+                    setting,
+                    ..diagnostic(DiagnosticCode::ColumnRemoved, column, None, message)
+                });
             }
             let (a, b) = (
                 *baseline_columns.get(column)?,

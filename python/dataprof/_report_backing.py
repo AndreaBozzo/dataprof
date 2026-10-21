@@ -306,13 +306,31 @@ _METRIC_SEMANTICS = {
 _PATTERN_LOCALES = ("none", "CA", "DE", "FR", "GB", "IT", "US")
 
 
-def _read_analysis_settings(document: dict[str, Any]) -> dict[str, str] | None:
+def _read_column_selection(columns: Any) -> dict[str, Any]:
+    """Read `analysis_settings.columns` as the Rust `ColumnSelection`."""
+    selection = columns.get("selection") if isinstance(columns, dict) else None
+    if selection == "all":
+        return {"selection": "all"}
+    names = columns.get("names") if isinstance(columns, dict) else None
+    if (
+        selection == "listed"
+        and isinstance(names, list)
+        and all(isinstance(name, str) for name in names)
+    ):
+        return {"selection": "listed", "names": list(names)}
+    raise ValueError(
+        "from_dict(): 'analysis_settings.columns' must be {'selection': 'all'} or "
+        f"{{'selection': 'listed', 'names': [...]}}, got {columns!r}."
+    )
+
+
+def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
     """Read `analysis_settings` as the Rust reader reads `AnalysisSettings`.
 
     A missing key is a document written before dataprof recorded it, so the
     settings are unknown: None, never the defaults. Unknown settings from a
-    later writer are ignored; a malformed or missing `pattern_locale` is an
-    error, as it is in Rust.
+    later writer are ignored; a malformed or missing `pattern_locale` or
+    `columns` is an error, as it is in Rust.
     """
     if "analysis_settings" not in document:
         return None
@@ -325,7 +343,7 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, str] | None:
             "from_dict(): 'analysis_settings.pattern_locale' must be one of "
             f"{', '.join(_PATTERN_LOCALES)}, got {locale!r}."
         )
-    return {"pattern_locale": locale}
+    return {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
 
 
 def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:

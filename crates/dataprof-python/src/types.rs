@@ -1218,7 +1218,9 @@ impl PyProfileReport {
     }
 
     /// The analysis settings the report was profiled with, as a dict such as
-    /// ``{"pattern_locale": "IT"}``, where ``"none"`` means no locale.
+    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"}}``, where
+    /// ``"none"`` means no locale and a ``columns=`` selection reads
+    /// ``{"selection": "listed", "names": [...]}``.
     ///
     /// None for a report loaded from a document written before dataprof
     /// recorded them: the settings are unknown, not the defaults.
@@ -1233,6 +1235,21 @@ impl PyProfileReport {
             pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
         })?;
         dict.set_item("pattern_locale", locale.as_str())?;
+        let columns = PyDict::new(py);
+        match &settings.columns {
+            dataprof::ColumnSelection::All => columns.set_item("selection", "all")?,
+            dataprof::ColumnSelection::Listed { names, .. } => {
+                columns.set_item("selection", "listed")?;
+                columns.set_item("names", names.clone())?;
+            }
+            // Required by `#[non_exhaustive]`; every variant is spelled above.
+            other => {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "unknown column selection {other:?}"
+                )));
+            }
+        }
+        dict.set_item("columns", columns)?;
         Ok(Some(dict))
     }
 

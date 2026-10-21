@@ -295,7 +295,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `analysis_settings` | `dict[str, str] \| None` | The settings it was profiled with that move a score and are recorded nowhere else: `{"pattern_locale": "IT"}`, or `"none"` when no locale was given; `None` for a report written before 0.13, whose settings are unknown |
+| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
 | `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
@@ -1125,12 +1125,24 @@ verdict; it is `[]` when nothing changed.
 | `code` | When |
 | --- | --- |
 | `column_added` | The report profiled a column the baseline did not. A rule about change that names it is `not_in_baseline`; absolute rules still read it |
-| `column_removed` | The baseline profiled a column the report has no profile for. A report does not record whether the column left the source or was not selected with `columns=` |
+| `column_removed` | The baseline profiled a column the report has no profile for |
 | `column_type_changed` | The column holds values on both sides and its inferred type differs; `data_type` gives both, `a` first. A column whose values are all null establishes no type |
 | `column_all_null` | The column held values in the baseline and every value read for it now is null. Decided on the counts, so one value in 100,000, shown as `100.0` percent null, is not all null |
 
 Column order is not compared. A flat summary that does not record a column's
 counts reports neither of the last two for it.
+
+For an added or removed column, the side without it says why, from its
+`analysis_settings["columns"]`. With no `reason`, that side profiled every
+column it selected and this one was not in what it read: for CSV and Parquet
+the source's header or schema, for JSON and JSONL the keys of the records read,
+so a scan that did not reach the end (the `evidence` of `reports.a` or
+`reports.b`) may have missed a key that appears later. The async reader
+(`dataprof.asyncio`) also drops a key first seen after its first chunk, even
+on a complete scan, until #1020 is fixed. With `"reason":
+"setting_changed"` and `"setting": "columns"`, its `columns=` selection left
+the column out; `setting_unrecorded` when it was saved before 0.13, which did
+not record the selection.
 
 The type is the inferred one, so a setting can change it on unchanged data.
 `identifier_columns` gives a column the `identifier` type, and a type change
