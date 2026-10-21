@@ -133,3 +133,48 @@ def test_the_keywords_are_validated():
         "status": "passed",
         "message": "the required column was profiled",
     }
+
+
+def test_a_closed_schema_is_not_passed_by_a_report_that_read_part_of_its_source(
+    tmp_path: Path,
+):
+    baseline_path = tmp_path / "baseline.jsonl"
+    baseline_path.write_text('{"id": 1}\n{"id": 2}\n')
+    incoming = tmp_path / "incoming.jsonl"
+    incoming.write_text('{"id": 1}\n{"id": 2, "extra": 5}\n')
+    baseline = dp.profile(str(baseline_path))
+    capped = dp.profile(str(incoming), max_rows=1)
+
+    result = capped.check(baseline=baseline, forbid_added_columns=True)
+    assert result.verdict == "inconclusive"
+    assert _outcomes(result) == [
+        ("forbid_added_column", "id", "passed"),
+        ("forbid_added_column", None, "evidence_incomplete:truncated"),
+    ]
+    observed = capped.check(baseline=baseline, forbid_added_columns=True, scope="observed")
+    assert observed.verdict == "pass"
+    full = dp.profile(str(incoming)).check(baseline=baseline, forbid_added_columns=True)
+    assert full.verdict == "fail"
+
+
+def test_a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns():
+    baseline = dp.profile({"id": [1]})
+    incoming = dp.profile({"id": [1], "extra": [2]}, columns=["id"])
+    result = incoming.check(baseline=baseline, forbid_added_columns=True)
+    assert result.verdict == "inconclusive"
+    assert _outcomes(result) == [
+        ("forbid_added_column", "id", "passed"),
+        ("forbid_added_column", None, "column_not_profiled"),
+    ]
+    observed = incoming.check(baseline=baseline, forbid_added_columns=True, scope="observed")
+    assert observed.verdict == "pass"
+    # A selected column the baseline lacks is still witnessed as new.
+    widened = dp.profile({"id": [1], "extra": [2], "more": [3]}, columns=["id", "extra"])
+    assert widened.check(baseline=baseline, forbid_added_columns=True).verdict == "fail"
+    # Saved before the selection was recorded: it cannot show every column.
+    unrecorded = _without_settings(dp.profile({"id": [1], "extra": [2]}))
+    assert _outcomes(unrecorded.check(baseline=baseline, forbid_added_columns=True))[-1] == (
+        "forbid_added_column",
+        None,
+        "setting_unrecorded:columns",
+    )
