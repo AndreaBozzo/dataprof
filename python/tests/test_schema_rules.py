@@ -155,3 +155,16 @@ def test_a_closed_schema_is_not_passed_by_a_report_that_read_part_of_its_source(
     assert observed.verdict == "pass"
     full = dp.profile(str(incoming)).check(baseline=baseline, forbid_added_columns=True)
     assert full.verdict == "fail"
+
+
+def test_a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns():
+    baseline = dp.profile({"id": [1]})
+    incoming = dp.profile({"id": [1], "extra": [2]}, columns=["id"])
+    result = incoming.check(baseline=baseline, forbid_added_columns=True)
+    assert result.verdict == "inconclusive"
+    assert _outcomes(result) == [
+        ("forbid_added_column", "id", "passed"),
+        ("forbid_added_column", None, "column_not_profiled"),
+    ]
+    observed = incoming.check(baseline=baseline, forbid_added_columns=True, scope="observed")
+    assert observed.verdict == "pass"

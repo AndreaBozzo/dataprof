@@ -103,7 +103,9 @@ use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 use serde::Serialize;
 
-use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
+use crate::profile_report::{
+    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
+};
 use crate::report_delta::{
     ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
     ReportSide, SchemaChange, Sides,
@@ -445,9 +447,11 @@ pub enum NotEvaluated {
     /// numeric values, no dates, no confidently detected pattern — or it was
     /// withheld because the run profiled a subset of columns.
     NotAssessed,
-    /// The report holds no profile for the named column. It was projected
-    /// away, or it is not in the source; a report does not record which, so
-    /// the requirement is not decided either way.
+    /// The report holds no profile for the named column, and its column
+    /// selection does not show the source lacks it: the run's `columns=`
+    /// selection left it out, or the report predates the record of its
+    /// selection. On a check with no column, the run's selection left some
+    /// source columns out.
     ColumnNotProfiled,
     /// The requirement asks about the full source, the evidence does not reach
     /// that far, and nothing observed settles it regardless.
@@ -943,8 +947,11 @@ impl QualityPolicy {
         self
     }
 
-    /// Require every column the baseline profiled to be profiled still.
-    /// Needs [`evaluate_against`](Self::evaluate_against).
+    /// Require every column the baseline profiled to be profiled still. The
+    /// rule is about the columns the baseline recorded: a column its source
+    /// held but it did not profile (a projection, or a key past a partial
+    /// read) is not one it can require. Needs
+    /// [`evaluate_against`](Self::evaluate_against).
     pub fn forbid_removed_columns(mut self) -> Self {
         self.forbid_removed_columns = true;
         self
@@ -952,9 +959,10 @@ impl QualityPolicy {
 
     /// Require every column the report profiled to be one the baseline
     /// profiled: a closed schema. Under [`PolicyScope::FullSource`], a report
-    /// whose column set does not cover its source also gets one check with no
-    /// column, left unevaluated: the records it did not read may hold a new
-    /// column. Needs [`evaluate_against`](Self::evaluate_against).
+    /// whose profiled columns may not be all of its source's also gets one
+    /// check with no column, left unevaluated: a column selection that left
+    /// columns out, one that was not recorded, or a column set covering part
+    /// of the source. Needs [`evaluate_against`](Self::evaluate_against).
     pub fn forbid_added_columns(mut self) -> Self {
         self.forbid_added_columns = true;
         self
@@ -1119,13 +1127,13 @@ impl QualityPolicy {
                 ));
             }
             // The per-column checks cover the columns the report found. When
-            // its column set does not cover the source, the records it did not
-            // read may hold a column the baseline lacked, which no per-column
+            // those do not enumerate the source, a column the baseline lacked
+            // may be among the ones it did not profile, which no per-column
             // check can name.
-            if let (PolicyScope::FullSource, Some(gap)) =
-                (self.scope, current.schema_evidence().gap())
+            if self.scope == PolicyScope::FullSource
+                && let Some(reason) = unenumerated_columns(&current)
             {
-                checks.push(self.unread_columns_check(baseline, &current, gap));
+                checks.push(self.unprofiled_columns_check(baseline, &current, reason));
             }
         }
         let diagnostics = schema_diagnostics(baseline, &current, &delta);
@@ -1892,14 +1900,28 @@ impl QualityPolicy {
         )
     }
 
-    /// The closed-schema rule's statement about the columns of the records
-    /// the report did not read: never decided, since nothing read shows them.
-    fn unread_columns_check(
+    /// The closed-schema rule's statement about the source columns the report
+    /// did not profile: never decided, since nothing profiled shows them.
+    fn unprofiled_columns_check(
         &self,
         baseline: &ReportSide,
         current: &ReportSide,
-        gap: EvidenceGap,
+        reason: NotEvaluated,
     ) -> Check {
+        let message = match &reason {
+            NotEvaluated::ColumnNotProfiled => {
+                "the run's column selection left source columns out, and one of them may be a \
+                 column the baseline lacked"
+            }
+            NotEvaluated::SettingUnrecorded { .. } => {
+                "the report does not record which columns it selected, so its columns may not \
+                 be all of its source's"
+            }
+            _ => {
+                "the report read part of its source, and the records it did not read may hold \
+                 a column the baseline lacked"
+            }
+        };
         Check {
             column: None,
             ..self.column_check(
@@ -1908,9 +1930,8 @@ impl QualityPolicy {
                 Expectation::InBaseline,
                 current,
                 Some(baseline),
-                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
-                "the report read part of its source, and the records it did not read may hold \
-                 a column the baseline lacked",
+                CheckStatus::NotEvaluated(reason),
+                message,
             )
         }
     }
@@ -2130,6 +2151,23 @@ impl<'a> ColumnIndex<'a> {
             in_report: names([&schema.common, &schema.added]),
             in_baseline: names([&schema.common, &schema.removed]),
         }
+    }
+}
+
+/// Why a side's profiled columns may not be all of its source's columns, or
+/// `None` when they are: every column was selected and the column set covers
+/// the source. The selection is named ahead of the coverage, since a
+/// projection leaves columns out however much of the source was read.
+fn unenumerated_columns(side: &ReportSide) -> Option<NotEvaluated> {
+    match side.column_selection() {
+        None => Some(NotEvaluated::SettingUnrecorded {
+            setting: "columns".to_string(),
+        }),
+        Some(ColumnSelection::All) => side
+            .schema_evidence()
+            .gap()
+            .map(|gap| NotEvaluated::EvidenceIncomplete { gap }),
+        Some(_) => Some(NotEvaluated::ColumnNotProfiled),
     }
 }
 

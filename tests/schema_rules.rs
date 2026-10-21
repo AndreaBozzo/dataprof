@@ -388,3 +388,43 @@ fn a_closed_schema_is_not_passed_by_a_report_that_read_part_of_its_source() {
     assert_eq!(csv.verdict, Verdict::Pass);
     assert_eq!(csv.checks.len(), 2);
 }
+
+#[test]
+fn a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns() {
+    // Every row was read and the header lists every column, but the run
+    // profiled only `id`, so a new `note` would go unseen.
+    let baseline = profile(&file(".csv", NO_NOTE), |p| p.columns(names(&["id"])));
+    let orders = file(".csv", ORDERS);
+    let policy = QualityPolicy::new().forbid_added_columns();
+    let against = |report: &ProfileReport| {
+        policy
+            .evaluate_against(report, &ReportSide::from_report(&baseline))
+            .unwrap()
+    };
+    let projected = profile(&orders, |p| p.columns(names(&["id"])));
+    let result = against(&projected);
+    assert_eq!(
+        result.verdict,
+        Verdict::Inconclusive,
+        "{:#?}",
+        result.checks
+    );
+    assert_eq!(
+        outcomes(&result),
+        [
+            outcome(CheckCode::ForbidAddedColumn, "id", "passed"),
+            outcome(CheckCode::ForbidAddedColumn, "", "column_not_profiled"),
+        ]
+    );
+    // A report saved before the selection was recorded cannot show it
+    // selected every column.
+    assert_eq!(
+        outcomes(&against(&without_settings(&profile(&orders, |p| p))))
+            .pick(CheckCode::ForbidAddedColumn, ""),
+        outcome(
+            CheckCode::ForbidAddedColumn,
+            "",
+            "setting_unrecorded:columns"
+        )
+    );
+}

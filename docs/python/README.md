@@ -1151,11 +1151,18 @@ with `setting_changed` or `setting_unrecorded` on the setting `columns`,
 `column_not_profiled` for a required column the run did not select, or
 `evidence_incomplete`.
 
-`forbid_added_columns` checks the columns this report found, so under
-`scope="full_source"` a report whose column set does not cover its source (a
-JSON or JSONL run stopped by `max_rows`, say) gets one more check, with no
-`column`, left `evidence_incomplete`: the records it did not read may hold a new
-column. The verdict is then inconclusive rather than a pass.
+`forbid_added_columns` checks the columns this report profiled, so under
+`scope="full_source"` a report whose profiled columns may not be all of its
+source's gets one more check, with no `column`, left unevaluated: a `columns=`
+projection (`column_not_profiled`), a report saved before the selection was
+recorded (`setting_unrecorded`), or a column set covering part of the source,
+such as a JSON or JSONL run stopped by `max_rows` (`evidence_incomplete`). The
+verdict is then inconclusive rather than a pass.
+
+`forbid_removed_columns` is about the columns the baseline recorded. A column
+its source held but it did not profile, because of a projection or a key past
+a partial read, is not one it can require; profile the baseline in full when
+that matters.
 
 `result.baseline["diagnostics"]` lists the schema changes from the baseline,
 whatever the policy states, at most one per column: the baseline's columns in
