@@ -80,7 +80,7 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
@@ -90,8 +90,8 @@ use serde::Serialize;
 
 use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
 use crate::report_delta::{
-    ColumnChange, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference, ReportSide,
-    SchemaChange, Sides,
+    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
+    ReportSide, SchemaChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -1661,13 +1661,24 @@ fn schema_diagnostics(
         side.identifier_order()
             .map(|names| names.iter().any(|name| name == column))
     };
-    let named = |names: &[String], column: &str| names.iter().any(|name| name == column);
+    // Built once, so a wide schema is not rescanned per column.
+    fn names(names: &[String]) -> HashSet<&str> {
+        names.iter().map(String::as_str).collect()
+    }
+    fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+        side.columns()
+            .iter()
+            .map(|column| (column.name.as_str(), column))
+            .collect()
+    }
+    let (added, removed) = (names(&delta.schema.added), names(&delta.schema.removed));
+    let (baseline_columns, current_columns) = (by_name(baseline), by_name(current));
     delta
         .columns
         .iter()
         .filter_map(|change| {
             let column = change.name.as_str();
-            if named(&delta.schema.added, column) {
+            if added.contains(column) {
                 return Some(diagnostic(
                     DiagnosticCode::ColumnAdded,
                     column,
@@ -1676,7 +1687,7 @@ fn schema_diagnostics(
                      nothing to measure its change from",
                 ));
             }
-            if named(&delta.schema.removed, column) {
+            if removed.contains(column) {
                 return Some(diagnostic(
                     DiagnosticCode::ColumnRemoved,
                     column,
@@ -1685,7 +1696,10 @@ fn schema_diagnostics(
                      not record whether a column left the source or was not selected",
                 ));
             }
-            let (a, b) = (baseline.column(column)?, current.column(column)?);
+            let (a, b) = (
+                *baseline_columns.get(column)?,
+                *current_columns.get(column)?,
+            );
             if a.populated()? && b.all_null()? {
                 return Some(diagnostic(
                     DiagnosticCode::ColumnAllNull,

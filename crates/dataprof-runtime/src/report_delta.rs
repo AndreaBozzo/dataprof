@@ -610,9 +610,9 @@ impl ReportSide {
         self.identifier_order.as_deref()
     }
 
-    /// The first column of that name, when the side has one.
-    pub(crate) fn column(&self, name: &str) -> Option<&ColumnSide> {
-        self.columns.iter().find(|column| column.name == name)
+    /// The side's columns, one per name, in its order.
+    pub(crate) fn columns(&self) -> &[ColumnSide] {
+        &self.columns
     }
 
     /// Read a flat summary document.
