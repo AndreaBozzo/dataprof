@@ -52,6 +52,12 @@
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
 //!   cover the whole source.
 //!
+//! A schema change from the baseline is reported as a [`Diagnostic`] in the
+//! result's `baseline.diagnostics`, whatever the policy states: a column added,
+//! removed, retyped while holding values on both sides, or holding only nulls
+//! where the baseline had values. A diagnostic is a warning, never a fourth
+//! verdict, and does not move the verdict.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -78,8 +84,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
+use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
+use serde::Serialize;
 
 use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
 use crate::report_delta::{
@@ -551,6 +558,92 @@ pub struct BaselineComparison {
     pub reports: Sides<ReportReference>,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
+    /// The schema changes from the baseline, whatever the policy states. A
+    /// diagnostic never moves the verdict. Empty when nothing changed.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Stable identifier for a kind of schema change.
+///
+/// Part of the serialized contract, like [`CheckCode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DiagnosticCode {
+    /// The report profiled a column the baseline did not.
+    ColumnAdded,
+    /// The baseline profiled a column the report did not. A report does not
+    /// record whether a column left the source or was not selected, so this
+    /// does not say the source lost it.
+    ColumnRemoved,
+    /// The column holds values on both sides and its inferred type differs.
+    /// A column whose values are all null on a side establishes no type there.
+    ColumnTypeChanged,
+    /// The column held values in the baseline, and every value read for it
+    /// in the report is null.
+    ColumnAllNull,
+}
+
+impl fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ColumnAdded => write!(f, "column_added"),
+            Self::ColumnRemoved => write!(f, "column_removed"),
+            Self::ColumnTypeChanged => write!(f, "column_type_changed"),
+            Self::ColumnAllNull => write!(f, "column_all_null"),
+        }
+    }
+}
+
+/// A schema change between the baseline and the report.
+///
+/// A warning, not a fourth verdict: it is reported whatever the policy
+/// states, and no rule decides on it. A requirement that would fail on it is
+/// a policy entry of its own.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct Diagnostic {
+    /// What changed.
+    pub code: DiagnosticCode,
+    /// The column it changed in.
+    pub column: String,
+    /// The inferred type on each side, `a` being the baseline. Present on
+    /// [`DiagnosticCode::ColumnTypeChanged`] only.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_data_types"
+    )]
+    pub data_type: Option<Sides<DataType>>,
+    /// A fixed sentence naming the change, free of numbers and names, like a
+    /// check's message.
+    pub message: String,
+}
+
+/// The type names a flat summary and the Python bindings use, so a
+/// diagnostic reads the same as `ColumnProfile.data_type`.
+fn data_type_name(data_type: &DataType) -> &'static str {
+    match data_type {
+        DataType::String => "string",
+        DataType::Identifier => "identifier",
+        DataType::Integer => "integer",
+        DataType::Float => "float",
+        DataType::Date => "date",
+        DataType::Boolean => "boolean",
+        DataType::Nested => "nested",
+    }
+}
+
+fn serialize_data_types<S: serde::Serializer>(
+    types: &Option<Sides<DataType>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    types
+        .as_ref()
+        .map(|types| Sides {
+            a: data_type_name(&types.a),
+            b: data_type_name(&types.b),
+        })
+        .serialize(serializer)
 }
 
 /// The interval a sampled score was decided on.
@@ -902,6 +995,7 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_increase_checks(&delta));
+        let diagnostics = schema_diagnostics(baseline, &current, &delta);
         Ok(GateResult {
             verdict: verdict_of(&checks),
             scope: self.scope,
@@ -910,6 +1004,7 @@ impl QualityPolicy {
             baseline: Some(BaselineComparison {
                 reports: delta.reports,
                 schema: delta.schema,
+                diagnostics,
             }),
         })
     }
@@ -1509,6 +1604,77 @@ impl QualityPolicy {
             _ => CheckStatus::Failed,
         }
     }
+}
+
+/// The schema changes between the two sides, at most one per column, in the
+/// delta's column order: the baseline's columns, then the added ones. A
+/// change is reported only where both sides recorded what it reads; a flat
+/// summary without a column's counts reports neither change for it, and one
+/// without its type no type change. Column order is not compared, since no
+/// rule reads it.
+fn schema_diagnostics(
+    baseline: &ReportSide,
+    current: &ReportSide,
+    delta: &ReportDelta,
+) -> Vec<Diagnostic> {
+    let diagnostic = |code, column: &str, data_type, message: &str| Diagnostic {
+        code,
+        column: column.to_string(),
+        data_type,
+        message: message.to_string(),
+    };
+    let named = |names: &[String], column: &str| names.iter().any(|name| name == column);
+    delta
+        .columns
+        .iter()
+        .filter_map(|change| {
+            let column = change.name.as_str();
+            if named(&delta.schema.added, column) {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnAdded,
+                    column,
+                    None,
+                    "the report profiled a column the baseline did not, so the baseline has \
+                     nothing to measure its change from",
+                ));
+            }
+            if named(&delta.schema.removed, column) {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnRemoved,
+                    column,
+                    None,
+                    "the baseline profiled a column the report has no profile for; a report does \
+                     not record whether a column left the source or was not selected",
+                ));
+            }
+            let (a, b) = (baseline.column(column)?, current.column(column)?);
+            if a.populated()? && b.all_null()? {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnAllNull,
+                    column,
+                    None,
+                    "this column held values in the baseline, and every value read for it in \
+                     the report is null",
+                ));
+            }
+            match (&a.data_type, &b.data_type) {
+                (Some(type_a), Some(type_b))
+                    if type_a != type_b && a.populated()? && b.populated()? =>
+                {
+                    Some(diagnostic(
+                        DiagnosticCode::ColumnTypeChanged,
+                        column,
+                        Some(Sides {
+                            a: type_a.clone(),
+                            b: type_b.clone(),
+                        }),
+                        "this column holds values on both sides, and its inferred type differs",
+                    ))
+                }
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 fn baseline_reading(

@@ -61,7 +61,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{QualityDimension, QualityScoreWeights, SemanticHintBinding, SemanticHintKind};
+use dataprof_core::{
+    DataType, QualityDimension, QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
+};
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{AnalysisSettings, MetricSemantics, PatternLocale, ProfileReport};
@@ -205,10 +207,11 @@ impl<T: PartialEq> SettingComparison<T> {
 /// The semantic hints a report recorded, by the configuration field that
 /// carries each, read from its hint bindings.
 ///
-/// Each list is sorted and keeps repetitions: a column named twice in
-/// `temporal_columns` is scanned twice and moves the timeliness score
-/// (#1004), so two reports that differ only by a repetition are not the same
-/// configuration.
+/// Each list is sorted and keeps the repetitions a report recorded. A report
+/// written since #1004 records a repeated column once, but one written before
+/// it records the column twice and scanned it twice, which moved the
+/// timeliness score, so such a report and one listing the column once are not
+/// the same configuration.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[non_exhaustive]
 pub struct RecordedHints {
@@ -327,28 +330,36 @@ impl ReportDelta {
             })
             .collect();
 
-        let a_names: HashSet<&str> = a.columns.iter().map(|(name, _)| name.as_str()).collect();
-        let b_names: HashSet<&str> = b.columns.iter().map(|(name, _)| name.as_str()).collect();
+        let a_names: HashSet<&str> = a
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
+        let b_names: HashSet<&str> = b
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
         let a_nulls: BTreeMap<&str, Option<f64>> = a
             .columns
             .iter()
-            .map(|(name, pct)| (name.as_str(), *pct))
+            .map(|column| (column.name.as_str(), column.null_pct))
             .collect();
         let b_nulls: BTreeMap<&str, Option<f64>> = b
             .columns
             .iter()
-            .map(|(name, pct)| (name.as_str(), *pct))
+            .map(|column| (column.name.as_str(), column.null_pct))
             .collect();
         let added: Vec<String> = b
             .columns
             .iter()
-            .filter(|(name, _)| !a_names.contains(name.as_str()))
-            .map(|(name, _)| name.clone())
+            .filter(|column| !a_names.contains(column.name.as_str()))
+            .map(|column| column.name.clone())
             .collect();
         let columns = a
             .columns
             .iter()
-            .map(|(name, _)| name)
+            .map(|column| &column.name)
             .chain(&added)
             .map(|name| {
                 let null_pct_a = a_nulls.get(name.as_str()).copied().flatten();
@@ -364,7 +375,7 @@ impl ReportDelta {
         let (removed, common) = a
             .columns
             .iter()
-            .map(|(name, _)| name.clone())
+            .map(|column| column.name.clone())
             .partition(|name| !b_names.contains(name.as_str()));
 
         let comparable = match (&a.metric_semantics, &b.metric_semantics) {
@@ -441,7 +452,7 @@ pub struct ReportSide {
     quality_score: Option<f64>,
     overall_evidence: Evidence,
     dimensions: Vec<DimensionSide>,
-    columns: Vec<(String, Option<f64>)>,
+    columns: Vec<ColumnSide>,
     metric_semantics: Option<MetricSemantics>,
     score_weights: Option<QualityScoreWeights>,
     semantic_hints: Option<RecordedHints>,
@@ -468,16 +479,45 @@ struct DimensionSide {
     evidence: Evidence,
 }
 
+/// What a comparison reads about one column.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ColumnSide {
+    pub(crate) name: String,
+    /// The null percentage at its serialized precision, `None` when the
+    /// column holds no values.
+    pub(crate) null_pct: Option<f64>,
+    /// The inferred type, `None` on a flat summary that did not record one
+    /// this build knows.
+    pub(crate) data_type: Option<DataType>,
+    /// `(total_count, null_count)`, `None` on a flat summary that did not
+    /// record both. Exact where the rounded percentage is not: 99.999% null
+    /// rounds to 100.00 and still holds a value.
+    pub(crate) counts: Option<(usize, usize)>,
+}
+
+impl ColumnSide {
+    /// At least one value read for the column is not null. `None` when the
+    /// counts were not recorded.
+    pub(crate) fn populated(&self) -> Option<bool> {
+        self.counts.map(|(total, nulls)| nulls < total)
+    }
+
+    /// Values were read for the column and every one is null. `None` when
+    /// the counts were not recorded.
+    pub(crate) fn all_null(&self) -> Option<bool> {
+        self.counts
+            .map(|(total, nulls)| total > 0 && nulls == total)
+    }
+}
+
 /// One entry per column name, in order, holding the first profile of a
 /// repeated name. Most input paths refuse duplicate names, but a report
 /// rebuilt from a document can carry them, and the quality gate reads the
 /// first profile too, so the two never disagree about which one a name means.
-fn first_of_each_name(
-    columns: impl Iterator<Item = (String, Option<f64>)>,
-) -> Vec<(String, Option<f64>)> {
+fn first_of_each_name(columns: impl Iterator<Item = ColumnSide>) -> Vec<ColumnSide> {
     let mut seen = HashSet::new();
     columns
-        .filter(|(name, _)| seen.insert(name.clone()))
+        .filter(|column| seen.insert(column.name.clone()))
         .collect()
 }
 
@@ -539,7 +579,12 @@ impl ReportSide {
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
                 let pct = (column.total_count > 0)
                     .then(|| column.null_count as f64 / column.total_count as f64 * 100.0);
-                (column.name.clone(), at_precision(pct))
+                ColumnSide {
+                    name: column.name.clone(),
+                    null_pct: at_precision(pct),
+                    data_type: Some(column.data_type.clone()),
+                    counts: Some((column.total_count, column.null_count)),
+                }
             })),
             metric_semantics: report.metric_semantics.clone(),
             // The weights behind the score this build reports: recorded, or
@@ -563,6 +608,11 @@ impl ReportSide {
     /// did not record its hints.
     pub(crate) fn identifier_order(&self) -> Option<&[String]> {
         self.identifier_order.as_deref()
+    }
+
+    /// The first column of that name, when the side has one.
+    pub(crate) fn column(&self, name: &str) -> Option<&ColumnSide> {
+        self.columns.iter().find(|column| column.name == name)
     }
 
     /// Read a flat summary document.
@@ -657,12 +707,12 @@ impl ReportSide {
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
-            columns: first_of_each_name(
-                summary
-                    .columns
-                    .into_iter()
-                    .map(|column| (column.name, at_precision(column.null_percentage))),
-            ),
+            columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
+                name: column.name,
+                null_pct: at_precision(column.null_percentage),
+                data_type: column.data_type.as_deref().and_then(summary_data_type),
+                counts: column.total_count.zip(column.null_count),
+            })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
             score_weights: quality.and_then(|quality| {
@@ -723,6 +773,28 @@ struct SummaryExecution {
 struct SummaryColumn {
     name: String,
     null_percentage: Option<f64>,
+    #[serde(default)]
+    data_type: Option<String>,
+    #[serde(default)]
+    total_count: Option<usize>,
+    #[serde(default)]
+    null_count: Option<usize>,
+}
+
+/// A flat summary's lowercase type name. A name this build does not know
+/// comes from a later release and reads as unrecorded, since this build has
+/// no type to name it with.
+fn summary_data_type(name: &str) -> Option<DataType> {
+    Some(match name {
+        "string" => DataType::String,
+        "identifier" => DataType::Identifier,
+        "integer" => DataType::Integer,
+        "float" => DataType::Float,
+        "date" => DataType::Date,
+        "boolean" => DataType::Boolean,
+        "nested" => DataType::Nested,
+        _ => return None,
+    })
 }
 
 #[derive(serde::Deserialize)]

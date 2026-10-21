@@ -132,8 +132,10 @@ class QualityGateResult:
     evidence: dict[str, _Any]
     checks: tuple[QualityCheck, ...] = _field(default_factory=tuple)
     #: When the policy was evaluated against a baseline: ``reports``, with the
-    #: baseline as ``a`` and this report as ``b``, and ``schema``, the columns
-    #: ``added``, ``removed`` and ``common``. ``None`` otherwise.
+    #: baseline as ``a`` and this report as ``b``, ``schema``, the columns
+    #: ``added``, ``removed`` and ``common``, and ``diagnostics``, the schema
+    #: changes from the baseline, which never move the verdict. ``None``
+    #: otherwise.
     baseline: dict[str, _Any] | None = None
 
     @property

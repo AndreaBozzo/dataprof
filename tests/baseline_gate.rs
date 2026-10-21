@@ -5,8 +5,9 @@
 use std::io::Write;
 
 use dataprof::{
-    Check, CheckCode, CheckStatus, EvidenceGap, GateResult, NotEvaluated, PolicyError, PolicyScope,
-    ProfileReport, Profiler, QualityDimension, QualityPolicy, ReportSide, StopCondition, Verdict,
+    Check, CheckCode, CheckStatus, DiagnosticCode, EvidenceGap, GateResult, NotEvaluated,
+    PolicyError, PolicyScope, ProfileReport, Profiler, QualityDimension, QualityPolicy, ReportSide,
+    StopCondition, Verdict,
 };
 use serde_json::{Value, json};
 
@@ -609,4 +610,140 @@ fn an_allowance_is_compared_at_the_serialized_precision() {
         assert_eq!(check["status"], json!("failed"), "{check:#}");
         assert_eq!(check["expected"]["value"].as_f64().unwrap().abs(), 0.0);
     }
+}
+
+fn diagnostics(result: &GateResult) -> Vec<(DiagnosticCode, &str)> {
+    result
+        .baseline
+        .as_ref()
+        .unwrap()
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.column.as_str()))
+        .collect()
+}
+
+const BEFORE: &str = "id,amount,code,gone\n1,10,a,x\n2,20,b,y\n";
+const AFTER: &str = "id,amount,code,new\n1,x1,,z\n2,y2,,w\n";
+
+#[test]
+fn a_schema_change_is_a_diagnostic_and_moves_no_verdict() {
+    let baseline = profile(BEFORE);
+    let report = profile(AFTER);
+    let policy = QualityPolicy::new().max_null_percentage_increase("id", 0.0);
+    let result = against(&policy, &report, &baseline);
+
+    // The one rule passes; four columns changed, one diagnostic each, in
+    // the baseline's column order and then the added ones.
+    assert_eq!(result.verdict, Verdict::Pass, "{:#?}", result.checks);
+    assert_eq!(
+        diagnostics(&result),
+        [
+            (DiagnosticCode::ColumnTypeChanged, "amount"),
+            (DiagnosticCode::ColumnAllNull, "code"),
+            (DiagnosticCode::ColumnRemoved, "gone"),
+            (DiagnosticCode::ColumnAdded, "new"),
+        ]
+    );
+    let document = serde_json::to_value(&result).unwrap();
+    let retyped = &document["baseline"]["diagnostics"][0];
+    assert_eq!(
+        retyped,
+        &json!({
+            "code": "column_type_changed",
+            "column": "amount",
+            "data_type": {"a": "integer", "b": "string"},
+            "message": "this column holds values on both sides, and its inferred type differs",
+        })
+    );
+    let keys: Vec<_> = document["baseline"]["diagnostics"][1]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(keys, ["code", "column", "message"]);
+
+    // Nothing changed: analyzed, and empty rather than absent.
+    let same = serde_json::to_value(against(&policy, &baseline, &baseline)).unwrap();
+    assert_eq!(same["baseline"]["diagnostics"], json!([]));
+    // No baseline, no comparison: absent.
+    let absolute =
+        serde_json::to_value(QualityPolicy::new().min_rows(1).evaluate(&report).unwrap()).unwrap();
+    assert!(absolute.get("baseline").is_none());
+}
+
+#[test]
+fn an_all_null_side_establishes_no_type_and_a_rounded_100_is_not_all_null() {
+    // The baseline column holds only nulls, so its inferred type says
+    // nothing, and a typed column later is not a type change.
+    let empty = profile("id,v\n1,\n2,\n");
+    let dated = profile("id,v\n1,2026-01-01\n2,2026-01-02\n");
+    assert_eq!(diagnostics(&against(&drift_policy(), &dated, &empty)), []);
+    // The other way round the column held values and now holds none.
+    assert_eq!(
+        diagnostics(&against(&drift_policy(), &empty, &dated)),
+        [(DiagnosticCode::ColumnAllNull, "v")]
+    );
+
+    // One value in 100,000 serializes as 100.00% null, and is still a value.
+    // A blank line is no row, so the nulls sit beside an id.
+    let nulls: String = (1..100_000).map(|i| format!("{i},\n")).collect();
+    let nearly = profile(&format!("id,v\n0,7\n{nulls}"));
+    let full = profile("id,v\n1,1\n2,2\n");
+    let result = against(&drift_policy(), &nearly, &full);
+    let column = &serde_json::to_value(&result.checks).unwrap()[3];
+    assert_eq!(column["observed"], json!(100.0), "{column:#}");
+    assert_eq!(diagnostics(&result), []);
+}
+
+#[test]
+fn a_flat_summary_baseline_gives_the_same_diagnostics_and_omits_what_it_lacks() {
+    let baseline = profile(BEFORE);
+    let report = profile(AFTER);
+    let policy = QualityPolicy::new().max_null_percentage_increase("id", 0.0);
+    let live = against(&policy, &report, &baseline);
+
+    let summary = baseline.summary_json().unwrap();
+    let flat = policy
+        .evaluate_against(&report, &ReportSide::from_summary_json(&summary).unwrap())
+        .unwrap();
+    assert_eq!(
+        flat.baseline.as_ref().unwrap().diagnostics,
+        live.baseline.as_ref().unwrap().diagnostics
+    );
+
+    let edited = |edit: &dyn Fn(&mut serde_json::Map<String, Value>)| {
+        let mut document: Value = serde_json::from_str(&summary).unwrap();
+        for column in document["columns"].as_array_mut().unwrap() {
+            edit(column.as_object_mut().unwrap());
+        }
+        let side = ReportSide::from_summary_json(&document.to_string()).unwrap();
+        policy.evaluate_against(&report, &side).unwrap()
+    };
+    // A type this build does not know comes from a later release, and reads
+    // as unrecorded rather than as a change or a decode error.
+    let future = edited(&|column| {
+        column.insert("data_type".to_string(), json!("future_type"));
+    });
+    assert_eq!(
+        diagnostics(&future),
+        [
+            (DiagnosticCode::ColumnAllNull, "code"),
+            (DiagnosticCode::ColumnRemoved, "gone"),
+            (DiagnosticCode::ColumnAdded, "new"),
+        ]
+    );
+    // Without the counts, neither the type nor the nulls can be read.
+    let uncounted = edited(&|column| {
+        column.remove("total_count");
+        column.remove("null_count");
+    });
+    assert_eq!(
+        diagnostics(&uncounted),
+        [
+            (DiagnosticCode::ColumnRemoved, "gone"),
+            (DiagnosticCode::ColumnAdded, "new"),
+        ]
+    );
 }

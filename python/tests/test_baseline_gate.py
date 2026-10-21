@@ -362,3 +362,70 @@ def test_an_allowance_is_compared_at_the_serialized_precision():
     for check in decide(0.004):
         assert check.status == "failed", check.to_dict()
         assert abs(check.expected["value"]) == 0.0
+
+
+BEFORE = {"id": [1, 2], "amount": [10, 20], "code": ["a", "b"], "gone": ["x", "y"]}
+AFTER = {"id": [1, 2], "amount": ["x1", "y2"], "code": [None, None], "new": ["z", "w"]}
+
+
+def _listed(result) -> list[dict[str, Any]]:
+    assert result.baseline is not None
+    return result.baseline["diagnostics"]
+
+
+def _diagnostics(result):
+    return [(item["code"], item["column"]) for item in _listed(result)]
+
+
+def test_a_schema_change_is_a_diagnostic_and_moves_no_verdict(tmp_path: Path):
+    baseline = dp.profile(BEFORE)
+    report = dp.profile(AFTER)
+    policy: dict[str, Any] = {"max_null_percentage_increase": {"id": 0}}
+    result = report.check(baseline=baseline, **policy)
+
+    assert result.verdict == "pass", result.to_dict()
+    assert _diagnostics(result) == [
+        ("column_type_changed", "amount"),
+        ("column_all_null", "code"),
+        ("column_removed", "gone"),
+        ("column_added", "new"),
+    ]
+    assert _listed(result)[0] == {
+        "code": "column_type_changed",
+        "column": "amount",
+        "data_type": {"a": "integer", "b": "string"},
+        "message": "this column holds values on both sides, and its inferred type differs",
+    }
+    assert list(_listed(result)[1]) == ["code", "column", "message"]
+    assert _listed(report.check(baseline=report, **policy)) == []
+
+    # Saved, or flattened to a summary, the baseline gives the same ones.
+    saved = tmp_path / "baseline.json"
+    baseline.save(saved)
+    loaded = dp.ProfileReport.load(saved)
+    flat = dp.ProfileReport.from_dict(baseline.to_dict())
+    for other in (loaded, flat):
+        assert _listed(report.check(baseline=other, **policy)) == _listed(result)
+
+
+def test_an_all_null_side_establishes_no_type():
+    empty = dp.profile({"id": [1, 2], "v": [None, None]})
+    dated = dp.profile({"id": [1, 2], "v": ["2026-01-01", "2026-01-02"]})
+    assert _diagnostics(dated.check(baseline=empty, **DRIFT)) == []
+    assert _diagnostics(empty.check(baseline=dated, **DRIFT)) == [("column_all_null", "v")]
+
+
+def test_a_0_11_summary_baseline_reports_schema_changes():
+    # Its one column, `city`, is a string with values; 0.11 recorded the
+    # type and the counts the diagnostics read.
+    legacy = dp.ProfileReport.from_dict(
+        json.loads((FIXTURES / "legacy_0_11_non_ascii.summary.json").read_text("utf-8"))
+    )
+    emptied = dp.profile({"city": [None, None], "extra": [1, 2]})
+    assert _diagnostics(emptied.check(baseline=legacy, max_null_percentage_increase=100)) == [
+        ("column_all_null", "city"),
+        ("column_added", "extra"),
+    ]
+    retyped = dp.profile({"city": [1, 2]})
+    result = retyped.check(baseline=legacy, max_null_percentage_increase=100)
+    assert _listed(result)[0]["data_type"] == {"a": "string", "b": "integer"}
