@@ -1117,6 +1117,34 @@ drop or `change_at_most` for an increase. `result.baseline` names both reports
 loaded from a flat `to_dict()` summary; what it did not record reads as
 unrecorded.
 
+`result.baseline["diagnostics"]` lists the schema changes from the baseline,
+whatever the policy states, at most one per column: the baseline's columns in
+order, then the added ones. A diagnostic is a warning and never moves the
+verdict; it is `[]` when nothing changed.
+
+| `code` | When |
+| --- | --- |
+| `column_added` | The report profiled a column the baseline did not. A rule about change that names it is `not_in_baseline`; absolute rules still read it |
+| `column_removed` | The baseline profiled a column the report has no profile for. A report does not record whether the column left the source or was not selected with `columns=` |
+| `column_type_changed` | The column holds values on both sides and its inferred type differs; `data_type` gives both, `a` first. A column whose values are all null establishes no type |
+| `column_all_null` | The column held values in the baseline and every value read for it now is null. Decided on the counts, so one value in 100,000, shown as `100.0` percent null, is not all null |
+
+Column order is not compared. A flat summary that does not record a column's
+counts reports neither of the last two for it.
+
+The type is the inferred one, so a setting can change it on unchanged data.
+`identifier_columns` gives a column the `identifier` type, and a type change
+to or from `identifier` under a hint that differs carries `"reason":
+"setting_changed"` and `"setting": "identifier_columns"`
+(`setting_unrecorded` when a side did not record its hints). An input path
+that types the same data differently is not recorded, so it is not named.
+
+```python
+{"code": "column_type_changed", "column": "amount",
+ "data_type": {"a": "integer", "b": "string"},
+ "message": "this column holds values on both sides, and its inferred type differs"}
+```
+
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
 

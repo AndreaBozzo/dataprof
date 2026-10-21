@@ -739,7 +739,9 @@ class ProfileReport:
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
         side does not cover its whole source. ``result.baseline`` names both
-        reports and how their columns differ.
+        reports and how their columns differ, and its ``diagnostics`` list
+        each column added, removed, retyped or now all null, which never move
+        the verdict.
 
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold

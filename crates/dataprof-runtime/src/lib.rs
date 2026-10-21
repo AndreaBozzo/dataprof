@@ -35,9 +35,9 @@ pub use profile_report::{
     REPORT_SCHEMA_VERSION,
 };
 pub use quality_gate::{
-    BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Evidence,
-    EvidenceGap, Expectation, GateResult, MetricValue, NotEvaluated, PolicyError, PolicyScope,
-    QualityPolicy, RequiredMetric, Verdict,
+    BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Diagnostic,
+    DiagnosticCode, Evidence, EvidenceGap, Expectation, GateResult, MetricValue, NotEvaluated,
+    PolicyError, PolicyScope, QualityPolicy, RequiredMetric, SettingDifference, Verdict,
 };
 pub use report_assembler::ReportAssembler;
 pub use report_delta::{

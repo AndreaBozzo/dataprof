@@ -52,6 +52,12 @@
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
 //!   cover the whole source.
 //!
+//! A schema change from the baseline is reported as a [`Diagnostic`] in the
+//! result's `baseline.diagnostics`, whatever the policy states: a column added,
+//! removed, retyped while holding values on both sides, or holding only nulls
+//! where the baseline had values. A diagnostic is a warning, never a fourth
+//! verdict, and does not move the verdict.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -74,17 +80,18 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
+use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
+use serde::Serialize;
 
 use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
 use crate::report_delta::{
-    ColumnChange, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference, ReportSide,
-    SchemaChange, Sides,
+    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
+    ReportSide, SchemaChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -551,6 +558,123 @@ pub struct BaselineComparison {
     pub reports: Sides<ReportReference>,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
+    /// The schema changes from the baseline, whatever the policy states. A
+    /// diagnostic never moves the verdict. Empty when nothing changed.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Stable identifier for a kind of schema change.
+///
+/// Part of the serialized contract, like [`CheckCode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DiagnosticCode {
+    /// The report profiled a column the baseline did not.
+    ColumnAdded,
+    /// The baseline profiled a column the report did not. A report does not
+    /// record whether a column left the source or was not selected, so this
+    /// does not say the source lost it.
+    ColumnRemoved,
+    /// The column holds values on both sides and its inferred type differs.
+    /// A column whose values are all null on a side establishes no type there.
+    ColumnTypeChanged,
+    /// The column held values in the baseline, and every value read for it
+    /// in the report is null.
+    ColumnAllNull,
+}
+
+impl fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ColumnAdded => write!(f, "column_added"),
+            Self::ColumnRemoved => write!(f, "column_removed"),
+            Self::ColumnTypeChanged => write!(f, "column_type_changed"),
+            Self::ColumnAllNull => write!(f, "column_all_null"),
+        }
+    }
+}
+
+/// A schema change between the baseline and the report.
+///
+/// A warning, not a fourth verdict: it is reported whatever the policy
+/// states, and no rule decides on it. A requirement that would fail on it is
+/// a policy entry of its own.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct Diagnostic {
+    /// What changed.
+    pub code: DiagnosticCode,
+    /// The column it changed in.
+    pub column: String,
+    /// The inferred type on each side, `a` being the baseline. Present on
+    /// [`DiagnosticCode::ColumnTypeChanged`] only.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_data_types"
+    )]
+    pub data_type: Option<Sides<DataType>>,
+    /// A recorded setting that can produce the change on unchanged data,
+    /// when one can. Serialized flat, as a check's reason is.
+    #[serde(flatten)]
+    pub setting: Option<SettingDifference>,
+    /// A fixed sentence naming the change, free of numbers and names, like a
+    /// check's message.
+    pub message: String,
+}
+
+/// How a setting that can produce a diagnostic's change compares across the
+/// two reports. A diagnostic carrying one may not reflect a change in the
+/// data.
+///
+/// Only the `identifier_columns` hint is read today: it is the one setting
+/// that sets a column's type, and the `identifier` type comes from nothing
+/// else. An input path that types the same data differently is not
+/// recorded, so it cannot be named here (#906).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SettingDifference {
+    /// The setting differs between the two reports for this column.
+    #[non_exhaustive]
+    SettingChanged {
+        /// The configuration field that differs.
+        setting: String,
+    },
+    /// At least one side did not record the setting, so it cannot be shown
+    /// to be the same.
+    #[non_exhaustive]
+    SettingUnrecorded {
+        /// The configuration field that is unrecorded.
+        setting: String,
+    },
+}
+
+/// The type names a flat summary and the Python bindings use, so a
+/// diagnostic reads the same as `ColumnProfile.data_type`.
+fn data_type_name(data_type: &DataType) -> &'static str {
+    match data_type {
+        DataType::String => "string",
+        DataType::Identifier => "identifier",
+        DataType::Integer => "integer",
+        DataType::Float => "float",
+        DataType::Date => "date",
+        DataType::Boolean => "boolean",
+        DataType::Nested => "nested",
+    }
+}
+
+fn serialize_data_types<S: serde::Serializer>(
+    types: &Option<Sides<DataType>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    types
+        .as_ref()
+        .map(|types| Sides {
+            a: data_type_name(&types.a),
+            b: data_type_name(&types.b),
+        })
+        .serialize(serializer)
 }
 
 /// The interval a sampled score was decided on.
@@ -902,6 +1026,7 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_increase_checks(&delta));
+        let diagnostics = schema_diagnostics(baseline, &current, &delta);
         Ok(GateResult {
             verdict: verdict_of(&checks),
             scope: self.scope,
@@ -910,6 +1035,7 @@ impl QualityPolicy {
             baseline: Some(BaselineComparison {
                 reports: delta.reports,
                 schema: delta.schema,
+                diagnostics,
             }),
         })
     }
@@ -1412,14 +1538,15 @@ impl QualityPolicy {
     /// both reports profiled, in the baseline's order. A column only the
     /// evaluated report has gets no rule unless the policy names it.
     fn null_increase_checks(&self, delta: &ReportDelta) -> Vec<Check> {
+        let index = ColumnIndex::new(delta);
         let mut checks = Vec::new();
         for (column, points) in &self.max_null_percentage_increase {
-            checks.push(self.null_increase_check(delta, column, *points));
+            checks.push(self.null_increase_check(delta, &index, column, *points));
         }
         if let Some(points) = self.max_null_percentage_increase_any {
             for column in &delta.schema.common {
                 if !self.max_null_percentage_increase.contains_key(column) {
-                    checks.push(self.null_increase_check(delta, column, points));
+                    checks.push(self.null_increase_check(delta, &index, column, points));
                 }
             }
         }
@@ -1431,8 +1558,14 @@ impl QualityPolicy {
     /// coverage is its evidence, and only the null-token definition can make
     /// the same data count differently. A column's own rule does not depend on
     /// the rest of the column set.
-    fn null_increase_check(&self, delta: &ReportDelta, column: &str, points: f64) -> Check {
-        let change = delta.columns.iter().find(|change| change.name == column);
+    fn null_increase_check(
+        &self,
+        delta: &ReportDelta,
+        index: &ColumnIndex<'_>,
+        column: &str,
+        points: f64,
+    ) -> Check {
+        let change = index.changes.get(column).copied();
         let (null_pct_a, null_pct_b, null_pct_delta) = change.map_or(
             (None, None, None),
             |ColumnChange {
@@ -1442,9 +1575,8 @@ impl QualityPolicy {
                  ..
              }| (*null_pct_a, *null_pct_b, *null_pct_delta),
         );
-        let named = |names: &[String]| names.iter().any(|name| name == column);
-        let in_report = named(&delta.schema.common) || named(&delta.schema.added);
-        let in_baseline = named(&delta.schema.common) || named(&delta.schema.removed);
+        let in_report = index.in_report.contains(column);
+        let in_baseline = index.in_baseline.contains(column);
         let evidence = Sides {
             a: delta.reports.a.evidence,
             b: delta.reports.b.evidence,
@@ -1507,6 +1639,152 @@ impl QualityPolicy {
             }
             _ if satisfied => CheckStatus::Passed,
             _ => CheckStatus::Failed,
+        }
+    }
+}
+
+/// The schema changes between the two sides, at most one per column, in the
+/// delta's column order: the baseline's columns, then the added ones. A
+/// change is reported only where both sides recorded what it reads; a flat
+/// summary without a column's counts reports neither change for it, and one
+/// without its type no type change. Column order is not compared, since no
+/// rule reads it.
+fn schema_diagnostics(
+    baseline: &ReportSide,
+    current: &ReportSide,
+    delta: &ReportDelta,
+) -> Vec<Diagnostic> {
+    let diagnostic = |code, column: &str, data_type, message: &str| Diagnostic {
+        code,
+        column: column.to_string(),
+        data_type,
+        setting: None,
+        message: message.to_string(),
+    };
+    // Whether each side's identifier hint names the column, `None` when the
+    // side did not record its hints.
+    let identified = |side: &ReportSide, column: &str| {
+        side.identifier_order()
+            .map(|names| names.iter().any(|name| name == column))
+    };
+    // Built once, so a wide schema is not rescanned per column.
+    fn names(names: &[String]) -> HashSet<&str> {
+        names.iter().map(String::as_str).collect()
+    }
+    fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+        side.columns()
+            .iter()
+            .map(|column| (column.name.as_str(), column))
+            .collect()
+    }
+    let (added, removed) = (names(&delta.schema.added), names(&delta.schema.removed));
+    let (baseline_columns, current_columns) = (by_name(baseline), by_name(current));
+    delta
+        .columns
+        .iter()
+        .filter_map(|change| {
+            let column = change.name.as_str();
+            if added.contains(column) {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnAdded,
+                    column,
+                    None,
+                    "the report profiled a column the baseline did not, so the baseline has \
+                     nothing to measure its change from",
+                ));
+            }
+            if removed.contains(column) {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnRemoved,
+                    column,
+                    None,
+                    "the baseline profiled a column the report has no profile for; a report does \
+                     not record whether a column left the source or was not selected",
+                ));
+            }
+            let (a, b) = (
+                *baseline_columns.get(column)?,
+                *current_columns.get(column)?,
+            );
+            if a.populated()? && b.all_null()? {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnAllNull,
+                    column,
+                    None,
+                    "this column held values in the baseline, and every value read for it in \
+                     the report is null",
+                ));
+            }
+            match (&a.data_type, &b.data_type) {
+                (Some(type_a), Some(type_b))
+                    if type_a != type_b && a.populated()? && b.populated()? =>
+                {
+                    let mut retyped = diagnostic(
+                        DiagnosticCode::ColumnTypeChanged,
+                        column,
+                        Some(Sides {
+                            a: type_a.clone(),
+                            b: type_b.clone(),
+                        }),
+                        "this column holds values on both sides, and its inferred type differs",
+                    );
+                    // Only the identifier hint gives a column the identifier
+                    // type, so the hint can explain a change only to or from
+                    // it.
+                    if *type_a == DataType::Identifier || *type_b == DataType::Identifier {
+                        let setting = "identifier_columns".to_string();
+                        retyped.setting =
+                            match (identified(baseline, column), identified(current, column)) {
+                                (Some(a), Some(b)) if a == b => None,
+                                (Some(_), Some(_)) => {
+                                    Some(SettingDifference::SettingChanged { setting })
+                                }
+                                _ => Some(SettingDifference::SettingUnrecorded { setting }),
+                            };
+                        if retyped.setting.is_some() {
+                            retyped.message = "this column holds values on both sides, and its \
+                                               inferred type differs; the identifier hint, \
+                                               which sets the type, is not shown to be the \
+                                               same on both sides"
+                                .to_string();
+                        }
+                    }
+                    Some(retyped)
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// A delta's columns by name, built once per evaluation so a rule over every
+/// shared column does not rescan the schema for each one.
+struct ColumnIndex<'a> {
+    changes: HashMap<&'a str, &'a ColumnChange>,
+    /// Columns the evaluated report profiled.
+    in_report: HashSet<&'a str>,
+    /// Columns the baseline profiled.
+    in_baseline: HashSet<&'a str>,
+}
+
+impl<'a> ColumnIndex<'a> {
+    fn new(delta: &'a ReportDelta) -> Self {
+        let schema = &delta.schema;
+        let names = |lists: [&'a [String]; 2]| {
+            lists
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        };
+        Self {
+            changes: delta
+                .columns
+                .iter()
+                .map(|change| (change.name.as_str(), change))
+                .collect(),
+            in_report: names([&schema.common, &schema.added]),
+            in_baseline: names([&schema.common, &schema.removed]),
         }
     }
 }
