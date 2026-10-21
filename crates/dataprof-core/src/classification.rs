@@ -23,6 +23,23 @@ pub enum DataType {
     Nested,
 }
 
+impl DataType {
+    /// The lowercase name that flat summaries, the Python bindings and the quality
+    /// gate's diagnostics show, such as `"integer"`. Serde keeps the variant name;
+    /// this is the one other spelling, kept in one place so a new variant gets it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Identifier => "identifier",
+            Self::Integer => "integer",
+            Self::Float => "float",
+            Self::Date => "date",
+            Self::Boolean => "boolean",
+            Self::Nested => "nested",
+        }
+    }
+}
+
 /// Mutually exclusive lexical form of a single non-null value.
 ///
 /// The variants partition non-null values — every value belongs to exactly one —
@@ -298,6 +315,26 @@ mod type_homogeneity_tests {
                 serde_json::to_string(&class).expect("class should serialize"),
                 format!("\"{name}\"")
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod data_type_name_tests {
+    use super::*;
+
+    #[test]
+    fn every_data_type_has_its_lowercase_name() {
+        for (data_type, name) in [
+            (DataType::String, "string"),
+            (DataType::Identifier, "identifier"),
+            (DataType::Integer, "integer"),
+            (DataType::Float, "float"),
+            (DataType::Date, "date"),
+            (DataType::Boolean, "boolean"),
+            (DataType::Nested, "nested"),
+        ] {
+            assert_eq!(data_type.name(), name);
         }
     }
 }

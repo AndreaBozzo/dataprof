@@ -2,22 +2,10 @@ use pyo3::prelude::*;
 use std::path::Path;
 
 use dataprof::{
-    CountMethod, DataType, RowCountEstimate, SchemaResult, StructureColumnSummary, StructureReport,
+    CountMethod, RowCountEstimate, SchemaResult, StructureColumnSummary, StructureReport,
 };
 
 use super::errors::analysis_error_to_py;
-
-fn data_type_name(data_type: &DataType) -> &'static str {
-    match data_type {
-        DataType::Integer => "integer",
-        DataType::Float => "float",
-        DataType::String => "string",
-        DataType::Identifier => "identifier",
-        DataType::Date => "date",
-        DataType::Boolean => "boolean",
-        DataType::Nested => "nested",
-    }
-}
 
 /// Result of fast schema inference.
 #[pyclass(name = "SchemaResult")]
@@ -42,10 +30,7 @@ impl PySchemaResult {
             .map(|c| {
                 let mut m = std::collections::HashMap::new();
                 m.insert("name".to_string(), c.name.clone());
-                m.insert(
-                    "data_type".to_string(),
-                    data_type_name(&c.data_type).to_string(),
-                );
+                m.insert("data_type".to_string(), c.data_type.name().to_string());
                 m
             })
             .collect()
@@ -118,7 +103,7 @@ impl PyStructureColumnSummary {
 
     #[getter]
     fn data_type(&self) -> &str {
-        data_type_name(&self.inner.data_type)
+        self.inner.data_type.name()
     }
 
     #[getter]
@@ -160,7 +145,7 @@ impl PyStructureColumnSummary {
         format!(
             "StructureColumnSummary(name='{}', type='{}', provenance='{}')",
             self.inner.name,
-            data_type_name(&self.inner.data_type),
+            self.inner.data_type.name(),
             self.inner.provenance,
         )
     }

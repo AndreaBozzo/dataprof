@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, PatternMatchCount,
+    ColumnProfile, ColumnStats, DataSource, NullTokenSet, Pattern, PatternMatchCount,
     ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
     QualityPolicy, QualityScores, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
     TextLengthUnit, TruncationReason,
@@ -245,15 +245,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
 
         Self {
             name: profile.name.clone(),
-            data_type: match profile.data_type {
-                DataType::Integer => "integer".to_string(),
-                DataType::Float => "float".to_string(),
-                DataType::String => "string".to_string(),
-                DataType::Identifier => "identifier".to_string(),
-                DataType::Date => "date".to_string(),
-                DataType::Boolean => "boolean".to_string(),
-                DataType::Nested => "nested".to_string(),
-            },
+            data_type: profile.data_type.name().to_string(),
             total_count: profile.total_count,
             null_count: profile.null_count,
             unique_count: profile.unique_count,
