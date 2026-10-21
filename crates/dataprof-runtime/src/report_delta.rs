@@ -689,6 +689,25 @@ impl ReportSide {
     }
 }
 
+/// The field's absence represents a legacy summary; JSON null is malformed.
+/// Include its name because serde_json's default type error omits the key.
+fn summary_metric_semantics<'de, D>(deserializer: D) -> Result<Option<MetricSemantics>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("metric_semantics: {error}"))
+    })
+}
+
+fn summary_schema_version<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("schema_version: {error}")))
+}
+
 /// The fields of a flat summary a comparison reads. Everything else in the
 /// document is ignored.
 #[derive(serde::Deserialize)]
@@ -697,10 +716,10 @@ struct Summary {
     execution: SummaryExecution,
     columns: Vec<SummaryColumn>,
     quality: Option<SummaryQuality>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "summary_metric_semantics")]
     metric_semantics: Option<MetricSemantics>,
     /// Absent before 0.10, whose summaries did not record hints either.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "summary_schema_version")]
     schema_version: Option<u32>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
