@@ -222,8 +222,7 @@ async fn schema_events(contents: &str, max_rows: Option<u64>) -> Vec<Vec<String>
         .profile_stream(BytesSource::new(contents.as_bytes().to_vec().into(), info))
         .await
         .unwrap();
-    let lists = lists.lock().unwrap().clone();
-    lists
+    lists.lock().unwrap().clone()
 }
 
 #[tokio::test]
