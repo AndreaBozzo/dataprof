@@ -113,6 +113,11 @@ def test_the_keywords_are_validated():
     with pytest.raises(ValueError, match="require_columns must be a list"):
         numbers: dict[str, Any] = {"require_columns": [1]}
         report.check(**numbers)
+    # Not a list: a bare value, and a one-shot iterator the check would consume.
+    for value in (1, (name for name in ["id"])):
+        with pytest.raises(ValueError, match="require_columns must be a list"):
+            kwargs: dict[str, Any] = {"require_columns": value}
+            report.check(**kwargs)
     with pytest.raises(ValueError, match="forbid_added_columns must be True or False"):
         bad: dict[str, Any] = {"forbid_added_columns": "yes"}
         report.check(baseline=report, **bad)

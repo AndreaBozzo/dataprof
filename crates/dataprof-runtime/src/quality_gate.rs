@@ -1094,14 +1094,27 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_increase_checks(&delta));
+        // Collected once, so a rule over every column does not rescan the
+        // other side's columns for each one.
+        let (baseline_names, current_names) = (column_names(baseline), column_names(&current));
         if self.forbid_removed_columns {
             for column in baseline.columns() {
-                checks.push(self.forbid_removed_check(baseline, &current, &column.name));
+                checks.push(self.forbid_removed_check(
+                    baseline,
+                    &current,
+                    &current_names,
+                    &column.name,
+                ));
             }
         }
         if self.forbid_added_columns {
             for column in current.columns() {
-                checks.push(self.forbid_added_check(baseline, &current, &column.name));
+                checks.push(self.forbid_added_check(
+                    baseline,
+                    &current,
+                    &baseline_names,
+                    &column.name,
+                ));
             }
         }
         let diagnostics = schema_diagnostics(baseline, &current, &delta);
@@ -1128,8 +1141,9 @@ impl QualityPolicy {
         }
         if !self.require_columns.is_empty() {
             let side = ReportSide::from_report(report);
+            let names = column_names(&side);
             for column in &self.require_columns {
-                checks.push(self.require_column_check(&side, column));
+                checks.push(self.require_column_check(&side, &names, column));
             }
         }
         if let Some(min) = self.min_rows {
@@ -1738,8 +1752,13 @@ impl QualityPolicy {
         }
     }
 
-    fn require_column_check(&self, current: &ReportSide, column: &str) -> Check {
-        let status = if has_column(current, column) {
+    fn require_column_check(
+        &self,
+        current: &ReportSide,
+        current_names: &HashSet<&str>,
+        column: &str,
+    ) -> Check {
+        let status = if current_names.contains(column) {
             CheckStatus::Passed
         } else {
             self.absence_status(current, column, NotEvaluated::ColumnNotProfiled)
@@ -1774,9 +1793,10 @@ impl QualityPolicy {
         &self,
         baseline: &ReportSide,
         current: &ReportSide,
+        current_names: &HashSet<&str>,
         column: &str,
     ) -> Check {
-        let status = if has_column(current, column) {
+        let status = if current_names.contains(column) {
             CheckStatus::Passed
         } else {
             self.absence_status(
@@ -1819,9 +1839,10 @@ impl QualityPolicy {
         &self,
         baseline: &ReportSide,
         current: &ReportSide,
+        baseline_names: &HashSet<&str>,
         column: &str,
     ) -> Check {
-        let status = if has_column(baseline, column) {
+        let status = if baseline_names.contains(column) {
             CheckStatus::Passed
         } else {
             self.absence_status(
@@ -2078,10 +2099,11 @@ impl<'a> ColumnIndex<'a> {
     }
 }
 
-fn has_column(side: &ReportSide, column: &str) -> bool {
+fn column_names(side: &ReportSide) -> HashSet<&str> {
     side.columns()
         .iter()
-        .any(|candidate| candidate.name == column)
+        .map(|column| column.name.as_str())
+        .collect()
 }
 
 fn baseline_reading(

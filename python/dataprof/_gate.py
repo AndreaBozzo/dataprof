@@ -348,9 +348,11 @@ class _Policy:
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
 
-        # A bare string is a sequence of characters, never a list of columns.
+        # A bare string is a sequence of characters, never a list of columns,
+        # and a one-shot iterator would be consumed by the check below.
         if require_columns is not None and (
-            isinstance(require_columns, (str, bytes))
+            not isinstance(require_columns, _Sequence)
+            or isinstance(require_columns, (str, bytes))
             or not all(isinstance(column, str) for column in require_columns)
         ):
             raise _PolicyFieldError(

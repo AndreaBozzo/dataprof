@@ -1276,8 +1276,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
-entries; the last occurrence of a repeated mapping key wins.
+`--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
+to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
