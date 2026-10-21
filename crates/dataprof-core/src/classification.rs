@@ -23,6 +23,38 @@ pub enum DataType {
     Nested,
 }
 
+impl DataType {
+    /// The lowercase name that flat summaries, the Python bindings and the quality
+    /// gate's diagnostics show, such as `"integer"`. Serde keeps the variant name;
+    /// this is the one other spelling, kept in one place so a new variant gets it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Identifier => "identifier",
+            Self::Integer => "integer",
+            Self::Float => "float",
+            Self::Date => "date",
+            Self::Boolean => "boolean",
+            Self::Nested => "nested",
+        }
+    }
+
+    /// The type `name()` spells as `name`, or `None` for a name this build does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "string" => Self::String,
+            "identifier" => Self::Identifier,
+            "integer" => Self::Integer,
+            "float" => Self::Float,
+            "date" => Self::Date,
+            "boolean" => Self::Boolean,
+            "nested" => Self::Nested,
+            _ => return None,
+        })
+    }
+}
+
 /// Mutually exclusive lexical form of a single non-null value.
 ///
 /// The variants partition non-null values — every value belongs to exactly one —
@@ -299,5 +331,34 @@ mod type_homogeneity_tests {
                 format!("\"{name}\"")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod data_type_name_tests {
+    use super::*;
+
+    // The one list a new variant has to join: it pins the spelling and checks
+    // that from_name reads it back.
+    #[test]
+    fn every_data_type_has_its_lowercase_name() {
+        for (data_type, name) in [
+            (DataType::String, "string"),
+            (DataType::Identifier, "identifier"),
+            (DataType::Integer, "integer"),
+            (DataType::Float, "float"),
+            (DataType::Date, "date"),
+            (DataType::Boolean, "boolean"),
+            (DataType::Nested, "nested"),
+        ] {
+            assert_eq!(data_type.name(), name);
+            assert_eq!(DataType::from_name(data_type.name()), Some(data_type));
+        }
+    }
+
+    #[test]
+    fn an_unknown_name_has_no_data_type() {
+        assert_eq!(DataType::from_name("decimal"), None);
+        assert_eq!(DataType::from_name("Integer"), None);
     }
 }

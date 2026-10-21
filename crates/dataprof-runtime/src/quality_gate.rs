@@ -687,20 +687,6 @@ pub enum SettingDifference {
     },
 }
 
-/// The type names a flat summary and the Python bindings use, so a
-/// diagnostic reads the same as `ColumnProfile.data_type`.
-fn data_type_name(data_type: &DataType) -> &'static str {
-    match data_type {
-        DataType::String => "string",
-        DataType::Identifier => "identifier",
-        DataType::Integer => "integer",
-        DataType::Float => "float",
-        DataType::Date => "date",
-        DataType::Boolean => "boolean",
-        DataType::Nested => "nested",
-    }
-}
-
 fn serialize_data_types<S: serde::Serializer>(
     types: &Option<Sides<DataType>>,
     serializer: S,
@@ -708,8 +694,8 @@ fn serialize_data_types<S: serde::Serializer>(
     types
         .as_ref()
         .map(|types| Sides {
-            a: data_type_name(&types.a),
-            b: data_type_name(&types.b),
+            a: types.a.name(),
+            b: types.b.name(),
         })
         .serialize(serializer)
 }

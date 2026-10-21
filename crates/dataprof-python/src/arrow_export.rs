@@ -29,8 +29,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict};
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, EngineType,
-    ExecutionMetadata, FileFormat, MetricPack, Profiler, TruncationReason,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, EngineType, ExecutionMetadata,
+    FileFormat, MetricPack, Profiler, TruncationReason,
 };
 use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_runtime::ReportAssembler;
@@ -684,20 +684,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     ]));
 
     let names: StringArray = profiles.iter().map(|p| Some(p.name.as_str())).collect();
-    let types: StringArray = profiles
-        .iter()
-        .map(|p| {
-            Some(match p.data_type {
-                DataType::Integer => "integer",
-                DataType::Float => "float",
-                DataType::String => "string",
-                DataType::Identifier => "identifier",
-                DataType::Date => "date",
-                DataType::Boolean => "boolean",
-                DataType::Nested => "nested",
-            })
-        })
-        .collect();
+    let types: StringArray = profiles.iter().map(|p| Some(p.data_type.name())).collect();
     let totals: UInt64Array = profiles
         .iter()
         .map(|p| Some(p.total_count as u64))
