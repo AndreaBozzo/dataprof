@@ -415,6 +415,9 @@ class ProfileReport:
         max_dimension_score_drops: list[tuple[str, float]] = ...,
         max_null_percentage_increase: list[tuple[str, float]] = ...,
         max_null_percentage_increase_any: float | None = ...,
+        require_columns: list[str] = ...,
+        forbid_removed_columns: bool = ...,
+        forbid_added_columns: bool = ...,
     ) -> str: ...
     def summary_json(self) -> str: ...
     def to_json(self) -> str: ...

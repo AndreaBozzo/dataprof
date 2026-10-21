@@ -265,6 +265,9 @@ class _Policy:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        require_columns: _Sequence[str] | None = None,
+        forbid_removed_columns: bool = False,
+        forbid_added_columns: bool = False,
     ) -> None:
         if scope not in _SCOPES:
             raise _PolicyFieldError(
@@ -345,12 +348,32 @@ class _Policy:
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
 
+        # A bare string is a sequence of characters, never a list of columns.
+        if require_columns is not None and (
+            isinstance(require_columns, (str, bytes))
+            or not all(isinstance(column, str) for column in require_columns)
+        ):
+            raise _PolicyFieldError(
+                "require_columns",
+                f"require_columns must be a list of column names, got {require_columns!r}",
+            )
+        self.require_columns = sorted(set(require_columns or ()))
+        for key, value in (
+            ("forbid_removed_columns", forbid_removed_columns),
+            ("forbid_added_columns", forbid_added_columns),
+        ):
+            if not isinstance(value, bool):
+                raise _PolicyFieldError(key, f"{key} must be True or False, got {value!r}")
+        self.forbid_removed_columns = forbid_removed_columns
+        self.forbid_added_columns = forbid_added_columns
+
         self.baseline = baseline
         if baseline is None and self._has_change_rules():
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase) needs a baseline report to compare against",
+                "max_null_percentage_increase, forbid_removed_columns, forbid_added_columns) "
+                "needs a baseline report to compare against",
             )
 
         self.require_quality = False
@@ -370,6 +393,7 @@ class _Policy:
             or self.max_duplicate_rows is not None
             or self.require_quality
             or self.require_dimensions
+            or self.require_columns
             or self._has_change_rules()
         ):
             raise ValueError("check() states no requirement; a gate must check something")
@@ -380,6 +404,8 @@ class _Policy:
             or bool(self.max_dimension_score_drops)
             or bool(self.max_null_percentage_increase)
             or self.max_null_percentage_increase_any is not None
+            or self.forbid_removed_columns
+            or self.forbid_added_columns
         )
 
     # -- evaluation ---------------------------------------------------------
@@ -413,6 +439,9 @@ class _Policy:
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
+                require_columns=self.require_columns,
+                forbid_removed_columns=self.forbid_removed_columns,
+                forbid_added_columns=self.forbid_added_columns,
             )
         )
         return _result_from_document(document)

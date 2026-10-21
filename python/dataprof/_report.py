@@ -674,6 +674,9 @@ class ProfileReport:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        require_columns: _Sequence[str] | None = None,
+        forbid_removed_columns: bool = False,
+        forbid_added_columns: bool = False,
     ) -> _QualityGateResult:
         """Evaluate a quality policy against this report.
 
@@ -734,6 +737,22 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            require_columns: Columns this report must have; needs no baseline.
+                One check per name, in name order.
+            forbid_removed_columns: Require every column the baseline profiled
+                to be profiled still. One check per baseline column.
+            forbid_added_columns: Allow no column the baseline did not profile:
+                a closed schema. One check per column of this report.
+
+        A missing column fails a column rule only when the side without it
+        shows its source lacks it: it recorded its column selection, the
+        selection included the column, and its column set covers the whole
+        source. A CSV header, a Parquet schema, a DataFrame or a query result
+        lists every column however few rows were read; for JSON, JSONL and
+        streams only a scan of every record does. Otherwise the check is
+        unevaluated: ``setting_changed`` or ``setting_unrecorded`` on the
+        setting ``columns``, ``column_not_profiled`` for a required column the
+        run did not select, or ``evidence_incomplete``.
 
         A rule about change is decided only when both reports measured the
         same thing the same way. Otherwise it is unevaluated, with the reason
@@ -773,6 +792,9 @@ class ProfileReport:
             max_quality_score_drop=max_quality_score_drop,
             max_dimension_score_drops=max_dimension_score_drops,
             max_null_percentage_increase=max_null_percentage_increase,
+            require_columns=require_columns,
+            forbid_removed_columns=forbid_removed_columns,
+            forbid_added_columns=forbid_added_columns,
         ).evaluate(self._native_report)
 
     def findings(
