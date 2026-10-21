@@ -951,8 +951,10 @@ impl QualityPolicy {
     }
 
     /// Require every column the report profiled to be one the baseline
-    /// profiled: a closed schema. Needs
-    /// [`evaluate_against`](Self::evaluate_against).
+    /// profiled: a closed schema. Under [`PolicyScope::FullSource`], a report
+    /// whose column set does not cover its source also gets one check with no
+    /// column, left unevaluated: the records it did not read may hold a new
+    /// column. Needs [`evaluate_against`](Self::evaluate_against).
     pub fn forbid_added_columns(mut self) -> Self {
         self.forbid_added_columns = true;
         self
@@ -1115,6 +1117,15 @@ impl QualityPolicy {
                     &baseline_names,
                     &column.name,
                 ));
+            }
+            // The per-column checks cover the columns the report found. When
+            // its column set does not cover the source, the records it did not
+            // read may hold a column the baseline lacked, which no per-column
+            // check can name.
+            if let (PolicyScope::FullSource, Some(gap)) =
+                (self.scope, current.schema_evidence().gap())
+            {
+                checks.push(self.unread_columns_check(baseline, &current, gap));
             }
         }
         let diagnostics = schema_diagnostics(baseline, &current, &delta);
@@ -1879,6 +1890,29 @@ impl QualityPolicy {
             status,
             message,
         )
+    }
+
+    /// The closed-schema rule's statement about the columns of the records
+    /// the report did not read: never decided, since nothing read shows them.
+    fn unread_columns_check(
+        &self,
+        baseline: &ReportSide,
+        current: &ReportSide,
+        gap: EvidenceGap,
+    ) -> Check {
+        Check {
+            column: None,
+            ..self.column_check(
+                CheckCode::ForbidAddedColumn,
+                "",
+                Expectation::InBaseline,
+                current,
+                Some(baseline),
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
+                "the report read part of its source, and the records it did not read may hold \
+                 a column the baseline lacked",
+            )
+        }
     }
 
     /// A rule about which columns a report has. Its evidence is the column

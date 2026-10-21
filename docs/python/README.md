@@ -1151,6 +1151,12 @@ with `setting_changed` or `setting_unrecorded` on the setting `columns`,
 `column_not_profiled` for a required column the run did not select, or
 `evidence_incomplete`.
 
+`forbid_added_columns` checks the columns this report found, so under
+`scope="full_source"` a report whose column set does not cover its source (a
+JSON or JSONL run stopped by `max_rows`, say) gets one more check, with no
+`column`, left `evidence_incomplete`: the records it did not read may hold a new
+column. The verdict is then inconclusive rather than a pass.
+
 `result.baseline["diagnostics"]` lists the schema changes from the baseline,
 whatever the policy states, at most one per column: the baseline's columns in
 order, then the added ones. A diagnostic is a warning and never moves the

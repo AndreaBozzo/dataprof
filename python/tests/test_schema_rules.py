@@ -133,3 +133,25 @@ def test_the_keywords_are_validated():
         "status": "passed",
         "message": "the required column was profiled",
     }
+
+
+def test_a_closed_schema_is_not_passed_by_a_report_that_read_part_of_its_source(
+    tmp_path: Path,
+):
+    baseline_path = tmp_path / "baseline.jsonl"
+    baseline_path.write_text('{"id": 1}\n{"id": 2}\n')
+    incoming = tmp_path / "incoming.jsonl"
+    incoming.write_text('{"id": 1}\n{"id": 2, "extra": 5}\n')
+    baseline = dp.profile(str(baseline_path))
+    capped = dp.profile(str(incoming), max_rows=1)
+
+    result = capped.check(baseline=baseline, forbid_added_columns=True)
+    assert result.verdict == "inconclusive"
+    assert _outcomes(result) == [
+        ("forbid_added_column", "id", "passed"),
+        ("forbid_added_column", None, "evidence_incomplete:truncated"),
+    ]
+    observed = capped.check(baseline=baseline, forbid_added_columns=True, scope="observed")
+    assert observed.verdict == "pass"
+    full = dp.profile(str(incoming)).check(baseline=baseline, forbid_added_columns=True)
+    assert full.verdict == "fail"
