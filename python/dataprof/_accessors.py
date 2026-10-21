@@ -216,6 +216,8 @@ class _ReportView(_View):
 
     __slots__ = ()
 
+    id = _Field[str | None]()
+    timestamp = _Field[str | None]()
     source = _Field[str]()
     source_type = _Field[str]()
     engine = _Field[str | None]()
