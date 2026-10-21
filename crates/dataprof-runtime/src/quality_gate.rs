@@ -614,9 +614,40 @@ pub struct Diagnostic {
         serialize_with = "serialize_data_types"
     )]
     pub data_type: Option<Sides<DataType>>,
+    /// A recorded setting that can produce the change on unchanged data,
+    /// when one can. Serialized flat, as a check's reason is.
+    #[serde(flatten)]
+    pub setting: Option<SettingDifference>,
     /// A fixed sentence naming the change, free of numbers and names, like a
     /// check's message.
     pub message: String,
+}
+
+/// How a setting that can produce a diagnostic's change compares across the
+/// two reports. A diagnostic carrying one may not reflect a change in the
+/// data.
+///
+/// Only the `identifier_columns` hint is read today: it is the one setting
+/// that sets a column's type, and the `identifier` type comes from nothing
+/// else. An input path that types the same data differently is not
+/// recorded, so it cannot be named here (#906).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SettingDifference {
+    /// The setting differs between the two reports for this column.
+    #[non_exhaustive]
+    SettingChanged {
+        /// The configuration field that differs.
+        setting: String,
+    },
+    /// At least one side did not record the setting, so it cannot be shown
+    /// to be the same.
+    #[non_exhaustive]
+    SettingUnrecorded {
+        /// The configuration field that is unrecorded.
+        setting: String,
+    },
 }
 
 /// The type names a flat summary and the Python bindings use, so a
@@ -1621,7 +1652,14 @@ fn schema_diagnostics(
         code,
         column: column.to_string(),
         data_type,
+        setting: None,
         message: message.to_string(),
+    };
+    // Whether each side's identifier hint names the column, `None` when the
+    // side did not record its hints.
+    let identified = |side: &ReportSide, column: &str| {
+        side.identifier_order()
+            .map(|names| names.iter().any(|name| name == column))
     };
     let named = |names: &[String], column: &str| names.iter().any(|name| name == column);
     delta
@@ -1661,7 +1699,7 @@ fn schema_diagnostics(
                 (Some(type_a), Some(type_b))
                     if type_a != type_b && a.populated()? && b.populated()? =>
                 {
-                    Some(diagnostic(
+                    let mut retyped = diagnostic(
                         DiagnosticCode::ColumnTypeChanged,
                         column,
                         Some(Sides {
@@ -1669,7 +1707,29 @@ fn schema_diagnostics(
                             b: type_b.clone(),
                         }),
                         "this column holds values on both sides, and its inferred type differs",
-                    ))
+                    );
+                    // Only the identifier hint gives a column the identifier
+                    // type, so the hint can explain a change only to or from
+                    // it.
+                    if *type_a == DataType::Identifier || *type_b == DataType::Identifier {
+                        let setting = "identifier_columns".to_string();
+                        retyped.setting =
+                            match (identified(baseline, column), identified(current, column)) {
+                                (Some(a), Some(b)) if a == b => None,
+                                (Some(_), Some(_)) => {
+                                    Some(SettingDifference::SettingChanged { setting })
+                                }
+                                _ => Some(SettingDifference::SettingUnrecorded { setting }),
+                            };
+                        if retyped.setting.is_some() {
+                            retyped.message = "this column holds values on both sides, and its \
+                                               inferred type differs; the identifier hint, \
+                                               which sets the type, is not shown to be the \
+                                               same on both sides"
+                                .to_string();
+                        }
+                    }
+                    Some(retyped)
                 }
                 _ => None,
             }

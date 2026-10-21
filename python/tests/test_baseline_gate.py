@@ -429,3 +429,17 @@ def test_a_0_11_summary_baseline_reports_schema_changes():
     retyped = dp.profile({"city": [1, 2]})
     result = retyped.check(baseline=legacy, max_null_percentage_increase=100)
     assert _listed(result)[0]["data_type"] == {"a": "string", "b": "integer"}
+
+
+def test_a_type_change_the_identifier_hint_explains_names_the_hint():
+    data = {"id": [1, 2], "n": [5, 6]}
+    plain = dp.profile(data)
+    hinted = dp.profile(data, identifier_columns=["id"])
+    result = hinted.check(baseline=plain, max_null_percentage_increase={"n": 0})
+
+    assert result.verdict == "pass"
+    [retyped] = _listed(result)
+    assert retyped["data_type"] == {"a": "integer", "b": "identifier"}
+    assert (retyped["reason"], retyped["setting"]) == ("setting_changed", "identifier_columns")
+    # A data-driven change carries no reason.
+    assert "reason" not in _listed(dp.profile(AFTER).check(baseline=dp.profile(BEFORE), **DRIFT))[0]

@@ -645,6 +645,26 @@ fn a_schema_change_is_a_diagnostic_and_moves_no_verdict() {
             (DiagnosticCode::ColumnAdded, "new"),
         ]
     );
+    let messages: Vec<_> = result
+        .baseline
+        .as_ref()
+        .unwrap()
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(
+        messages[1..],
+        [
+            "this column held values in the baseline, and every value read for it in the report \
+             is null",
+            // Absence and projection look the same in a report.
+            "the baseline profiled a column the report has no profile for; a report does not \
+             record whether a column left the source or was not selected",
+            "the report profiled a column the baseline did not, so the baseline has nothing to \
+             measure its change from",
+        ]
+    );
     let document = serde_json::to_value(&result).unwrap();
     let retyped = &document["baseline"]["diagnostics"][0];
     assert_eq!(
@@ -745,5 +765,45 @@ fn a_flat_summary_baseline_gives_the_same_diagnostics_and_omits_what_it_lacks() 
             (DiagnosticCode::ColumnRemoved, "gone"),
             (DiagnosticCode::ColumnAdded, "new"),
         ]
+    );
+}
+
+#[test]
+fn a_type_change_the_identifier_hint_explains_names_the_hint() {
+    let keys = csv("id,n\n1,5\n2,6\n");
+    let hinted = Profiler::new()
+        .identifier_columns(names(&["id"]))
+        .analyze_file(keys.path())
+        .unwrap();
+    let plain = Profiler::new().analyze_file(keys.path()).unwrap();
+    let policy = QualityPolicy::new().max_null_percentage_increase("n", 0.0);
+
+    // Same data: only the hint retyped `id`, and the diagnostic says so.
+    let result = against(&policy, &hinted, &plain);
+    assert_eq!(result.verdict, Verdict::Pass);
+    let document = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        document["baseline"]["diagnostics"],
+        json!([{
+            "code": "column_type_changed",
+            "column": "id",
+            "data_type": {"a": "integer", "b": "identifier"},
+            "reason": "setting_changed",
+            "setting": "identifier_columns",
+            "message": "this column holds values on both sides, and its inferred type differs; \
+                        the identifier hint, which sets the type, is not shown to be the same \
+                        on both sides",
+        }])
+    );
+
+    // A baseline from before 0.10 recorded no hints, so the hint cannot be
+    // shown to be the same.
+    let mut summary: Value = serde_json::from_str(&plain.summary_json().unwrap()).unwrap();
+    summary.as_object_mut().unwrap().remove("schema_version");
+    let old = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    let document = serde_json::to_value(policy.evaluate_against(&hinted, &old).unwrap()).unwrap();
+    assert_eq!(
+        document["baseline"]["diagnostics"][0]["reason"],
+        json!("setting_unrecorded")
     );
 }

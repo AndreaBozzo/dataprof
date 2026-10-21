@@ -1132,6 +1132,13 @@ verdict; it is `[]` when nothing changed.
 Column order is not compared. A flat summary that does not record a column's
 counts reports neither of the last two for it.
 
+The type is the inferred one, so a setting can change it on unchanged data.
+`identifier_columns` gives a column the `identifier` type, and a type change
+to or from `identifier` under a hint that differs carries `"reason":
+"setting_changed"` and `"setting": "identifier_columns"`
+(`setting_unrecorded` when a side did not record its hints). An input path
+that types the same data differently is not recorded, so it is not named.
+
 ```python
 {"code": "column_type_changed", "column": "amount",
  "data_type": {"a": "integer", "b": "string"},
