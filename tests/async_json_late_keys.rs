@@ -197,3 +197,55 @@ async fn a_key_only_rows_past_a_row_cap_carry_is_not_a_column() {
         [("id".to_string(), 2, 0), ("pad".to_string(), 2, 1)]
     );
 }
+
+/// The column lists of the `SchemaDetected` events, one record per chunk.
+async fn schema_events(contents: &str, max_rows: Option<u64>) -> Vec<Vec<String>> {
+    use std::sync::{Arc, Mutex};
+
+    let lists = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&lists);
+    let sink = dataprof::ProgressSink::Callback(Arc::new(move |event| {
+        if let dataprof::ProgressEvent::SchemaDetected { column_names } = event {
+            captured.lock().unwrap().push(column_names);
+        }
+    }));
+    let mut profiler = Profiler::new()
+        .chunk_size(ChunkSize::Fixed(1))
+        .progress_interval(std::time::Duration::ZERO)
+        .progress_sink(sink);
+    if let Some(rows) = max_rows {
+        profiler = profiler.stop_when(StopCondition::MaxRows(rows));
+    }
+    let info =
+        AsyncSourceInfo::new("late-keys", FileFormat::Jsonl).size_hint(Some(contents.len() as u64));
+    profiler
+        .profile_stream(BytesSource::new(contents.as_bytes().to_vec().into(), info))
+        .await
+        .unwrap();
+    let lists = lists.lock().unwrap().clone();
+    lists
+}
+
+#[tokio::test]
+async fn a_late_key_is_announced_by_a_second_schema_event() {
+    let names = |list: &[&str]| list.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    let contents = jsonl(&[
+        r#"{"id": 1}"#,
+        r#"{"id": 2, "late": 7}"#,
+        r#"{"id": 3}"#,
+        r#"{"id": 4, "later": 8}"#,
+    ]);
+
+    // Each event extends the last; a chunk with no new key sends none (#1034).
+    assert_eq!(
+        schema_events(&contents, None).await,
+        [
+            names(&["id"]),
+            names(&["id", "late"]),
+            names(&["id", "late", "later"])
+        ]
+    );
+    // A cap that stops before the late key never makes it a column, so it is
+    // never announced either.
+    assert_eq!(schema_events(&contents, Some(1)).await, [names(&["id"])]);
+}
