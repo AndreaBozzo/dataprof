@@ -1169,6 +1169,9 @@ impl AsyncStreamingProfiler {
         // `headers` through a chunk's `new_columns` and is registered by the
         // first row that covers it.
         let mut registered = headers.len();
+        // Columns the consumed rows reach, whether or not the sampler kept
+        // them. A column only rejected rows reach is still in the source read.
+        let mut discovered = registered;
 
         let header_bytes = total_bytes;
         progress_tracker.emit_started(estimated_total.map(|rows| rows as usize), size_hint);
@@ -1206,6 +1209,8 @@ impl AsyncStreamingProfiler {
                     break;
                 }
 
+                // Consumed from here on, kept by the sampler or not.
+                discovered = discovered.max(values.len().min(headers.len()));
                 if !sampler.accept() {
                     continue;
                 }
@@ -1336,6 +1341,12 @@ impl AsyncStreamingProfiler {
                 &containers,
             );
             sampled_rows += 1;
+        }
+        // A column the consumed rows reach but no folded row covers is missing
+        // from every folded row: none was read after it appeared, or it would
+        // cover it. Columns only rows past a row cap reach are not registered.
+        for header in &headers[registered..discovered] {
+            column_stats.init_column_with_missing(header, sampled_rows);
         }
 
         Ok((
