@@ -708,6 +708,16 @@ where
         .map_err(|error| <D::Error as serde::de::Error>::custom(format!("schema_version: {error}")))
 }
 
+/// An absent value belongs to a legacy summary; an explicit null does not.
+fn summary_analysis_settings<'de, D>(deserializer: D) -> Result<Option<AnalysisSettings>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("analysis_settings: {error}"))
+    })
+}
+
 /// The fields of a flat summary a comparison reads. Everything else in the
 /// document is ignored.
 #[derive(serde::Deserialize)]
@@ -725,7 +735,7 @@ struct Summary {
     semantic_hint_bindings: Vec<SemanticHintBinding>,
     /// Absent before 0.13. An explicit null is malformed, as in the
     /// canonical reader and Python's `from_dict()`.
-    #[serde(default, deserialize_with = "crate::profile_report::present_value")]
+    #[serde(default, deserialize_with = "summary_analysis_settings")]
     analysis_settings: Option<AnalysisSettings>,
 }
 
