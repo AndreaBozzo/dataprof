@@ -17,7 +17,8 @@ use dataprof::{DataProfilerError, ProfileReport, SemanticHints};
 ///
 /// The category drives the exception type so callers can `except` on the
 /// idiomatic Python class instead of string-matching a `RuntimeError`:
-///   * bad user input (config, semantic hints, unsupported format) → `ValueError`
+///   * bad user input (config, semantic hints, unsupported format, a malformed
+///     or unsupported database connection string) → `ValueError`
 ///   * malformed data — CSV *and* JSON alike → `ValueError`
 ///   * a missing file → `FileNotFoundError`
 ///   * permission / other I/O trouble → `PermissionError` / `IOError`
@@ -152,7 +153,8 @@ fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::CsvParsingError { .. }
         | DataProfilerError::EncodingError { .. }
         | DataProfilerError::BinaryInput { .. }
-        | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
+        | DataProfilerError::UnsupportedFormat { .. }
+        | DataProfilerError::DatabaseConfigError { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
         // A read that failed because the source changed under it: an I/O
         // condition a caller can retry, not an analysis failure (#865).
