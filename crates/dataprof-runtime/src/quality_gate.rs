@@ -1538,14 +1538,15 @@ impl QualityPolicy {
     /// both reports profiled, in the baseline's order. A column only the
     /// evaluated report has gets no rule unless the policy names it.
     fn null_increase_checks(&self, delta: &ReportDelta) -> Vec<Check> {
+        let index = ColumnIndex::new(delta);
         let mut checks = Vec::new();
         for (column, points) in &self.max_null_percentage_increase {
-            checks.push(self.null_increase_check(delta, column, *points));
+            checks.push(self.null_increase_check(delta, &index, column, *points));
         }
         if let Some(points) = self.max_null_percentage_increase_any {
             for column in &delta.schema.common {
                 if !self.max_null_percentage_increase.contains_key(column) {
-                    checks.push(self.null_increase_check(delta, column, points));
+                    checks.push(self.null_increase_check(delta, &index, column, points));
                 }
             }
         }
@@ -1557,8 +1558,14 @@ impl QualityPolicy {
     /// coverage is its evidence, and only the null-token definition can make
     /// the same data count differently. A column's own rule does not depend on
     /// the rest of the column set.
-    fn null_increase_check(&self, delta: &ReportDelta, column: &str, points: f64) -> Check {
-        let change = delta.columns.iter().find(|change| change.name == column);
+    fn null_increase_check(
+        &self,
+        delta: &ReportDelta,
+        index: &ColumnIndex<'_>,
+        column: &str,
+        points: f64,
+    ) -> Check {
+        let change = index.changes.get(column).copied();
         let (null_pct_a, null_pct_b, null_pct_delta) = change.map_or(
             (None, None, None),
             |ColumnChange {
@@ -1568,9 +1575,8 @@ impl QualityPolicy {
                  ..
              }| (*null_pct_a, *null_pct_b, *null_pct_delta),
         );
-        let named = |names: &[String]| names.iter().any(|name| name == column);
-        let in_report = named(&delta.schema.common) || named(&delta.schema.added);
-        let in_baseline = named(&delta.schema.common) || named(&delta.schema.removed);
+        let in_report = index.in_report.contains(column);
+        let in_baseline = index.in_baseline.contains(column);
         let evidence = Sides {
             a: delta.reports.a.evidence,
             b: delta.reports.b.evidence,
@@ -1749,6 +1755,38 @@ fn schema_diagnostics(
             }
         })
         .collect()
+}
+
+/// A delta's columns by name, built once per evaluation so a rule over every
+/// shared column does not rescan the schema for each one.
+struct ColumnIndex<'a> {
+    changes: HashMap<&'a str, &'a ColumnChange>,
+    /// Columns the evaluated report profiled.
+    in_report: HashSet<&'a str>,
+    /// Columns the baseline profiled.
+    in_baseline: HashSet<&'a str>,
+}
+
+impl<'a> ColumnIndex<'a> {
+    fn new(delta: &'a ReportDelta) -> Self {
+        let schema = &delta.schema;
+        let names = |lists: [&'a [String]; 2]| {
+            lists
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        };
+        Self {
+            changes: delta
+                .columns
+                .iter()
+                .map(|change| (change.name.as_str(), change))
+                .collect(),
+            in_report: names([&schema.common, &schema.added]),
+            in_baseline: names([&schema.common, &schema.removed]),
+        }
+    }
 }
 
 fn baseline_reading(
