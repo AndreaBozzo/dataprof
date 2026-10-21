@@ -38,6 +38,21 @@ impl DataType {
             Self::Nested => "nested",
         }
     }
+
+    /// The type `name()` spells as `name`, or `None` for a name this build does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "string" => Self::String,
+            "identifier" => Self::Identifier,
+            "integer" => Self::Integer,
+            "float" => Self::Float,
+            "date" => Self::Date,
+            "boolean" => Self::Boolean,
+            "nested" => Self::Nested,
+            _ => return None,
+        })
+    }
 }
 
 /// Mutually exclusive lexical form of a single non-null value.
@@ -323,6 +338,8 @@ mod type_homogeneity_tests {
 mod data_type_name_tests {
     use super::*;
 
+    // The one list a new variant has to join: it pins the spelling and checks
+    // that from_name reads it back.
     #[test]
     fn every_data_type_has_its_lowercase_name() {
         for (data_type, name) in [
@@ -335,6 +352,13 @@ mod data_type_name_tests {
             (DataType::Nested, "nested"),
         ] {
             assert_eq!(data_type.name(), name);
+            assert_eq!(DataType::from_name(data_type.name()), Some(data_type));
         }
+    }
+
+    #[test]
+    fn an_unknown_name_has_no_data_type() {
+        assert_eq!(DataType::from_name("decimal"), None);
+        assert_eq!(DataType::from_name("Integer"), None);
     }
 }

@@ -742,7 +742,9 @@ impl ReportSide {
             columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
                 name: column.name,
                 null_pct: at_precision(column.null_percentage),
-                data_type: column.data_type.as_deref().and_then(summary_data_type),
+                // A name this build does not know comes from a later release and
+                // reads as unrecorded, since this build has no type to name it with.
+                data_type: column.data_type.as_deref().and_then(DataType::from_name),
                 counts: column.total_count.zip(column.null_count),
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
@@ -846,22 +848,6 @@ struct SummaryColumn {
     total_count: Option<usize>,
     #[serde(default)]
     null_count: Option<usize>,
-}
-
-/// A flat summary's lowercase type name. A name this build does not know
-/// comes from a later release and reads as unrecorded, since this build has
-/// no type to name it with.
-fn summary_data_type(name: &str) -> Option<DataType> {
-    Some(match name {
-        "string" => DataType::String,
-        "identifier" => DataType::Identifier,
-        "integer" => DataType::Integer,
-        "float" => DataType::Float,
-        "date" => DataType::Date,
-        "boolean" => DataType::Boolean,
-        "nested" => DataType::Nested,
-        _ => return None,
-    })
 }
 
 #[derive(serde::Deserialize)]
