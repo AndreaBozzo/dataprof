@@ -260,7 +260,7 @@ def test_report_members_survive_roundtrip(rich_report, tmp_path, via):
         "ProfileReport",
         # A flat summary omits identity/source/confidence metadata. Only the
         # canonical JSON round trips can preserve that persistence document.
-        skip=_UNCOMPARABLE_REPORT_MEMBERS | ({"to_json"} if via == "from_dict" else set()),
+        skip=_UNCOMPARABLE_REPORT_MEMBERS | ({"to_json", "id", "timestamp"} if via == "from_dict" else set()),
     )
 
 
@@ -312,7 +312,7 @@ def test_sparse_report_survives_roundtrip(sparse_report, tmp_path, via):
         sparse_report,
         restored,
         "ProfileReport",
-        skip=_UNCOMPARABLE_REPORT_MEMBERS | ({"to_json"} if via == "from_dict" else set()),
+        skip=_UNCOMPARABLE_REPORT_MEMBERS | ({"to_json", "id", "timestamp"} if via == "from_dict" else set()),
     )
     _assert_members_agree(native_quality, restored.quality, "DataQualityMetrics")
 
