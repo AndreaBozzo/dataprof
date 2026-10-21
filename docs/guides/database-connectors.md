@@ -57,7 +57,7 @@ for the pip-from-sdist form.
 |---|---|---|
 | PostgreSQL | `postgres` | `postgres://user:pass@host:5432/dbname` |
 | MySQL/MariaDB | `mysql` | `mysql://user:pass@host:3306/dbname` |
-| SQLite | `sqlite` | `sqlite:///path/to/db.db` or `/path/to/db.db` |
+| SQLite | `sqlite` | `sqlite:///path/to/db.db`, `sqlite://relative/path.db`, `sqlite::memory:`, or `/path/to/db.db` |
 
 ## Quick Start
 
@@ -168,14 +168,20 @@ Examples:
 
 ```
 sqlite:///path/to/database.db
+sqlite://relative/path.db
+sqlite::memory:
 /path/to/database.db
 :memory:
 ```
 
 Examples:
-- `sqlite:///home/user/data.db`
-- `/var/data/app.sqlite`
+- `sqlite:///home/user/data.db` (absolute path)
+- `sqlite://relative/path.db` (relative path)
+- `sqlite::memory:` (in-memory database for testing)
+- `/var/data/app.sqlite` (bare absolute path)
 - `:memory:` (in-memory database for testing)
+
+SQLite URLs do not support usernames, passwords, or port numbers; URLs specifying credentials or ports are rejected.
 
 ## DatabaseConfig Reference
 

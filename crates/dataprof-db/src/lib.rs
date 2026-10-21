@@ -96,7 +96,7 @@ pub fn create_connector(
         )?))
     } else if connection_str.starts_with("mysql://") {
         Ok(Box::new(connectors::mysql::MySqlConnector::new(config)?))
-    } else if connection_str.starts_with("sqlite://")
+    } else if connection_str.starts_with("sqlite:")
         || connection_str.ends_with(".db")
         || connection_str.ends_with(".sqlite")
         || connection_str == ":memory:"

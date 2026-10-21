@@ -42,6 +42,30 @@ impl SqliteConnector {
             });
         }
 
+        if connection_info.scheme == "sqlite"
+            && (connection_info.username.is_some()
+                || connection_info.password.is_some()
+                || connection_info.port.is_some())
+        {
+            let mut found = Vec::new();
+            if let Some(user) = &connection_info.username {
+                found.push(format!("username ({user})"));
+            }
+            if connection_info.password.is_some() {
+                found.push("password".to_string());
+            }
+            if let Some(port) = connection_info.port {
+                found.push(format!("port {port}"));
+            }
+
+            return Err(DataProfilerError::DatabaseConfigError {
+                message: format!(
+                    "SQLite URLs do not support credentials or ports: found {}. Supported forms: sqlite:///absolute/path.db, sqlite://relative/path.db, sqlite::memory:, or a bare file path",
+                    found.join(", ")
+                ),
+            });
+        }
+
         Ok(Self {
             config,
             connection_info,
@@ -238,5 +262,95 @@ impl DatabaseConnector for SqliteConnector {
 impl crate::DecodeStructured for sqlx::sqlite::SqliteRow {
     fn decode_structured(&self, _index: usize) -> Option<crate::StructuredValue> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sqlite_url_with_username() {
+        let config = DatabaseConfig {
+            connection_string: "sqlite://alice@localhost/data.db".to_string(),
+            ..Default::default()
+        };
+        let err = match SqliteConnector::new(config) {
+            Ok(_) => panic!("URL with username must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("username (alice)"), "should name the found username: {err}");
+        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
+        assert!(err.contains("sqlite://relative/path.db"), "should name supported forms: {err}");
+        assert!(err.contains("sqlite::memory:"), "should name supported forms: {err}");
+        assert!(err.contains("bare file path"), "should name supported forms: {err}");
+    }
+
+    #[test]
+    fn rejects_sqlite_url_with_password() {
+        let config = DatabaseConfig {
+            connection_string: "sqlite://:s3cret@localhost/data.db".to_string(),
+            ..Default::default()
+        };
+        let err = match SqliteConnector::new(config) {
+            Ok(_) => panic!("URL with password must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("password"), "should name password: {err}");
+        assert!(!err.contains("s3cret"), "password must not leak: {err}");
+        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
+    }
+
+    #[test]
+    fn rejects_sqlite_url_with_port() {
+        let config = DatabaseConfig {
+            connection_string: "sqlite://localhost:5432/data.db".to_string(),
+            ..Default::default()
+        };
+        let err = match SqliteConnector::new(config) {
+            Ok(_) => panic!("URL with port must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("port 5432"), "should name the found port: {err}");
+        assert!(err.contains("sqlite:///absolute/path.db"), "should name supported forms: {err}");
+    }
+
+    #[test]
+    fn rejects_sqlite_url_with_credentials_and_port() {
+        let config = DatabaseConfig {
+            connection_string: "sqlite://user:secret@localhost:5432/data.db".to_string(),
+            ..Default::default()
+        };
+        let err = match SqliteConnector::new(config) {
+            Ok(_) => panic!("URL with credentials and port must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("username (user)"), "should name username: {err}");
+        assert!(err.contains("password"), "should name password: {err}");
+        assert!(err.contains("port 5432"), "should name port: {err}");
+        assert!(!err.contains("secret"), "password must not leak: {err}");
+    }
+
+    #[test]
+    fn supported_sqlite_forms_construct_connector() {
+        let forms = [
+            "sqlite:///absolute/path.db",
+            "sqlite://relative/path.db",
+            "sqlite::memory:",
+            ":memory:",
+            "/path/to/database.db",
+            "relative/path.db",
+        ];
+
+        for form in forms {
+            let config = DatabaseConfig {
+                connection_string: form.to_string(),
+                ..Default::default()
+            };
+            assert!(
+                SqliteConnector::new(config).is_ok(),
+                "supported form must construct a connector: {form}"
+            );
+        }
     }
 }
