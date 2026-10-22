@@ -96,13 +96,31 @@ pub struct RowCompletenessSummary {
 pub struct AccuracyMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
+    /// Failures of the name-based range rules (age, percentage, count, year):
+    /// a value breaking two of them adds two. A diagnostic; the score reads
+    /// `rule_violating_values`.
     pub range_violations: usize,
+    /// Negative values in positive-only columns. A diagnostic; the score
+    /// reads `rule_violating_values`.
     pub negative_values_in_positive: usize,
     /// Finite numeric values examined across all columns. 0 means the
     /// dimension had nothing to assess and it is excluded from the overall
     /// score.
     #[serde(default)]
     pub numeric_values_checked: usize,
+    /// Finite numeric values of the columns a range or sign rule applies to:
+    /// the units of the rule component. 0 means no rule applied, and the
+    /// component takes nothing off the score. Additive: documents written
+    /// before it read as 0, so the schema does not require it.
+    #[serde(default)]
+    #[schemars(default)]
+    pub rule_values_checked: usize,
+    /// Of `rule_values_checked`, the values breaking at least one rule, each
+    /// counted once however many rules it breaks. Additive, like
+    /// `rule_values_checked`.
+    #[serde(default)]
+    #[schemars(default)]
+    pub rule_violating_values: usize,
 }
 
 /// Timeliness metrics (ISO 8000-8).
@@ -314,6 +332,8 @@ impl QualityMetrics {
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 0,
+                rule_values_checked: 0,
+                rule_violating_values: 0,
             }),
             timeliness: Some(TimelinessMetrics {
                 future_dates_count: 0,
@@ -396,13 +416,21 @@ impl QualityMetrics {
     /// Score for the accuracy dimension (0-100), or `None` when the
     /// dimension was not computed or no numeric values were found.
     ///
-    /// `100 - outlier_ratio`, penalized by range violations and negative
-    /// values in positive-only columns as a share of the numeric values
-    /// checked.
+    /// `100 - outlier_ratio`, penalized by the share of values breaking a
+    /// range or sign rule among the values of the columns those rules apply
+    /// to. Columns under no rule add nothing to either side (#1005).
     pub fn accuracy_score(&self) -> Option<f64> {
         let a = self.accuracy.as_ref().filter(|a| a.is_assessed())?;
-        let violation_ratio = (a.range_violations + a.negative_values_in_positive) as f64
-            / a.numeric_values_checked as f64;
+        let violation_ratio = if a.rule_values_checked > 0 {
+            a.rule_violating_values as f64 / a.rule_values_checked as f64
+        } else {
+            // No rule applied, so no failure was counted either, unless the
+            // report predates the rule units: through 0.12 it summed the
+            // failures over every numeric value, and a report without saved
+            // scores (0.11) still scores as its release did.
+            (a.range_violations + a.negative_values_in_positive) as f64
+                / a.numeric_values_checked as f64
+        };
         Some((100.0 - a.outlier_ratio - violation_ratio * 100.0).clamp(0.0, 100.0))
     }
 
@@ -1234,6 +1262,8 @@ mod tests {
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 100,
+                rule_values_checked: 0,
+                rule_violating_values: 0,
             }),
             timeliness: Some(TimelinessMetrics {
                 future_dates_count: 0,
@@ -1461,6 +1491,28 @@ mod tests {
 
     #[test]
     fn test_range_and_negative_violations_lower_accuracy_score() {
+        // 20 values under a rule, 2 of them violating: one breaks two range
+        // rules and the sign rule, one a range rule. The penalty is 2 in 20,
+        // whatever the per-rule failure counts and the numeric values beside.
+        let mut metrics = perfect_assessed();
+        if let Some(ref mut a) = metrics.accuracy {
+            a.outlier_ratio = 10.0;
+            a.range_violations = 3;
+            a.negative_values_in_positive = 1;
+            a.rule_values_checked = 20;
+            a.rule_violating_values = 2;
+        }
+        let score = metrics
+            .accuracy_score()
+            .expect("accuracy should be assessed");
+        assert!((score - 80.0).abs() < 0.01, "{score}");
+    }
+
+    /// A report written before the rule units were recorded (0.11, which
+    /// saved no scores) scores as its release did: failures over every
+    /// numeric value.
+    #[test]
+    fn accuracy_without_rule_units_scores_as_recorded() {
         let mut metrics = perfect_assessed();
         if let Some(ref mut a) = metrics.accuracy {
             a.outlier_ratio = 10.0;
@@ -1470,7 +1522,7 @@ mod tests {
         let score = metrics
             .accuracy_score()
             .expect("accuracy should be assessed");
-        assert!((score - 80.0).abs() < 0.01);
+        assert!((score - 80.0).abs() < 0.01, "{score}");
     }
 
     #[test]
@@ -1770,6 +1822,8 @@ mod tests {
                         range_violations: 1,
                         negative_values_in_positive: 1,
                         numeric_values_checked: 16,
+                        rule_values_checked: 8,
+                        rule_violating_values: 1,
                     }),
                     ..QualityMetrics::default()
                 },

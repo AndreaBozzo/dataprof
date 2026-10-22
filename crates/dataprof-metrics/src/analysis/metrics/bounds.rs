@@ -479,11 +479,17 @@ fn collect_shares(
             if metrics.outlier_values_checked > 0 {
                 outliers.push(counts(metrics.outliers, metrics.outlier_values_checked, 1));
             }
-            violations.push(counts(
-                metrics.range_violations + metrics.negative_values_in_positive,
-                metrics.numeric_values_checked,
-                AccuracyCalculator::max_violations_per_value(&profile.name, positive_columns),
-            ));
+            // A column under no range or sign rule has no units in the rule
+            // share; one under a rule fails a value at most once (#1005). A
+            // ruled column takes part even when its sample held no number,
+            // since the values outside the sample may hold some.
+            if AccuracyCalculator::is_ruled(&profile.name, positive_columns) {
+                violations.push(counts(
+                    metrics.rule_violating_values,
+                    metrics.rule_values_checked,
+                    1,
+                ));
+            }
         }
         if wants(QualityDimension::Timeliness) && temporal_columns.contains(&profile.name) {
             let metrics = timeliness.calculate(&single, temporal_columns, &[], column_profiles)?;
@@ -1205,5 +1211,28 @@ mod tests {
             interval_under("price"),
             "average_price"
         );
+    }
+
+    #[test]
+    fn a_ruled_column_whose_sample_holds_no_number_still_bounds_the_rule_share() {
+        // `discount_percent` holds 20,000 values; its sample of 10,000 is all
+        // text, but the unseen half may be numbers above 100. The only numbers
+        // seen are 20 clean ones in an unruled column, read in full. Leaving
+        // the ruled column out would bound accuracy to exactly 100, while the
+        // whole source may score 0 (#1048).
+        let data = HashMap::from([
+            (
+                "discount_percent".to_string(),
+                strings((0..10_000).map(|index| format!("n/a-{index}"))),
+            ),
+            ("reading".to_string(), strings(std::iter::repeat_n(1, 20))),
+        ]);
+        let profiles = vec![
+            profile("discount_percent", DataType::String, 20_000, 0),
+            profile("reading", DataType::Integer, 20_000, 19_980),
+        ];
+        assert_eq!(score(&data, &profiles, QualityDimension::Accuracy), 100.0);
+        let accuracy = interval(&bounds_for(&data, &profiles), QualityDimension::Accuracy);
+        assert!(contains(accuracy, 0.0), "{accuracy:?}");
     }
 }

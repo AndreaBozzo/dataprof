@@ -718,3 +718,35 @@ an object without `pattern_locale` or `columns`, an unknown locale value, and a
 `columns` object of another shape are malformed.
 A field a later release adds is ignored by this reader. Stored v1 reports
 remain valid.
+
+## v1 additive change: `metric_semantics.range_rule_count` and the accuracy rule units
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `range_rule_count` | `"violating_values"` | what the range and sign rules behind the accuracy score count |
+
+`quality.metrics.accuracy` gains the two counts it defines (#1005):
+
+| field | meaning |
+| --- | --- |
+| `rule_values_checked` | finite numeric values of the columns a range rule (`age`, percentage, `count`, `year` names) or the sign rule (`positive_columns`) applies to |
+| `rule_violating_values` | of those, the values breaking at least one rule, each counted once |
+
+The accuracy score subtracts `100 * rule_violating_values / rule_values_checked`
+from `100 - outlier_ratio` (9 violating values of 20 take off 45 points);
+columns under no rule add nothing to either side,
+and with no such column the rules take nothing off. Through 0.12 every rule
+failure counted, a negative percentage hinted positive twice, and the failures
+were divided by `numeric_values_checked`, the numeric values of every column,
+so clean columns beside a broken one raised its score. `range_violations` and
+`negative_values_in_positive` keep counting failures per rule, as diagnostics.
+
+A report that records no `range_rule_count` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`. Both counts default to 0 when absent, and such a
+document still scores its range and sign failures over
+`numeric_values_checked`, as the release that wrote it did. The fields are
+additive and not `required`, so stored v1 reports remain valid; an explicit
+`null` for `range_rule_count` is malformed, as for `text_length_unit`.

@@ -2226,6 +2226,8 @@ enum Definition {
     NullTokens,
     /// What a pattern match counts, behind the validity score.
     PatternMatchCount,
+    /// What the range and sign rules count, behind the accuracy score.
+    RangeRuleCount,
 }
 
 impl Definition {
@@ -2233,6 +2235,7 @@ impl Definition {
         match self {
             Self::NullTokens => "null_tokens",
             Self::PatternMatchCount => "pattern_match_count",
+            Self::RangeRuleCount => "range_rule_count",
         }
     }
 
@@ -2244,6 +2247,7 @@ impl Definition {
         match self {
             Self::NullTokens => agree(&a.null_tokens, &b.null_tokens),
             Self::PatternMatchCount => agree(&a.pattern_match_count, &b.pattern_match_count),
+            Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
         }
     }
 }
@@ -2252,9 +2256,15 @@ impl Definition {
 /// feed no score.
 fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definition] {
     match dimension {
-        None | Some(QualityDimension::Validity) => {
+        None => &[
+            Definition::NullTokens,
+            Definition::PatternMatchCount,
+            Definition::RangeRuleCount,
+        ],
+        Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
         }
+        Some(QualityDimension::Accuracy) => &[Definition::NullTokens, Definition::RangeRuleCount],
         Some(_) => &[Definition::NullTokens],
     }
 }

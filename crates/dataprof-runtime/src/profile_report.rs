@@ -1,7 +1,7 @@
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, Locale, NullTokenSet,
-    PatternMatchCount, QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator,
-    TextLengthUnit,
+    PatternMatchCount, QualityScoreWeights, RangeRuleCount, SemanticHintBinding,
+    ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -123,6 +123,17 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "ShapeMomentEstimator")]
     pub shape_moments: Option<ShapeMomentEstimator>,
+    /// What the range and sign rules behind the accuracy score count.
+    ///
+    /// Absent means not recorded: through 0.12 every rule failure counted,
+    /// over the numeric values of every column.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "RangeRuleCount")]
+    pub range_rule_count: Option<RangeRuleCount>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -143,6 +154,7 @@ impl MetricSemantics {
             null_tokens: Some(NullTokenSet::CommonMarkers),
             pattern_match_count: Some(PatternMatchCount::Validated),
             shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
+            range_rule_count: Some(RangeRuleCount::ViolatingValues),
         }
     }
 
@@ -156,11 +168,13 @@ impl MetricSemantics {
             null_tokens,
             pattern_match_count,
             shape_moments,
+            range_rule_count,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
             && pattern_match_count.is_some()
             && shape_moments.is_some()
+            && range_rule_count.is_some()
     }
 }
 
@@ -868,6 +882,9 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
+        // Written always since 0.13 (#1005), absent before.
+        ("/$defs/AccuracyMetrics/required", "rule_values_checked"),
+        ("/$defs/AccuracyMetrics/required", "rule_violating_values"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)
@@ -1323,6 +1340,7 @@ mod tests {
             "null_tokens": "common_markers",
             "pattern_match_count": "validated",
             "shape_moments": "adjusted_sample",
+            "range_rule_count": "violating_values",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1352,6 +1370,8 @@ mod tests {
             json!({"pattern_match_count": null}),
             json!({"shape_moments": "population"}),
             json!({"shape_moments": null}),
+            json!({"range_rule_count": "rule_failures"}),
+            json!({"range_rule_count": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();
