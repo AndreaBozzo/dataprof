@@ -18,7 +18,9 @@ pub enum ProgressEvent {
         processing_speed: f64,
         percentage: Option<f64>,
     },
-    /// Column schema has been detected (emitted once, after first chunk).
+    /// Column schema has been detected: emitted after the first chunk, and
+    /// again with the full list whenever a later column joins (an async JSON
+    /// key first seen after the first chunk). Each list extends the last.
     SchemaDetected { column_names: Vec<String> },
     /// Profiling has finished (successfully or via early stop).
     Finished {

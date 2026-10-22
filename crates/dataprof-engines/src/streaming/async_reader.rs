@@ -1175,7 +1175,7 @@ impl AsyncStreamingProfiler {
 
         let header_bytes = total_bytes;
         progress_tracker.emit_started(estimated_total.map(|rows| rows as usize), size_hint);
-        progress_tracker.emit_schema(headers.clone());
+        progress_tracker.emit_schema(&headers);
 
         // A row cap is a hard ceiling on what the caller authorized us to
         // analyze, so it is checked per row. Evaluating it only per chunk
@@ -1252,6 +1252,9 @@ impl AsyncStreamingProfiler {
             }
 
             total_rows += rows_consumed;
+            // A key first seen in this chunk is a column once a consumed row
+            // reaches it; tell progress consumers before the chunk's update.
+            progress_tracker.emit_schema(&headers[..discovered]);
 
             if hit_row_limit {
                 // Reaching the cap is only a truncation if a row actually
