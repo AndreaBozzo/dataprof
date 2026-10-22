@@ -145,7 +145,7 @@ meaning the computation was asked for and broke, with the message in
 | `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns`, `total_cells` |
 | `consistency` | `data_type_consistency`, `format_violations`, `encoding_issues`, `values_checked` |
 | `uniqueness` | `duplicate_rows`, `duplicate_rows_approximate`, `key_uniqueness`, `key_column`, `key_values_checked`, `high_cardinality_warning`, `rows_checked` |
-| `accuracy` | `outlier_ratio`, `range_violations`, `negative_values_in_positive`, `numeric_values_checked`, `rule_values_checked`, `rule_violating_values` |
+| `accuracy` | `outlier_ratio`, `outlier_values_checked`, `range_violations`, `negative_values_in_positive`, `numeric_values_checked`, `rule_values_checked`, `rule_violating_values` |
 | `timeliness` | `future_dates_count`, `stale_data_ratio`, `temporal_violations`, `invalid_date_values`, `date_values_checked`, `temporal_pairs_checked` |
 | `validity` | `valid_values_ratio`, `invalid_values`, `values_checked` |
 | `precision` | `decimal_places_consistency`, `inconsistent_precision_values`, `numeric_values_checked` |

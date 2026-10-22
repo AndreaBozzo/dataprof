@@ -292,6 +292,7 @@ impl MetricsCalculator {
             };
             Some(AccuracyMetrics {
                 outlier_ratio: a.outlier_ratio,
+                outlier_values_checked: Some(a.outlier_values_checked),
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
                 numeric_values_checked: a.numeric_values_checked,
@@ -406,6 +407,7 @@ impl MetricsCalculator {
             accuracy: if is_req(QualityDimension::Accuracy) {
                 Some(AccuracyMetrics {
                     outlier_ratio: 0.0,
+                    outlier_values_checked: Some(0),
                     range_violations: 0,
                     negative_values_in_positive: 0,
                     numeric_values_checked: 0,
@@ -630,6 +632,7 @@ impl MetricsCalculator {
             sampled_dimensions.push("accuracy".to_string());
             Some(AccuracyMetrics {
                 outlier_ratio: a.outlier_ratio,
+                outlier_values_checked: Some(a.outlier_values_checked),
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
                 numeric_values_checked: a.numeric_values_checked,

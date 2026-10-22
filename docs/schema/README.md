@@ -774,3 +774,31 @@ was identified, and on documents written before it, whose `key_uniqueness`
 divided by every row and still scores as recorded. Both fields are additive and
 not `required`, so stored v1 reports remain valid; an explicit `null` for
 `key_uniqueness_units` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.outlier_units` and `outlier_values_checked`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `outlier_units` | `"tested_values"` | what `outlier_ratio` is measured over |
+
+`quality.metrics.accuracy` gains `outlier_values_checked`, the finite numeric
+values of the columns that reached `outlier_min_samples` (#1005). With none, no
+outlier test ran: `outlier_ratio` is 0 and carries no signal, and the component
+takes nothing off the score. Through 0.12 that 0 read as a measurement.
+
+The accuracy dimension is now assessed when one of its components had units: an
+outlier test ran, or a range or sign rule applied to a value
+(`rule_values_checked`). Numeric values neither component examined no longer
+assess it, so a source whose only numeric columns are shorter than
+`outlier_min_samples` and fall under no rule reports accuracy as unassessed,
+where 0.12 scored it 100. The overall score then renormalizes over the other
+dimensions, as for any unassessed one.
+
+A report that records no `outlier_units` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`. `outlier_values_checked` is absent on documents
+written before it; those are assessed and scored as their release did. The
+field is additive and not `required`, so stored v1 reports remain valid; an
+explicit `null` for `outlier_units` is malformed, as for `text_length_unit`.

@@ -2230,6 +2230,8 @@ enum Definition {
     RangeRuleCount,
     /// What key uniqueness divides by, behind the uniqueness score.
     KeyUniquenessUnits,
+    /// What the outlier ratio is measured over, behind the accuracy score.
+    OutlierUnits,
 }
 
 impl Definition {
@@ -2239,6 +2241,7 @@ impl Definition {
             Self::PatternMatchCount => "pattern_match_count",
             Self::RangeRuleCount => "range_rule_count",
             Self::KeyUniquenessUnits => "key_uniqueness_units",
+            Self::OutlierUnits => "outlier_units",
         }
     }
 
@@ -2252,6 +2255,7 @@ impl Definition {
             Self::PatternMatchCount => agree(&a.pattern_match_count, &b.pattern_match_count),
             Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
             Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
+            Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
         }
     }
 }
@@ -2265,11 +2269,16 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::PatternMatchCount,
             Definition::RangeRuleCount,
             Definition::KeyUniquenessUnits,
+            Definition::OutlierUnits,
         ],
         Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
         }
-        Some(QualityDimension::Accuracy) => &[Definition::NullTokens, Definition::RangeRuleCount],
+        Some(QualityDimension::Accuracy) => &[
+            Definition::NullTokens,
+            Definition::RangeRuleCount,
+            Definition::OutlierUnits,
+        ],
         Some(QualityDimension::Uniqueness) => {
             &[Definition::NullTokens, Definition::KeyUniquenessUnits]
         }
