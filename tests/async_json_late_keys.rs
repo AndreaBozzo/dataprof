@@ -86,8 +86,8 @@ async fn a_late_key_profiles_as_on_the_sync_path_at_every_chunk_size() {
         ("64 bytes", ChunkSize::Fixed(64)),
         ("adaptive", ChunkSize::Adaptive),
     ];
-    // A fieldless record before the first key is left out of the row counts
-    // on the file path only (#1021), so it is not compared here.
+    // Leading fieldless records and their row counts are covered separately in
+    // json_fieldless_rows.rs (#1021).
     let mut wrong = Vec::new();
     for (name, contents) in &cases {
         let expected = measured(&sync(contents, ".jsonl"));
