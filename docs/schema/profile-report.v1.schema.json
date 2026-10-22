@@ -28,14 +28,14 @@
         },
         "rule_values_checked": {
           "default": 0,
-          "description": "Finite numeric values of the columns a range or sign rule applies to:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score.",
+          "description": "Finite numeric values of the columns a range or sign rule applies to:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score. Additive: documents written\nbefore it read as 0, so the schema does not require it.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         },
         "rule_violating_values": {
           "default": 0,
-          "description": "Of `rule_values_checked`, the values breaking at least one rule, each\ncounted once however many rules it breaks.",
+          "description": "Of `rule_values_checked`, the values breaking at least one rule, each\ncounted once however many rules it breaks. Additive, like\n`rule_values_checked`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -45,9 +45,7 @@
         "outlier_ratio",
         "range_violations",
         "negative_values_in_positive",
-        "numeric_values_checked",
-        "rule_values_checked",
-        "rule_violating_values"
+        "numeric_values_checked"
       ],
       "type": "object"
     },

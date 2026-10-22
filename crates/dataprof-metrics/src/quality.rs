@@ -110,12 +110,16 @@ pub struct AccuracyMetrics {
     pub numeric_values_checked: usize,
     /// Finite numeric values of the columns a range or sign rule applies to:
     /// the units of the rule component. 0 means no rule applied, and the
-    /// component takes nothing off the score.
+    /// component takes nothing off the score. Additive: documents written
+    /// before it read as 0, so the schema does not require it.
     #[serde(default)]
+    #[schemars(default)]
     pub rule_values_checked: usize,
     /// Of `rule_values_checked`, the values breaking at least one rule, each
-    /// counted once however many rules it breaks.
+    /// counted once however many rules it breaks. Additive, like
+    /// `rule_values_checked`.
     #[serde(default)]
+    #[schemars(default)]
     pub rule_violating_values: usize,
 }
 

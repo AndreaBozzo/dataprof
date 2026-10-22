@@ -882,6 +882,9 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
+        // Written always since 0.13 (#1005), absent before.
+        ("/$defs/AccuracyMetrics/required", "rule_values_checked"),
+        ("/$defs/AccuracyMetrics/required", "rule_violating_values"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)

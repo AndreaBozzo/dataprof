@@ -361,6 +361,31 @@ fn reports_saved_before_quality_status_still_validate() {
     }
 }
 
+/// A report saved before the accuracy rule units carries neither count. They
+/// are additive, so those documents must still validate and read back as 0.
+#[test]
+fn reports_saved_before_the_accuracy_rule_units_still_validate() {
+    let expected = include_str!("fixtures/canonical_report.json");
+    let mut document: Value = serde_json::from_str(expected).unwrap();
+    let accuracy = document["quality"]["metrics"]["accuracy"]
+        .as_object_mut()
+        .expect("the canonical report assesses accuracy");
+    for field in ["rule_values_checked", "rule_violating_values"] {
+        accuracy
+            .remove(field)
+            .unwrap_or_else(|| panic!("this build writes {field}"));
+    }
+
+    assert_valid(&committed_schema(), &document);
+    let restored: ProfileReport =
+        serde_json::from_value(document).expect("a pre-0.13 report must remain readable");
+    let accuracy = restored.quality.unwrap().metrics.accuracy.unwrap();
+    assert_eq!(
+        (accuracy.rule_values_checked, accuracy.rule_violating_values),
+        (0, 0)
+    );
+}
+
 #[test]
 fn schema_rejects_wrong_versions_missing_fields_bad_enums_and_bad_primitives() {
     let schema = committed_schema();
