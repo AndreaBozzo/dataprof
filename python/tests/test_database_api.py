@@ -107,10 +107,11 @@ class TestDatabaseConnection:
             _run(_test_connection_async, "invalid://nope")
 
     def test_connection_sqlite_with_credentials_is_rejected(self):
-        with pytest.raises(
-            ValueError,
-            match=r"SQLite URLs do not support credentials or ports: found username \(alice\), password, port 5432",
-        ):
+        expected_msg = (
+            r"SQLite URLs do not support credentials or ports: "
+            r"found username \(alice\), password, port 5432"
+        )
+        with pytest.raises(ValueError, match=expected_msg):
             _run(
                 _test_connection_async,
                 "sqlite://alice:secret@localhost:5432/data.db",
