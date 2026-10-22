@@ -92,9 +92,17 @@ impl RangeRules {
         }
     }
 
-    fn any(self) -> bool {
-        self.age || self.percent || self.count || self.year
+    /// Whether any rule applies: a range rule from the name, or the sign rule
+    /// when the column is hinted `positive`.
+    fn applies(self, positive: bool) -> bool {
+        self.age || self.percent || self.count || self.year || positive
     }
+}
+
+fn is_positive(column_name: &str, positive_columns: &[String]) -> bool {
+    positive_columns
+        .iter()
+        .any(|candidate| candidate == column_name)
 }
 
 /// Calculator for accuracy dimension metrics
@@ -132,9 +140,7 @@ impl<'a> AccuracyCalculator<'a> {
         let rules = data
             .iter()
             .map(|(column_name, values)| {
-                let positive = positive_columns
-                    .iter()
-                    .any(|candidate| candidate == column_name);
+                let positive = is_positive(column_name, positive_columns);
                 Self::check_value_rules(column_name, values, positive)
             })
             .fold(RuleCounts::default(), RuleCounts::add);
@@ -149,6 +155,15 @@ impl<'a> AccuracyCalculator<'a> {
             outliers,
             outlier_values_checked,
         })
+    }
+
+    /// Whether a range or sign rule applies to `column_name`, so that its
+    /// values are units of the rule component. The score bounds select
+    /// columns by this rather than by the numbers a sample happened to hold:
+    /// a ruled column whose sample held none can still hold violating values
+    /// outside it.
+    pub fn is_ruled(column_name: &str, positive_columns: &[String]) -> bool {
+        RangeRules::for_column(column_name).applies(is_positive(column_name, positive_columns))
     }
 
     /// Count statistical outliers and the numeric values they were drawn from.
@@ -230,7 +245,7 @@ impl<'a> AccuracyCalculator<'a> {
     /// columns under no rule are numeric values, but no rule's units.
     fn check_value_rules(column_name: &str, values: &[String], positive: bool) -> RuleCounts {
         let rules = RangeRules::for_column(column_name);
-        let ruled = rules.any() || positive;
+        let ruled = rules.applies(positive);
         let mut counts = RuleCounts::default();
 
         for value in values {
