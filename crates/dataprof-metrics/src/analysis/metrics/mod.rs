@@ -271,6 +271,7 @@ impl MetricsCalculator {
                 high_cardinality_warning: u.high_cardinality_warning,
                 rows_checked: u.rows_checked,
                 key_column: u.key_column,
+                key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
             })
         } else {
@@ -396,6 +397,7 @@ impl MetricsCalculator {
                     high_cardinality_warning: false,
                     rows_checked: 0,
                     key_column: None,
+                    key_values_checked: None,
                     duplicate_rows_approximate: false,
                 })
             } else {
@@ -565,10 +567,24 @@ impl MetricsCalculator {
             // until the distinct estimator spills to its HLL sketch, after
             // which they are flagged approximate and filed as non-exact.
             // Key uniqueness is the key column's distinct count over its
-            // rows, so it is only as exact as that count: an estimated count
-            // is filed as sampled, and the score says it rests on an estimate
-            // rather than presenting one as a measurement.
-            if let Some(key) = u.key_column.as_deref() {
+            // non-null values, so it is only as exact as that count: an
+            // estimated count is filed as sampled, and the score says it
+            // rests on an estimate rather than presenting one as a
+            // measurement. A key with no value measured nothing.
+            let metrics = UniquenessMetrics {
+                duplicate_rows: u.duplicate_rows,
+                key_uniqueness: u.key_uniqueness,
+                high_cardinality_warning: u.high_cardinality_warning,
+                rows_checked: u.rows_checked,
+                key_column: u.key_column,
+                key_values_checked: u.key_values_checked,
+                duplicate_rows_approximate: u.duplicate_rows_approximate,
+            };
+            if let Some(key) = metrics
+                .key_column
+                .as_deref()
+                .filter(|_| metrics.key_measured())
+            {
                 let estimated = column_profiles
                     .iter()
                     .find(|profile| profile.name == key)
@@ -587,14 +603,7 @@ impl MetricsCalculator {
                     sampled_dimensions.push("duplicate_rows".to_string());
                 }
             }
-            Some(UniquenessMetrics {
-                duplicate_rows: u.duplicate_rows,
-                key_uniqueness: u.key_uniqueness,
-                high_cardinality_warning: u.high_cardinality_warning,
-                rows_checked: u.rows_checked,
-                key_column: u.key_column,
-                duplicate_rows_approximate: u.duplicate_rows_approximate,
-            })
+            Some(metrics)
         } else {
             None
         };
@@ -858,6 +867,33 @@ mod tests {
                 !filed_as_sampled
             );
         }
+    }
+
+    #[test]
+    fn a_key_holding_no_value_claims_no_provenance() {
+        // The key was identified but every value was null: it measured
+        // nothing, so neither list may say how it was measured (#1005).
+        let key = ColumnProfile {
+            null_count: 5_000,
+            unique_count: Some(0),
+            unique_count_is_approximate: Some(false),
+            ..string_profile("order_id", 5_000, 5_000)
+        };
+        let result = MetricsCalculator::new()
+            .calculate_bifurcated_metrics_with_hints(
+                &HashMap::from([("order_id".to_string(), vec![])]),
+                &[key],
+                Some(&[QualityDimension::Uniqueness]),
+                &SemanticHints::default(),
+                None,
+            )
+            .expect("quality metrics");
+        let uniqueness = result.metrics.uniqueness.expect("uniqueness metrics");
+        assert_eq!(uniqueness.key_column.as_deref(), Some("order_id"));
+        assert_eq!(uniqueness.key_values_checked, Some(0));
+        let label = "key_uniqueness".to_string();
+        assert!(!result.exact_dimensions.contains(&label));
+        assert!(!result.sampled_dimensions.contains(&label));
     }
 
     #[test]

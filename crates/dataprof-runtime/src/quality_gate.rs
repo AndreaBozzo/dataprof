@@ -2228,6 +2228,8 @@ enum Definition {
     PatternMatchCount,
     /// What the range and sign rules count, behind the accuracy score.
     RangeRuleCount,
+    /// What key uniqueness divides by, behind the uniqueness score.
+    KeyUniquenessUnits,
 }
 
 impl Definition {
@@ -2236,6 +2238,7 @@ impl Definition {
             Self::NullTokens => "null_tokens",
             Self::PatternMatchCount => "pattern_match_count",
             Self::RangeRuleCount => "range_rule_count",
+            Self::KeyUniquenessUnits => "key_uniqueness_units",
         }
     }
 
@@ -2248,6 +2251,7 @@ impl Definition {
             Self::NullTokens => agree(&a.null_tokens, &b.null_tokens),
             Self::PatternMatchCount => agree(&a.pattern_match_count, &b.pattern_match_count),
             Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
+            Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
         }
     }
 }
@@ -2260,11 +2264,15 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::NullTokens,
             Definition::PatternMatchCount,
             Definition::RangeRuleCount,
+            Definition::KeyUniquenessUnits,
         ],
         Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
         }
         Some(QualityDimension::Accuracy) => &[Definition::NullTokens, Definition::RangeRuleCount],
+        Some(QualityDimension::Uniqueness) => {
+            &[Definition::NullTokens, Definition::KeyUniquenessUnits]
+        }
         Some(_) => &[Definition::NullTokens],
     }
 }
@@ -2845,6 +2853,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 5,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: approximate,
             }),
             ..QualityMetrics::default()

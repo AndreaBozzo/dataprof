@@ -418,44 +418,54 @@ fn a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated() {
 }
 
 #[test]
-fn a_baseline_without_the_range_rule_definition_leaves_accuracy_unevaluated() {
+fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated() {
     // A baseline that records every other definition, as a 0.12 report does
-    // not, so only the range rule count separates it from the report (#1005).
+    // not, so only the one removed separates it from the report (#1005). The
+    // overall score and the dimension reading it go unevaluated; the other
+    // dimensions are still decided.
     let report = profile(CLEAN);
-    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
-    summary["metric_semantics"]
-        .as_object_mut()
-        .unwrap()
-        .remove("range_rule_count")
-        .expect("reports record the range rule count");
-    let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
-    let result = QualityPolicy::new()
-        .max_quality_score_drop(0.0)
-        .max_dimension_score_drop(QualityDimension::Accuracy, 0.0)
-        .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
-        .evaluate_against(&report, &baseline)
-        .unwrap();
-    for (code, subject) in [
-        (CheckCode::MaxQualityScoreDrop, None),
-        (CheckCode::MaxDimensionScoreDrop, Some("accuracy")),
+    for (definition, reads, other) in [
+        ("range_rule_count", "accuracy", "uniqueness"),
+        ("key_uniqueness_units", "uniqueness", "accuracy"),
     ] {
-        assert!(
-            matches!(
-                reason(check(&result, code, subject)),
-                Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "range_rule_count"
-            ),
-            "{code:?} {subject:?}"
-        );
+        let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        summary["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove(definition)
+            .unwrap_or_else(|| panic!("reports record {definition}"));
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let dimension = |name: &str| match name {
+            "accuracy" => QualityDimension::Accuracy,
+            _ => QualityDimension::Uniqueness,
+        };
+        let result = QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(dimension(reads), 0.0)
+            .max_dimension_score_drop(dimension(other), 0.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+            .evaluate_against(&report, &baseline)
+            .unwrap();
+        for (code, subject) in [
+            (CheckCode::MaxQualityScoreDrop, None),
+            (CheckCode::MaxDimensionScoreDrop, Some(reads)),
+        ] {
+            assert!(
+                matches!(
+                    reason(check(&result, code, subject)),
+                    Some(NotEvaluated::DefinitionNotComparable { definition: missing, .. }) if missing == definition
+                ),
+                "{definition}: {code:?} {subject:?}"
+            );
+        }
+        for decided in [other, "completeness"] {
+            assert_eq!(
+                check(&result, CheckCode::MaxDimensionScoreDrop, Some(decided)).status,
+                CheckStatus::Passed,
+                "{definition}: {decided}"
+            );
+        }
     }
-    assert_eq!(
-        check(
-            &result,
-            CheckCode::MaxDimensionScoreDrop,
-            Some("completeness")
-        )
-        .status,
-        CheckStatus::Passed
-    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, Locale, NullTokenSet,
-    PatternMatchCount, QualityScoreWeights, RangeRuleCount, SemanticHintBinding,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyUniquenessUnits, Locale,
+    NullTokenSet, PatternMatchCount, QualityScoreWeights, RangeRuleCount, SemanticHintBinding,
     ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
@@ -134,6 +134,17 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "RangeRuleCount")]
     pub range_rule_count: Option<RangeRuleCount>,
+    /// What `key_uniqueness` divides the key's distinct values by.
+    ///
+    /// Absent means not recorded: through 0.12 it divided by every row,
+    /// nulls included.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "KeyUniquenessUnits")]
+    pub key_uniqueness_units: Option<KeyUniquenessUnits>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -155,6 +166,7 @@ impl MetricSemantics {
             pattern_match_count: Some(PatternMatchCount::Validated),
             shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
             range_rule_count: Some(RangeRuleCount::ViolatingValues),
+            key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
         }
     }
 
@@ -169,12 +181,14 @@ impl MetricSemantics {
             pattern_match_count,
             shape_moments,
             range_rule_count,
+            key_uniqueness_units,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
             && pattern_match_count.is_some()
             && shape_moments.is_some()
             && range_rule_count.is_some()
+            && key_uniqueness_units.is_some()
     }
 }
 
@@ -657,6 +671,8 @@ struct PythonUniquenessDocument {
     high_cardinality_warning: bool,
     rows_checked: usize,
     key_column: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_values_checked: Option<usize>,
     duplicate_rows_approximate: bool,
 }
 
@@ -1341,6 +1357,7 @@ mod tests {
             "pattern_match_count": "validated",
             "shape_moments": "adjusted_sample",
             "range_rule_count": "violating_values",
+            "key_uniqueness_units": "non_null_values",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1372,6 +1389,8 @@ mod tests {
             json!({"shape_moments": null}),
             json!({"range_rule_count": "rule_failures"}),
             json!({"range_rule_count": null}),
+            json!({"key_uniqueness_units": "rows"}),
+            json!({"key_uniqueness_units": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

@@ -218,20 +218,30 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
     assert result.verdict == "inconclusive"
 
 
-def test_a_baseline_without_the_range_rule_definition_leaves_accuracy_unevaluated():
-    # Every other definition recorded, so only the range rule count separates
-    # the baseline from the report (#1005).
+@pytest.mark.parametrize(
+    ("definition", "reads", "other"),
+    [
+        ("range_rule_count", "accuracy", "uniqueness"),
+        ("key_uniqueness_units", "uniqueness", "accuracy"),
+    ],
+)
+def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(
+    definition: str, reads: str, other: str
+):
+    # Every other definition recorded, so only the one removed separates the
+    # baseline from the report (#1005). The other dimensions are still decided.
     report = dp.profile(CLEAN)
     summary = report.to_dict()
-    del summary["metric_semantics"]["range_rule_count"]
+    del summary["metric_semantics"][definition]
     result = report.check(
         baseline=dp.ProfileReport.from_dict(summary),
         max_quality_score_drop=0,
-        max_dimension_score_drops={"accuracy": 0, "completeness": 0},
+        max_dimension_score_drops={reads: 0, other: 0, "completeness": 0},
     )
-    unevaluated = {"reason": "definition_not_comparable", "definition": "range_rule_count"}
+    unevaluated = {"reason": "definition_not_comparable", "definition": definition}
     assert _find(result, "max_quality_score_drop").reason == unevaluated
-    assert _find(result, "max_dimension_score_drop", "accuracy").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", reads).reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", other).status == "passed"
     assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
 
 

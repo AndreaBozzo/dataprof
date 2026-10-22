@@ -201,9 +201,9 @@ pub(crate) fn score_bounds(
 ///   whose exact set was dropped; it held that many distinct rows then, so
 ///   there are at most `max_duplicate_rows` duplicates and at least none. A
 ///   duplicate scan over a sample (engines without a tracker) is not bounded.
-/// - Key uniqueness, the key column's distinct count over its rows. An
-///   estimated count is at least what the column's exact set held, and at
-///   most its non-null values.
+/// - Key uniqueness, the key column's distinct count over its non-null
+///   values. An estimated count is at least what the column's exact set
+///   held, and at most those values, a share of 100.
 ///
 /// Neither bound is probabilistic, so neither spends any of the error budget
 /// the sampled shares split.
@@ -231,18 +231,23 @@ fn uniqueness_interval(
         }
     }
 
-    if let Some(key) = uniqueness.key_column.as_deref() {
+    if let Some(key) = uniqueness
+        .key_column
+        .as_deref()
+        .filter(|_| uniqueness.key_measured())
+    {
         if !is_sampled("key_uniqueness") {
             components.push((uniqueness.key_uniqueness, uniqueness.key_uniqueness));
         } else {
+            // The estimate counts distinct non-null values, which are also
+            // the units: at least the exact set's floor, at most every one.
             let profile = column_profiles.iter().find(|profile| profile.name == key)?;
             let floor = profile.unique_count_lower_bound?;
-            let total = profile.total_count as f64;
-            if total == 0.0 {
+            let values = profile.total_count.saturating_sub(profile.null_count) as f64;
+            if values == 0.0 {
                 return None;
             }
-            let non_null = profile.total_count.saturating_sub(profile.null_count) as f64;
-            components.push((floor as f64 / total * 100.0, non_null / total * 100.0));
+            components.push((floor as f64 / values * 100.0, 100.0));
         }
     }
 
@@ -1055,6 +1060,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: rows,
                 key_column: key.map(|(name, _)| name.to_string()),
+                key_values_checked: key.map(|_| rows),
                 duplicate_rows_approximate: approximate,
             }),
             ..QualityMetrics::default()
@@ -1093,7 +1099,7 @@ mod tests {
 
     #[test]
     fn an_estimated_key_count_is_bounded_by_its_floor_and_its_values() {
-        let metrics = uniqueness_metrics(1_200_000, 6_000, false, Some(("id", 99.52)));
+        let metrics = uniqueness_metrics(1_200_000, 6_000, false, Some(("id", 99.42)));
         let mut id = profile("id", DataType::Integer, 1_200_000, 200_000);
         id.unique_count = Some(994_240);
         id.unique_count_is_approximate = Some(true);
@@ -1113,10 +1119,11 @@ mod tests {
         )
         .expect("bounded");
 
-        // Mean of the exact duplicate share and the key's [floor, non-null].
+        // Mean of the exact duplicate share and the key's [floor, every value],
+        // over its 1,000,000 non-null values (#1005).
         let duplicates = (1.0 - 6_000.0 / 1_200_000.0) * 100.0;
-        let key_lower = 900_000.0 / 1_200_000.0 * 100.0;
-        let key_upper = 1_000_000.0 / 1_200_000.0 * 100.0;
+        let key_lower = 900_000.0 / 1_000_000.0 * 100.0;
+        let key_upper = 100.0;
         assert!(
             (lower - (duplicates + key_lower) / 2.0).abs() < 1e-9,
             "{lower}"
@@ -1124,6 +1131,22 @@ mod tests {
         assert!(
             (upper - (duplicates + key_upper) / 2.0).abs() < 1e-9,
             "{upper}"
+        );
+    }
+
+    #[test]
+    fn a_key_holding_no_value_stays_out_of_the_interval() {
+        // The key was identified but held no value, so the score rests on the
+        // duplicate share alone; its placeholder 100 must not pull the
+        // interval away from that score (#1005).
+        let mut metrics = uniqueness_metrics(100, 50, false, Some(("id", 100.0)));
+        if let Some(uniqueness) = metrics.uniqueness.as_mut() {
+            uniqueness.key_values_checked = Some(0);
+        }
+        assert_eq!(metrics.uniqueness_score(), Some(50.0));
+        assert_eq!(
+            uniqueness_interval(&metrics, &[], None, &sampled(&[])),
+            Some((50.0, 50.0))
         );
     }
 
