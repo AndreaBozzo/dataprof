@@ -734,8 +734,9 @@ remain valid.
 | `rule_values_checked` | finite numeric values of the columns a range rule (`age`, percentage, `count`, `year` names) or the sign rule (`positive_columns`) applies to |
 | `rule_violating_values` | of those, the values breaking at least one rule, each counted once |
 
-The accuracy score subtracts `rule_violating_values / rule_values_checked`
-from `100 - outlier_ratio`; columns under no rule add nothing to either side,
+The accuracy score subtracts `100 * rule_violating_values / rule_values_checked`
+from `100 - outlier_ratio` (9 violating values of 20 take off 45 points);
+columns under no rule add nothing to either side,
 and with no such column the rules take nothing off. Through 0.12 every rule
 failure counted, a negative percentage hinted positive twice, and the failures
 were divided by `numeric_values_checked`, the numeric values of every column,
