@@ -1036,6 +1036,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 5_000_000,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: true,
             }),
             ..QualityMetrics::default()
@@ -1156,6 +1157,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 60_000,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             timeliness: Some(TimelinessMetrics {

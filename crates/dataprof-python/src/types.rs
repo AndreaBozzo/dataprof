@@ -3,9 +3,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, NullTokenSet, Pattern, PatternMatchCount,
-    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
-    QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind,
+    ColumnProfile, ColumnStats, DataSource, KeyUniquenessUnits, NullTokenSet, Pattern,
+    PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension,
+    QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind,
     ShapeMomentEstimator, TextLengthUnit, TruncationReason,
 };
 
@@ -535,6 +535,12 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                if let Some(values) = u.key_values_checked {
+                    m.insert(
+                        "key_values_checked".into(),
+                        values.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 m.insert(
                     "duplicate_rows_approximate".into(),
                     u.duplicate_rows_approximate
@@ -1222,6 +1228,14 @@ impl PyProfileReport {
                 "range_rule_count",
                 match count {
                     RangeRuleCount::ViolatingValues => "violating_values",
+                },
+            )?;
+        }
+        if let Some(units) = semantics.key_uniqueness_units {
+            dict.set_item(
+                "key_uniqueness_units",
+                match units {
+                    KeyUniquenessUnits::NonNullValues => "non_null_values",
                 },
             )?;
         }

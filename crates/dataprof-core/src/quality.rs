@@ -74,6 +74,22 @@ pub enum RangeRuleCount {
     ViolatingValues,
 }
 
+/// What `key_uniqueness` divides the key column's distinct values by, as
+/// recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.12 it divided by every
+/// row, nulls included, so a nullable key lost uniqueness for each null the
+/// completeness score already counted; those releases recorded no
+/// definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyUniquenessUnits {
+    /// The key column's non-null values.
+    NonNullValues,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

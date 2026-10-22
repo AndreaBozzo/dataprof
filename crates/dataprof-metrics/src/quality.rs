@@ -52,6 +52,14 @@ pub struct UniquenessMetrics {
     /// and does not contribute to the dimension score.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_column: Option<String>,
+    /// Non-null values of `key_column`: the units `key_uniqueness` divides
+    /// the key's distinct values by. 0 means the key held no value, so
+    /// `key_uniqueness` carries no signal and does not contribute to the
+    /// dimension score. Absent with no key column, and on documents written
+    /// before 0.13, whose `key_uniqueness` divided by every row, nulls
+    /// included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_values_checked: Option<usize>,
     /// True when `duplicate_rows` comes from the full-stream distinct-count
     /// estimator after it spilled to its HLL sketch (~1% relative error on
     /// the distinct count), rather than an exact count.
@@ -213,7 +221,14 @@ impl UniquenessMetrics {
     /// True when either component had data: rows scanned for duplicates, or an
     /// identified key column whose uniqueness `key_uniqueness` describes.
     pub fn is_assessed(&self) -> bool {
-        self.rows_checked > 0 || self.key_column.is_some()
+        self.rows_checked > 0 || self.key_measured()
+    }
+
+    /// True when `key_uniqueness` measured something: a key column was
+    /// identified and held at least one value. A document that predates
+    /// `key_values_checked` counts as measured whenever it names a key.
+    pub fn key_measured(&self) -> bool {
+        self.key_column.is_some() && self.key_values_checked != Some(0)
     }
 }
 
@@ -325,6 +340,7 @@ impl QualityMetrics {
                 high_cardinality_warning: false,
                 rows_checked: 0,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
@@ -394,14 +410,15 @@ impl QualityMetrics {
     ///
     /// Mean of the available components: share of non-duplicate rows (when
     /// a row tracker or an aligned sample scan produced a count) and
-    /// `key_uniqueness` (when a key column was identified). Engines without
+    /// `key_uniqueness` (when a key column was identified and held a value).
+    /// Engines without
     /// a row tracker whose samples cannot be proven row-aligned contribute
     /// only the key component.
     pub fn uniqueness_score(&self) -> Option<f64> {
         let u = self.uniqueness.as_ref().filter(|u| u.is_assessed())?;
         let duplicate_score = (u.rows_checked > 0)
             .then(|| (1.0 - u.duplicate_rows as f64 / u.rows_checked as f64) * 100.0);
-        let key_score = u.key_column.is_some().then_some(u.key_uniqueness);
+        let key_score = u.key_measured().then_some(u.key_uniqueness);
 
         let (sum, count) = [duplicate_score, key_score]
             .iter()
@@ -1074,7 +1091,7 @@ impl QualityAssessment {
         };
         let mut labels = Vec::new();
         if let Some(uniqueness) = &self.metrics.uniqueness {
-            if uniqueness.key_column.is_some() {
+            if uniqueness.key_measured() {
                 labels.push("key_uniqueness".to_string());
             }
             if uniqueness.rows_checked > 0 {
@@ -1255,6 +1272,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
@@ -1593,6 +1611,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             ..QualityMetrics::default()
@@ -1728,6 +1747,7 @@ mod tests {
                 // No rows scanned, but a key column was identified, so the key
                 // component alone still carries a measurement.
                 key_column: Some("id".to_string()),
+                key_values_checked: Some(10),
                 duplicate_rows_approximate: false,
             }),
             ..QualityMetrics::default()
@@ -1803,6 +1823,7 @@ mod tests {
                         high_cardinality_warning: true,
                         rows_checked: 25,
                         key_column: Some("user_id".to_string()),
+                        key_values_checked: Some(25),
                         duplicate_rows_approximate: false,
                     }),
                     ..QualityMetrics::default()

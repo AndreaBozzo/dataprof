@@ -882,6 +882,16 @@
       ],
       "type": "object"
     },
+    "KeyUniquenessUnits": {
+      "description": "What `key_uniqueness` divides the key column's distinct values by, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 it divided by every\nrow, nulls included, so a nullable key lost uniqueness for each null the\ncompleteness score already counted; those releases recorded no\ndefinition.",
+      "oneOf": [
+        {
+          "const": "non_null_values",
+          "description": "The key column's non-null values.",
+          "type": "string"
+        }
+      ]
+    },
     "MetricConfidence": {
       "description": "Confidence level for quality metrics.",
       "oneOf": [
@@ -971,6 +981,10 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "key_uniqueness_units": {
+          "$ref": "#/$defs/KeyUniquenessUnits",
+          "description": "What `key_uniqueness` divides the key's distinct values by.\n\nAbsent means not recorded: through 0.12 it divided by every row,\nnulls included."
+        },
         "null_tokens": {
           "$ref": "#/$defs/NullTokenSet",
           "description": "The text values counted as null, which every `null_count` and every\ncompleteness figure depend on.\n\nAbsent means not recorded: the release that wrote the report counted\nonly empty, `null` and `nan`, or recorded nothing at all."
@@ -2097,6 +2111,14 @@
           "format": "double",
           "type": "number"
         },
+        "key_values_checked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "rows_checked": {
           "format": "uint",
           "minimum": 0,
@@ -2904,6 +2926,15 @@
         "key_uniqueness": {
           "format": "double",
           "type": "number"
+        },
+        "key_values_checked": {
+          "description": "Non-null values of `key_column`: the units `key_uniqueness` divides\nthe key's distinct values by. 0 means the key held no value, so\n`key_uniqueness` carries no signal and does not contribute to the\ndimension score. Absent with no key column, and on documents written\nbefore 0.13, whose `key_uniqueness` divided by every row, nulls\nincluded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "rows_checked": {
           "default": 0,

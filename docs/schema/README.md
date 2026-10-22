@@ -750,3 +750,27 @@ document still scores its range and sign failures over
 `numeric_values_checked`, as the release that wrote it did. The fields are
 additive and not `required`, so stored v1 reports remain valid; an explicit
 `null` for `range_rule_count` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.key_uniqueness_units` and `key_values_checked`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `key_uniqueness_units` | `"non_null_values"` | what `key_uniqueness` divides the key column's distinct values by |
+
+`quality.metrics.uniqueness` gains `key_values_checked`, the non-null values of
+`key_column` (#1005). `key_uniqueness` is the key's distinct values over them,
+so a nullable key no longer loses uniqueness for the nulls completeness already
+counts: 100 distinct ids and 100 nulls score 100, where 0.12 reported 50. A key
+column holding no value is still named, with `key_values_checked` 0, and its
+`key_uniqueness` carries no signal: the uniqueness score then rests on the
+duplicate-row component alone, or the dimension is unassessed without one.
+
+A report that records no `key_uniqueness_units` reads back with it unknown, and
+a quality gate leaves the uniqueness and overall score rules over it
+`definition_not_comparable`. `key_values_checked` is absent when no key column
+was identified, and on documents written before it, whose `key_uniqueness`
+divided by every row and still scores as recorded. Both fields are additive and
+not `required`, so stored v1 reports remain valid; an explicit `null` for
+`key_uniqueness_units` is malformed, as for `text_length_unit`.
