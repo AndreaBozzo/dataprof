@@ -4,6 +4,7 @@
       "description": "Accuracy metrics (ISO 25012).",
       "properties": {
         "negative_values_in_positive": {
+          "description": "Negative values in positive-only columns. A diagnostic; the score\nreads `rule_violating_values`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -20,6 +21,21 @@
           "type": "number"
         },
         "range_violations": {
+          "description": "Failures of the name-based range rules (age, percentage, count, year):\na value breaking two of them adds two. A diagnostic; the score reads\n`rule_violating_values`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule_values_checked": {
+          "default": 0,
+          "description": "Finite numeric values of the columns a range or sign rule applies to:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule_violating_values": {
+          "default": 0,
+          "description": "Of `rule_values_checked`, the values breaking at least one rule, each\ncounted once however many rules it breaks.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -29,7 +45,9 @@
         "outlier_ratio",
         "range_violations",
         "negative_values_in_positive",
-        "numeric_values_checked"
+        "numeric_values_checked",
+        "rule_values_checked",
+        "rule_violating_values"
       ],
       "type": "object"
     },
@@ -962,6 +980,10 @@
         "pattern_match_count": {
           "$ref": "#/$defs/PatternMatchCount",
           "description": "What every pattern's `match_count` and `match_percentage` count.\n\nAbsent means not recorded: through 0.12 they counted every regular\nexpression match, validated or not."
+        },
+        "range_rule_count": {
+          "$ref": "#/$defs/RangeRuleCount",
+          "description": "What the range and sign rules behind the accuracy score count.\n\nAbsent means not recorded: through 0.12 every rule failure counted,\nover the numeric values of every column."
         },
         "shape_moments": {
           "$ref": "#/$defs/ShapeMomentEstimator",
@@ -2440,6 +2462,16 @@
         }
       ],
       "description": "Supported query engines for SQL-based profiling"
+    },
+    "RangeRuleCount": {
+      "description": "What the range and sign rules of the accuracy score count, as recorded in\na report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 every rule failure\ncounted, a value breaking two rules twice, and the failures were divided\nby the numeric values of every column, so clean columns diluted a broken\none; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "violating_values",
+          "description": "Values breaking at least one rule, each counted once, over the values\nof the columns a rule applies to.",
+          "type": "string"
+        }
+      ]
     },
     "RecoveryEvent": {
       "description": "A failed execution attempt followed by a retry, in chronological order.\n\nThis is execution provenance, not a metric or a count of damaged rows.\nError text is diagnostic and is not a stable machine-readable contract.",

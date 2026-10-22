@@ -5,8 +5,8 @@ use pyo3::types::PyDict;
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, NullTokenSet, Pattern, PatternMatchCount,
     ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
-    QualityPolicy, QualityScores, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
-    TextLengthUnit, TruncationReason,
+    QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind,
+    ShapeMomentEstimator, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -588,6 +588,17 @@ impl PyDataQualityMetrics {
                 m.insert(
                     "numeric_values_checked".into(),
                     a.numeric_values_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "rule_values_checked".into(),
+                    a.rule_values_checked.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "rule_violating_values".into(),
+                    a.rule_violating_values
                         .into_pyobject(py)?
                         .unbind()
                         .into_any(),
@@ -1203,6 +1214,14 @@ impl PyProfileReport {
                 "shape_moments",
                 match estimator {
                     ShapeMomentEstimator::AdjustedSample => "adjusted_sample",
+                },
+            )?;
+        }
+        if let Some(count) = semantics.range_rule_count {
+            dict.set_item(
+                "range_rule_count",
+                match count {
+                    RangeRuleCount::ViolatingValues => "violating_values",
                 },
             )?;
         }

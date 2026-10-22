@@ -479,11 +479,15 @@ fn collect_shares(
             if metrics.outlier_values_checked > 0 {
                 outliers.push(counts(metrics.outliers, metrics.outlier_values_checked, 1));
             }
-            violations.push(counts(
-                metrics.range_violations + metrics.negative_values_in_positive,
-                metrics.numeric_values_checked,
-                AccuracyCalculator::max_violations_per_value(&profile.name, positive_columns),
-            ));
+            // A column under no range or sign rule has no units in the rule
+            // share; one under a rule fails a value at most once (#1005).
+            if metrics.rule_values_checked > 0 {
+                violations.push(counts(
+                    metrics.rule_violating_values,
+                    metrics.rule_values_checked,
+                    1,
+                ));
+            }
         }
         if wants(QualityDimension::Timeliness) && temporal_columns.contains(&profile.name) {
             let metrics = timeliness.calculate(&single, temporal_columns, &[], column_profiles)?;

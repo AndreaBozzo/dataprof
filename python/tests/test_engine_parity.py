@@ -277,6 +277,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "null_tokens": "common_markers",
         "pattern_match_count": "validated",
         "shape_moments": "adjusted_sample",
+        "range_rule_count": "violating_values",
     }
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected

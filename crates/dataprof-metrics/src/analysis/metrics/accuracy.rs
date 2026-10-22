@@ -17,6 +17,10 @@ pub(crate) struct AccuracyMetrics {
     pub range_violations: usize,
     pub negative_values_in_positive: usize,
     pub numeric_values_checked: usize,
+    /// Numeric values of columns under a range or sign rule.
+    pub rule_values_checked: usize,
+    /// Of `rule_values_checked`, those breaking at least one rule.
+    pub rule_violating_values: usize,
     /// Values outside the Tukey fences: the count behind `outlier_ratio`.
     pub outliers: usize,
     /// Numeric values in columns with enough of them for an outlier test:
@@ -40,8 +44,8 @@ pub(crate) struct AccuracyMetrics {
 /// unless another word of the name is a smaller unit, as in
 /// `account_age_days`.
 ///
-/// The counter and the score bounds both read this, so they cannot disagree on
-/// which rules a column is under.
+/// The score bounds count each column through the same calculator, so they
+/// cannot disagree with the counter on which rules a column is under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RangeRules {
     age: bool,
@@ -87,6 +91,10 @@ impl RangeRules {
             year: has_identifier_word(column_name, &["year"]),
         }
     }
+
+    fn any(self) -> bool {
+        self.age || self.percent || self.count || self.year
+    }
 }
 
 /// Calculator for accuracy dimension metrics
@@ -121,35 +129,26 @@ impl<'a> AccuracyCalculator<'a> {
         } else {
             (outliers as f64 / outlier_values_checked as f64) * 100.0
         };
-        let (range_violations, numeric_values_checked) = Self::count_range_violations(data)?;
-        let negative_values_in_positive =
-            Self::count_negative_in_positive_fields(data, positive_columns)?;
+        let rules = data
+            .iter()
+            .map(|(column_name, values)| {
+                let positive = positive_columns
+                    .iter()
+                    .any(|candidate| candidate == column_name);
+                Self::check_value_rules(column_name, values, positive)
+            })
+            .fold(RuleCounts::default(), RuleCounts::add);
 
         Ok(AccuracyMetrics {
             outlier_ratio,
-            range_violations,
-            negative_values_in_positive,
-            numeric_values_checked,
+            range_violations: rules.range_violations,
+            negative_values_in_positive: rules.negative_values,
+            numeric_values_checked: rules.numeric_values,
+            rule_values_checked: rules.rule_values,
+            rule_violating_values: rules.violating_values,
             outliers,
             outlier_values_checked,
         })
-    }
-
-    /// The most range violations and negative-in-positive findings a single
-    /// value of `column_name` can add, since one value can break several of
-    /// the name-based rules at once.
-    pub fn max_violations_per_value(column_name: &str, positive_columns: &[String]) -> usize {
-        let range = RangeRules::for_column(column_name);
-        let rules = [
-            range.age,
-            range.percent,
-            range.count,
-            range.year,
-            positive_columns
-                .iter()
-                .any(|candidate| candidate == column_name),
-        ];
-        rules.into_iter().filter(|matched| *matched).count()
     }
 
     /// Count statistical outliers and the numeric values they were drawn from.
@@ -221,96 +220,85 @@ impl<'a> AccuracyCalculator<'a> {
             .count()
     }
 
-    /// Count values outside expected ranges; returns `(violations, finite
-    /// numeric values seen across all columns)`. The second value is the
-    /// denominator that makes the violation counts interpretable and marks
-    /// the accuracy dimension as assessable.
-    fn count_range_violations(
-        data: &HashMap<String, Vec<String>>,
-    ) -> Result<(usize, usize), DataProfilerError> {
-        let mut violations = 0;
-        let mut numeric_values_checked = 0;
-
-        for (column_name, values) in data {
-            let (column_violations, column_numeric) =
-                Self::check_domain_specific_ranges(column_name, values);
-            violations += column_violations;
-            numeric_values_checked += column_numeric;
-        }
-
-        Ok((violations, numeric_values_checked))
-    }
-
-    /// Check domain-specific range violations; returns `(violations, finite
-    /// numeric values seen)`.
-    fn check_domain_specific_ranges(column_name: &str, values: &[String]) -> (usize, usize) {
+    /// Check one column's finite numeric values against the name-based range
+    /// rules and, when `positive`, the sign rule.
+    ///
+    /// The rule component's unit is a value of a column under at least one
+    /// rule, counted once however many rules it breaks (#1005): a negative
+    /// `discount_percent` hinted positive is one violating value, though both
+    /// the percentage and the sign rule count it as a failure. Values of
+    /// columns under no rule are numeric values, but no rule's units.
+    fn check_value_rules(column_name: &str, values: &[String], positive: bool) -> RuleCounts {
         let rules = RangeRules::for_column(column_name);
-        let mut violations = 0;
-        let mut numeric_values = 0;
+        let ruled = rules.any() || positive;
+        let mut counts = RuleCounts::default();
 
         for value in values {
             if is_null_like_token(value.trim()) {
                 continue;
             }
+            let Some(num_value) = value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+            else {
+                continue;
+            };
+            counts.numeric_values += 1;
+            if !ruled {
+                continue;
+            }
+            counts.rule_values += 1;
 
-            if let Ok(num_value) = value.trim().parse::<f64>() {
-                if !num_value.is_finite() {
-                    continue;
-                }
-                numeric_values += 1;
-
+            let range_failures = [
                 // Age should be reasonable (0-150)
-                if rules.age && !(0.0..=150.0).contains(&num_value) {
-                    violations += 1;
-                }
-
+                rules.age && !(0.0..=150.0).contains(&num_value),
                 // Percentage should be 0-100
-                if rules.percent && !(0.0..=100.0).contains(&num_value) {
-                    violations += 1;
-                }
-
+                rules.percent && !(0.0..=100.0).contains(&num_value),
                 // Counts should be non-negative
-                if rules.count && num_value < 0.0 {
-                    violations += 1;
-                }
-
+                rules.count && num_value < 0.0,
                 // Years should be reasonable (1900-2100)
-                if rules.year && !(1900.0..=2100.0).contains(&num_value) {
-                    violations += 1;
-                }
-            }
+                rules.year && !(1900.0..=2100.0).contains(&num_value),
+            ]
+            .into_iter()
+            .filter(|failed| *failed)
+            .count();
+            let negative = positive && num_value < 0.0;
+
+            counts.range_violations += range_failures;
+            counts.negative_values += usize::from(negative);
+            counts.violating_values += usize::from(range_failures > 0 || negative);
         }
 
-        (violations, numeric_values)
+        counts
     }
+}
 
-    /// Count negative values in positive-only fields
-    fn count_negative_in_positive_fields(
-        data: &HashMap<String, Vec<String>>,
-        positive_columns: &[String],
-    ) -> Result<usize, DataProfilerError> {
-        let mut violations = 0;
+/// What the range and sign rules found in one column, or summed over several.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RuleCounts {
+    /// Finite numeric values, in every column.
+    numeric_values: usize,
+    /// Range rule failures: a value breaking two range rules adds two.
+    range_violations: usize,
+    /// Negative values in positive-only columns.
+    negative_values: usize,
+    /// Finite numeric values of columns under at least one rule.
+    rule_values: usize,
+    /// Of `rule_values`, those breaking at least one rule.
+    violating_values: usize,
+}
 
-        for (column_name, values) in data {
-            if positive_columns
-                .iter()
-                .any(|candidate| candidate == column_name)
-            {
-                violations += values
-                    .iter()
-                    .filter_map(|v| {
-                        if is_null_like_token(v.trim()) {
-                            None
-                        } else {
-                            v.trim().parse::<f64>().ok().filter(|n| n.is_finite())
-                        }
-                    })
-                    .filter(|&num| num < 0.0)
-                    .count();
-            }
+impl RuleCounts {
+    fn add(self, other: Self) -> Self {
+        Self {
+            numeric_values: self.numeric_values + other.numeric_values,
+            range_violations: self.range_violations + other.range_violations,
+            negative_values: self.negative_values + other.negative_values,
+            rule_values: self.rule_values + other.rule_values,
+            violating_values: self.violating_values + other.violating_values,
         }
-
-        Ok(violations)
     }
 }
 
@@ -420,34 +408,84 @@ mod tests {
             ("price", ["-1", "200", "3000", "101"], 0),
         ] {
             let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+            let counts = AccuracyCalculator::check_value_rules(name, &values, false);
             assert_eq!(
-                AccuracyCalculator::check_domain_specific_ranges(name, &values),
+                (counts.range_violations, counts.numeric_values),
                 (expected, 4),
                 "{name}"
             );
         }
     }
 
-    /// The score bounds allow an unseen value as many violations as the rules
-    /// its column is under, so they must read the name as the counter does.
+    /// A value is one unit of the rule component however many rules it
+    /// breaks, and a column under no rule adds no units (#1005).
     #[test]
-    fn max_violations_per_value_reads_the_name_by_words() {
-        for (name, expected) in [
-            ("average_price", 0),
-            ("mileage", 0),
-            ("discount", 0),
-            ("customer_age", 1),
-            ("item_count", 1),
-        ] {
-            assert_eq!(
-                AccuracyCalculator::max_violations_per_value(name, &[]),
-                expected,
-                "{name}"
-            );
-        }
+    fn rule_units_are_values_of_ruled_columns_counted_once() {
+        let values: Vec<String> = ["-5", "50", "150", "NaN", "inf", "n/a"]
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
+        let counts =
+            |name, positive| AccuracyCalculator::check_value_rules(name, &values, positive);
+
+        // -5 breaks the percentage and the sign rule, 150 the percentage rule.
         assert_eq!(
-            AccuracyCalculator::max_violations_per_value("mileage", &["mileage".to_string()]),
-            1
+            counts("discount_percent", true),
+            RuleCounts {
+                numeric_values: 3,
+                range_violations: 2,
+                negative_values: 1,
+                rule_values: 3,
+                violating_values: 2,
+            }
+        );
+        // A redundant rule finds no value the others missed, so it moves
+        // neither side of the component.
+        let without_sign = counts("discount_percent", false);
+        assert_eq!(
+            (without_sign.rule_values, without_sign.violating_values),
+            (3, 2)
+        );
+        // Only the sign rule applies: one unit per value, one violation.
+        let sign_only = counts("balance", true);
+        assert_eq!((sign_only.rule_values, sign_only.violating_values), (3, 1));
+        assert_eq!(
+            counts("price", false),
+            RuleCounts {
+                numeric_values: 3,
+                ..RuleCounts::default()
+            }
+        );
+    }
+
+    /// Clean numeric columns beside a broken rule column change neither the
+    /// rule component's units nor its violations (#1005).
+    #[test]
+    fn unruled_columns_do_not_dilute_the_rule_component() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = AccuracyCalculator::new(&thresholds);
+        let column = |values: &[&str]| values.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+        let broken = ("discount_percent".to_string(), column(&["150", "200"]));
+        let alone = HashMap::from([broken.clone()]);
+        let beside = HashMap::from([broken, ("price".to_string(), column(&["1", "2", "3"]))]);
+        let profiles = vec![
+            numeric_profile("discount_percent"),
+            numeric_profile("price"),
+        ];
+
+        let alone = calc.calculate(&alone, &profiles).unwrap();
+        let beside = calc.calculate(&beside, &profiles).unwrap();
+        assert_eq!(
+            (alone.rule_values_checked, alone.rule_violating_values),
+            (2, 2)
+        );
+        assert_eq!(
+            (beside.rule_values_checked, beside.rule_violating_values),
+            (2, 2)
+        );
+        assert_eq!(
+            (alone.numeric_values_checked, beside.numeric_values_checked),
+            (2, 5)
         );
     }
 

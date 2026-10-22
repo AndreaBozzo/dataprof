@@ -206,6 +206,10 @@ Measures whether values fall within expected ranges.
   (`account_age_days`), and a `rate` is not taken for a percentage
   (`sample_rate`, `heart_rate`)
 - `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
+- `rule_violating_values` of `rule_values_checked` -- what the score reads:
+  the values of the columns a range or sign rule applies to, and those
+  breaking at least one rule, each counted once. Clean columns under no rule
+  do not dilute a broken one
 
 ### Timeliness
 

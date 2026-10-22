@@ -62,7 +62,9 @@
         "negative_values_in_positive": 0,
         "numeric_values_checked": 3,
         "outlier_ratio": 0.0,
-        "range_violations": 0
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
       },
       "completeness": {
         "complete_records_ratio": 66.67,

@@ -218,6 +218,23 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
     assert result.verdict == "inconclusive"
 
 
+def test_a_baseline_without_the_range_rule_definition_leaves_accuracy_unevaluated():
+    # Every other definition recorded, so only the range rule count separates
+    # the baseline from the report (#1005).
+    report = dp.profile(CLEAN)
+    summary = report.to_dict()
+    del summary["metric_semantics"]["range_rule_count"]
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        max_quality_score_drop=0,
+        max_dimension_score_drops={"accuracy": 0, "completeness": 0},
+    )
+    unevaluated = {"reason": "definition_not_comparable", "definition": "range_rule_count"}
+    assert _find(result, "max_quality_score_drop").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "accuracy").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+
+
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):
     path = tmp_path / "rows.csv"
     path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))

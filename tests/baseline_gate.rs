@@ -418,6 +418,47 @@ fn a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated() {
 }
 
 #[test]
+fn a_baseline_without_the_range_rule_definition_leaves_accuracy_unevaluated() {
+    // A baseline that records every other definition, as a 0.12 report does
+    // not, so only the range rule count separates it from the report (#1005).
+    let report = profile(CLEAN);
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    summary["metric_semantics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("range_rule_count")
+        .expect("reports record the range rule count");
+    let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    let result = QualityPolicy::new()
+        .max_quality_score_drop(0.0)
+        .max_dimension_score_drop(QualityDimension::Accuracy, 0.0)
+        .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+        .evaluate_against(&report, &baseline)
+        .unwrap();
+    for (code, subject) in [
+        (CheckCode::MaxQualityScoreDrop, None),
+        (CheckCode::MaxDimensionScoreDrop, Some("accuracy")),
+    ] {
+        assert!(
+            matches!(
+                reason(check(&result, code, subject)),
+                Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "range_rule_count"
+            ),
+            "{code:?} {subject:?}"
+        );
+    }
+    assert_eq!(
+        check(
+            &result,
+            CheckCode::MaxDimensionScoreDrop,
+            Some("completeness")
+        )
+        .status,
+        CheckStatus::Passed
+    );
+}
+
+#[test]
 fn partial_evidence_on_either_side_is_unevaluated_under_full_source_only() {
     let rows: String = (0..200).map(|i| format!("{i},{}\n", i * 2)).collect();
     let file = csv(&format!("id,amount\n{rows}"));

@@ -57,6 +57,23 @@ impl std::fmt::Display for QualityDimension {
     }
 }
 
+/// What the range and sign rules of the accuracy score count, as recorded in
+/// a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.12 every rule failure
+/// counted, a value breaking two rules twice, and the failures were divided
+/// by the numeric values of every column, so clean columns diluted a broken
+/// one; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RangeRuleCount {
+    /// Values breaking at least one rule, each counted once, over the values
+    /// of the columns a rule applies to.
+    ViolatingValues,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

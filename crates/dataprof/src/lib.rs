@@ -28,11 +28,11 @@ pub use dataprof_core::{
     ExecutionMetadata, FileFormat, FrequencyItem, IsoQualityConfig, LexicalClass, Locale,
     MetricPack, NULL_MARKERS, NullTokenSet, NumericStats, ParquetMetadata, Pattern,
     PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink, QualityDimension,
-    QualityScoreWeights, Quartiles, QueryEngine, RecoveryEvent, RecoveryKind, RowCountEstimate,
-    SamplingStrategy, SchemaResult, SemanticHintBinding, SemanticHintKind, SemanticHints,
-    ShapeMomentEstimator, SlashDateOrder, StopCondition, StopEvaluator, StructureColumnSummary,
-    StructureReport, TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity,
-    validate_unique_column_names,
+    QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent, RecoveryKind,
+    RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding, SemanticHintKind,
+    SemanticHints, ShapeMomentEstimator, SlashDateOrder, StopCondition, StopEvaluator,
+    StructureColumnSummary, StructureReport, TextLengthUnit, TextStats, TruncationReason,
+    TypeHomogeneity, validate_unique_column_names,
 };
 pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{

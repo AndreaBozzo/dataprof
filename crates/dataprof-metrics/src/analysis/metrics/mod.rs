@@ -294,6 +294,8 @@ impl MetricsCalculator {
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
                 numeric_values_checked: a.numeric_values_checked,
+                rule_values_checked: a.rule_values_checked,
+                rule_violating_values: a.rule_violating_values,
             })
         } else {
             None
@@ -405,6 +407,8 @@ impl MetricsCalculator {
                     range_violations: 0,
                     negative_values_in_positive: 0,
                     numeric_values_checked: 0,
+                    rule_values_checked: 0,
+                    rule_violating_values: 0,
                 })
             } else {
                 None
@@ -608,6 +612,8 @@ impl MetricsCalculator {
                     range_violations: 0,
                     negative_values_in_positive: 0,
                     numeric_values_checked: 0,
+                    rule_values_checked: 0,
+                    rule_violating_values: 0,
                     outliers: 0,
                     outlier_values_checked: 0,
                 }
@@ -618,6 +624,8 @@ impl MetricsCalculator {
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
                 numeric_values_checked: a.numeric_values_checked,
+                rule_values_checked: a.rule_values_checked,
+                rule_violating_values: a.rule_violating_values,
             })
         } else {
             None
