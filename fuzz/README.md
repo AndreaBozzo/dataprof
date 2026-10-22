@@ -83,10 +83,21 @@ and [CLI source for the pinned version](https://github.com/rust-fuzz/cargo-fuzz/
 
 `.github/workflows/fuzz.yml` runs stable replay on Linux and Windows, and builds
 all four sanitizer targets to replay their seeds on Linux for relevant PRs and
-pushes. Weekly and manual runs mutate each corpus for five minutes. Each job
-has a wall-clock timeout and uploads its crash artifacts and evolved corpus
-for 14 days, even after a failure. Corpus growth is kept in ignored
-`fuzz/corpus/`; review and minimize discoveries before adding them to `seeds/`.
+pushes. Weekly and manual runs mutate each corpus for five minutes. **Scheduled**
+runs restore the latest per-target evolved corpus via `actions/cache`, then add
+any new committed seeds. Each scheduled run saves an immutable cache key with
+its run ID, so the next run restores the newest available corpus, and varies
+libFuzzer's `-seed` using `GITHUB_RUN_NUMBER`. Logs show the cache key (or a
+cold-start note), seed, and corpus file count before and after the run. If
+GitHub evicts the cache, the job explicitly falls back to committed seeds;
+cache availability depends on the repository's cache retention policy.
+
+PR and push runs still **only replay committed seeds** (`-runs=0`, fixed
+`-seed=274`) and cannot read the evolved corpus cache. Manual dispatch still
+uses the fixed seed `274` for reproducibility, as before. Each job has a wall-clock
+timeout and uploads its crash artifacts and evolved corpus for 14 days, even
+after a failure. Corpus growth is kept in ignored `fuzz/corpus/`; review and
+minimize discoveries before adding them to `seeds/`.
 
 Reproduce an uploaded input with the same tool versions and bounds:
 

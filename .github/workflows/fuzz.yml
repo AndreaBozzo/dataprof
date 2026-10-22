@@ -80,22 +80,50 @@ jobs:
         run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fetch locked harness dependencies
         run: cargo fetch --manifest-path fuzz/Cargo.toml --locked
+      - name: Restore last scheduled corpus (per target)
+        if: github.event_name == 'schedule'
+        id: evolved-corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          # Cache keys are immutable. A new run ID saves new mutations; the
+          # restore prefix picks the most recent prior scheduled campaign.
+          key: scheduled-fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            scheduled-fuzz-${{ matrix.target }}-
       - name: Replay seeds or run a bounded campaign
         shell: bash
         env:
           CARGO_NET_OFFLINE: 'true'
+          RESTORED_CORPUS_KEY: ${{ steps.evolved-corpus.outputs.cache-matched-key }}
         run: |
           mkdir -p "fuzz/corpus/$FUZZ_TARGET"
           cp fuzz/seeds/"$FUZZ_TARGET"/* "fuzz/corpus/$FUZZ_TARGET/"
-          # PRs and pushes replay a fixed corpus. Scheduled/manual runs mutate
-          # it for five minutes per target, retaining all discoveries.
+          # The restored corpus is combined with committed seeds. PR/push runs
+          # do not restore or mutate a previously evolved corpus.
+          echo "Restored scheduled corpus cache: ${RESTORED_CORPUS_KEY:-none (cold start)}"
+          echo "Corpus before: $(find "fuzz/corpus/$FUZZ_TARGET" -maxdepth 1 -type f | wc -l) files"
+          trap 'echo "Corpus after: $(find "fuzz/corpus/$FUZZ_TARGET" -maxdepth 1 -type f | wc -l) files"' EXIT
           budget=(-runs=0)
-          if [[ "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ]]; then
+          seed=274
+          if [[ "$EVENT_NAME" == schedule ]]; then
+            budget=(-max_total_time=300)
+            # Unique per workflow run; don't replay the same mutation sequence
+            # when neither the build nor the corpus has changed.
+            seed="$GITHUB_RUN_NUMBER"
+          elif [[ "$EVENT_NAME" == workflow_dispatch ]]; then
             budget=(-max_total_time=300)
           fi
+          echo "libFuzzer seed: $seed (event=$EVENT_NAME)"
           cargo fuzz run "$FUZZ_TARGET" --features fuzzing -- \
-            "${budget[@]}" -max_len=4096 -timeout=10 -rss_limit_mb=1024 -seed=274
+            "${budget[@]}" -max_len=4096 -timeout=10 -rss_limit_mb=1024 -seed="$seed"
           git diff --exit-code -- fuzz/Cargo.lock
+      - name: Save evolved corpus after scheduled campaign
+        if: always() && github.event_name == 'schedule'
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: scheduled-fuzz-${{ matrix.target }}-${{ github.run_id }}
       - name: Retain crash inputs and evolved corpus
         if: always()
         uses: actions/upload-artifact@v7
