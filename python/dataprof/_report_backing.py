@@ -300,6 +300,7 @@ _METRIC_SEMANTICS = {
     "shape_moments": ("adjusted_sample",),
     "range_rule_count": ("violating_values",),
     "key_uniqueness_units": ("non_null_values",),
+    "outlier_units": ("tested_values",),
 }
 
 

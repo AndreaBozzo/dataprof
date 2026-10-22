@@ -3,10 +3,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, KeyUniquenessUnits, NullTokenSet, Pattern,
-    PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension,
-    QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind,
-    ShapeMomentEstimator, TextLengthUnit, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits,
+    Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment,
+    QualityDimension, QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval,
+    SemanticHintKind, ShapeMomentEstimator, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -580,6 +580,12 @@ impl PyDataQualityMetrics {
                     "outlier_ratio".into(),
                     a.outlier_ratio.into_pyobject(py)?.unbind().into_any(),
                 );
+                if let Some(tested) = a.outlier_values_checked {
+                    m.insert(
+                        "outlier_values_checked".into(),
+                        tested.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 m.insert(
                     "range_violations".into(),
                     a.range_violations.into_pyobject(py)?.unbind().into_any(),
@@ -1236,6 +1242,14 @@ impl PyProfileReport {
                 "key_uniqueness_units",
                 match units {
                     KeyUniquenessUnits::NonNullValues => "non_null_values",
+                },
+            )?;
+        }
+        if let Some(units) = semantics.outlier_units {
+            dict.set_item(
+                "outlier_units",
+                match units {
+                    OutlierUnits::TestedValues => "tested_values",
                 },
             )?;
         }

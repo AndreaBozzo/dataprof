@@ -102,8 +102,18 @@ pub struct RowCompletenessSummary {
 /// Accuracy metrics (ISO 25012).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AccuracyMetrics {
+    /// Values outside the Tukey fences, as a percentage of
+    /// `outlier_values_checked`. Carries no signal, and takes nothing off
+    /// the score, when that is 0.
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
+    /// Finite numeric values of the columns that reached
+    /// `outlier_min_samples`: the units of the outlier component. 0 means no
+    /// column was tested, so the component is absent. Absent on documents
+    /// written before 0.13, whose `outlier_ratio` read 0 for an untested
+    /// source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outlier_values_checked: Option<usize>,
     /// Failures of the name-based range rules (age, percentage, count, year):
     /// a value breaking two of them adds two. A diagnostic; the score reads
     /// `rule_violating_values`.
@@ -111,9 +121,9 @@ pub struct AccuracyMetrics {
     /// Negative values in positive-only columns. A diagnostic; the score
     /// reads `rule_violating_values`.
     pub negative_values_in_positive: usize,
-    /// Finite numeric values examined across all columns. 0 means the
-    /// dimension had nothing to assess and it is excluded from the overall
-    /// score.
+    /// Finite numeric values examined across all columns. The dimension is
+    /// assessed when the outlier or the rule component had units, not by this
+    /// count alone; see [`AccuracyMetrics::is_assessed`].
     #[serde(default)]
     pub numeric_values_checked: usize,
     /// Finite numeric values of the columns a range or sign rule applies to:
@@ -233,9 +243,21 @@ impl UniquenessMetrics {
 }
 
 impl AccuracyMetrics {
-    /// True when at least one finite numeric value was examined.
+    /// True when a component measured something: the outlier test ran on at
+    /// least one column, or a range or sign rule applied to a value. Numeric
+    /// values that neither component tested assess nothing (#1005).
     pub fn is_assessed(&self) -> bool {
-        self.numeric_values_checked > 0
+        self.outliers_measured() || self.rule_values_checked > 0
+    }
+
+    /// True when the outlier test ran. A document that predates
+    /// `outlier_values_checked` counts as tested whenever it examined a
+    /// numeric value, as its release scored it.
+    pub fn outliers_measured(&self) -> bool {
+        match self.outlier_values_checked {
+            Some(tested) => tested > 0,
+            None => self.numeric_values_checked > 0,
+        }
     }
 }
 
@@ -345,6 +367,7 @@ impl QualityMetrics {
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
+                outlier_values_checked: Some(0),
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 0,
@@ -431,12 +454,14 @@ impl QualityMetrics {
     }
 
     /// Score for the accuracy dimension (0-100), or `None` when the
-    /// dimension was not computed or no numeric values were found.
+    /// dimension was not computed or neither component measured anything.
     ///
-    /// `100 - outlier_ratio`, penalized by the share of values breaking a
-    /// range or sign rule among the values of the columns those rules apply
-    /// to. Columns under no rule add nothing to either side (#1005).
+    /// `100 - outlier_ratio` when the outlier test ran, penalized by the
+    /// share of values breaking a range or sign rule among the values of the
+    /// columns those rules apply to. A component without units takes nothing
+    /// off (#1005).
     pub fn accuracy_score(&self) -> Option<f64> {
+        // An untested outlier component reads 0, so it takes nothing off.
         let a = self.accuracy.as_ref().filter(|a| a.is_assessed())?;
         let violation_ratio = if a.rule_values_checked > 0 {
             a.rule_violating_values as f64 / a.rule_values_checked as f64
@@ -1277,6 +1302,7 @@ mod tests {
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
+                outlier_values_checked: Some(100),
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 100,
@@ -1429,7 +1455,9 @@ mod tests {
             u.rows_checked = 0;
         }
         if let Some(ref mut a) = metrics.accuracy {
-            a.numeric_values_checked = 0;
+            // Neither component had units: nothing tested, no rule applied.
+            a.outlier_values_checked = Some(0);
+            a.rule_values_checked = 0;
         }
         if let Some(ref mut t) = metrics.timeliness {
             t.date_values_checked = 0;
@@ -1840,6 +1868,7 @@ mod tests {
                 metrics: QualityMetrics {
                     accuracy: Some(AccuracyMetrics {
                         outlier_ratio: 6.25,
+                        outlier_values_checked: Some(16),
                         range_violations: 1,
                         negative_values_in_positive: 1,
                         numeric_values_checked: 16,

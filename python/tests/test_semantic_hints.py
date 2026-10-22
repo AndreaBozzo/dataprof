@@ -18,11 +18,15 @@ class TestSemanticHints:
         path = tmp_path / "pressure.csv"
         path.write_text("pressure,temperature_delta\n101325,1\n-500,-2\n100900,3\n")
 
+        # Three values each: too few for the outlier test, and no rule applies,
+        # so accuracy measured nothing (#1005).
         without_hint = dataprof.profile(str(path), engine="incremental")
         assert without_hint.quality is not None
-        assert without_hint.quality.accuracy is not None
-        assert without_hint.quality.accuracy["negative_values_in_positive"] == 0
+        assert without_hint.quality.accuracy is None
+        assert without_hint.quality.dimension_scores()["accuracy"] is None
 
+        # The hint puts `pressure` under the sign rule, which gives accuracy
+        # its units.
         with_hint = dataprof.profile(
             str(path),
             engine="incremental",
@@ -31,6 +35,7 @@ class TestSemanticHints:
         assert with_hint.quality is not None
         assert with_hint.quality.accuracy is not None
         assert with_hint.quality.accuracy["negative_values_in_positive"] == 1
+        assert with_hint.quality.accuracy["rule_values_checked"] == 3
 
     def test_identifier_columns_omit_numeric_stats(self, tmp_path):
         path = tmp_path / "orders.csv"
@@ -45,9 +50,11 @@ class TestSemanticHints:
         assert order_id.data_type == "identifier"
         assert order_id.mean is None
         assert order_id.outlier_count is None
+        # The identifier is left out of the outlier test, and it is the only
+        # column, so accuracy measured nothing (#1005).
         assert report.quality is not None
-        assert report.quality.accuracy is not None
-        assert report.quality.accuracy["outlier_ratio"] == 0.0
+        assert report.quality.accuracy is None
+        assert report.quality.dimension_scores()["accuracy"] is None
 
     def test_dataframe_hints(self):
         pd = pytest.importorskip("pandas")

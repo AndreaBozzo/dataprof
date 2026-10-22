@@ -90,6 +90,23 @@ pub enum KeyUniquenessUnits {
     NonNullValues,
 }
 
+/// What `outlier_ratio` is measured over, as recorded in a report's metric
+/// semantics.
+///
+/// Only the current definition has a value. Through 0.12 a source in which no
+/// column reached `outlier_min_samples` reported `outlier_ratio` 0, and its
+/// numeric values alone made the accuracy dimension assessed; those releases
+/// recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlierUnits {
+    /// The values of the columns that reached `outlier_min_samples`. With
+    /// none, the component is absent rather than 0.
+    TestedValues,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

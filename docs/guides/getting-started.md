@@ -199,7 +199,11 @@ Measures duplication in the data.
 
 Measures whether values fall within expected ranges.
 
-- `outlier_ratio` -- fraction of values outside the interquartile range
+- `outlier_ratio` -- share of values outside the interquartile range, over
+  `outlier_values_checked`: the values of columns with at least
+  `outlier_min_samples` numbers (4 by default). With none, no test ran and
+  the component is left out; accuracy with neither an outlier test nor a
+  range rule to apply is unassessed rather than 100
 - `range_violations` -- values outside the range a word of the column name
   implies: `age` 0 to 150, `percent`, `percentage` or `pct` 0 to 100,
   `count` or `counts` not negative, `year` 1900 to 2100 (`customer_age`
