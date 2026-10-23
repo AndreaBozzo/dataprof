@@ -1270,7 +1270,7 @@ python -m dataprof.check daily_drop.csv --min-quality 90 --report profile.json -
 
 The path must end in `.json`; reload it with `dp.ProfileReport.load()`. It is the
 report the verdict was computed from, written on `pass`, `fail` and
-`inconclusive` and not when profiling fails. An existing file is overwritten; a
+`inconclusive`, and not when profiling or the comparison with a baseline fails. An existing file is overwritten; a
 write failure exits `3` and names the path. `--json` stdout is unchanged.
 The report path must not refer to the source, policy or baseline file, including
 through symbolic links, hard links or case-insensitive path aliases.
@@ -1338,8 +1338,9 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 
 A rule about change without `--baseline` is a policy error (exit `3`). The
 baseline is any file `--report` or `save()` wrote, or a flat `to_dict()` summary,
-which leaves what it did not record unrecorded. A baseline that cannot be read
-or is not a report exits `3` with an error of kind `baseline` naming the path.
+which leaves what it did not record unrecorded. A baseline that cannot be read,
+is not a report, or cannot be compared exits `3` with an error of kind `baseline`
+naming the path.
 When the two reports did not measure the same thing the same way (a changed
 metric definition or setting, a schema change behind a score, or incomplete
 evidence under `full_source`), the rule is unevaluated and the run exits `2`, with

@@ -571,13 +571,20 @@ def test_absent_policy_file_is_a_policy_error(source: Path, tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    "content",
-    [None, "{not json", "[]", '{"a": 1}'],
-    ids=["missing", "invalid-json", "array", "not-a-report"],
+    "content,stage",
+    [
+        (None, "read"),
+        ("{not json", "read"),
+        ("[]", "read"),
+        ('{"a": 1}', "read"),
+        # load() accepts the shape of a flat summary; the gate cannot decode it.
+        ('{"source": null, "execution": {}, "columns": []}', "compare with"),
+    ],
+    ids=["missing", "invalid-json", "array", "not-a-report", "undecodable-summary"],
 )
 @pytest.mark.parametrize("json_output", [False, True])
 def test_an_unreadable_baseline_is_a_baseline_error(
-    source: Path, tmp_path: Path, content: str | None, json_output: bool
+    source: Path, tmp_path: Path, content: str | None, stage: str, json_output: bool
 ):
     baseline = tmp_path / "baseline.json"
     if content is not None:
@@ -590,11 +597,11 @@ def test_an_unreadable_baseline_is_a_baseline_error(
         error = json.loads(result.stdout)["error"]
         assert error["kind"] == "baseline"
         assert error["path"] == str(baseline)
-        assert error["message"].startswith(f"cannot read baseline {baseline}: ")
+        assert error["message"].startswith(f"cannot {stage} baseline {baseline}: ")
         assert result.stderr == ""
     else:
         assert result.stdout == ""
-        assert f"cannot read baseline {baseline}: " in result.stderr
+        assert f"cannot {stage} baseline {baseline}: " in result.stderr
 
 
 @pytest.mark.parametrize(

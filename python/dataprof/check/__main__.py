@@ -445,8 +445,21 @@ def main(argv: list[str] | None = None) -> int:
             max_rows=args.max_rows,
             metrics=args.metrics,
         )
+    except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
+        return _report_error("input", str(exc), path=args.source, json_output=args.json)
+    try:
         result = report.check(**policy, baseline=baseline)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
+        # The policy was validated and today's report is native, so a
+        # comparison that cannot start is the baseline's: a summary load()
+        # accepts can still be one the gate cannot decode.
+        if baseline is not None:
+            return _report_error(
+                "baseline",
+                f"cannot compare with baseline {args.baseline}: {exc}",
+                path=args.baseline,
+                json_output=args.json,
+            )
         return _report_error("input", str(exc), path=args.source, json_output=args.json)
 
     if args.report is not None:
