@@ -3,18 +3,13 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from dataprof._gate import _QUALITY_DIMENSIONS, _SCOPES
 from dataprof.check.__main__.py import _POLICY_DEFAULTS
 
 
 def test_quality_policy_schema_matches_policy_defaults():
     schema_path = (
-        Path(__file__).resolve().parents[2]
-        / "docs"
-        / "schema"
-        / "quality-policy.v1.schema.json"
+        Path(__file__).resolve().parents[2] / "docs" / "schema" / "quality-policy.v1.schema.json"
     )
     assert schema_path.is_file(), f"Missing schema at {schema_path}"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
