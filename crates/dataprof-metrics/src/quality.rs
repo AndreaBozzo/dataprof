@@ -52,6 +52,14 @@ pub struct UniquenessMetrics {
     /// and does not contribute to the dimension score.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_column: Option<String>,
+    /// Non-null values of `key_column`: the units `key_uniqueness` divides
+    /// the key's distinct values by. 0 means the key held no value, so
+    /// `key_uniqueness` carries no signal and does not contribute to the
+    /// dimension score. Absent with no key column, and on documents written
+    /// before 0.13, whose `key_uniqueness` divided by every row, nulls
+    /// included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_values_checked: Option<usize>,
     /// True when `duplicate_rows` comes from the full-stream distinct-count
     /// estimator after it spilled to its HLL sketch (~1% relative error on
     /// the distinct count), rather than an exact count.
@@ -94,15 +102,43 @@ pub struct RowCompletenessSummary {
 /// Accuracy metrics (ISO 25012).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AccuracyMetrics {
+    /// Values outside the Tukey fences, as a percentage of
+    /// `outlier_values_checked`. Carries no signal, and takes nothing off
+    /// the score, when that is 0.
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
+    /// Finite numeric values of the columns that reached
+    /// `outlier_min_samples`: the units of the outlier component. 0 means no
+    /// column was tested, so the component is absent. Absent on documents
+    /// written before 0.13, whose `outlier_ratio` read 0 for an untested
+    /// source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outlier_values_checked: Option<usize>,
+    /// Failures of the name-based range rules (age, percentage, count, year):
+    /// a value breaking two of them adds two. A diagnostic; the score reads
+    /// `rule_violating_values`.
     pub range_violations: usize,
+    /// Negative values in positive-only columns. A diagnostic; the score
+    /// reads `rule_violating_values`.
     pub negative_values_in_positive: usize,
-    /// Finite numeric values examined across all columns. 0 means the
-    /// dimension had nothing to assess and it is excluded from the overall
-    /// score.
+    /// Finite numeric values examined across all columns. The dimension is
+    /// assessed when the outlier or the rule component had units, not by this
+    /// count alone; see [`AccuracyMetrics::is_assessed`].
     #[serde(default)]
     pub numeric_values_checked: usize,
+    /// Finite numeric values of the columns a range or sign rule applies to:
+    /// the units of the rule component. 0 means no rule applied, and the
+    /// component takes nothing off the score. Additive: documents written
+    /// before it read as 0, so the schema does not require it.
+    #[serde(default)]
+    #[schemars(default)]
+    pub rule_values_checked: usize,
+    /// Of `rule_values_checked`, the values breaking at least one rule, each
+    /// counted once however many rules it breaks. Additive, like
+    /// `rule_values_checked`.
+    #[serde(default)]
+    #[schemars(default)]
+    pub rule_violating_values: usize,
 }
 
 /// Timeliness metrics (ISO 8000-8).
@@ -195,14 +231,33 @@ impl UniquenessMetrics {
     /// True when either component had data: rows scanned for duplicates, or an
     /// identified key column whose uniqueness `key_uniqueness` describes.
     pub fn is_assessed(&self) -> bool {
-        self.rows_checked > 0 || self.key_column.is_some()
+        self.rows_checked > 0 || self.key_measured()
+    }
+
+    /// True when `key_uniqueness` measured something: a key column was
+    /// identified and held at least one value. A document that predates
+    /// `key_values_checked` counts as measured whenever it names a key.
+    pub fn key_measured(&self) -> bool {
+        self.key_column.is_some() && self.key_values_checked != Some(0)
     }
 }
 
 impl AccuracyMetrics {
-    /// True when at least one finite numeric value was examined.
+    /// True when a component measured something: the outlier test ran on at
+    /// least one column, or a range or sign rule applied to a value. Numeric
+    /// values that neither component tested assess nothing (#1005).
     pub fn is_assessed(&self) -> bool {
-        self.numeric_values_checked > 0
+        self.outliers_measured() || self.rule_values_checked > 0
+    }
+
+    /// True when the outlier test ran. A document that predates
+    /// `outlier_values_checked` counts as tested whenever it examined a
+    /// numeric value, as its release scored it.
+    pub fn outliers_measured(&self) -> bool {
+        match self.outlier_values_checked {
+            Some(tested) => tested > 0,
+            None => self.numeric_values_checked > 0,
+        }
     }
 }
 
@@ -307,13 +362,17 @@ impl QualityMetrics {
                 high_cardinality_warning: false,
                 rows_checked: 0,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
+                outlier_values_checked: Some(0),
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 0,
+                rule_values_checked: 0,
+                rule_violating_values: 0,
             }),
             timeliness: Some(TimelinessMetrics {
                 future_dates_count: 0,
@@ -374,14 +433,15 @@ impl QualityMetrics {
     ///
     /// Mean of the available components: share of non-duplicate rows (when
     /// a row tracker or an aligned sample scan produced a count) and
-    /// `key_uniqueness` (when a key column was identified). Engines without
+    /// `key_uniqueness` (when a key column was identified and held a value).
+    /// Engines without
     /// a row tracker whose samples cannot be proven row-aligned contribute
     /// only the key component.
     pub fn uniqueness_score(&self) -> Option<f64> {
         let u = self.uniqueness.as_ref().filter(|u| u.is_assessed())?;
         let duplicate_score = (u.rows_checked > 0)
             .then(|| (1.0 - u.duplicate_rows as f64 / u.rows_checked as f64) * 100.0);
-        let key_score = u.key_column.is_some().then_some(u.key_uniqueness);
+        let key_score = u.key_measured().then_some(u.key_uniqueness);
 
         let (sum, count) = [duplicate_score, key_score]
             .iter()
@@ -394,15 +454,25 @@ impl QualityMetrics {
     }
 
     /// Score for the accuracy dimension (0-100), or `None` when the
-    /// dimension was not computed or no numeric values were found.
+    /// dimension was not computed or neither component measured anything.
     ///
-    /// `100 - outlier_ratio`, penalized by range violations and negative
-    /// values in positive-only columns as a share of the numeric values
-    /// checked.
+    /// `100 - outlier_ratio` when the outlier test ran, penalized by the
+    /// share of values breaking a range or sign rule among the values of the
+    /// columns those rules apply to. A component without units takes nothing
+    /// off (#1005).
     pub fn accuracy_score(&self) -> Option<f64> {
+        // An untested outlier component reads 0, so it takes nothing off.
         let a = self.accuracy.as_ref().filter(|a| a.is_assessed())?;
-        let violation_ratio = (a.range_violations + a.negative_values_in_positive) as f64
-            / a.numeric_values_checked as f64;
+        let violation_ratio = if a.rule_values_checked > 0 {
+            a.rule_violating_values as f64 / a.rule_values_checked as f64
+        } else {
+            // No rule applied, so no failure was counted either, unless the
+            // report predates the rule units: through 0.12 it summed the
+            // failures over every numeric value, and a report without saved
+            // scores (0.11) still scores as its release did.
+            (a.range_violations + a.negative_values_in_positive) as f64
+                / a.numeric_values_checked as f64
+        };
         Some((100.0 - a.outlier_ratio - violation_ratio * 100.0).clamp(0.0, 100.0))
     }
 
@@ -1046,7 +1116,7 @@ impl QualityAssessment {
         };
         let mut labels = Vec::new();
         if let Some(uniqueness) = &self.metrics.uniqueness {
-            if uniqueness.key_column.is_some() {
+            if uniqueness.key_measured() {
                 labels.push("key_uniqueness".to_string());
             }
             if uniqueness.rows_checked > 0 {
@@ -1227,13 +1297,17 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
+                outlier_values_checked: Some(100),
                 range_violations: 0,
                 negative_values_in_positive: 0,
                 numeric_values_checked: 100,
+                rule_values_checked: 0,
+                rule_violating_values: 0,
             }),
             timeliness: Some(TimelinessMetrics {
                 future_dates_count: 0,
@@ -1381,7 +1455,9 @@ mod tests {
             u.rows_checked = 0;
         }
         if let Some(ref mut a) = metrics.accuracy {
-            a.numeric_values_checked = 0;
+            // Neither component had units: nothing tested, no rule applied.
+            a.outlier_values_checked = Some(0);
+            a.rule_values_checked = 0;
         }
         if let Some(ref mut t) = metrics.timeliness {
             t.date_values_checked = 0;
@@ -1461,6 +1537,28 @@ mod tests {
 
     #[test]
     fn test_range_and_negative_violations_lower_accuracy_score() {
+        // 20 values under a rule, 2 of them violating: one breaks two range
+        // rules and the sign rule, one a range rule. The penalty is 2 in 20,
+        // whatever the per-rule failure counts and the numeric values beside.
+        let mut metrics = perfect_assessed();
+        if let Some(ref mut a) = metrics.accuracy {
+            a.outlier_ratio = 10.0;
+            a.range_violations = 3;
+            a.negative_values_in_positive = 1;
+            a.rule_values_checked = 20;
+            a.rule_violating_values = 2;
+        }
+        let score = metrics
+            .accuracy_score()
+            .expect("accuracy should be assessed");
+        assert!((score - 80.0).abs() < 0.01, "{score}");
+    }
+
+    /// A report written before the rule units were recorded (0.11, which
+    /// saved no scores) scores as its release did: failures over every
+    /// numeric value.
+    #[test]
+    fn accuracy_without_rule_units_scores_as_recorded() {
         let mut metrics = perfect_assessed();
         if let Some(ref mut a) = metrics.accuracy {
             a.outlier_ratio = 10.0;
@@ -1470,7 +1568,7 @@ mod tests {
         let score = metrics
             .accuracy_score()
             .expect("accuracy should be assessed");
-        assert!((score - 80.0).abs() < 0.01);
+        assert!((score - 80.0).abs() < 0.01, "{score}");
     }
 
     #[test]
@@ -1541,6 +1639,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: false,
             }),
             ..QualityMetrics::default()
@@ -1676,6 +1775,7 @@ mod tests {
                 // No rows scanned, but a key column was identified, so the key
                 // component alone still carries a measurement.
                 key_column: Some("id".to_string()),
+                key_values_checked: Some(10),
                 duplicate_rows_approximate: false,
             }),
             ..QualityMetrics::default()
@@ -1751,6 +1851,7 @@ mod tests {
                         high_cardinality_warning: true,
                         rows_checked: 25,
                         key_column: Some("user_id".to_string()),
+                        key_values_checked: Some(25),
                         duplicate_rows_approximate: false,
                     }),
                     ..QualityMetrics::default()
@@ -1767,9 +1868,12 @@ mod tests {
                 metrics: QualityMetrics {
                     accuracy: Some(AccuracyMetrics {
                         outlier_ratio: 6.25,
+                        outlier_values_checked: Some(16),
                         range_violations: 1,
                         negative_values_in_positive: 1,
                         numeric_values_checked: 16,
+                        rule_values_checked: 8,
+                        rule_violating_values: 1,
                     }),
                     ..QualityMetrics::default()
                 },

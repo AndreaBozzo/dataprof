@@ -13,6 +13,7 @@ import dataprof as dp
 import pytest
 
 EMAILS = {"email": ["a@example.com", "b@example.com", "c@example.com"]}
+ITALIAN = {"pattern_locale": "IT", "columns": {"selection": "all"}}
 
 
 def _routes(tmp_path: Path) -> dict[str, Any]:
@@ -64,22 +65,22 @@ def test_every_input_path_records_the_locale(tmp_path: Path):
         for packs in ({}, {"metrics": ["schema", "patterns"]}):
             for options, expected in (({}, "none"), ({"locale": "it"}, "IT")):
                 settings = _profile(source, **packs, **options).analysis_settings
-                if settings != {"pattern_locale": expected}:
+                if settings is None or settings["pattern_locale"] != expected:
                     wrong.append((name, packs, options, settings))
     assert wrong == []
 
 
 def test_a_document_keeps_the_settings_and_their_absence(tmp_path: Path):
     report = dp.profile(EMAILS, locale="it")
-    assert report.analysis_settings == {"pattern_locale": "IT"}
+    assert report.analysis_settings == ITALIAN
 
     saved = tmp_path / "report.json"
     report.save(saved)
-    assert dp.ProfileReport.load(saved).analysis_settings == {"pattern_locale": "IT"}
+    assert dp.ProfileReport.load(saved).analysis_settings == ITALIAN
 
     summary = report.to_dict()
-    assert summary["analysis_settings"] == {"pattern_locale": "IT"}
-    assert dp.ProfileReport.from_dict(summary).analysis_settings == {"pattern_locale": "IT"}
+    assert summary["analysis_settings"] == ITALIAN
+    assert dp.ProfileReport.from_dict(summary).analysis_settings == ITALIAN
 
     # Written before the field: unknown, not the defaults.
     del summary["analysis_settings"]
@@ -104,7 +105,7 @@ def test_a_document_keeps_the_settings_and_their_absence(tmp_path: Path):
     # A setting a later release adds is ignored.
     later = report.to_dict()
     later["analysis_settings"]["metric_packs"] = ["schema"]
-    assert dp.ProfileReport.from_dict(later).analysis_settings == {"pattern_locale": "IT"}
+    assert dp.ProfileReport.from_dict(later).analysis_settings == ITALIAN
 
 
 def test_compare_and_check_read_the_locale():

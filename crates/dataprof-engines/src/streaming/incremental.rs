@@ -205,7 +205,7 @@ impl IncrementalProfiler {
                     // two source columns into one profile with an inflated count.
                     dataprof_core::validate_unique_column_names(&names, "CSV header")?;
                     column_stats.init_columns(&names);
-                    progress_tracker.emit_schema(names);
+                    progress_tracker.emit_schema(&names);
                 }
             }
             if headers.is_none()
@@ -220,7 +220,7 @@ impl IncrementalProfiler {
                 );
                 let names: Vec<String> = generated.iter().map(str::to_string).collect();
                 column_stats.init_columns(&names);
-                progress_tracker.emit_schema(names);
+                progress_tracker.emit_schema(&names);
                 headers = Some(generated);
             }
 

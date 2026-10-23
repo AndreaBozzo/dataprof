@@ -102,8 +102,20 @@ class TestDatabaseConnection:
         assert result is True
 
     def test_connection_bad_string(self):
-        with pytest.raises(RuntimeError):
+        # A connection string no connector accepts is a caller mistake.
+        with pytest.raises(ValueError, match="Unsupported database connection string"):
             _run(_test_connection_async, "invalid://nope")
+
+    def test_connection_sqlite_with_credentials_is_rejected(self):
+        expected_msg = (
+            r"SQLite URLs do not support credentials or ports: "
+            r"found username \(alice\), password, port 5432"
+        )
+        with pytest.raises(ValueError, match=expected_msg):
+            _run(
+                _test_connection_async,
+                "sqlite://alice:secret@localhost:5432/data.db",
+            )
 
 
 @pytest.mark.database
@@ -202,8 +214,15 @@ class TestDatabaseErrors:
     """Test error handling for invalid inputs."""
 
     def test_bad_connection_string(self):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ValueError, match="Unsupported database connection string"):
             _run(analyze_database_async, "invalid://bad", "SELECT 1")
+
+    def test_every_helper_raises_value_error_for_a_bad_connection_string(self):
+        # The table helpers map errors the way analyze_database_async does,
+        # rather than flattening every failure into a RuntimeError.
+        for helper in (get_table_schema_async, count_table_rows_async):
+            with pytest.raises(ValueError, match="Unsupported database connection string"):
+                _run(helper, "invalid://bad", "test_users")
 
     def test_invalid_query(self, sqlite_db):
         with pytest.raises(RuntimeError):

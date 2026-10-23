@@ -43,7 +43,7 @@ pub use profile::{
     Quartiles, ShapeMomentEstimator, SlashDateOrder, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
-pub use quality::{MetricPack, QualityDimension};
+pub use quality::{KeyUniquenessUnits, MetricPack, OutlierUnits, QualityDimension, RangeRuleCount};
 pub use sampling::{ChunkSize, ReservoirSampler, RowSampler, SamplingStrategy};
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 pub use source::{

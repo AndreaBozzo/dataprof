@@ -699,11 +699,12 @@ any enum value it does not know. Consumers matching on `kind` must accept
 
 Both dialects gain a top-level `analysis_settings` object recording the
 settings a report was profiled with that move its scores on unchanged data and
-are recorded nowhere else in it (#1010). It has one field so far:
+are recorded nowhere else in it (#1010):
 
 | field | values | meaning |
 | --- | --- | --- |
 | `pattern_locale` | `"none"`, `"CA"`, `"DE"`, `"FR"`, `"GB"`, `"IT"`, `"US"` | the locale detected patterns were ranked with, which the validity score reads; `"none"` when no locale was given |
+| `columns` | `{"selection": "all"}` or `{"selection": "listed", "names": [...]}` | the columns the run profiled: every column, or a `columns=` projection in the order given. A projection that names a missing column is refused, so with `"all"` a column without a profile was not in what the run read |
 
 `metric_semantics` records how a release defines its measurements;
 `analysis_settings` records what the caller chose. Score weights live in the
@@ -713,6 +714,91 @@ repeated here.
 The object is absent from documents written before 0.13, whose settings are
 unknown rather than the defaults, and from a report built directly with
 `ProfileReport::new` rather than through a profiling run. An explicit `null`,
-an object without `pattern_locale`, and an unknown locale value are malformed.
+an object without `pattern_locale` or `columns`, an unknown locale value, and a
+`columns` object of another shape are malformed.
 A field a later release adds is ignored by this reader. Stored v1 reports
 remain valid.
+
+## v1 additive change: `metric_semantics.range_rule_count` and the accuracy rule units
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `range_rule_count` | `"violating_values"` | what the range and sign rules behind the accuracy score count |
+
+`quality.metrics.accuracy` gains the two counts it defines (#1005):
+
+| field | meaning |
+| --- | --- |
+| `rule_values_checked` | finite numeric values of the columns a range rule (`age`, percentage, `count`, `year` names) or the sign rule (`positive_columns`) applies to |
+| `rule_violating_values` | of those, the values breaking at least one rule, each counted once |
+
+The accuracy score subtracts `100 * rule_violating_values / rule_values_checked`
+from `100 - outlier_ratio` (9 violating values of 20 take off 45 points);
+columns under no rule add nothing to either side,
+and with no such column the rules take nothing off. Through 0.12 every rule
+failure counted, a negative percentage hinted positive twice, and the failures
+were divided by `numeric_values_checked`, the numeric values of every column,
+so clean columns beside a broken one raised its score. `range_violations` and
+`negative_values_in_positive` keep counting failures per rule, as diagnostics.
+
+A report that records no `range_rule_count` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`. Both counts default to 0 when absent, and such a
+document still scores its range and sign failures over
+`numeric_values_checked`, as the release that wrote it did. The fields are
+additive and not `required`, so stored v1 reports remain valid; an explicit
+`null` for `range_rule_count` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.key_uniqueness_units` and `key_values_checked`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `key_uniqueness_units` | `"non_null_values"` | what `key_uniqueness` divides the key column's distinct values by |
+
+`quality.metrics.uniqueness` gains `key_values_checked`, the non-null values of
+`key_column` (#1005). `key_uniqueness` is the key's distinct values over them,
+so a nullable key no longer loses uniqueness for the nulls completeness already
+counts: 100 distinct ids and 100 nulls score 100, where 0.12 reported 50. A key
+column holding no value is still named, with `key_values_checked` 0, and its
+`key_uniqueness` carries no signal: the uniqueness score then rests on the
+duplicate-row component alone, or the dimension is unassessed without one.
+
+A report that records no `key_uniqueness_units` reads back with it unknown, and
+a quality gate leaves the uniqueness and overall score rules over it
+`definition_not_comparable`. `key_values_checked` is absent when no key column
+was identified, and on documents written before it, whose `key_uniqueness`
+divided by every row and still scores as recorded. Both fields are additive and
+not `required`, so stored v1 reports remain valid; an explicit `null` for
+`key_uniqueness_units` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.outlier_units` and `outlier_values_checked`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `outlier_units` | `"tested_values"` | what `outlier_ratio` is measured over |
+
+`quality.metrics.accuracy` gains `outlier_values_checked`, the finite numeric
+values of the columns that reached `outlier_min_samples` (#1005). With none, no
+outlier test ran: `outlier_ratio` is 0 and carries no signal, and the component
+takes nothing off the score. Through 0.12 that 0 read as a measurement.
+
+The accuracy dimension is now assessed when one of its components had units: an
+outlier test ran, or a range or sign rule applied to a value
+(`rule_values_checked`). Numeric values neither component examined no longer
+assess it, so a source whose only numeric columns are shorter than
+`outlier_min_samples` and fall under no rule reports accuracy as unassessed,
+where 0.12 scored it 100. The overall score then renormalizes over the other
+dimensions, as for any unassessed one.
+
+A report that records no `outlier_units` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`. `outlier_values_checked` is absent on documents
+written before it; those are assessed and scored as their release did. The
+field is additive and not `required`, so stored v1 reports remain valid; an
+explicit `null` for `outlier_units` is malformed, as for `text_length_unit`.

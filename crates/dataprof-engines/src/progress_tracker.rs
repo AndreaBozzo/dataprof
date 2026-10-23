@@ -12,7 +12,8 @@ pub(crate) struct ProgressTracker {
     update_interval: Duration,
     total_rows: usize,
     total_bytes: u64,
-    schema_sent: bool,
+    /// Columns in the last `SchemaDetected`, `None` before the first.
+    schema_len: Option<usize>,
 }
 
 impl ProgressTracker {
@@ -29,7 +30,7 @@ impl ProgressTracker {
             update_interval: interval,
             total_rows: 0,
             total_bytes: 0,
-            schema_sent: false,
+            schema_len: None,
         }
     }
 
@@ -78,12 +79,20 @@ impl ProgressTracker {
         });
     }
 
-    pub(crate) fn emit_schema(&mut self, column_names: Vec<String>) {
-        if self.schema_sent {
+    /// Sends the schema once, then again, with the full list, each time it
+    /// grows: an async JSON key first seen after the first chunk becomes a
+    /// column of the report (#1034). Columns are only ever appended.
+    pub(crate) fn emit_schema(&mut self, column_names: &[String]) {
+        if self
+            .schema_len
+            .is_some_and(|sent| column_names.len() <= sent)
+        {
             return;
         }
-        self.schema_sent = true;
-        self.emit(ProgressEvent::SchemaDetected { column_names });
+        self.schema_len = Some(column_names.len());
+        self.emit(ProgressEvent::SchemaDetected {
+            column_names: column_names.to_vec(),
+        });
     }
 
     pub(crate) fn emit_finished(&mut self, truncated: bool) {

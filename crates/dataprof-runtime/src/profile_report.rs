@@ -1,7 +1,7 @@
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, Locale, NullTokenSet,
-    PatternMatchCount, QualityScoreWeights, SemanticHintBinding, ShapeMomentEstimator,
-    TextLengthUnit,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyUniquenessUnits, Locale,
+    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
+    SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -123,6 +123,39 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "ShapeMomentEstimator")]
     pub shape_moments: Option<ShapeMomentEstimator>,
+    /// What the range and sign rules behind the accuracy score count.
+    ///
+    /// Absent means not recorded: through 0.12 every rule failure counted,
+    /// over the numeric values of every column.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "RangeRuleCount")]
+    pub range_rule_count: Option<RangeRuleCount>,
+    /// What `key_uniqueness` divides the key's distinct values by.
+    ///
+    /// Absent means not recorded: through 0.12 it divided by every row,
+    /// nulls included.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "KeyUniquenessUnits")]
+    pub key_uniqueness_units: Option<KeyUniquenessUnits>,
+    /// What `outlier_ratio` is measured over.
+    ///
+    /// Absent means not recorded: through 0.12 an untested source read 0 and
+    /// still assessed accuracy.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "OutlierUnits")]
+    pub outlier_units: Option<OutlierUnits>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -143,6 +176,9 @@ impl MetricSemantics {
             null_tokens: Some(NullTokenSet::CommonMarkers),
             pattern_match_count: Some(PatternMatchCount::Validated),
             shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
+            range_rule_count: Some(RangeRuleCount::ViolatingValues),
+            key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
+            outlier_units: Some(OutlierUnits::TestedValues),
         }
     }
 
@@ -156,11 +192,17 @@ impl MetricSemantics {
             null_tokens,
             pattern_match_count,
             shape_moments,
+            range_rule_count,
+            key_uniqueness_units,
+            outlier_units,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
             && pattern_match_count.is_some()
             && shape_moments.is_some()
+            && range_rule_count.is_some()
+            && key_uniqueness_units.is_some()
+            && outlier_units.is_some()
     }
 }
 
@@ -223,8 +265,51 @@ impl PatternLocale {
     }
 }
 
-/// The analysis settings a report was profiled with that move its scores on
-/// unchanged data and are recorded nowhere else in it.
+/// Which of the source's columns a run profiled.
+///
+/// A projection that names a column the source lacks is refused before
+/// profiling, so a report with [`ColumnSelection::All`] that has no profile
+/// for a column shows the source has no such column, and one with
+/// [`ColumnSelection::Listed`] shows only that the caller did not select it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "selection", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ColumnSelection {
+    /// Every column of the source.
+    All,
+    /// Only the named columns.
+    #[non_exhaustive]
+    Listed {
+        /// The names as the caller gave them.
+        names: Vec<String>,
+    },
+}
+
+impl ColumnSelection {
+    /// The selection `options` profile with.
+    pub fn from_options(options: &AnalysisOptions) -> Self {
+        match options.columns() {
+            None => Self::All,
+            Some(names) => Self::Listed {
+                names: names.to_vec(),
+            },
+        }
+    }
+
+    /// Whether the selection includes `column`, which a source that has the
+    /// column profiles.
+    pub fn includes(&self, column: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Listed { names } => names.iter().any(|name| name == column),
+        }
+    }
+}
+
+/// The analysis settings a report was profiled with that change what its
+/// scores measure on unchanged data and are recorded nowhere else in it.
 ///
 /// [`MetricSemantics`] records how a release defines its measurements; this
 /// records what the caller chose. The score weights live in the quality
@@ -232,13 +317,17 @@ impl PatternLocale {
 /// repeated here. Later releases add fields, which older readers ignore, and a
 /// field missing from a stored report means the release did not record it.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[non_exhaustive]
 pub struct AnalysisSettings {
     /// The locale detected patterns were ranked with, which the validity
     /// score reads.
     pub pattern_locale: PatternLocale,
+    /// The columns the run profiled. A dataset-level score has the column
+    /// set as its subject, and a report without a column's profile needs this
+    /// to tell a column the source lacks from one that was not selected.
+    pub columns: ColumnSelection,
 }
 
 impl AnalysisSettings {
@@ -246,6 +335,7 @@ impl AnalysisSettings {
     pub fn from_options(options: &AnalysisOptions) -> Self {
         Self {
             pattern_locale: options.locale().into(),
+            columns: ColumnSelection::from_options(options),
         }
     }
 }
@@ -595,6 +685,8 @@ struct PythonUniquenessDocument {
     high_cardinality_warning: bool,
     rows_checked: usize,
     key_column: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_values_checked: Option<usize>,
     duplicate_rows_approximate: bool,
 }
 
@@ -735,7 +827,7 @@ impl PythonProfileReportDocument {
             quality_status: report.quality_status.clone(),
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
             metric_semantics: report.metric_semantics.clone(),
-            analysis_settings: report.analysis_settings,
+            analysis_settings: report.analysis_settings.clone(),
         })
     }
 }
@@ -820,6 +912,9 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
+        // Written always since 0.13 (#1005), absent before.
+        ("/$defs/AccuracyMetrics/required", "rule_values_checked"),
+        ("/$defs/AccuracyMetrics/required", "rule_violating_values"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)
@@ -1275,6 +1370,9 @@ mod tests {
             "null_tokens": "common_markers",
             "pattern_match_count": "validated",
             "shape_moments": "adjusted_sample",
+            "range_rule_count": "violating_values",
+            "key_uniqueness_units": "non_null_values",
+            "outlier_units": "tested_values",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1304,6 +1402,12 @@ mod tests {
             json!({"pattern_match_count": null}),
             json!({"shape_moments": "population"}),
             json!({"shape_moments": null}),
+            json!({"range_rule_count": "rule_failures"}),
+            json!({"range_rule_count": null}),
+            json!({"key_uniqueness_units": "rows"}),
+            json!({"key_uniqueness_units": null}),
+            json!({"outlier_units": "numeric_values"}),
+            json!({"outlier_units": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

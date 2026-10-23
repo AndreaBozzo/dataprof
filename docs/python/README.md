@@ -283,6 +283,8 @@ Returned by `profile()` and all analysis functions.
 
 | Property | Type | Description |
 |---|---|---|
+| `id` | `str \| None` | The report's identifier, as `compare()` and `check()` name it; `None` for a report loaded from a flat `to_dict()` summary, which does not record one |
+| `timestamp` | `str \| None` | The report's creation timestamp, as `compare()` and `check()` record it; `None` for a report loaded from a flat `to_dict()` summary, which does not record one |
 | `source` | `str` | Source identifier (file path, table name, etc.) |
 | `source_type` | `str` | `"file"`, `"bytes"`, `"query"`, `"dataframe"`, `"stream"` |
 | `engine` | `str \| None` | Engine or parser that produced the report |
@@ -295,8 +297,8 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `analysis_settings` | `dict[str, str] \| None` | The settings it was profiled with that move a score and are recorded nowhere else: `{"pattern_locale": "IT"}`, or `"none"` when no locale was given; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -615,7 +617,7 @@ print(q.score_weights)  # relative weights used by dataprof's aggregate formula
 print(q.completeness)    # {"missing_values_ratio": ..., "complete_records_ratio": ..., "null_columns": [...]}
 print(q.consistency)     # {"data_type_consistency": ..., "format_violations": ..., "encoding_issues": ...}
 print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_cardinality_warning": ...}
-print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "negative_values_in_positive": ...}
+print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "rule_violating_values": ..., "rule_values_checked": ...}
 print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., "temporal_violations": ...}
 print(q.validity)        # {"valid_values_ratio": ..., "invalid_values": ..., "values_checked": ...}
 print(q.precision)       # {"decimal_places_consistency": ..., "inconsistent_precision_values": ..., "numeric_values_checked": ...}
@@ -947,6 +949,9 @@ if not result.passed:
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
+| `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
+| `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A policy that cannot be evaluated as written -- a threshold
@@ -1094,7 +1099,10 @@ unevaluated, with one of these reasons:
   on one side only, since the overall score averages the assessed ones;
 - `definition_not_comparable`, with the `metric_semantics` key the rule
   depends on (`null_tokens` for every rule, `pattern_match_count` also for
-  validity and the overall score), when the two reports do not both record it
+  validity and the overall score, `range_rule_count` also for accuracy and the
+  overall score, `key_uniqueness_units` also for uniqueness and the overall
+  score, `outlier_units` also for accuracy and the overall score), when the
+  two reports do not both record it
   identically. A baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
@@ -1116,6 +1124,90 @@ drop or `change_at_most` for an increase. `result.baseline` names both reports
 (`a` is the baseline) and the `schema` change between them. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
 unrecorded.
+
+**Rules about the column set (0.13+).** `require_columns` names columns the
+report must have, and needs no baseline. With a baseline,
+`forbid_removed_columns=True` requires every baseline column and
+`forbid_added_columns=True` allows no new one:
+
+```python
+result = dp.profile("orders.csv").check(
+    baseline=baseline,
+    require_columns=["order_id", "customer_id"],
+    forbid_removed_columns=True,
+    forbid_added_columns=True,
+)
+```
+
+Each makes one check per column: per name for `require_columns`, per baseline
+column for `forbid_removed_columns`, per column of this report for
+`forbid_added_columns`, with `expected` `{"comparison": "present"}` or
+`{"comparison": "in_baseline"}`. A missing column fails only when the side
+without it shows its source lacks it: it recorded its column selection
+(`analysis_settings["columns"]`, from 0.13), the selection included the column,
+and its column set covers the whole source. A CSV header, a Parquet schema, a
+DataFrame or a query result lists every column however few rows were read, so
+a capped CSV run still decides; for JSON, JSONL and `dataprof.asyncio` streams
+the columns are the keys of the records read, so only a scan of every record
+decides under `scope="full_source"`. A flat `to_dict()` summary records the
+kind of source but not a file's format, so a summary baseline of a file
+decides only when its scan was complete. Otherwise the check is unevaluated,
+with `setting_changed` or `setting_unrecorded` on the setting `columns`,
+`column_not_profiled` for a required column the run did not select, or
+`evidence_incomplete`.
+
+`forbid_added_columns` checks the columns this report profiled, so under
+`scope="full_source"` a report whose profiled columns may not be all of its
+source's gets one more check, with no `column`, left unevaluated: a `columns=`
+projection (`column_not_profiled`), a report saved before the selection was
+recorded (`setting_unrecorded`), or a column set covering part of the source,
+such as a JSON or JSONL run stopped by `max_rows` (`evidence_incomplete`). The
+verdict is then inconclusive rather than a pass.
+
+`forbid_removed_columns` is about the columns the baseline recorded. A column
+its source held but it did not profile, because of a projection or a key past
+a partial read, is not one it can require; profile the baseline in full when
+that matters.
+
+`result.baseline["diagnostics"]` lists the schema changes from the baseline,
+whatever the policy states, at most one per column: the baseline's columns in
+order, then the added ones. A diagnostic is a warning and never moves the
+verdict; it is `[]` when nothing changed.
+
+| `code` | When |
+| --- | --- |
+| `column_added` | The report profiled a column the baseline did not. A rule about change that names it is `not_in_baseline`; absolute rules still read it |
+| `column_removed` | The baseline profiled a column the report has no profile for |
+| `column_type_changed` | The column holds values on both sides and its inferred type differs; `data_type` gives both, `a` first. A column whose values are all null establishes no type |
+| `column_all_null` | The column held values in the baseline and every value read for it now is null. Decided on the counts, so one value in 100,000, shown as `100.0` percent null, is not all null |
+
+Column order is not compared. A flat summary that does not record a column's
+counts reports neither of the last two for it.
+
+For an added or removed column, the side without it says why, from its
+`analysis_settings["columns"]`. With no `reason`, that side profiled every
+column it selected and this one was not in what it read: for CSV and Parquet
+the source's header or schema, for JSON and JSONL the keys of the records read,
+so a scan that did not reach the end (the `evidence` of `reports.a` or
+`reports.b`) may have missed a key that appears later. The async reader
+(`dataprof.asyncio`) also drops a key first seen after its first chunk, even
+on a complete scan, until #1020 is fixed. With `"reason":
+"setting_changed"` and `"setting": "columns"`, its `columns=` selection left
+the column out; `setting_unrecorded` when it was saved before 0.13, which did
+not record the selection.
+
+The type is the inferred one, so a setting can change it on unchanged data.
+`identifier_columns` gives a column the `identifier` type, and a type change
+to or from `identifier` under a hint that differs carries `"reason":
+"setting_changed"` and `"setting": "identifier_columns"`
+(`setting_unrecorded` when a side did not record its hints). An input path
+that types the same data differently is not recorded, so it is not named.
+
+```python
+{"code": "column_type_changed", "column": "amount",
+ "data_type": {"a": "integer", "b": "string"},
+ "message": "this column holds values on both sides, and its inferred type differs"}
+```
 
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
@@ -1202,8 +1294,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
-entries; the last occurrence of a repeated mapping key wins.
+`--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
+to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).

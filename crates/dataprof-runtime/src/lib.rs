@@ -31,13 +31,13 @@ pub use profile_builder::{
 #[doc(hidden)]
 pub use profile_report::profile_report_schema_document;
 pub use profile_report::{
-    AnalysisSettings, MetricSemantics, PatternLocale, ProfileReport, QualityAnalysisStatus,
-    REPORT_SCHEMA_VERSION,
+    AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
+    QualityAnalysisStatus, REPORT_SCHEMA_VERSION,
 };
 pub use quality_gate::{
-    BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Evidence,
-    EvidenceGap, Expectation, GateResult, MetricValue, NotEvaluated, PolicyError, PolicyScope,
-    QualityPolicy, RequiredMetric, Verdict,
+    BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Diagnostic,
+    DiagnosticCode, Evidence, EvidenceGap, Expectation, GateResult, MetricValue, NotEvaluated,
+    PolicyError, PolicyScope, QualityPolicy, RequiredMetric, SettingDifference, Verdict,
 };
 pub use report_assembler::ReportAssembler;
 pub use report_delta::{

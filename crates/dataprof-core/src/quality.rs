@@ -57,6 +57,56 @@ impl std::fmt::Display for QualityDimension {
     }
 }
 
+/// What the range and sign rules of the accuracy score count, as recorded in
+/// a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.12 every rule failure
+/// counted, a value breaking two rules twice, and the failures were divided
+/// by the numeric values of every column, so clean columns diluted a broken
+/// one; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RangeRuleCount {
+    /// Values breaking at least one rule, each counted once, over the values
+    /// of the columns a rule applies to.
+    ViolatingValues,
+}
+
+/// What `key_uniqueness` divides the key column's distinct values by, as
+/// recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.12 it divided by every
+/// row, nulls included, so a nullable key lost uniqueness for each null the
+/// completeness score already counted; those releases recorded no
+/// definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyUniquenessUnits {
+    /// The key column's non-null values.
+    NonNullValues,
+}
+
+/// What `outlier_ratio` is measured over, as recorded in a report's metric
+/// semantics.
+///
+/// Only the current definition has a value. Through 0.12 a source in which no
+/// column reached `outlier_min_samples` reported `outlier_ratio` 0, and its
+/// numeric values alone made the accuracy dimension assessed; those releases
+/// recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlierUnits {
+    /// The values of the columns that reached `outlier_min_samples`. With
+    /// none, the component is absent rather than 0.
+    TestedValues,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

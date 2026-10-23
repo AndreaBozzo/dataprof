@@ -3,10 +3,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, NullTokenSet, Pattern, PatternMatchCount,
-    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
-    QualityPolicy, QualityScores, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
-    TextLengthUnit, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits,
+    Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment,
+    QualityDimension, QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval,
+    SemanticHintKind, ShapeMomentEstimator, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -245,15 +245,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
 
         Self {
             name: profile.name.clone(),
-            data_type: match profile.data_type {
-                DataType::Integer => "integer".to_string(),
-                DataType::Float => "float".to_string(),
-                DataType::String => "string".to_string(),
-                DataType::Identifier => "identifier".to_string(),
-                DataType::Date => "date".to_string(),
-                DataType::Boolean => "boolean".to_string(),
-                DataType::Nested => "nested".to_string(),
-            },
+            data_type: profile.data_type.name().to_string(),
             total_count: profile.total_count,
             null_count: profile.null_count,
             unique_count: profile.unique_count,
@@ -543,6 +535,12 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                if let Some(values) = u.key_values_checked {
+                    m.insert(
+                        "key_values_checked".into(),
+                        values.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 m.insert(
                     "duplicate_rows_approximate".into(),
                     u.duplicate_rows_approximate
@@ -582,6 +580,12 @@ impl PyDataQualityMetrics {
                     "outlier_ratio".into(),
                     a.outlier_ratio.into_pyobject(py)?.unbind().into_any(),
                 );
+                if let Some(tested) = a.outlier_values_checked {
+                    m.insert(
+                        "outlier_values_checked".into(),
+                        tested.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 m.insert(
                     "range_violations".into(),
                     a.range_violations.into_pyobject(py)?.unbind().into_any(),
@@ -596,6 +600,17 @@ impl PyDataQualityMetrics {
                 m.insert(
                     "numeric_values_checked".into(),
                     a.numeric_values_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "rule_values_checked".into(),
+                    a.rule_values_checked.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "rule_violating_values".into(),
+                    a.rule_violating_values
                         .into_pyobject(py)?
                         .unbind()
                         .into_any(),
@@ -1226,11 +1241,37 @@ impl PyProfileReport {
                 },
             )?;
         }
+        if let Some(count) = semantics.range_rule_count {
+            dict.set_item(
+                "range_rule_count",
+                match count {
+                    RangeRuleCount::ViolatingValues => "violating_values",
+                },
+            )?;
+        }
+        if let Some(units) = semantics.key_uniqueness_units {
+            dict.set_item(
+                "key_uniqueness_units",
+                match units {
+                    KeyUniquenessUnits::NonNullValues => "non_null_values",
+                },
+            )?;
+        }
+        if let Some(units) = semantics.outlier_units {
+            dict.set_item(
+                "outlier_units",
+                match units {
+                    OutlierUnits::TestedValues => "tested_values",
+                },
+            )?;
+        }
         Ok(Some(dict))
     }
 
     /// The analysis settings the report was profiled with, as a dict such as
-    /// ``{"pattern_locale": "IT"}``, where ``"none"`` means no locale.
+    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"}}``, where
+    /// ``"none"`` means no locale and a ``columns=`` selection reads
+    /// ``{"selection": "listed", "names": [...]}``.
     ///
     /// None for a report loaded from a document written before dataprof
     /// recorded them: the settings are unknown, not the defaults.
@@ -1245,6 +1286,21 @@ impl PyProfileReport {
             pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
         })?;
         dict.set_item("pattern_locale", locale.as_str())?;
+        let columns = PyDict::new(py);
+        match &settings.columns {
+            dataprof::ColumnSelection::All => columns.set_item("selection", "all")?,
+            dataprof::ColumnSelection::Listed { names, .. } => {
+                columns.set_item("selection", "listed")?;
+                columns.set_item("names", names.clone())?;
+            }
+            // Required by `#[non_exhaustive]`; every variant is spelled above.
+            other => {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "unknown column selection {other:?}"
+                )));
+            }
+        }
+        dict.set_item("columns", columns)?;
         Ok(Some(dict))
     }
 
@@ -1312,6 +1368,9 @@ impl PyProfileReport {
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
         max_null_percentage_increase_any = None,
+        require_columns = Vec::new(),
+        forbid_removed_columns = false,
+        forbid_added_columns = false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn quality_gate_json(
@@ -1330,6 +1389,9 @@ impl PyProfileReport {
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
         max_null_percentage_increase_any: Option<f64>,
+        require_columns: Vec<String>,
+        forbid_removed_columns: bool,
+        forbid_added_columns: bool,
     ) -> PyResult<String> {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
         let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
@@ -1369,6 +1431,15 @@ impl PyProfileReport {
         }
         if let Some(points) = max_null_percentage_increase_any {
             policy = policy.max_null_percentage_increase_any(points);
+        }
+        if !require_columns.is_empty() {
+            policy = policy.require_columns(require_columns);
+        }
+        if forbid_removed_columns {
+            policy = policy.forbid_removed_columns();
+        }
+        if forbid_added_columns {
+            policy = policy.forbid_added_columns();
         }
         let result = match baseline {
             Some(baseline) => policy.evaluate_against(&self.inner, &baseline.side("check()")?),

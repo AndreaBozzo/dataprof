@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import dataprof as dp
+import pytest
 
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
 CLEAN = {"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]}
@@ -117,8 +118,6 @@ def test_identity_accessors_match_delta_for_native_reloaded_and_flat(tmp_path: P
             assert delta["reports"][side]["timestamp"] == candidate.timestamp
 
     # These are properties, not mutable aliases for persisted document fields.
-    import pytest
-
     with pytest.raises(AttributeError):
         setattr(report, "id", "forged")
     with pytest.raises(AttributeError):

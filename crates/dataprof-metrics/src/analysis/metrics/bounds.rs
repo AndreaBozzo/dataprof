@@ -201,9 +201,9 @@ pub(crate) fn score_bounds(
 ///   whose exact set was dropped; it held that many distinct rows then, so
 ///   there are at most `max_duplicate_rows` duplicates and at least none. A
 ///   duplicate scan over a sample (engines without a tracker) is not bounded.
-/// - Key uniqueness, the key column's distinct count over its rows. An
-///   estimated count is at least what the column's exact set held, and at
-///   most its non-null values.
+/// - Key uniqueness, the key column's distinct count over its non-null
+///   values. An estimated count is at least what the column's exact set
+///   held, and at most those values, a share of 100.
 ///
 /// Neither bound is probabilistic, so neither spends any of the error budget
 /// the sampled shares split.
@@ -231,18 +231,23 @@ fn uniqueness_interval(
         }
     }
 
-    if let Some(key) = uniqueness.key_column.as_deref() {
+    if let Some(key) = uniqueness
+        .key_column
+        .as_deref()
+        .filter(|_| uniqueness.key_measured())
+    {
         if !is_sampled("key_uniqueness") {
             components.push((uniqueness.key_uniqueness, uniqueness.key_uniqueness));
         } else {
+            // The estimate counts distinct non-null values, which are also
+            // the units: at least the exact set's floor, at most every one.
             let profile = column_profiles.iter().find(|profile| profile.name == key)?;
             let floor = profile.unique_count_lower_bound?;
-            let total = profile.total_count as f64;
-            if total == 0.0 {
+            let values = profile.total_count.saturating_sub(profile.null_count) as f64;
+            if values == 0.0 {
                 return None;
             }
-            let non_null = profile.total_count.saturating_sub(profile.null_count) as f64;
-            components.push((floor as f64 / total * 100.0, non_null / total * 100.0));
+            components.push((floor as f64 / values * 100.0, 100.0));
         }
     }
 
@@ -479,11 +484,17 @@ fn collect_shares(
             if metrics.outlier_values_checked > 0 {
                 outliers.push(counts(metrics.outliers, metrics.outlier_values_checked, 1));
             }
-            violations.push(counts(
-                metrics.range_violations + metrics.negative_values_in_positive,
-                metrics.numeric_values_checked,
-                AccuracyCalculator::max_violations_per_value(&profile.name, positive_columns),
-            ));
+            // A column under no range or sign rule has no units in the rule
+            // share; one under a rule fails a value at most once (#1005). A
+            // ruled column takes part even when its sample held no number,
+            // since the values outside the sample may hold some.
+            if AccuracyCalculator::is_ruled(&profile.name, positive_columns) {
+                violations.push(counts(
+                    metrics.rule_violating_values,
+                    metrics.rule_values_checked,
+                    1,
+                ));
+            }
         }
         if wants(QualityDimension::Timeliness) && temporal_columns.contains(&profile.name) {
             let metrics = timeliness.calculate(&single, temporal_columns, &[], column_profiles)?;
@@ -1049,6 +1060,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: rows,
                 key_column: key.map(|(name, _)| name.to_string()),
+                key_values_checked: key.map(|_| rows),
                 duplicate_rows_approximate: approximate,
             }),
             ..QualityMetrics::default()
@@ -1087,7 +1099,7 @@ mod tests {
 
     #[test]
     fn an_estimated_key_count_is_bounded_by_its_floor_and_its_values() {
-        let metrics = uniqueness_metrics(1_200_000, 6_000, false, Some(("id", 99.52)));
+        let metrics = uniqueness_metrics(1_200_000, 6_000, false, Some(("id", 99.42)));
         let mut id = profile("id", DataType::Integer, 1_200_000, 200_000);
         id.unique_count = Some(994_240);
         id.unique_count_is_approximate = Some(true);
@@ -1107,10 +1119,11 @@ mod tests {
         )
         .expect("bounded");
 
-        // Mean of the exact duplicate share and the key's [floor, non-null].
+        // Mean of the exact duplicate share and the key's [floor, every value],
+        // over its 1,000,000 non-null values (#1005).
         let duplicates = (1.0 - 6_000.0 / 1_200_000.0) * 100.0;
-        let key_lower = 900_000.0 / 1_200_000.0 * 100.0;
-        let key_upper = 1_000_000.0 / 1_200_000.0 * 100.0;
+        let key_lower = 900_000.0 / 1_000_000.0 * 100.0;
+        let key_upper = 100.0;
         assert!(
             (lower - (duplicates + key_lower) / 2.0).abs() < 1e-9,
             "{lower}"
@@ -1118,6 +1131,22 @@ mod tests {
         assert!(
             (upper - (duplicates + key_upper) / 2.0).abs() < 1e-9,
             "{upper}"
+        );
+    }
+
+    #[test]
+    fn a_key_holding_no_value_stays_out_of_the_interval() {
+        // The key was identified but held no value, so the score rests on the
+        // duplicate share alone; its placeholder 100 must not pull the
+        // interval away from that score (#1005).
+        let mut metrics = uniqueness_metrics(100, 50, false, Some(("id", 100.0)));
+        if let Some(uniqueness) = metrics.uniqueness.as_mut() {
+            uniqueness.key_values_checked = Some(0);
+        }
+        assert_eq!(metrics.uniqueness_score(), Some(50.0));
+        assert_eq!(
+            uniqueness_interval(&metrics, &[], None, &sampled(&[])),
+            Some((50.0, 50.0))
         );
     }
 
@@ -1205,5 +1234,28 @@ mod tests {
             interval_under("price"),
             "average_price"
         );
+    }
+
+    #[test]
+    fn a_ruled_column_whose_sample_holds_no_number_still_bounds_the_rule_share() {
+        // `discount_percent` holds 20,000 values; its sample of 10,000 is all
+        // text, but the unseen half may be numbers above 100. The only numbers
+        // seen are 20 clean ones in an unruled column, read in full. Leaving
+        // the ruled column out would bound accuracy to exactly 100, while the
+        // whole source may score 0 (#1048).
+        let data = HashMap::from([
+            (
+                "discount_percent".to_string(),
+                strings((0..10_000).map(|index| format!("n/a-{index}"))),
+            ),
+            ("reading".to_string(), strings(std::iter::repeat_n(1, 20))),
+        ]);
+        let profiles = vec![
+            profile("discount_percent", DataType::String, 20_000, 0),
+            profile("reading", DataType::Integer, 20_000, 19_980),
+        ];
+        assert_eq!(score(&data, &profiles, QualityDimension::Accuracy), 100.0);
+        let accuracy = interval(&bounds_for(&data, &profiles), QualityDimension::Accuracy);
+        assert!(contains(accuracy, 0.0), "{accuracy:?}");
     }
 }

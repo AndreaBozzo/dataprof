@@ -190,14 +190,20 @@ Measures duplication in the data.
   as a value, so two objects, or two Arrow maps, with the same entries in a
   different order are equal, and a string never equals an object or array,
   even one that spells its JSON
-- `key_uniqueness` -- ratio of distinct values in likely-key columns
+- `key_uniqueness` -- distinct values of the likely-key column over its
+  non-null values (`key_values_checked`); nulls are completeness's finding,
+  and a key holding no value leaves this component out of the score
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
 ### Accuracy
 
 Measures whether values fall within expected ranges.
 
-- `outlier_ratio` -- fraction of values outside the interquartile range
+- `outlier_ratio` -- share of values outside the interquartile range, over
+  `outlier_values_checked`: the values of columns with at least
+  `outlier_min_samples` numbers (4 by default). With none, no test ran and
+  the component is left out; accuracy with neither an outlier test nor a
+  range rule to apply is unassessed rather than 100
 - `range_violations` -- values outside the range a word of the column name
   implies: `age` 0 to 150, `percent`, `percentage` or `pct` 0 to 100,
   `count` or `counts` not negative, `year` 1900 to 2100 (`customer_age`
@@ -206,6 +212,10 @@ Measures whether values fall within expected ranges.
   (`account_age_days`), and a `rate` is not taken for a percentage
   (`sample_rate`, `heart_rate`)
 - `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
+- `rule_violating_values` of `rule_values_checked` -- what the score reads:
+  the values of the columns a range or sign rule applies to, and those
+  breaking at least one rule, each counted once. Clean columns under no rule
+  do not dilute a broken one
 
 ### Timeliness
 
