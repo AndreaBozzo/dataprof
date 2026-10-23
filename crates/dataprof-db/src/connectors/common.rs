@@ -59,13 +59,15 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// same profile. Rendering the offset would buy fidelity in the raw sample
 /// values and nothing in the numbers.
 ///
-/// The last arm is [`DecodeStructured`]: JSON and array types, which each
-/// backend decodes its own way (#766). It yields the only values that can be
-/// containers, so the macro evaluates to the text and whether the value was a
-/// container: `(Option<String>, bool)`.
+/// The last arm is [`DecodeStructured`]: JSON, array and PostgreSQL enum types,
+/// which each backend decodes its own way (#766, #952). It yields the only
+/// values that can be containers, so the macro evaluates to the text and
+/// whether the value was a container: `Ok((Option<String>, bool))`.
 ///
-/// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
-/// binary column type rather than a decode arm.
+/// A non-null value no arm decodes is an error naming the column and its type
+/// (#952): recording it as null reported a column the connector could not read
+/// as entirely missing. Binary values are the exception, see
+/// [`is_binary_type`]: they still read as null until they have a column type.
 #[macro_export]
 macro_rules! db_column_to_string {
     ($row:expr, $index:expr) => {
@@ -75,6 +77,7 @@ macro_rules! db_column_to_string {
         let row = $row;
         let index = $index;
         let mut container = false;
+        let mut undecodable = false;
 
         let text = if let Ok(v) = row.try_get::<Option<String>, _>(index) {
             v
@@ -123,10 +126,56 @@ macro_rules! db_column_to_string {
             container = value.container;
             Some(value.text)
         } else {
+            undecodable = true;
             None
         };
-        (text, container)
+        if undecodable {
+            let column = ::sqlx::Row::column(row, index);
+            let type_name = ::sqlx::TypeInfo::name(::sqlx::Column::type_info(column));
+            if $crate::is_binary_type(type_name) {
+                // decode-audit: no-data — binary columns still read as null,
+                // as the connector guide documents, until they have a column
+                // type of their own (#645).
+                Ok((None, false))
+            } else {
+                // A value the chain cannot decode is not a missing value:
+                // recording it as null reported a column the connector could
+                // not read as entirely missing (#952).
+                Err($crate::undecodable_value_error(
+                    ::sqlx::Column::name(column),
+                    type_name,
+                ))
+            }
+        } else {
+            Ok((text, container))
+        }
     }};
+}
+
+/// The error for a non-null value the decode chain cannot read (#952).
+///
+/// It names the column and its type and says how to get past it, because the
+/// alternative the chain used to take, recording the value as null, reported a
+/// column the connector could not read as entirely missing.
+pub fn undecodable_value_error(column: &str, type_name: &str) -> DataProfilerError {
+    DataProfilerError::database_query(&format!(
+        "column \"{column}\" has type {type_name}, which dataprof cannot decode; \
+         cast it to text in the query, or leave the column out"
+    ))
+}
+
+/// Whether a column of this declared type holds raw bytes.
+///
+/// Binary values fall past the whole decode chain, and the connector guide
+/// documents them as profiling as null until they have a column type (#645),
+/// so they are the one exception to failing on an undecodable value (#952).
+/// The names are sqlx's: PostgreSQL `BYTEA`, MySQL's blob and binary types, and
+/// SQLite's `BLOB` storage class.
+pub fn is_binary_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "BYTEA" | "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY"
+    )
 }
 
 /// A value of a JSON or array column, rendered for the profiler.
@@ -140,7 +189,8 @@ pub struct StructuredValue {
     pub container: bool,
 }
 
-/// Decode the structured types of one backend: JSON, JSONB and arrays.
+/// Decode the types one backend reads its own way: JSON, JSONB and arrays, and
+/// PostgreSQL enums (#952).
 ///
 /// Neither decodes as `String` through sqlx, so before this every such value
 /// fell past the whole chain and was recorded as SQL NULL (#766). Called for
@@ -295,10 +345,10 @@ macro_rules! streaming_profile_loop {
         })? {
             for i in 0..column_names.len() {
                 let (value, container) =
-                    $crate::db_column_to_string!(&row, i, [$($backend_ty),*]);
-                // decode-audit: no-data — None is SQL NULL (or a type
-                // db_column_to_string documents as unsupported); "" is
-                // the profiler's textual null.
+                    $crate::db_column_to_string!(&row, i, [$($backend_ty),*])?;
+                // decode-audit: no-data — None is SQL NULL or a binary
+                // value (#645), the only ones db_column_to_string returns
+                // as None; "" is the profiler's textual null.
                 columns.push_decoded(i, value.unwrap_or_default(), container);
             }
 
@@ -348,10 +398,10 @@ macro_rules! process_rows_to_columns {
                     for row in &$rows {
                         for i in 0..columns.len() {
                             let (value, container) =
-                                $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
-                            // decode-audit: no-data — None is SQL NULL (or a type
-                            // db_column_to_string documents as unsupported); "" is
-                            // the profiler's textual null.
+                                $crate::db_column_to_string!(row, i, [$($backend_ty),*])?;
+                            // decode-audit: no-data — None is SQL NULL or a binary
+                            // value (#645), the only ones db_column_to_string
+                            // returns as None; "" is the profiler's textual null.
                             result.push_decoded(i, value.unwrap_or_default(), container);
                         }
                     }
