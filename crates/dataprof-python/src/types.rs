@@ -861,6 +861,18 @@ impl PyProfileReport {
 
 #[pymethods]
 impl PyProfileReport {
+    /// Stable identity stored in the canonical report document.
+    #[getter]
+    fn id(&self) -> &str {
+        &self.inner.id
+    }
+
+    /// Creation time stored in the canonical report document.
+    #[getter]
+    fn timestamp(&self) -> &str {
+        &self.inner.timestamp
+    }
+
     /// Data source identifier (file path, dataframe name, etc.)
     #[getter]
     fn source(&self) -> String {

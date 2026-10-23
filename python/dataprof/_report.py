@@ -133,6 +133,22 @@ class ProfileReport:
     # -- Property accessors --
 
     @property
+    def id(self) -> str | None:
+        """Report identifier, or None for a flat ``to_dict()`` summary.
+
+        Flat summaries do not record an identifier, including current ones.
+        """
+        return self._report.id
+
+    @property
+    def timestamp(self) -> str | None:
+        """Creation timestamp, or None for a flat ``to_dict()`` summary.
+
+        Flat summaries do not record a timestamp, including current ones.
+        """
+        return self._report.timestamp
+
+    @property
     def source(self) -> str:
         return self._report.source
 

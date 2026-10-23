@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import dataprof as dp
+import pytest
 
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
 CLEAN = {"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]}
@@ -90,6 +91,37 @@ def test_a_flat_summary_compares_like_the_report_it_came_from():
     assert flat == masked
     masked["reports"]["b"] = native["reports"]["b"]
     assert mixed == masked
+
+
+def test_identity_accessors_match_delta_for_native_reloaded_and_flat(tmp_path: Path):
+    report = dp.profile(CLEAN)
+    canonical = json.loads(report.to_json())
+    assert report.id == canonical["id"]
+    assert report.timestamp == canonical["timestamp"]
+
+    saved = tmp_path / "identity.json"
+    report.save(saved)
+    restored = [
+        report,
+        dp.ProfileReport.from_json(report.to_json()),
+        dp.ProfileReport.load(saved),
+        _flat(report),
+    ]
+    for candidate in restored:
+        delta = candidate.compare(candidate)
+        expected_id = None if candidate is restored[-1] else canonical["id"]
+        expected_timestamp = None if candidate is restored[-1] else canonical["timestamp"]
+        assert candidate.id == expected_id
+        assert candidate.timestamp == expected_timestamp
+        for side in ("a", "b"):
+            assert delta["reports"][side]["id"] == candidate.id
+            assert delta["reports"][side]["timestamp"] == candidate.timestamp
+
+    # These are properties, not mutable aliases for persisted document fields.
+    with pytest.raises(AttributeError):
+        setattr(report, "id", "forged")
+    with pytest.raises(AttributeError):
+        setattr(report, "timestamp", "2020-01-01T00:00:00Z")
 
 
 def test_a_0_11_baseline_reads_as_unrecorded(tmp_path: Path):

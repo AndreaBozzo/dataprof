@@ -378,6 +378,10 @@ def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     execution = document.get("execution") or {}
     values = dict(execution)
+    # Flat summaries deliberately omit identity; additive unknown keys cannot
+    # turn a summary into a canonical report.
+    values["id"] = None
+    values["timestamp"] = None
     values["source"] = document.get("source")
     values["source_type"] = document.get("source_type")
     # Only these additive fields have legacy defaults. Unknown measurements

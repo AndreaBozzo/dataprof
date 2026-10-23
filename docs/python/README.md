@@ -283,6 +283,8 @@ Returned by `profile()` and all analysis functions.
 
 | Property | Type | Description |
 |---|---|---|
+| `id` | `str \| None` | The report's identifier, as `compare()` and `check()` name it; `None` for a report loaded from a flat `to_dict()` summary, which does not record one |
+| `timestamp` | `str \| None` | The report's creation timestamp, as `compare()` and `check()` record it; `None` for a report loaded from a flat `to_dict()` summary, which does not record one |
 | `source` | `str` | Source identifier (file path, table name, etc.) |
 | `source_type` | `str` | `"file"`, `"bytes"`, `"query"`, `"dataframe"`, `"stream"` |
 | `engine` | `str \| None` | Engine or parser that produced the report |
