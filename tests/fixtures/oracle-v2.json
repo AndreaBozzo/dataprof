@@ -1,0 +1,1299 @@
+{
+  "fixture_version": 2,
+  "generator": "python/tests/_oracle_fixture.py",
+  "oracle": "fractions.Fraction + 100-digit decimal.Decimal; no dataprof imports",
+  "conventions": {
+    "variance": "sample, ddof=1",
+    "quartiles": "Hyndman-Fan type 7; absent below four observations",
+    "mode": "absent when all unique; smallest tied modal value",
+    "coefficient_of_variation": "std_dev / |mean| * 100; absent when the mean is zero",
+    "undefined": "null, never zero except the documented constant shape convention",
+    "values": "strings read by dtype; float64 is the exact binary64, float32 the nearest binary32 promoted losslessly, decimals exact",
+    "answers": "exact: rationals as p/q, irrationals to 40 significant digits; the tests round them to the serialized precision"
+  },
+  "cases": [
+    {
+      "id": "ordinary",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 0,
+        "min": "1",
+        "max": "4",
+        "mean": "5/2",
+        "variance": "5/3",
+        "std_dev": "1.290994448735805628393088466594133203611",
+        "coefficient_of_variation": "51.63977794943222513572353866376532814444",
+        "median": "5/2",
+        "mode": null,
+        "quartiles": {
+          "q1": "7/4",
+          "q2": "5/2",
+          "q3": "13/4",
+          "iqr": "3/2"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-1.200000000000000000000000000000000000000"
+      },
+      "notes": []
+    },
+    {
+      "id": "mixed_sign_zero_mean",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "-10",
+        "-2",
+        "0",
+        "4",
+        "8"
+      ],
+      "expected": {
+        "total_count": 5,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 5,
+        "duplicate_rows": 0,
+        "min": "-10",
+        "max": "8",
+        "mean": "0",
+        "variance": "46",
+        "std_dev": "6.782329983125268139064556326625969105196",
+        "coefficient_of_variation": null,
+        "median": "0",
+        "mode": null,
+        "quartiles": {
+          "q1": "-2",
+          "q2": "0",
+          "q3": "4",
+          "iqr": "6"
+        },
+        "outlier_count": 0,
+        "skewness": "-0.5769467849539453048353592338339671261509",
+        "kurtosis": "0.4877126654064272211720226843100189035917"
+      },
+      "notes": []
+    },
+    {
+      "id": "constant",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "7",
+        "7",
+        "7",
+        "7"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 1,
+        "duplicate_rows": 3,
+        "min": "7",
+        "max": "7",
+        "mean": "7",
+        "variance": "0",
+        "std_dev": "0",
+        "coefficient_of_variation": "0",
+        "median": "7",
+        "mode": "7",
+        "quartiles": {
+          "q1": "7",
+          "q2": "7",
+          "q3": "7",
+          "iqr": "0"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "0"
+      },
+      "notes": [
+        "Zero shape moments are dataprof's explicit constant-column convention; mathematically standardized moments are undefined."
+      ]
+    },
+    {
+      "id": "two_values",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "1",
+        "2"
+      ],
+      "expected": {
+        "total_count": 2,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 2,
+        "duplicate_rows": 0,
+        "min": "1",
+        "max": "2",
+        "mean": "3/2",
+        "variance": "1/2",
+        "std_dev": "0.7071067811865475244008443621048490392848",
+        "coefficient_of_variation": "47.14045207910316829338962414032326928566",
+        "median": "3/2",
+        "mode": null,
+        "quartiles": null,
+        "outlier_count": null,
+        "skewness": null,
+        "kurtosis": null
+      },
+      "notes": []
+    },
+    {
+      "id": "asymmetric",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "1",
+        "2",
+        "3",
+        "10",
+        "4",
+        "5"
+      ],
+      "expected": {
+        "total_count": 6,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 6,
+        "duplicate_rows": 0,
+        "min": "1",
+        "max": "10",
+        "mean": "25/6",
+        "variance": "61/6",
+        "std_dev": "3.188521078284831829263751458836197758507",
+        "coefficient_of_variation": "76.52450587883596390233003501206874620417",
+        "median": "7/2",
+        "mode": null,
+        "quartiles": {
+          "q1": "9/4",
+          "q2": "7/2",
+          "q3": "19/4",
+          "iqr": "5/2"
+        },
+        "outlier_count": 1,
+        "skewness": "1.439590274527954171771863061232145185244",
+        "kurtosis": "2.437731792528890083310937919914001612470"
+      },
+      "notes": []
+    },
+    {
+      "id": "above_2_pow_53",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "9007199254740993",
+        "9007199254740995",
+        "9007199254740997"
+      ],
+      "expected": {
+        "total_count": 3,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 3,
+        "duplicate_rows": 0,
+        "min": "9007199254740993",
+        "max": "9007199254740997",
+        "mean": "9007199254740995",
+        "variance": "4",
+        "std_dev": "2.000000000000000000000000000000000000000",
+        "coefficient_of_variation": "0.00000000000002220446049250312341290164691483319373500",
+        "median": "9007199254740995",
+        "mode": null,
+        "quartiles": null,
+        "outlier_count": null,
+        "skewness": "0",
+        "kurtosis": null
+      },
+      "notes": [
+        "#1038: exact extrema and order statistics past 2^53."
+      ]
+    },
+    {
+      "id": "epoch_nanoseconds",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "1759700000123456789",
+        "1759700000123456791",
+        "1759700000123456795",
+        "1759700000123456800"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 0,
+        "min": "1759700000123456789",
+        "max": "1759700000123456800",
+        "mean": "7038800000493827175/4",
+        "variance": "283/12",
+        "std_dev": "4.856267428111155137698584118079641941122",
+        "coefficient_of_variation": "0.0000000000000002759713262357475584848881977627034661528",
+        "median": "1759700000123456793",
+        "mode": null,
+        "quartiles": {
+          "q1": "3519400000246913581/2",
+          "q2": "1759700000123456793",
+          "q3": "7038800000493827185/4",
+          "iqr": "23/4"
+        },
+        "outlier_count": 0,
+        "skewness": "0.6876109407631572283522324401481244566959",
+        "kurtosis": "-0.9464970220629549626041029354842737454582"
+      },
+      "notes": [
+        "#1038: extrema, mode and IQR; variance and shape must hold now."
+      ]
+    },
+    {
+      "id": "uint64_edge",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "uint64",
+      "values": [
+        "18446744073709551612",
+        "18446744073709551613",
+        "18446744073709551614",
+        "18446744073709551615"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 0,
+        "min": "18446744073709551612",
+        "max": "18446744073709551615",
+        "mean": "36893488147419103227/2",
+        "variance": "5/3",
+        "std_dev": "1.290994448735805628393088466594133203611",
+        "coefficient_of_variation": "0.000000000000000006998494929930433229017734110730608177756",
+        "median": "36893488147419103227/2",
+        "mode": null,
+        "quartiles": {
+          "q1": "73786976294838206451/4",
+          "q2": "36893488147419103227/2",
+          "q3": "73786976294838206457/4",
+          "iqr": "3/2"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-1.200000000000000000000000000000000000000"
+      },
+      "notes": [
+        "Never build a float64 series first. #1038 applies to order statistics."
+      ]
+    },
+    {
+      "id": "simd_64",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "expected": {
+        "total_count": 64,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 60,
+        "min": "0",
+        "max": "3",
+        "mean": "3/2",
+        "variance": "80/63",
+        "std_dev": "1.126872339638022103346157769821260390174",
+        "coefficient_of_variation": "75.12482264253480688974385132141735934496",
+        "median": "3/2",
+        "mode": "0",
+        "quartiles": {
+          "q1": "3/4",
+          "q2": "3/2",
+          "q3": "9/4",
+          "iqr": "3/2"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-1.372607086197778952934955050237969328398"
+      },
+      "notes": []
+    },
+    {
+      "id": "simd_65",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0",
+        "1",
+        "2",
+        "3",
+        "0"
+      ],
+      "expected": {
+        "total_count": 65,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 61,
+        "min": "0",
+        "max": "3",
+        "mean": "96/65",
+        "variance": "167/130",
+        "std_dev": "1.133408745605655107248090482873276502919",
+        "coefficient_of_variation": "76.74121715038289788658945977787809655180",
+        "median": "1",
+        "mode": "0",
+        "quartiles": {
+          "q1": "0",
+          "q2": "1",
+          "q3": "2",
+          "iqr": "2"
+        },
+        "outlier_count": 0,
+        "skewness": "0.02566125228880303844340349207982605606359",
+        "kurtosis": "-1.388326302774015422891902114257095235837"
+      },
+      "notes": []
+    },
+    {
+      "id": "large_offset_64",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "int64",
+      "values": [
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003",
+        "1000000000000",
+        "1000000000001",
+        "1000000000002",
+        "1000000000003"
+      ],
+      "expected": {
+        "total_count": 64,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 4,
+        "duplicate_rows": 60,
+        "min": "1000000000000",
+        "max": "1000000000003",
+        "mean": "2000000000003/2",
+        "variance": "80/63",
+        "std_dev": "1.126872339638022103346157769821260390174",
+        "coefficient_of_variation": "0.0000000001126872339636331794836703272129005335266",
+        "median": "2000000000003/2",
+        "mode": "1000000000000",
+        "quartiles": {
+          "q1": "4000000000003/4",
+          "q2": "2000000000003/2",
+          "q3": "4000000000009/4",
+          "iqr": "3/2"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-1.372607086197778952934955050237969328398"
+      },
+      "notes": []
+    },
+    {
+      "id": "cancellation",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "float64",
+      "values": [
+        "-1000000000000.0",
+        "1.0",
+        "1000000000000.0"
+      ],
+      "expected": {
+        "total_count": 3,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 3,
+        "duplicate_rows": 0,
+        "min": "-1000000000000",
+        "max": "1000000000000",
+        "mean": "1/3",
+        "variance": "3000000000000000000000001/3",
+        "std_dev": "1000000000000.000000000000166666666666667",
+        "coefficient_of_variation": "300000000000000.0000000000500000000000000",
+        "median": "1",
+        "mode": null,
+        "quartiles": null,
+        "outlier_count": null,
+        "skewness": "-0.000000000002999999999999999999999998166666666666667",
+        "kurtosis": null
+      },
+      "notes": []
+    },
+    {
+      "id": "variance_fits_m2_does_not",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "float64",
+      "relative": true,
+      "values": [
+        "-7e+153",
+        "7e+153",
+        "-7e+153",
+        "7e+153"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 2,
+        "duplicate_rows": 2,
+        "min": "-6999999999999999812063107609186712233361878314499896009468692980217164324595475341466780559922101737600776669044728186587542627454761660556073094092947456",
+        "max": "6999999999999999812063107609186712233361878314499896009468692980217164324595475341466780559922101737600776669044728186587542627454761660556073094092947456",
+        "mean": "0",
+        "variance": "195999999999999989475534026114456026349367271676528028779069413094081833701602300025803936559401972368386088681890464802872128308312907921015659788480645324324307119799838030887033365081000266559657524758864226094648549510952190699937329163951435954071576762323756507534959814884274963111659533347830307487744/3",
+        "std_dev": "8082903768654760486117252102031840939217000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "coefficient_of_variation": null,
+        "median": "0",
+        "mode": "-6999999999999999812063107609186712233361878314499896009468692980217164324595475341466780559922101737600776669044728186587542627454761660556073094092947456",
+        "quartiles": {
+          "q1": "-6999999999999999812063107609186712233361878314499896009468692980217164324595475341466780559922101737600776669044728186587542627454761660556073094092947456",
+          "q2": "0",
+          "q3": "6999999999999999812063107609186712233361878314499896009468692980217164324595475341466780559922101737600776669044728186587542627454761660556073094092947456",
+          "iqr": "13999999999999999624126215218373424466723756628999792018937385960434328649190950682933561119844203475201553338089456373175085254909523321112146188185894912"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-6.000000000000000000000000000000000000000"
+      },
+      "notes": [
+        "Statistics compare relatively and not-null: 4dp says nothing at this magnitude. Higher moments and outlier fences are outside this case."
+      ]
+    },
+    {
+      "id": "float32_constant",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "float32",
+      "routes": [
+        "pandas",
+        "pandas_arrow",
+        "polars",
+        "arrow",
+        "arrow_chunked",
+        "arrow_stream",
+        "parquet"
+      ],
+      "values": [
+        "1.23495",
+        "1.23495",
+        "1.23495",
+        "1.23495"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 1,
+        "duplicate_rows": 3,
+        "min": "10359511/8388608",
+        "max": "10359511/8388608",
+        "mean": "10359511/8388608",
+        "variance": "0",
+        "std_dev": "0",
+        "coefficient_of_variation": "0",
+        "median": "10359511/8388608",
+        "mode": "10359511/8388608",
+        "quartiles": {
+          "q1": "10359511/8388608",
+          "q2": "10359511/8388608",
+          "q3": "10359511/8388608",
+          "iqr": "0"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "0"
+      },
+      "notes": [
+        "#1041: 1.23495 is held as 1.2349499464..., so every data value serializes as 1.2349; a median read from the short text 1.235 lies above the max."
+      ]
+    },
+    {
+      "id": "float32_below_the_midpoint",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "float32",
+      "routes": [
+        "pandas",
+        "pandas_arrow",
+        "polars",
+        "arrow",
+        "arrow_chunked",
+        "arrow_stream",
+        "parquet"
+      ],
+      "values": [
+        "1.00005",
+        "-1.00005",
+        null,
+        "3.14165",
+        "-0.00005",
+        "1.00005",
+        "12.34565",
+        "2.67505"
+      ],
+      "expected": {
+        "total_count": 8,
+        "null_count": 1,
+        "null_percentage": "25/2",
+        "unique_count": 6,
+        "duplicate_rows": 1,
+        "min": "-8389027/8388608",
+        "max": "1618169/131072",
+        "mean": "5267306563817/1924145348608",
+        "variance": "31730257487117750540315699/1586715138244200791801856",
+        "std_dev": "4.471850906847610138141548098285820260683",
+        "coefficient_of_variation": "163.3565659759886012839655034586786193378",
+        "median": "8389027/8388608",
+        "mode": "8389027/8388608",
+        "quartiles": {
+          "q1": "274877892841/549755813888",
+          "q2": "8389027/8388608",
+          "q3": "1524813/524288",
+          "iqr": "1324004423447/549755813888"
+        },
+        "outlier_count": 1,
+        "skewness": "2.097437004611569058367832208424498725664",
+        "kurtosis": "4.859912152377188623552751079065825137030"
+      },
+      "notes": [
+        "Each literal but 2.67505 is a 4dp midpoint in decimal and lies below it in binary32, on both signs, so rounding the text instead of the held value moves each data value by one unit."
+      ]
+    },
+    {
+      "id": "float32_integer_spacing",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "float32",
+      "routes": [
+        "pandas",
+        "pandas_arrow",
+        "polars",
+        "arrow",
+        "arrow_chunked",
+        "arrow_stream",
+        "parquet"
+      ],
+      "values": [
+        "16777216",
+        "16777217",
+        "16777218",
+        "16777219",
+        "16777221"
+      ],
+      "expected": {
+        "total_count": 5,
+        "null_count": 0,
+        "null_percentage": "0",
+        "unique_count": 3,
+        "duplicate_rows": 2,
+        "min": "16777216",
+        "max": "16777220",
+        "mean": "16777218",
+        "variance": "4",
+        "std_dev": "2.000000000000000000000000000000000000000",
+        "coefficient_of_variation": "0.00001192092753399282288636888428105303274953",
+        "median": "16777218",
+        "mode": "16777216",
+        "quartiles": {
+          "q1": "16777216",
+          "q2": "16777218",
+          "q3": "16777220",
+          "iqr": "4"
+        },
+        "outlier_count": 0,
+        "skewness": "0",
+        "kurtosis": "-3.000000000000000000000000000000000000000"
+      },
+      "notes": [
+        "Past 2^24 binary32 holds only even integers: 16777217 is 16777216."
+      ]
+    },
+    {
+      "id": "decimal128_scale_2",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "decimal128",
+      "precision": 5,
+      "scale": 2,
+      "values": [
+        "1.25",
+        "-3.50",
+        null,
+        "1.25",
+        "10.00",
+        "0.01",
+        "-0.07"
+      ],
+      "expected": {
+        "total_count": 7,
+        "null_count": 1,
+        "null_percentage": "100/7",
+        "unique_count": 5,
+        "duplicate_rows": 1,
+        "min": "-7/2",
+        "max": "10",
+        "mean": "149/100",
+        "variance": "510297/25000",
+        "std_dev": "4.517950862946608010618944761138489310371",
+        "coefficient_of_variation": "303.2181787212488597730835410160059939846",
+        "median": "63/100",
+        "mode": "5/4",
+        "quartiles": {
+          "q1": "-1/20",
+          "q2": "63/100",
+          "q3": "5/4",
+          "iqr": "13/10"
+        },
+        "outlier_count": 2,
+        "skewness": "1.577678513780429288521369112067599099030",
+        "kurtosis": "3.621210409756322128331505711902533277042"
+      },
+      "notes": []
+    },
+    {
+      "id": "decimal128_scale_0",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "decimal128",
+      "precision": 10,
+      "scale": 0,
+      "values": [
+        "123",
+        "-45",
+        null,
+        "0",
+        "123",
+        "999999999"
+      ],
+      "expected": {
+        "total_count": 6,
+        "null_count": 1,
+        "null_percentage": "50/3",
+        "unique_count": 4,
+        "duplicate_rows": 1,
+        "min": "-45",
+        "max": "999999999",
+        "mean": "200000040",
+        "variance": "199999979500006071",
+        "std_dev": "447213572.5802673701764240946477098521030",
+        "coefficient_of_variation": "223.6067415687853713311377810962987067918",
+        "median": "123",
+        "mode": "123",
+        "quartiles": {
+          "q1": "0",
+          "q2": "123",
+          "q3": "123",
+          "iqr": "123"
+        },
+        "outlier_count": 1,
+        "skewness": "2.236067977499634689714356431796661557370",
+        "kurtosis": "4.999999999999445431198681178011129738247"
+      },
+      "notes": []
+    },
+    {
+      "id": "decimal128_scale_10",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "decimal128",
+      "precision": 38,
+      "scale": 10,
+      "values": [
+        "1234567.8901234567",
+        "-0.0000000001",
+        null,
+        "1234567.8901234567",
+        "42.5"
+      ],
+      "expected": {
+        "total_count": 5,
+        "null_count": 1,
+        "null_percentage": "20",
+        "unique_count": 3,
+        "duplicate_rows": 1,
+        "min": "-1/10000000000",
+        "max": "12345678901234567/10000000000",
+        "mean": "24691782802469133/40000000000",
+        "variance": "609642163017296332726052627648227/1200000000000000000000",
+        "std_dev": "712765.8352136043171126113146386364172610",
+        "coefficient_of_variation": "115.4660788839158330316094270031287003594",
+        "median": "12346103901234567/20000000000",
+        "mode": "12345678901234567/10000000000",
+        "quartiles": {
+          "q1": "1274999999999/40000000000",
+          "q2": "12346103901234567/20000000000",
+          "q3": "12345678901234567/10000000000",
+          "iqr": "49381440604938269/40000000000"
+        },
+        "outlier_count": 0,
+        "skewness": "-0.000000003079035827943870987071613972178528556307",
+        "kurtosis": "-5.999999982223178361554500023482937759715"
+      },
+      "notes": [
+        "Text routes read these as binary64, which keeps 4dp at this magnitude."
+      ]
+    },
+    {
+      "id": "decimal128_negative_scale",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "decimal128",
+      "precision": 5,
+      "scale": -2,
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "csv",
+        "pandas",
+        "pandas_arrow",
+        "arrow",
+        "arrow_chunked",
+        "arrow_stream"
+      ],
+      "values": [
+        "12300",
+        "-500",
+        null,
+        "0",
+        "12300",
+        "700"
+      ],
+      "expected": {
+        "total_count": 6,
+        "null_count": 1,
+        "null_percentage": "50/3",
+        "unique_count": 4,
+        "duplicate_rows": 1,
+        "min": "-500",
+        "max": "12300",
+        "mean": "4960",
+        "variance": "45078000",
+        "std_dev": "6714.015192118647567098469171502405967131",
+        "coefficient_of_variation": "135.3632095185211203044046203931936686922",
+        "median": "700",
+        "mode": "12300",
+        "quartiles": {
+          "q1": "0",
+          "q2": "700",
+          "q3": "12300",
+          "iqr": "12300"
+        },
+        "outlier_count": 0,
+        "skewness": "0.5903182431099042226133026048826209141624",
+        "kurtosis": "-3.307352219992467380157901555755816764407"
+      },
+      "notes": [
+        "Parquet's decimal type and polars reject a negative scale, so those routes cannot carry the column."
+      ]
+    },
+    {
+      "id": "decimal256_scale_4",
+      "kind": "numeric",
+      "column": "v",
+      "dtype": "decimal256",
+      "precision": 40,
+      "scale": 4,
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "csv",
+        "pandas",
+        "pandas_arrow",
+        "arrow",
+        "arrow_chunked",
+        "arrow_stream",
+        "parquet"
+      ],
+      "values": [
+        "12345.6789",
+        "-0.0001",
+        null,
+        "12345.6789",
+        "-99999.9999",
+        "0.5000"
+      ],
+      "expected": {
+        "total_count": 6,
+        "null_count": 1,
+        "null_percentage": "50/3",
+        "unique_count": 4,
+        "duplicate_rows": 1,
+        "min": "-999999999/10000",
+        "max": "123456789/10000",
+        "mean": "-376540711/25000",
+        "variance": "71645064835396299/31250000",
+        "std_dev": "47881.54210896597227514536693630555199405",
+        "coefficient_of_variation": "317.9041515976075444545049933279694688448",
+        "median": "1/2",
+        "mode": "123456789/10000",
+        "quartiles": {
+          "q1": "-1/10000",
+          "q2": "1/2",
+          "q3": "123456789/10000",
+          "iqr": "12345679/1000"
+        },
+        "outlier_count": 1,
+        "skewness": "-2.143704892314932040590145241104576451101",
+        "kurtosis": "4.670925869289581589524396837971939129337"
+      },
+      "notes": [
+        "polars has no 256-bit decimal and panics importing one."
+      ]
+    },
+    {
+      "id": "object_key_order",
+      "kind": "nested",
+      "column": "v",
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "pandas",
+        "arrow",
+        "arrow_chunked",
+        "parquet",
+        "polars"
+      ],
+      "values": [
+        {
+          "a": 1,
+          "b": 2
+        },
+        {
+          "b": 2,
+          "a": 1
+        },
+        {
+          "a": 2,
+          "b": 2
+        },
+        null
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 1,
+        "duplicate_rows": 1,
+        "data_type": "nested",
+        "stats": null,
+        "unique_count": null
+      }
+    },
+    {
+      "id": "list_order",
+      "kind": "nested",
+      "column": "v",
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "pandas",
+        "arrow",
+        "arrow_chunked",
+        "parquet",
+        "polars"
+      ],
+      "values": [
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [],
+        null
+      ],
+      "expected": {
+        "total_count": 5,
+        "null_count": 1,
+        "duplicate_rows": 1,
+        "data_type": "nested",
+        "stats": null,
+        "unique_count": null
+      }
+    },
+    {
+      "id": "inner_null_is_not_outer_null",
+      "kind": "nested",
+      "column": "v",
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "pandas",
+        "arrow",
+        "arrow_chunked",
+        "parquet",
+        "polars"
+      ],
+      "values": [
+        {
+          "x": null
+        },
+        {
+          "x": 1
+        },
+        null,
+        {
+          "x": null
+        }
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 1,
+        "duplicate_rows": 1,
+        "data_type": "nested",
+        "stats": null,
+        "unique_count": null
+      }
+    },
+    {
+      "id": "container_vs_its_text",
+      "kind": "nested",
+      "column": "v",
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "pandas"
+      ],
+      "values": [
+        {
+          "x": 1
+        },
+        "{\"x\":1}",
+        [
+          1,
+          2
+        ],
+        "[1,2]"
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 0,
+        "duplicate_rows": 0
+      }
+    },
+    {
+      "id": "container_and_text_repeats",
+      "kind": "nested",
+      "column": "v",
+      "routes": [
+        "dict",
+        "records",
+        "json",
+        "jsonl",
+        "pandas"
+      ],
+      "values": [
+        {
+          "x": 1
+        },
+        "{\"x\":1}",
+        [
+          1,
+          2
+        ],
+        "[1,2]",
+        {
+          "x": 1
+        },
+        "{\"x\":1}"
+      ],
+      "expected": {
+        "total_count": 6,
+        "null_count": 0,
+        "duplicate_rows": 2
+      }
+    },
+    {
+      "id": "null_tokens_and_near_misses",
+      "kind": "nulls",
+      "column": "v",
+      "values": [
+        null,
+        "",
+        " ",
+        "\t",
+        "null",
+        "NULL",
+        "NaN",
+        "NA",
+        "N/A",
+        "n/a",
+        "#N/A",
+        "\\N",
+        "None",
+        "Na",
+        "na",
+        "none",
+        "NONE",
+        "#n/a",
+        "\\n",
+        "N/a",
+        "-",
+        "?",
+        "n.d.",
+        "0"
+      ],
+      "expected": {
+        "total_count": 24,
+        "null_count": 13,
+        "null_percentage": "325/6",
+        "unique_count": 11,
+        "duplicate_rows": 1
+      },
+      "expected_typed_only": {
+        "null_count": 1,
+        "null_percentage": "25/6"
+      },
+      "notes": [
+        "Duplicate-row identity is raw lexical identity, not equality after the null vocabulary: only None and the empty string collide here.",
+        "Typed-only mode is a proposed #846 setting, not checked yet."
+      ]
+    },
+    {
+      "id": "all_null",
+      "kind": "nulls",
+      "column": "v",
+      "values": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "expected": {
+        "total_count": 4,
+        "null_count": 4,
+        "null_percentage": "100",
+        "unique_count": 0,
+        "stats": null,
+        "duplicate_rows": 3
+      },
+      "notes": []
+    }
+  ]
+}
