@@ -156,7 +156,7 @@ def test_report_write_failure_is_an_output_error(
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("protected", ["source", "--policy"])
+@pytest.mark.parametrize("protected", ["source", "--policy", "--baseline"])
 @pytest.mark.parametrize("alias", ["direct", "parent", "symlink", "hardlink", "case"])
 @pytest.mark.parametrize("json_output", [False, True])
 def test_report_cannot_overwrite_inputs(
@@ -166,8 +166,12 @@ def test_report_cannot_overwrite_inputs(
     source.write_text('[{"id": 1, "amount": 10}, {"id": 2, "amount": 20}]', encoding="utf-8")
     policy = tmp_path / "policy.json"
     policy.write_text('{"max_null_percentage": {"*": 100}}', encoding="utf-8")
-    before = {path: path.read_bytes() for path in (source, policy)}
-    target = source if protected == "source" else policy
+    # A report is written whatever the verdict: over the baseline, a failing
+    # run would become the next run's baseline.
+    baseline = tmp_path / "baseline.json"
+    dp.profile_file(source).save(baseline)
+    before = {path: path.read_bytes() for path in (source, policy, baseline)}
+    target = {"source": source, "--policy": policy, "--baseline": baseline}[protected]
     if alias == "parent":
         subdir = tmp_path / "subdir"
         subdir.mkdir()
@@ -192,7 +196,9 @@ def test_report_cannot_overwrite_inputs(
             pytest.skip("filesystem is case-sensitive")
 
     output_flags = ["--json"] if json_output else []
-    result = run_check(source, "--policy", policy, "--report", target, *output_flags)
+    result = run_check(
+        source, "--policy", policy, "--baseline", baseline, "--report", target, *output_flags
+    )
     for path, original in before.items():
         assert path.read_bytes() == original
     assert result.returncode == 3
@@ -380,6 +386,13 @@ def test_repeated_policy_flags_match_library(source: Path):
         # A quoted number is text, not a threshold (#771).
         '{"min_quality_score": "90"}',
         '{"max_null_percentage": {"*": "20"}}',
+        # Rules about change, refused for their value before the missing baseline.
+        '{"max_quality_score_drop": 101}',
+        '{"max_dimension_score_drops": []}',
+        '{"max_dimension_score_drops": [5]}',
+        '{"max_null_percentage_increase": [5]}',
+        '{"max_null_percentage_increase": "5"}',
+        '{"forbid_added_columns": "yes"}',
     ],
 )
 def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: str):
@@ -557,14 +570,31 @@ def test_absent_policy_file_is_a_policy_error(source: Path, tmp_path: Path):
     assert "Traceback" not in result.stderr
 
 
-def test_absent_baseline_is_an_argument_error(source: Path, tmp_path: Path):
-    result = run_check(source, "--baseline", tmp_path / "missing.json", "--json")
+@pytest.mark.parametrize(
+    "content",
+    [None, "{not json", "[]", '{"a": 1}'],
+    ids=["missing", "invalid-json", "array", "not-a-report"],
+)
+@pytest.mark.parametrize("json_output", [False, True])
+def test_an_unreadable_baseline_is_a_baseline_error(
+    source: Path, tmp_path: Path, content: str | None, json_output: bool
+):
+    baseline = tmp_path / "baseline.json"
+    if content is not None:
+        baseline.write_text(content, encoding="utf-8")
+    flags = ["--json"] if json_output else []
+    result = run_check(source, "--baseline", baseline, "--max-quality-drop", "5", *flags)
     assert result.returncode == 3
-    error = json.loads(result.stdout)["error"]
-    assert error["kind"] == "argument"
-    assert "--baseline is not supported by the quality-gate API yet" in error["message"]
-    assert result.stderr == ""
     assert "Traceback" not in result.stderr
+    if json_output:
+        error = json.loads(result.stdout)["error"]
+        assert error["kind"] == "baseline"
+        assert error["path"] == str(baseline)
+        assert error["message"].startswith(f"cannot read baseline {baseline}: ")
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert f"cannot read baseline {baseline}: " in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -630,24 +660,161 @@ def test_unknown_policy_keys_in_text_mode_names_file_on_stderr(source: Path, tmp
     assert f"policy file {path} has unknown policy keys: typo" in result.stderr
 
 
-def test_existing_baseline_is_explicitly_unsupported(source: Path, tmp_path: Path):
+def _clean_baseline(tmp_path: Path, text: str = "id,amount\n1,10\n2,20\n3,30\n") -> Path:
+    """Yesterday's report: the same columns as `source`, without its null."""
+    clean = tmp_path / "yesterday.csv"
+    clean.write_text(text, encoding="utf-8")
     baseline = tmp_path / "baseline.json"
-    dp.profile_file(source).save(baseline)
-    result = run_check(source, "--baseline", baseline, "--min-quality", "0", "--json")
-    assert result.returncode == 3
-    error = json.loads(result.stdout)["error"]
-    assert error["kind"] == "argument"
-    assert "--baseline is not supported by the quality-gate API yet" in error["message"]
-    assert result.stderr == ""
+    dp.profile_file(clean).save(baseline)
+    return baseline
 
 
-def test_unsupported_baseline_without_json_explains_on_stderr(source: Path, tmp_path: Path):
+def _same_result(document: dict[str, Any]) -> dict[str, Any]:
+    """The result without the identity of this run's report, new on every profile."""
+    reports = (document.get("baseline") or {}).get("reports") or {}
+    for key in ("id", "timestamp"):
+        (reports.get("b") or {}).pop(key, None)
+    return document
+
+
+@pytest.mark.parametrize(
+    "flags,rules,code",
+    [
+        (["--max-null-increase", "amount=50"], {"max_null_percentage_increase": {"amount": 50}}, 0),
+        (["--max-null-increase", "amount=10"], {"max_null_percentage_increase": {"amount": 10}}, 1),
+        (["--max-null-increase", "*=10"], {"max_null_percentage_increase": {"*": 10}}, 1),
+        (["--max-quality-drop", "100"], {"max_quality_score_drop": 100}, 0),
+        (
+            ["--max-dimension-drop", "completeness=0"],
+            {"max_dimension_score_drops": {"completeness": 0}},
+            1,
+        ),
+    ],
+)
+def test_baseline_verdict_matches_the_library(
+    source: Path, tmp_path: Path, flags: list[str], rules: dict[str, Any], code: int
+):
+    baseline = _clean_baseline(tmp_path)
+    result = run_check(source, "--baseline", baseline, *flags, "--json")
+    assert result.returncode == code, result.stdout + result.stderr
+    expected = dp.profile_file(source).check(baseline=dp.ProfileReport.load(baseline), **rules)
+    assert _same_result(json.loads(result.stdout)) == _same_result(expected.to_dict())
+    assert json.loads(result.stdout)["baseline"]["reports"]["a"]["source"].endswith("yesterday.csv")
+
+
+def test_an_incomparable_baseline_is_inconclusive(source: Path, tmp_path: Path):
+    # A baseline that read one row of three does not cover its source, so a
+    # full-source rule about change cannot be decided against it.
+    clean = tmp_path / "yesterday.csv"
+    clean.write_text("id,amount\n1,10\n2,20\n3,30\n", encoding="utf-8")
     baseline = tmp_path / "baseline.json"
-    dp.profile_file(source).save(baseline)
-    result = run_check(source, "--baseline", baseline, "--min-quality", "0")
+    dp.profile_file(clean, max_rows=1).save(baseline)
+    result = run_check(source, "--baseline", baseline, "--max-null-increase", "amount=0", "--json")
+    assert result.returncode == 2, result.stdout + result.stderr
+    document = json.loads(result.stdout)
+    assert document["verdict"] == "inconclusive"
+    (check,) = [c for c in document["checks"] if c["code"] == "max_null_percentage_increase"]
+    assert check["status"] == "not_evaluated"
+    assert check["reason"] is not None
+
+
+def test_a_flat_summary_baseline_matches_the_library(source: Path, tmp_path: Path):
+    clean = tmp_path / "yesterday.csv"
+    clean.write_text("id,amount\n1,10\n2,20\n3,30\n", encoding="utf-8")
+    baseline = tmp_path / "summary.json"
+    baseline.write_text(json.dumps(dp.profile_file(clean).to_dict()), encoding="utf-8")
+    rules: dict[str, Any] = {
+        "max_null_percentage_increase": {"amount": 10},
+        "max_quality_score_drop": 100,
+    }
+    result = run_check(
+        source,
+        "--baseline",
+        baseline,
+        "--max-null-increase",
+        "amount=10",
+        "--max-quality-drop",
+        "100",
+        "--json",
+    )
+    expected = dp.profile_file(source).check(baseline=dp.ProfileReport.load(baseline), **rules)
+    assert result.returncode == {"pass": 0, "fail": 1, "inconclusive": 2}[expected.verdict]
+    assert _same_result(json.loads(result.stdout)) == _same_result(expected.to_dict())
+
+
+def test_policy_file_supports_the_rules_about_change(source: Path, tmp_path: Path):
+    baseline = _clean_baseline(tmp_path)
+    policy: dict[str, Any] = {
+        "max_quality_score_drop": 100,
+        "max_dimension_score_drops": {"completeness": 100},
+        "max_null_percentage_increase": {"*": 100, "amount": 50},
+        "forbid_removed_columns": True,
+        "forbid_added_columns": True,
+    }
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy), encoding="utf-8")
+    result = run_check(source, "--policy", path, "--baseline", baseline, "--json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = dp.profile_file(source).check(baseline=dp.ProfileReport.load(baseline), **policy)
+    assert _same_result(json.loads(result.stdout)) == _same_result(expected.to_dict())
+
+    # A flag replaces the matching key in full, as for the absolute rules.
+    tightened = run_check(
+        source, "--policy", path, "--baseline", baseline, "--max-null-increase", "amount=0"
+    )
+    assert tightened.returncode == 1, tightened.stderr
+
+
+@pytest.mark.parametrize(
+    "baseline_text,flag",
+    [
+        ("id,amount,note\n1,10,a\n2,20,b\n3,30,c\n", "--forbid-removed-columns"),
+        ("id\n1\n2\n3\n", "--forbid-added-columns"),
+    ],
+)
+def test_column_rules_against_a_baseline(
+    source: Path, tmp_path: Path, baseline_text: str, flag: str
+):
+    baseline = _clean_baseline(tmp_path, baseline_text)
+    result = run_check(source, "--baseline", baseline, flag, "--json")
+    assert result.returncode == 1, result.stdout + result.stderr
+    rules: dict[str, Any] = {flag.removeprefix("--").replace("-", "_"): True}
+    expected = dp.profile_file(source).check(baseline=dp.ProfileReport.load(baseline), **rules)
+    assert _same_result(json.loads(result.stdout)) == _same_result(expected.to_dict())
+
+
+@pytest.mark.parametrize("from_file", [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_a_rule_about_change_needs_a_baseline(
+    source: Path, tmp_path: Path, from_file: bool, json_output: bool
+):
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"max_quality_score_drop": 5}', encoding="utf-8")
+    rule: list[str | Path] = ["--policy", policy] if from_file else ["--max-quality-drop", "5"]
+    flags = ["--json"] if json_output else []
+    result = run_check(source, *rule, *flags)
     assert result.returncode == 3
+    assert "Traceback" not in result.stderr
+    if json_output:
+        error = json.loads(result.stdout)["error"]
+        assert error["kind"] == "policy"
+        assert error["message"].endswith(
+            "needs a baseline report to compare against: pass --baseline PATH"
+        )
+        # No file supplied the missing baseline, so none is named.
+        assert "path" not in error
+    else:
+        assert result.stdout == ""
+        assert "pass --baseline PATH" in result.stderr
+        assert "policy file" not in result.stderr
+
+
+def test_human_summary_names_the_baseline(source: Path, tmp_path: Path):
+    baseline = _clean_baseline(tmp_path)
+    result = run_check(source, "--baseline", baseline, "--max-quality-drop", "100")
+    assert result.returncode == 0, result.stderr
     assert result.stdout == ""
-    assert "--baseline is not supported by the quality-gate API yet" in result.stderr
+    assert f"  baseline: {baseline}" in result.stderr
 
 
 def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
@@ -788,7 +955,12 @@ def test_help_documents_flags_and_exit_codes():
         "--report PATH",
         "--json",
         "--min-quality",
-        "--baseline",
+        "--baseline PATH",
+        "--max-quality-drop POINTS",
+        "--max-dimension-drop NAME=POINTS",
+        "--max-null-increase COLUMN=POINTS",
+        "--forbid-removed-columns",
+        "--forbid-added-columns",
         "Exit codes:",
         "0 =",
         "1 =",
@@ -825,6 +997,6 @@ def test_a_required_column_is_a_policy_key_and_a_flag(source: Path, tmp_path: Pa
     refused = run_check(source, "--policy", policy, "--json")
     assert refused.returncode == 3
     assert "require_columns must be a JSON array of names" in refused.stdout
-    # The baseline rules need a baseline the entrypoint does not take yet.
+    # A rule about change needs --baseline, which this run does not pass.
     policy.write_text(json.dumps({"forbid_added_columns": True}), encoding="utf-8")
     assert run_check(source, "--policy", policy, "--json").returncode == 3

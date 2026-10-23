@@ -3,6 +3,6 @@ def main(argv: list[str] | None = ...) -> int:
 
     Raises:
         SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
-            invalid arguments or the unsupported ``--baseline`` option.
+            invalid arguments.
     """
     ...

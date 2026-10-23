@@ -1272,8 +1272,8 @@ The path must end in `.json`; reload it with `dp.ProfileReport.load()`. It is th
 report the verdict was computed from, written on `pass`, `fail` and
 `inconclusive` and not when profiling fails. An existing file is overwritten; a
 write failure exits `3` and names the path. `--json` stdout is unchanged.
-The report path must not refer to the source or policy file, including through
-symbolic links, hard links or case-insensitive path aliases.
+The report path must not refer to the source, policy or baseline file, including
+through symbolic links, hard links or case-insensitive path aliases.
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.
@@ -1311,23 +1311,55 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 | `0` | Every requirement passed; also used by `--help` and `--version` |
 | `1` | The gate found a proven violation, even if other checks are unevaluated |
 | `2` | The gate is inconclusive: a threshold could not be evaluated |
-| `3` | An argument, policy, or source could not be read or used, or the report could not be written |
+| `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written |
 
 Human summaries go to stderr. With `--json`, stdout contains only the existing
 `QualityGateResult.to_json()` document, including inconclusive results. Errors
 (exit `3`) write an error object instead of a result document:
-`{"error": {"kind": "argument" | "policy" | "input" | "output", "message": "...", "path": "..."}}`,
+`{"error": {"kind": "argument" | "policy" | "input" | "baseline" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
 `path` comes from a command-line flag (for example `--min-quality 150`), not
 from the policy file. Without `--json`, errors
 go to stderr and stdout stays empty. `--help` prints usage to stdout and lists
 every flag and code. `--version` prints `dataprof <version>` to stdout and exits 0.
 
-`ProfileReport.check(baseline=...)` evaluates rules about change, and the
-entrypoint does not pass them through yet: a policy file naming one is refused
-as an unknown key, and `--baseline PATH` exits `3` with an explicit unsupported-operation
-message, whether or not the path exists. It never ignores the requested
-comparison or substitutes an absolute check.
+#### Against a baseline (0.13+)
+
+`--baseline PATH` compares the run with a report an earlier run saved, through
+`ProfileReport.check(baseline=...)`. The rules about change need it:
+
+| Flag | Policy key |
+|---|---|
+| `--max-quality-drop POINTS` | `max_quality_score_drop` |
+| `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
+| `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
+| `--forbid-removed-columns` | `forbid_removed_columns` |
+| `--forbid-added-columns` | `forbid_added_columns` |
+
+A rule about change without `--baseline` is a policy error (exit `3`). The
+baseline is any file `--report` or `save()` wrote, or a flat `to_dict()` summary,
+which leaves what it did not record unrecorded. A baseline that cannot be read
+or is not a report exits `3` with an error of kind `baseline` naming the path.
+When the two reports did not measure the same thing the same way (a changed
+metric definition or setting, a schema change behind a score, or incomplete
+evidence under `full_source`), the rule is unevaluated and the run exits `2`, with
+the reason in the check. `--json` output then carries `baseline`: both reports,
+how their columns differ, and diagnostics that never move the verdict.
+
+`--report` cannot write over the baseline, because a report is written whatever
+the verdict and a failing run would become the next baseline. Write it elsewhere
+and promote it on a pass:
+
+```bash
+# First run: no baseline yet, so absolute rules only; keep the report.
+python -m dataprof.check orders.csv --min-quality 90 --report baseline.json
+
+# Later runs: compare with the last accepted report, promote today's on a pass.
+python -m dataprof.check orders.csv --min-quality 90 \
+  --baseline baseline.json --max-quality-drop 5 --max-null-increase '*=2' \
+  --forbid-removed-columns --report candidate.json --json > verdict.json \
+  && mv candidate.json baseline.json
+```
 
 For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
 GitHub Actions job runs the gate and retains its result even when it fails:

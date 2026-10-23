@@ -25,6 +25,11 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "require_metrics": None,
     "require_columns": None,
     "scope": "full_source",
+    "max_quality_score_drop": None,
+    "max_dimension_score_drops": None,
+    "max_null_percentage_increase": None,
+    "forbid_removed_columns": False,
+    "forbid_added_columns": False,
 }
 
 
@@ -144,10 +149,10 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         epilog=(
             "Exit codes: 0 = pass (also --help and --version); 1 = a proven policy violation; "
             "2 = inconclusive (a threshold could not be evaluated); "
-            "3 = an argument, policy, or source could not be read or used, "
+            "3 = an argument, policy, source, or baseline could not be read or used, "
             "or the report could not be written. "
             "A proven violation takes precedence over unevaluated checks. "
-            "Baseline comparison is not yet supported by the gate API."
+            "Rules about change need --baseline: a report an earlier run saved with --report."
         ),
     )
     parser.add_argument("source", type=Path, help="CSV, JSON, JSONL, or Parquet file")
@@ -248,7 +253,45 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--baseline",
         type=Path,
         metavar="PATH",
-        help="unsupported: baseline comparison awaits support in the gate API (exits 3)",
+        help="a report an earlier run saved (--report or save()) to measure change from",
+    )
+    parser.add_argument(
+        "--max-quality-drop",
+        dest="max_quality_score_drop",
+        type=float,
+        metavar="POINTS",
+        help="how far the overall quality score may fall below the baseline's (0-100)",
+    )
+    parser.add_argument(
+        "--max-dimension-drop",
+        dest="max_dimension_score_drops",
+        type=_named_percentage,
+        action="append",
+        metavar="NAME=POINTS",
+        help="how far a dimension score may fall below the baseline's (0-100); repeatable",
+    )
+    parser.add_argument(
+        "--max-null-increase",
+        dest="max_null_percentage_increase",
+        type=_named_percentage,
+        action="append",
+        metavar="COLUMN=POINTS",
+        help=(
+            "how far a column's null percentage may rise above the baseline's (0-100); "
+            "use *=POINTS for every column both reports profiled; repeatable"
+        ),
+    )
+    parser.add_argument(
+        "--forbid-removed-columns",
+        action="store_const",
+        const=True,
+        help="fail when a column the baseline profiled is gone",
+    )
+    parser.add_argument(
+        "--forbid-added-columns",
+        action="store_const",
+        const=True,
+        help="fail when a column the baseline did not profile appears (a closed schema)",
     )
     return parser
 
@@ -263,7 +306,7 @@ def _unique_policy_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _policy(args: argparse.Namespace) -> dict[str, Any]:
+def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -> dict[str, Any]:
     policy = dict(_POLICY_DEFAULTS)
     if args.policy is not None:
         try:
@@ -298,16 +341,21 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     for key in policy:
         value = getattr(args, key)
         if value is not None:
-            if key in ("min_dimension_scores", "max_null_percentage"):
+            if key in (
+                "min_dimension_scores",
+                "max_null_percentage",
+                "max_dimension_score_drops",
+                "max_null_percentage_increase",
+            ):
                 value = dict(value)
             policy[key] = value
 
     # Validate JSON container shapes before handing values to the same policy
     # validator the public check() method uses. Thresholds, dimension names,
     # scope, and empty-policy semantics belong to that validator.
-    dimensions = policy["min_dimension_scores"]
-    if dimensions is not None and not isinstance(dimensions, dict):
-        raise ValueError(f"policy file {args.policy}: min_dimension_scores must be a JSON object")
+    for key in ("min_dimension_scores", "max_dimension_score_drops"):
+        if policy[key] is not None and not isinstance(policy[key], dict):
+            raise ValueError(f"policy file {args.policy}: {key} must be a JSON object")
     required = policy["require_metrics"]
     if required is not None and (
         not isinstance(required, list) or not all(isinstance(name, str) for name in required)
@@ -322,7 +370,7 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             f"policy file {args.policy}: require_columns must be a JSON array of names"
         )
-    _Policy(**policy)
+    _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
     return policy
 
 
@@ -331,29 +379,49 @@ def main(argv: list[str] | None = None) -> int:
 
     Raises:
         SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
-            invalid arguments or the unsupported ``--baseline`` option.
+            invalid arguments.
     """
     parser = _parser(argv)
     args = parser.parse_args(argv)
-    if args.baseline is not None:
-        parser.error("--baseline is not supported by the quality-gate API yet")
     if args.report is not None and args.report.suffix.lower() != ".json":
         parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
     if args.report is not None:
         target = args.report.resolve()
-        for flag, other in (("source", args.source), ("--policy", args.policy)):
+        # A report is written whatever the verdict, so writing it over the
+        # baseline would make a failing run the next run's baseline.
+        for flag, other in (
+            ("source", args.source),
+            ("--policy", args.policy),
+            ("--baseline", args.baseline),
+        ):
             if other is not None and (
                 target == Path(other).resolve()
                 or (target.exists() and Path(other).exists() and target.samefile(other))
             ):
                 parser.error(f"--report would overwrite the {flag} file: {args.report}")
+    baseline = None
+    if args.baseline is not None:
+        try:
+            baseline = dataprof.ProfileReport.load(args.baseline)
+        except (OSError, ValueError, TypeError, RuntimeError) as exc:
+            detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+            return _report_error(
+                "baseline",
+                f"cannot read baseline {args.baseline}: {detail}",
+                path=args.baseline,
+                json_output=args.json,
+            )
     try:
-        policy = _policy(args)
+        policy = _policy(args, baseline)
     except (OSError, ValueError, RuntimeError) as exc:
         message = str(exc)
+        if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
+            message = f"{message}: pass --baseline PATH"
         # A value error names the file only when the file supplied that key
-        # and no flag replaced it.
-        from_flag = isinstance(exc, _PolicyFieldError) and getattr(args, exc.key, None) is not None
+        # and no flag replaced it. A missing baseline is no file's key.
+        from_flag = isinstance(exc, _PolicyFieldError) and (
+            exc.key == "baseline" or getattr(args, exc.key, None) is not None
+        )
 
         if (
             not args.json
@@ -377,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             max_rows=args.max_rows,
             metrics=args.metrics,
         )
-        result = report.check(**policy)
+        result = report.check(**policy, baseline=baseline)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
         return _report_error("input", str(exc), path=args.source, json_output=args.json)
 
@@ -401,6 +469,8 @@ def main(argv: list[str] | None = None) -> int:
         f"(scope: {result.scope})",
         file=sys.stderr,
     )
+    if args.baseline is not None:
+        print(f"  baseline: {args.baseline}", file=sys.stderr)
     for check in result.checks:
         if check.status != "passed":
             subject = check.column if check.column is not None else check.dimension
