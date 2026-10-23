@@ -10,7 +10,9 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
   lints and tests on the toolchain in `rust-toolchain.toml`, which rustup
   installs and uses for `cargo` in this checkout on its own
 - **Cargo** (comes with Rust)
-- **Python 3.10** or later
+- **Python 3.11** or later. Local development runs on CPython 3.15, pinned in
+  `.python-version`; uv reads that file and installs the interpreter itself.
+  pyenv and asdf read it too, so the commands below start Python through uv
 - **uv** for Python dependency and test commands ([install](https://docs.astral.sh/uv/))
 - **Git**
 
@@ -35,7 +37,7 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
 Run the complete contributor setup smoke path from the repository root:
 
 ```bash
-python .github/scripts/contributor_smoke.py
+uv run --no-project python .github/scripts/contributor_smoke.py
 ```
 
 The runner stops at the first failure and executes exactly these five steps:
@@ -64,7 +66,7 @@ below:
 # Rust. rustup runs the toolchain rust-toolchain.toml pins, as CI does.
 cargo fmt --all
 cargo clippy --all --all-targets -- -D warnings
-python .github/scripts/check_decode_audit.py
+uv run --no-project python .github/scripts/check_decode_audit.py
 
 # Python. The paths matter: CI checks the scripts directories too, so a
 # narrower path can pass locally and still fail there.
@@ -95,7 +97,7 @@ The MSRV is verified by compilation, not by declaration:
 
 ```bash
 rustup toolchain install 1.96
-RUSTUP_TOOLCHAIN=1.96 python .github/scripts/msrv_check.py
+RUSTUP_TOOLCHAIN=1.96 uv run --no-project python .github/scripts/msrv_check.py
 ```
 
 That script is the `MSRV Compile Gate` job in CI and a release gate in
@@ -129,7 +131,7 @@ loudly if the toolchain pin and `rust-version` drift apart.
 ### Python interpreters and release wheels
 
 Starting with 0.12, `.github/python-interpreters.json` declares the release
-interpreter set: standard, GIL-enabled CPython 3.10–3.14. CI runs the Python
+interpreter set: standard, GIL-enabled CPython 3.11–3.15. CI runs the Python
 suite on every declared version and wheel smoke tests on every declared version
 on Linux, macOS and Windows. PyPy, preview Python and free-threaded builds are
 outside this support policy; they are not published. Adopting free-threading or
@@ -144,12 +146,17 @@ and optimized builds pass this check before optimized artifacts are renamed.
 Linux wheels select interpreters inside the manylinux container; host Python
 installation does not control those builds (see the
 [maturin action documentation](https://github.com/PyO3/maturin-action#usage)).
+The aarch64 leg cross-compiles in a `manylinux_2_28-cross` image, where maturin
+takes each interpreter's configuration from its bundled sysconfig rather than
+from a target interpreter.
 
 When changing support, update the JSON declaration and the version classifiers
 and `requires-python` in `pyproject.toml`, then refresh `uv.lock`. Metadata must
 agree with the declaration or both CI and the release fail. The bound excludes
-Python 3.15+ from source installs too; extending support is a tested release
+Python 3.16+ from source installs too; extending support is a tested release
 change, rather than an implicit promise made by an open-ended requirement.
+Local development follows the newest declared version through `.python-version`;
+CI jobs pinned to the floor set `UV_PYTHON`, so that file does not move them.
 Python package metadata cannot exclude the free-threaded ABI or PyPy by itself;
 the artifact check and this policy define that boundary.
 
@@ -239,7 +246,7 @@ Use descriptive branch names:
    ```bash
    uv run ruff check python/dataprof python/tests
    cargo clippy --all --all-targets -- -D warnings
-   python .github/scripts/check_decode_audit.py
+   uv run --no-project python .github/scripts/check_decode_audit.py
    ```
 6. **Build release** (verify no warnings):
    ```bash
@@ -307,7 +314,7 @@ Good first issues in this repository usually mean:
 - [ ] Relevant tests pass
 - [ ] Code is formatted (`cargo fmt --all`)
 - [ ] No linting errors in the area you touched
-- [ ] Decode audit passes (`python .github/scripts/check_decode_audit.py`); see [Decode-path error handling](#decode-path-error-handling)
+- [ ] Decode audit passes (`uv run --no-project python .github/scripts/check_decode_audit.py`); see [Decode-path error handling](#decode-path-error-handling)
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
 - [ ] Commit messages are clear and descriptive
@@ -402,7 +409,7 @@ Describe:
 Run this check from the repository root before opening a PR:
 
 ```bash
-python .github/scripts/check_decode_audit.py
+uv run --no-project python .github/scripts/check_decode_audit.py
 ```
 
 A decode or parse error must not silently become a plausible value such as
@@ -511,7 +518,7 @@ cargo test -p dataprof-python
 # Run lint checks
 uv run ruff check python/dataprof python/tests
 cargo clippy --all --all-targets -- -D warnings
-python .github/scripts/check_decode_audit.py
+uv run --no-project python .github/scripts/check_decode_audit.py
 
 # Run benchmarks
 cargo bench

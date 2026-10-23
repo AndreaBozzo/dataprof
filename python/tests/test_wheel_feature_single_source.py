@@ -13,7 +13,9 @@ the CLI flag is absent).
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,35 +24,27 @@ def _release_workflow() -> str:
     return (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
 
-def _tool_maturin_features() -> list[str]:
-    """The `features` list from `[tool.maturin]`, read without a TOML parser.
+def _pyproject() -> dict[str, Any]:
+    return tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    `tomllib` is 3.11+ and this project supports 3.10, where every CI leg runs;
-    scanning the one section beats adding a backport dependency for one list.
-    """
-    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    section = re.search(r"^\[tool\.maturin\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
-    assert section, "pyproject.toml has no [tool.maturin] section"
-    declaration = re.search(r"^features\s*=\s*\[(.*?)\]", section.group(1), re.M | re.S)
-    assert declaration, "[tool.maturin] declares no features list"
-    return re.findall(r'"([^"]+)"', declaration.group(1))
+
+def _tool_maturin_features() -> list[str]:
+    """The `features` list from `[tool.maturin]`."""
+    maturin = _pyproject().get("tool", {}).get("maturin")
+    assert maturin is not None, "pyproject.toml has no [tool.maturin] section"
+    assert "features" in maturin, "[tool.maturin] declares no features list"
+    return maturin["features"]
 
 
 def test_pyproject_declares_a_nonempty_wheel_feature_set():
     assert _tool_maturin_features(), "the shipped feature set must be declared in pyproject.toml"
 
 
-def _optional_dependency_extras() -> dict[str, str]:
-    """Every `name = [...]` entry under `[project.optional-dependencies]`."""
-    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    section = re.search(
-        r"^\[project\.optional-dependencies\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S
-    )
-    assert section, "pyproject.toml has no [project.optional-dependencies] section"
-    return {
-        name: body
-        for name, body in re.findall(r"^(\S+)\s*=\s*\[(.*?)\]", section.group(1), re.M | re.S)
-    }
+def _optional_dependency_extras() -> dict[str, list[str]]:
+    """Every entry under `[project.optional-dependencies]`."""
+    extras = _pyproject()["project"].get("optional-dependencies")
+    assert extras is not None, "pyproject.toml has no [project.optional-dependencies] section"
+    return extras
 
 
 def test_no_extra_resolves_to_nothing():
@@ -63,7 +57,7 @@ def test_no_extra_resolves_to_nothing():
     """
     extras = _optional_dependency_extras()
     assert extras, "expected at least one optional-dependency extra"
-    empty = sorted(name for name, body in extras.items() if not body.strip())
+    empty = sorted(name for name, requirements in extras.items() if not requirements)
     assert not empty, (
         f"extras resolve to no requirements: {empty}. An extra that installs nothing "
         "promises an install path that does not exist; document the build instead."

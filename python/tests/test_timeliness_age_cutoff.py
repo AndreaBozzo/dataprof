@@ -1,13 +1,13 @@
 """Whole-date freshness cutoffs. Rust twin: tests/timeliness_age_cutoff.rs."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from _profile_routes import _routes
 
 
 def test_every_route_compares_whole_dates_for_staleness(tmp_path: Path):
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     cutoff = today - timedelta(days=int(5.0 * 365.2425))
     values = [
         str(cutoff - timedelta(days=1)),

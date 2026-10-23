@@ -22,7 +22,7 @@ A Rust library with a Python package on top. No server, no account, no network.
 pip install dataprof          # or: uv pip install dataprof
 ```
 
-Wheels for CPython 3.10 to 3.14 on Linux, macOS and Windows, with no Python dependencies.
+Wheels for CPython 3.11 to 3.15 on Linux, macOS and Windows, with no Python dependencies.
 
 ## Profile a file
 
