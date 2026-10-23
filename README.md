@@ -61,7 +61,7 @@ Or from CI, with no code at all:
 
 ```bash
 python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"
-# exit 0 = pass, 1 = fail, 2 = inconclusive, 3 = bad input
+# exit 0 = pass, 1 = fail, 2 = inconclusive, 3 = an argument, policy, input, baseline or output error
 
 # Or against the last accepted run: fail if quality drops more than 5 points.
 python -m dataprof.check orders.csv --baseline accepted.json --max-quality-drop 5

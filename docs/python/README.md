@@ -1337,7 +1337,7 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--forbid-added-columns` | `forbid_added_columns` |
 
 A rule about change without `--baseline` is a policy error (exit `3`). The
-baseline is any file `--report` or `save()` wrote, or a flat `to_dict()` summary,
+baseline is a `.json` report that `--report` or `save()` wrote, or a flat `to_dict()` summary,
 which leaves what it did not record unrecorded. A baseline that cannot be read,
 is not a report, or cannot be compared exits `3` with an error of kind `baseline`
 naming the path.

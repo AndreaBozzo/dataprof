@@ -253,7 +253,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--baseline",
         type=Path,
         metavar="PATH",
-        help="a report an earlier run saved (--report or save()) to measure change from",
+        help="a .json report an earlier run saved (--report or save()) to measure change from",
     )
     parser.add_argument(
         "--max-quality-drop",
