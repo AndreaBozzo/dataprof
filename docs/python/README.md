@@ -1349,11 +1349,12 @@ how their columns differ, and diagnostics that never move the verdict.
 
 `--report` cannot write over the baseline, because a report is written whatever
 the verdict and a failing run would become the next baseline. Write it elsewhere
-and promote it on a pass:
+and promote it on a pass, the first run included:
 
 ```bash
-# First run: no baseline yet, so absolute rules only; keep the report.
-python -m dataprof.check orders.csv --min-quality 90 --report baseline.json
+# First run: no baseline yet, so absolute rules only; promote the report on a pass.
+python -m dataprof.check orders.csv --min-quality 90 --report candidate.json \
+  && mv candidate.json baseline.json
 
 # Later runs: compare with the last accepted report, promote today's on a pass.
 python -m dataprof.check orders.csv --min-quality 90 \
