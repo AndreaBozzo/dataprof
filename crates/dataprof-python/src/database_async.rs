@@ -163,7 +163,7 @@ pub fn test_connection_async<'py>(
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             test_connection_internal(connection_string)
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+                .map_err(|e| analysis_error_to_py(&e))
         })
     }
 
@@ -224,7 +224,7 @@ pub fn get_table_schema_async<'py>(
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             get_table_schema_internal(connection_string, table_name)
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+                .map_err(|e| analysis_error_to_py(&e))
         })
     }
 
@@ -289,7 +289,7 @@ pub fn count_table_rows_async<'py>(
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             count_table_rows_internal(connection_string, table_name)
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+                .map_err(|e| analysis_error_to_py(&e))
         })
     }
 

@@ -57,12 +57,12 @@ KNOWN: dict[tuple[str, str, str], str] = {
     # past 2^53 collapse: the extremes round, distinct values tie for a mode,
     # and the quartiles of a narrow spread coincide.
     **{
-        (case, "*", field): "#877"
+        (case, "*", field): "#1038"
         for case in ("above_2_pow_53", "epoch_nanoseconds", "uint64_edge")
         for field in ("min", "max", "mode")
     },
-    ("epoch_nanoseconds", "*", "quartiles.iqr"): "#877",
-    ("uint64_edge", "*", "quartiles.iqr"): "#877",
+    ("epoch_nanoseconds", "*", "quartiles.iqr"): "#1038",
+    ("uint64_edge", "*", "quartiles.iqr"): "#1038",
 }
 
 Route = tuple[str, Callable[[], dp.ProfileReport]]

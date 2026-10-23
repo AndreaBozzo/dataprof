@@ -308,16 +308,21 @@ class ProfileReport:
         return None if semantics is None else dict(semantics)
 
     @property
-    def analysis_settings(self) -> dict[str, str] | None:
-        """The analysis settings this report was profiled with that move a
-        score on unchanged data and are recorded nowhere else in it.
+    def analysis_settings(self) -> dict[str, _Any] | None:
+        """The analysis settings this report was profiled with that change
+        what a score measures on unchanged data and are recorded nowhere else
+        in it.
 
-        Currently ``{"pattern_locale": ...}``: the locale detected patterns
-        were ranked with, which the validity score reads, as its ISO 3166-1
-        alpha-2 code (``"IT"``), or ``"none"`` when no locale was given.
-        :meth:`compare` lists it under ``configuration``, and a baseline
-        ``check()`` decides a validity or overall drop only when both reports
-        agree on it.
+        ``pattern_locale`` is the locale detected patterns were ranked with,
+        which the validity score reads, as its ISO 3166-1 alpha-2 code
+        (``"IT"``), or ``"none"`` when no locale was given. :meth:`compare`
+        lists it under ``configuration``, and a baseline ``check()`` decides
+        a validity or overall drop only when both reports agree on it.
+
+        ``columns`` is the column selection: ``{"selection": "all"}``, or
+        ``{"selection": "listed", "names": [...]}`` for a ``columns=``
+        projection, in the order given. A baseline ``check()`` reads it to
+        tell a column the source lacks from one that was not selected.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded them: the settings are unknown, not the defaults.
@@ -669,6 +674,9 @@ class ProfileReport:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        require_columns: _Sequence[str] | None = None,
+        forbid_removed_columns: bool = False,
+        forbid_added_columns: bool = False,
     ) -> _QualityGateResult:
         """Evaluate a quality policy against this report.
 
@@ -729,6 +737,22 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            require_columns: Columns this report must have; needs no baseline.
+                One check per name, in name order.
+            forbid_removed_columns: Require every column the baseline profiled
+                to be profiled still. One check per baseline column.
+            forbid_added_columns: Allow no column the baseline did not profile:
+                a closed schema. One check per column of this report.
+
+        A missing column fails a column rule only when the side without it
+        shows its source lacks it: it recorded its column selection, the
+        selection included the column, and its column set covers the whole
+        source. A CSV header, a Parquet schema, a DataFrame or a query result
+        lists every column however few rows were read; for JSON, JSONL and
+        streams only a scan of every record does. Otherwise the check is
+        unevaluated: ``setting_changed`` or ``setting_unrecorded`` on the
+        setting ``columns``, ``column_not_profiled`` for a required column the
+        run did not select, or ``evidence_incomplete``.
 
         A rule about change is decided only when both reports measured the
         same thing the same way. Otherwise it is unevaluated, with the reason
@@ -739,7 +763,9 @@ class ProfileReport:
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
         side does not cover its whole source. ``result.baseline`` names both
-        reports and how their columns differ.
+        reports and how their columns differ, and its ``diagnostics`` list
+        each column added, removed, retyped or now all null, which never move
+        the verdict.
 
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
@@ -766,6 +792,9 @@ class ProfileReport:
             max_quality_score_drop=max_quality_score_drop,
             max_dimension_score_drops=max_dimension_score_drops,
             max_null_percentage_increase=max_null_percentage_increase,
+            require_columns=require_columns,
+            forbid_removed_columns=forbid_removed_columns,
+            forbid_added_columns=forbid_added_columns,
         ).evaluate(self._native_report)
 
     def findings(

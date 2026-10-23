@@ -625,7 +625,7 @@
               "reason": "quality_sampled"
             },
             "bounds": {
-              "lower": 99.68,
+              "lower": 99.69,
               "upper": 100.0,
               "confidence_level": 0.999
             },

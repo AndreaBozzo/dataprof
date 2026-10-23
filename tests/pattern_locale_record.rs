@@ -23,6 +23,7 @@ fn file(suffix: &str, contents: &str) -> tempfile::NamedTempFile {
 fn recorded(report: &ProfileReport) -> Option<PatternLocale> {
     report
         .analysis_settings
+        .as_ref()
         .map(|settings| settings.pattern_locale)
 }
 
@@ -90,7 +91,7 @@ fn a_document_keeps_the_settings_and_their_absence() {
     let document = serde_json::to_value(&report).unwrap();
     assert_eq!(
         document["analysis_settings"],
-        json!({"pattern_locale": "IT"})
+        json!({"pattern_locale": "IT", "columns": {"selection": "all"}})
     );
     let reloaded: ProfileReport = serde_json::from_value(document.clone()).unwrap();
     assert_eq!(recorded(&reloaded), Some(PatternLocale::It));
@@ -98,7 +99,7 @@ fn a_document_keeps_the_settings_and_their_absence() {
     let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
     assert_eq!(
         summary["analysis_settings"],
-        json!({"pattern_locale": "IT"})
+        json!({"pattern_locale": "IT", "columns": {"selection": "all"}})
     );
 
     // Written before the field: unknown, not the defaults.

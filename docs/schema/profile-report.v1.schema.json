@@ -4,22 +4,48 @@
       "description": "Accuracy metrics (ISO 25012).",
       "properties": {
         "negative_values_in_positive": {
+          "description": "Negative values in positive-only columns. A diagnostic; the score\nreads `rule_violating_values`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         },
         "numeric_values_checked": {
           "default": 0,
-          "description": "Finite numeric values examined across all columns. 0 means the\ndimension had nothing to assess and it is excluded from the overall\nscore.",
+          "description": "Finite numeric values examined across all columns. The dimension is\nassessed when the outlier or the rule component had units, not by this\ncount alone; see [`AccuracyMetrics::is_assessed`].",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
         },
         "outlier_ratio": {
+          "description": "Values outside the Tukey fences, as a percentage of\n`outlier_values_checked`. Carries no signal, and takes nothing off\nthe score, when that is 0.",
           "format": "double",
           "type": "number"
         },
+        "outlier_values_checked": {
+          "description": "Finite numeric values of the columns that reached\n`outlier_min_samples`: the units of the outlier component. 0 means no\ncolumn was tested, so the component is absent. Absent on documents\nwritten before 0.13, whose `outlier_ratio` read 0 for an untested\nsource.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "range_violations": {
+          "description": "Failures of the name-based range rules (age, percentage, count, year):\na value breaking two of them adds two. A diagnostic; the score reads\n`rule_violating_values`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule_values_checked": {
+          "default": 0,
+          "description": "Finite numeric values of the columns a range or sign rule applies to:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score. Additive: documents written\nbefore it read as 0, so the schema does not require it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule_violating_values": {
+          "default": 0,
+          "description": "Of `rule_values_checked`, the values breaking at least one rule, each\ncounted once however many rules it breaks. Additive, like\n`rule_values_checked`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -34,15 +60,20 @@
       "type": "object"
     },
     "AnalysisSettings": {
-      "description": "The analysis settings a report was profiled with that move its scores on\nunchanged data and are recorded nowhere else in it.\n\n[`MetricSemantics`] records how a release defines its measurements; this\nrecords what the caller chose. The score weights live in the quality\nassessment and the semantic hints in the hint bindings, so they are not\nrepeated here. Later releases add fields, which older readers ignore, and a\nfield missing from a stored report means the release did not record it.",
+      "description": "The analysis settings a report was profiled with that change what its\nscores measure on unchanged data and are recorded nowhere else in it.\n\n[`MetricSemantics`] records how a release defines its measurements; this\nrecords what the caller chose. The score weights live in the quality\nassessment and the semantic hints in the hint bindings, so they are not\nrepeated here. Later releases add fields, which older readers ignore, and a\nfield missing from a stored report means the release did not record it.",
       "properties": {
+        "columns": {
+          "$ref": "#/$defs/ColumnSelection",
+          "description": "The columns the run profiled. A dataset-level score has the column\nset as its subject, and a report without a column's profile needs this\nto tell a column the source lacks from one that was not selected."
+        },
         "pattern_locale": {
           "$ref": "#/$defs/PatternLocale",
           "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
         }
       },
       "required": [
-        "pattern_locale"
+        "pattern_locale",
+        "columns"
       ],
       "type": "object"
     },
@@ -158,6 +189,45 @@
         "patterns"
       ],
       "type": "object"
+    },
+    "ColumnSelection": {
+      "description": "Which of the source's columns a run profiled.\n\nA projection that names a column the source lacks is refused before\nprofiling, so a report with [`ColumnSelection::All`] that has no profile\nfor a column shows the source has no such column, and one with\n[`ColumnSelection::Listed`] shows only that the caller did not select it.",
+      "oneOf": [
+        {
+          "description": "Every column of the source.",
+          "properties": {
+            "selection": {
+              "const": "all",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Only the named columns.",
+          "properties": {
+            "names": {
+              "description": "The names as the caller gave them.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "selection": {
+              "const": "listed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection",
+            "names"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ColumnStats": {
       "description": "Type-specific statistics for a column, determined by the inferred data type.",
@@ -822,6 +892,16 @@
       ],
       "type": "object"
     },
+    "KeyUniquenessUnits": {
+      "description": "What `key_uniqueness` divides the key column's distinct values by, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 it divided by every\nrow, nulls included, so a nullable key lost uniqueness for each null the\ncompleteness score already counted; those releases recorded no\ndefinition.",
+      "oneOf": [
+        {
+          "const": "non_null_values",
+          "description": "The key column's non-null values.",
+          "type": "string"
+        }
+      ]
+    },
     "MetricConfidence": {
       "description": "Confidence level for quality metrics.",
       "oneOf": [
@@ -911,13 +991,25 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "key_uniqueness_units": {
+          "$ref": "#/$defs/KeyUniquenessUnits",
+          "description": "What `key_uniqueness` divides the key's distinct values by.\n\nAbsent means not recorded: through 0.12 it divided by every row,\nnulls included."
+        },
         "null_tokens": {
           "$ref": "#/$defs/NullTokenSet",
           "description": "The text values counted as null, which every `null_count` and every\ncompleteness figure depend on.\n\nAbsent means not recorded: the release that wrote the report counted\nonly empty, `null` and `nan`, or recorded nothing at all."
         },
+        "outlier_units": {
+          "$ref": "#/$defs/OutlierUnits",
+          "description": "What `outlier_ratio` is measured over.\n\nAbsent means not recorded: through 0.12 an untested source read 0 and\nstill assessed accuracy."
+        },
         "pattern_match_count": {
           "$ref": "#/$defs/PatternMatchCount",
           "description": "What every pattern's `match_count` and `match_percentage` count.\n\nAbsent means not recorded: through 0.12 they counted every regular\nexpression match, validated or not."
+        },
+        "range_rule_count": {
+          "$ref": "#/$defs/RangeRuleCount",
+          "description": "What the range and sign rules behind the accuracy score count.\n\nAbsent means not recorded: through 0.12 every rule failure counted,\nover the numeric values of every column."
         },
         "shape_moments": {
           "$ref": "#/$defs/ShapeMomentEstimator",
@@ -1040,6 +1132,16 @@
         "variance"
       ],
       "type": "object"
+    },
+    "OutlierUnits": {
+      "description": "What `outlier_ratio` is measured over, as recorded in a report's metric\nsemantics.\n\nOnly the current definition has a value. Through 0.12 a source in which no\ncolumn reached `outlier_min_samples` reported `outlier_ratio` 0, and its\nnumeric values alone made the accuracy dimension assessed; those releases\nrecorded no definition.",
+      "oneOf": [
+        {
+          "const": "tested_values",
+          "description": "The values of the columns that reached `outlier_min_samples`. With\nnone, the component is absent rather than 0.",
+          "type": "string"
+        }
+      ]
     },
     "ParquetMetadata": {
       "description": "Metadata specific to Parquet files",
@@ -2033,6 +2135,14 @@
           "format": "double",
           "type": "number"
         },
+        "key_values_checked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "rows_checked": {
           "format": "uint",
           "minimum": 0,
@@ -2396,6 +2506,16 @@
         }
       ],
       "description": "Supported query engines for SQL-based profiling"
+    },
+    "RangeRuleCount": {
+      "description": "What the range and sign rules of the accuracy score count, as recorded in\na report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 every rule failure\ncounted, a value breaking two rules twice, and the failures were divided\nby the numeric values of every column, so clean columns diluted a broken\none; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "violating_values",
+          "description": "Values breaking at least one rule, each counted once, over the values\nof the columns a rule applies to.",
+          "type": "string"
+        }
+      ]
     },
     "RecoveryEvent": {
       "description": "A failed execution attempt followed by a retry, in chronological order.\n\nThis is execution provenance, not a metric or a count of damaged rows.\nError text is diagnostic and is not a stable machine-readable contract.",
@@ -2830,6 +2950,15 @@
         "key_uniqueness": {
           "format": "double",
           "type": "number"
+        },
+        "key_values_checked": {
+          "description": "Non-null values of `key_column`: the units `key_uniqueness` divides\nthe key's distinct values by. 0 means the key held no value, so\n`key_uniqueness` carries no signal and does not contribute to the\ndimension score. Absent with no key column, and on documents written\nbefore 0.13, whose `key_uniqueness` divided by every row, nulls\nincluded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "rows_checked": {
           "default": 0,

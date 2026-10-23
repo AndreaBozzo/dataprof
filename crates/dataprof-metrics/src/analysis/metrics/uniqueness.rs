@@ -18,7 +18,28 @@ pub(crate) struct UniquenessMetrics {
     pub high_cardinality_warning: bool,
     pub rows_checked: usize,
     pub key_column: Option<String>,
+    /// Non-null values of `key_column`, the units of `key_uniqueness`.
+    pub key_values_checked: Option<usize>,
     pub duplicate_rows_approximate: bool,
+}
+
+/// The key uniqueness component: its share, the column it describes and the
+/// values it was measured over.
+struct KeyUniqueness {
+    share: f64,
+    column: Option<String>,
+    values_checked: Option<usize>,
+}
+
+impl KeyUniqueness {
+    /// No key signal: no column, so nothing was measured.
+    fn none() -> Self {
+        Self {
+            share: 100.0,
+            column: None,
+            values_checked: None,
+        }
+    }
 }
 
 /// Calculator for uniqueness dimension metrics
@@ -55,17 +76,17 @@ impl<'a> UniquenessCalculator<'a> {
                 (duplicates, rows, false)
             }
         };
-        let (key_uniqueness, key_column) =
-            Self::calculate_key_uniqueness(column_profiles, identifier_columns)?;
+        let key = Self::calculate_key_uniqueness(column_profiles, identifier_columns)?;
         let high_cardinality_warning =
             self.check_high_cardinality(column_profiles, total_rows, identifier_columns);
 
         Ok(UniquenessMetrics {
             duplicate_rows,
-            key_uniqueness,
+            key_uniqueness: key.share,
             high_cardinality_warning,
             rows_checked,
-            key_column,
+            key_column: key.column,
+            key_values_checked: key.values_checked,
             duplicate_rows_approximate,
         })
     }
@@ -121,15 +142,17 @@ impl<'a> UniquenessCalculator<'a> {
         Ok((duplicates, total_rows))
     }
 
-    /// Calculate key uniqueness percentage and the column it describes.
+    /// Calculate key uniqueness percentage, the column it describes and the
+    /// key values it was measured over.
     ///
-    /// Returns `(100.0, None)` when no key column was identified or its
-    /// unique count is unavailable — the caller treats `None` as "no key
-    /// signal" rather than "perfect key".
+    /// Returns no column when no key column was identified or its unique
+    /// count is unavailable — the caller treats that as "no key signal"
+    /// rather than "perfect key". A key column with no non-null value is
+    /// named, with 0 values checked: identified, but nothing to measure.
     fn calculate_key_uniqueness(
         column_profiles: &[ColumnProfile],
         identifier_columns: &[String],
-    ) -> Result<(f64, Option<String>), DataProfilerError> {
+    ) -> Result<KeyUniqueness, DataProfilerError> {
         // Explicit semantic hints take precedence and retain user-supplied
         // order. Fall back to the conservative name heuristic when absent.
         let key_column = identifier_columns
@@ -145,24 +168,28 @@ impl<'a> UniquenessCalculator<'a> {
                     .find(|profile| is_likely_id_column(&profile.name))
             });
 
-        if let Some(key_col) = key_column {
-            if let Some(unique_count) = key_col.unique_count {
-                if key_col.total_count == 0 {
-                    Ok((100.0, None))
-                } else {
-                    Ok((
-                        (unique_count as f64 / key_col.total_count as f64) * 100.0,
-                        Some(key_col.name.clone()),
-                    ))
-                }
-            } else {
-                // unique_count unavailable: no evidence either way
-                Ok((100.0, None))
-            }
-        } else {
+        let Some(key_col) = key_column else {
             // No key column found: no key signal
-            Ok((100.0, None))
-        }
+            return Ok(KeyUniqueness::none());
+        };
+        let Some(unique_count) = key_col.unique_count else {
+            // unique_count unavailable: no evidence either way
+            return Ok(KeyUniqueness::none());
+        };
+        // The units are the key's non-null values, as `unique_count` counts
+        // them: a null is completeness's finding, not a repeated key (#1005).
+        // A key holding no value has no uniqueness to measure.
+        let values = key_col.total_count.saturating_sub(key_col.null_count);
+        let share = if values == 0 {
+            100.0
+        } else {
+            unique_count as f64 / values as f64 * 100.0
+        };
+        Ok(KeyUniqueness {
+            share,
+            column: Some(key_col.name.clone()),
+            values_checked: Some(values),
+        })
     }
 
     /// Check for high cardinality warning

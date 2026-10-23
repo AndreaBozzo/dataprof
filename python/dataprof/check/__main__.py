@@ -23,6 +23,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage": None,
     "max_duplicate_rows": None,
     "require_metrics": None,
+    "require_columns": None,
     "scope": "full_source",
 }
 
@@ -208,6 +209,13 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="require quality or a dimension to be analyzed; absence fails; repeatable",
     )
     parser.add_argument(
+        "--require-column",
+        dest="require_columns",
+        action="append",
+        metavar="NAME",
+        help="require a column to be profiled; fails when the source lacks it; repeatable",
+    )
+    parser.add_argument(
         "--scope",
         choices=("full_source", "observed"),
         help="require evidence about the full source (default) or the observed population",
@@ -306,6 +314,13 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError(
             f"policy file {args.policy}: require_metrics must be a JSON array of names"
+        )
+    columns = policy["require_columns"]
+    if columns is not None and (
+        not isinstance(columns, list) or not all(isinstance(name, str) for name in columns)
+    ):
+        raise ValueError(
+            f"policy file {args.policy}: require_columns must be a JSON array of names"
         )
     _Policy(**policy)
     return policy

@@ -13,16 +13,7 @@ surface is Rust library crates plus Python wheels — there is **no CLI binary**
 It profiles data and reports on it; it does not transform, clean, or move data.
 Keep changes within that identity.
 
-## Layout
-
-- `Cargo.toml` (root) — workspace: versions, shared dependencies, feature flags.
-- `crates/dataprof/src/` — public Rust facade (re-exports internal crates).
-- `crates/dataprof-*` — core, metrics, csv/json/parquet parsers, engines,
-  partial analysis, db connectors, runtime, python bindings.
-- `python/` — Python package sources and tests.
-- `tests/` — Rust integration tests for the facade.
-- `docs/` — guides, release notes, contributing, security policy.
-- `examples/` — executable docs; CI runs them, keep them working.
+`examples/` are executable docs: CI runs them, so keep them working.
 
 ## Build, test, lint
 

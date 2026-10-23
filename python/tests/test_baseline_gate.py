@@ -218,6 +218,34 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
     assert result.verdict == "inconclusive"
 
 
+@pytest.mark.parametrize(
+    ("definition", "reads", "other"),
+    [
+        ("range_rule_count", "accuracy", "uniqueness"),
+        ("key_uniqueness_units", "uniqueness", "accuracy"),
+        ("outlier_units", "accuracy", "uniqueness"),
+    ],
+)
+def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(
+    definition: str, reads: str, other: str
+):
+    # Every other definition recorded, so only the one removed separates the
+    # baseline from the report (#1005). The other dimensions are still decided.
+    report = dp.profile(CLEAN)
+    summary = report.to_dict()
+    del summary["metric_semantics"][definition]
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        max_quality_score_drop=0,
+        max_dimension_score_drops={reads: 0, other: 0, "completeness": 0},
+    )
+    unevaluated = {"reason": "definition_not_comparable", "definition": definition}
+    assert _find(result, "max_quality_score_drop").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", reads).reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", other).status == "passed"
+    assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+
+
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):
     path = tmp_path / "rows.csv"
     path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))
@@ -362,3 +390,84 @@ def test_an_allowance_is_compared_at_the_serialized_precision():
     for check in decide(0.004):
         assert check.status == "failed", check.to_dict()
         assert abs(check.expected["value"]) == 0.0
+
+
+BEFORE = {"id": [1, 2], "amount": [10, 20], "code": ["a", "b"], "gone": ["x", "y"]}
+AFTER = {"id": [1, 2], "amount": ["x1", "y2"], "code": [None, None], "new": ["z", "w"]}
+
+
+def _listed(result) -> list[dict[str, Any]]:
+    assert result.baseline is not None
+    return result.baseline["diagnostics"]
+
+
+def _diagnostics(result):
+    return [(item["code"], item["column"]) for item in _listed(result)]
+
+
+def test_a_schema_change_is_a_diagnostic_and_moves_no_verdict(tmp_path: Path):
+    baseline = dp.profile(BEFORE)
+    report = dp.profile(AFTER)
+    policy: dict[str, Any] = {"max_null_percentage_increase": {"id": 0}}
+    result = report.check(baseline=baseline, **policy)
+
+    assert result.verdict == "pass", result.to_dict()
+    assert _diagnostics(result) == [
+        ("column_type_changed", "amount"),
+        ("column_all_null", "code"),
+        ("column_removed", "gone"),
+        ("column_added", "new"),
+    ]
+    assert _listed(result)[0] == {
+        "code": "column_type_changed",
+        "column": "amount",
+        "data_type": {"a": "integer", "b": "string"},
+        "message": "this column holds values on both sides, and its inferred type differs",
+    }
+    assert list(_listed(result)[1]) == ["code", "column", "message"]
+    assert _listed(report.check(baseline=report, **policy)) == []
+
+    # Saved, or flattened to a summary, the baseline gives the same ones.
+    saved = tmp_path / "baseline.json"
+    baseline.save(saved)
+    loaded = dp.ProfileReport.load(saved)
+    flat = dp.ProfileReport.from_dict(baseline.to_dict())
+    for other in (loaded, flat):
+        assert _listed(report.check(baseline=other, **policy)) == _listed(result)
+
+
+def test_an_all_null_side_establishes_no_type():
+    empty = dp.profile({"id": [1, 2], "v": [None, None]})
+    dated = dp.profile({"id": [1, 2], "v": ["2026-01-01", "2026-01-02"]})
+    assert _diagnostics(dated.check(baseline=empty, **DRIFT)) == []
+    assert _diagnostics(empty.check(baseline=dated, **DRIFT)) == [("column_all_null", "v")]
+
+
+def test_a_0_11_summary_baseline_reports_schema_changes():
+    # Its one column, `city`, is a string with values; 0.11 recorded the
+    # type and the counts the diagnostics read.
+    legacy = dp.ProfileReport.from_dict(
+        json.loads((FIXTURES / "legacy_0_11_non_ascii.summary.json").read_text("utf-8"))
+    )
+    emptied = dp.profile({"city": [None, None], "extra": [1, 2]})
+    assert _diagnostics(emptied.check(baseline=legacy, max_null_percentage_increase=100)) == [
+        ("column_all_null", "city"),
+        ("column_added", "extra"),
+    ]
+    retyped = dp.profile({"city": [1, 2]})
+    result = retyped.check(baseline=legacy, max_null_percentage_increase=100)
+    assert _listed(result)[0]["data_type"] == {"a": "string", "b": "integer"}
+
+
+def test_a_type_change_the_identifier_hint_explains_names_the_hint():
+    data = {"id": [1, 2], "n": [5, 6]}
+    plain = dp.profile(data)
+    hinted = dp.profile(data, identifier_columns=["id"])
+    result = hinted.check(baseline=plain, max_null_percentage_increase={"n": 0})
+
+    assert result.verdict == "pass"
+    [retyped] = _listed(result)
+    assert retyped["data_type"] == {"a": "integer", "b": "identifier"}
+    assert (retyped["reason"], retyped["setting"]) == ("setting_changed", "identifier_columns")
+    # A data-driven change carries no reason.
+    assert "reason" not in _listed(dp.profile(AFTER).check(baseline=dp.profile(BEFORE), **DRIFT))[0]

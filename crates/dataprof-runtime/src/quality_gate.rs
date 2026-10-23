@@ -52,6 +52,27 @@
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
 //!   cover the whole source.
 //!
+//! A schema change from the baseline is reported as a [`Diagnostic`] in the
+//! result's `baseline.diagnostics`, whatever the policy states: a column added,
+//! removed, retyped while holding values on both sides, or holding only nulls
+//! where the baseline had values. A diagnostic is a warning, never a fourth
+//! verdict, and does not move the verdict.
+//!
+//! Rules about the column set decide on whether a column is there.
+//! [`QualityPolicy::require_columns`] names columns the report must have;
+//! [`QualityPolicy::forbid_removed_columns`] requires every baseline column,
+//! and [`QualityPolicy::forbid_added_columns`] allows no column the baseline
+//! lacked. A missing column fails such a rule only when the side without it
+//! shows its source lacks it: that side recorded its column selection, the
+//! selection included the column, and its column set covers the whole source.
+//! A source that declares its columns up front (a CSV header, a Parquet
+//! schema, a DataFrame, a query result) covers it however few rows were read;
+//! for JSON, JSONL and streams the columns are the keys of the records read,
+//! so only a scan of every record does. Otherwise the rule is unevaluated:
+//! [`NotEvaluated::SettingChanged`] or [`NotEvaluated::SettingUnrecorded`] on
+//! the setting `columns`, [`NotEvaluated::ColumnNotProfiled`] for a required
+//! column the run did not select, or [`NotEvaluated::EvidenceIncomplete`].
+//!
 //! # Example
 //!
 //! ```no_run
@@ -74,17 +95,20 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
+use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
+use serde::Serialize;
 
-use crate::profile_report::{MetricSemantics, ProfileReport, QualityAnalysisStatus};
+use crate::profile_report::{
+    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
+};
 use crate::report_delta::{
-    ColumnChange, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference, ReportSide,
-    SchemaChange, Sides,
+    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
+    ReportSide, SchemaChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -299,6 +323,12 @@ pub enum CheckCode {
     /// A column's null percentage may rise at most the threshold's number of
     /// points above the baseline's.
     MaxNullPercentageIncrease,
+    /// A named column must be profiled.
+    RequireColumn,
+    /// A column the baseline profiled must still be profiled.
+    ForbidRemovedColumn,
+    /// A column the report profiled must be one the baseline profiled.
+    ForbidAddedColumn,
 }
 
 impl fmt::Display for CheckCode {
@@ -313,6 +343,9 @@ impl fmt::Display for CheckCode {
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
             Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
+            Self::RequireColumn => write!(f, "require_column"),
+            Self::ForbidRemovedColumn => write!(f, "forbid_removed_column"),
+            Self::ForbidAddedColumn => write!(f, "forbid_added_column"),
         }
     }
 }
@@ -374,6 +407,10 @@ pub enum Expectation {
         /// The threshold, in points.
         value: MetricValue,
     },
+    /// The column must be profiled. No number is compared.
+    Present,
+    /// The column must be one the baseline profiled. No number is compared.
+    InBaseline,
 }
 
 impl fmt::Display for Expectation {
@@ -384,6 +421,8 @@ impl fmt::Display for Expectation {
             Self::Analyzed => write!(f, "analyzed"),
             Self::ChangeAtLeast { value } => write!(f, "a change of at least {value}"),
             Self::ChangeAtMost { value } => write!(f, "a change of at most {value}"),
+            Self::Present => write!(f, "present"),
+            Self::InBaseline => write!(f, "in the baseline"),
         }
     }
 }
@@ -408,9 +447,11 @@ pub enum NotEvaluated {
     /// numeric values, no dates, no confidently detected pattern — or it was
     /// withheld because the run profiled a subset of columns.
     NotAssessed,
-    /// The report holds no profile for the named column. It was projected
-    /// away, or it is not in the source; a report does not record which, so
-    /// the requirement is not decided either way.
+    /// The report holds no profile for the named column, and its column
+    /// selection does not show the source lacks it: the run's `columns=`
+    /// selection left it out, or the report predates the record of its
+    /// selection. On a check with no column, the run profiled a `columns=`
+    /// selection, which may have left source columns out.
     ColumnNotProfiled,
     /// The requirement asks about the full source, the evidence does not reach
     /// that far, and nothing observed settles it regardless.
@@ -551,6 +592,112 @@ pub struct BaselineComparison {
     pub reports: Sides<ReportReference>,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
+    /// The schema changes from the baseline, whatever the policy states. A
+    /// diagnostic never moves the verdict. Empty when nothing changed.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Stable identifier for a kind of schema change.
+///
+/// Part of the serialized contract, like [`CheckCode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DiagnosticCode {
+    /// The report profiled a column the baseline did not. Without a reason,
+    /// the baseline profiled every column it selected that its source had,
+    /// and this was not among them.
+    ColumnAdded,
+    /// The baseline profiled a column the report did not. Without a reason,
+    /// the report's selection included it, so it was not in what the report
+    /// read. With one, the report's column selection left it out or was not
+    /// recorded.
+    ColumnRemoved,
+    /// The column holds values on both sides and its inferred type differs.
+    /// A column whose values are all null on a side establishes no type there.
+    ColumnTypeChanged,
+    /// The column held values in the baseline, and every value read for it
+    /// in the report is null.
+    ColumnAllNull,
+}
+
+impl fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ColumnAdded => write!(f, "column_added"),
+            Self::ColumnRemoved => write!(f, "column_removed"),
+            Self::ColumnTypeChanged => write!(f, "column_type_changed"),
+            Self::ColumnAllNull => write!(f, "column_all_null"),
+        }
+    }
+}
+
+/// A schema change between the baseline and the report.
+///
+/// A warning, not a fourth verdict: it is reported whatever the policy
+/// states, and no rule decides on it. A requirement that would fail on it is
+/// a policy entry of its own.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[non_exhaustive]
+pub struct Diagnostic {
+    /// What changed.
+    pub code: DiagnosticCode,
+    /// The column it changed in.
+    pub column: String,
+    /// The inferred type on each side, `a` being the baseline. Present on
+    /// [`DiagnosticCode::ColumnTypeChanged`] only.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_data_types"
+    )]
+    pub data_type: Option<Sides<DataType>>,
+    /// A recorded setting that can produce the change on unchanged data,
+    /// when one can. Serialized flat, as a check's reason is.
+    #[serde(flatten)]
+    pub setting: Option<SettingDifference>,
+    /// A fixed sentence naming the change, free of numbers and names, like a
+    /// check's message.
+    pub message: String,
+}
+
+/// How a setting that can produce a diagnostic's change compares across the
+/// two reports. A diagnostic carrying one may not reflect a change in the
+/// data.
+///
+/// Two settings are read: `columns`, the column selection, on an added or
+/// removed column, and `identifier_columns` on a type change to or from
+/// `identifier`, the one type a setting assigns. An input path that types the
+/// same data differently is not recorded, so it cannot be named here (#906).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SettingDifference {
+    /// The setting differs between the two reports for this column.
+    #[non_exhaustive]
+    SettingChanged {
+        /// The configuration field that differs.
+        setting: String,
+    },
+    /// At least one side did not record the setting, so it cannot be shown
+    /// to be the same.
+    #[non_exhaustive]
+    SettingUnrecorded {
+        /// The configuration field that is unrecorded.
+        setting: String,
+    },
+}
+
+fn serialize_data_types<S: serde::Serializer>(
+    types: &Option<Sides<DataType>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    types
+        .as_ref()
+        .map(|types| Sides {
+            a: types.a.name(),
+            b: types.b.name(),
+        })
+        .serialize(serializer)
 }
 
 /// The interval a sampled score was decided on.
@@ -664,6 +811,9 @@ pub struct QualityPolicy {
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage_increase: BTreeMap<String, f64>,
     max_null_percentage_increase_any: Option<f64>,
+    require_columns: BTreeSet<String>,
+    forbid_removed_columns: bool,
+    forbid_added_columns: bool,
     scope: PolicyScope,
 }
 
@@ -769,6 +919,41 @@ impl QualityPolicy {
         self
     }
 
+    /// Require each named column to be profiled. A column missing from the
+    /// report fails only when the report shows its source lacks it: the run's
+    /// column selection included the column, and the column set covers the
+    /// whole source (see the [module docs](self)).
+    pub fn require_columns<I, S>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.require_columns
+            .extend(columns.into_iter().map(Into::into));
+        self
+    }
+
+    /// Require every column the baseline profiled to be profiled still. The
+    /// rule is about the columns the baseline recorded: a column its source
+    /// held but it did not profile (a projection, or a key past a partial
+    /// read) is not one it can require. Needs
+    /// [`evaluate_against`](Self::evaluate_against).
+    pub fn forbid_removed_columns(mut self) -> Self {
+        self.forbid_removed_columns = true;
+        self
+    }
+
+    /// Require every column the report profiled to be one the baseline
+    /// profiled: a closed schema. Under [`PolicyScope::FullSource`], a report
+    /// whose profiled columns may not be all of its source's also gets one
+    /// check with no column, left unevaluated: a column selection that left
+    /// columns out, one that was not recorded, or a column set covering part
+    /// of the source. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn forbid_added_columns(mut self) -> Self {
+        self.forbid_added_columns = true;
+        self
+    }
+
     /// Set what the requirements are statements about. Defaults to
     /// [`PolicyScope::FullSource`].
     pub fn scope(mut self, scope: PolicyScope) -> Self {
@@ -831,6 +1016,7 @@ impl QualityPolicy {
             && self.max_null_percentage_any.is_none()
             && self.max_duplicate_rows.is_none()
             && self.require_metrics.is_empty()
+            && self.require_columns.is_empty()
             && !self.has_change_rules()
     }
 
@@ -840,6 +1026,8 @@ impl QualityPolicy {
             || !self.max_dimension_score_drops.is_empty()
             || !self.max_null_percentage_increase.is_empty()
             || self.max_null_percentage_increase_any.is_some()
+            || self.forbid_removed_columns
+            || self.forbid_added_columns
     }
 
     /// Evaluate the policy against a report.
@@ -902,6 +1090,39 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_increase_checks(&delta));
+        // Collected once, so a rule over every column does not rescan the
+        // other side's columns for each one.
+        let (baseline_names, current_names) = (column_names(baseline), column_names(&current));
+        if self.forbid_removed_columns {
+            for column in baseline.columns() {
+                checks.push(self.forbid_removed_check(
+                    baseline,
+                    &current,
+                    &current_names,
+                    &column.name,
+                ));
+            }
+        }
+        if self.forbid_added_columns {
+            for column in current.columns() {
+                checks.push(self.forbid_added_check(
+                    baseline,
+                    &current,
+                    &baseline_names,
+                    &column.name,
+                ));
+            }
+            // The per-column checks cover the columns the report found. When
+            // those do not enumerate the source, a column the baseline lacked
+            // may be among the ones it did not profile, which no per-column
+            // check can name.
+            if self.scope == PolicyScope::FullSource
+                && let Some(reason) = unenumerated_columns(&current)
+            {
+                checks.push(self.unprofiled_columns_check(baseline, &current, reason));
+            }
+        }
+        let diagnostics = schema_diagnostics(baseline, &current, &delta);
         Ok(GateResult {
             verdict: verdict_of(&checks),
             scope: self.scope,
@@ -910,6 +1131,7 @@ impl QualityPolicy {
             baseline: Some(BaselineComparison {
                 reports: delta.reports,
                 schema: delta.schema,
+                diagnostics,
             }),
         })
     }
@@ -921,6 +1143,13 @@ impl QualityPolicy {
 
         for metric in required_metrics_in_order(&self.require_metrics) {
             checks.push(self.require_metric_check(report, metric));
+        }
+        if !self.require_columns.is_empty() {
+            let side = ReportSide::from_report(report);
+            let names = column_names(&side);
+            for column in &self.require_columns {
+                checks.push(self.require_column_check(&side, &names, column));
+            }
         }
         if let Some(min) = self.min_rows {
             checks.push(self.row_count_check(report, scan, min));
@@ -1412,14 +1641,15 @@ impl QualityPolicy {
     /// both reports profiled, in the baseline's order. A column only the
     /// evaluated report has gets no rule unless the policy names it.
     fn null_increase_checks(&self, delta: &ReportDelta) -> Vec<Check> {
+        let index = ColumnIndex::new(delta);
         let mut checks = Vec::new();
         for (column, points) in &self.max_null_percentage_increase {
-            checks.push(self.null_increase_check(delta, column, *points));
+            checks.push(self.null_increase_check(delta, &index, column, *points));
         }
         if let Some(points) = self.max_null_percentage_increase_any {
             for column in &delta.schema.common {
                 if !self.max_null_percentage_increase.contains_key(column) {
-                    checks.push(self.null_increase_check(delta, column, points));
+                    checks.push(self.null_increase_check(delta, &index, column, points));
                 }
             }
         }
@@ -1431,8 +1661,14 @@ impl QualityPolicy {
     /// coverage is its evidence, and only the null-token definition can make
     /// the same data count differently. A column's own rule does not depend on
     /// the rest of the column set.
-    fn null_increase_check(&self, delta: &ReportDelta, column: &str, points: f64) -> Check {
-        let change = delta.columns.iter().find(|change| change.name == column);
+    fn null_increase_check(
+        &self,
+        delta: &ReportDelta,
+        index: &ColumnIndex<'_>,
+        column: &str,
+        points: f64,
+    ) -> Check {
+        let change = index.changes.get(column).copied();
         let (null_pct_a, null_pct_b, null_pct_delta) = change.map_or(
             (None, None, None),
             |ColumnChange {
@@ -1442,9 +1678,8 @@ impl QualityPolicy {
                  ..
              }| (*null_pct_a, *null_pct_b, *null_pct_delta),
         );
-        let named = |names: &[String]| names.iter().any(|name| name == column);
-        let in_report = named(&delta.schema.common) || named(&delta.schema.added);
-        let in_baseline = named(&delta.schema.common) || named(&delta.schema.removed);
+        let in_report = index.in_report.contains(column);
+        let in_baseline = index.in_baseline.contains(column);
         let evidence = Sides {
             a: delta.reports.a.evidence,
             b: delta.reports.b.evidence,
@@ -1496,6 +1731,229 @@ impl QualityPolicy {
         check
     }
 
+    /// Whether the side without `column` shows its source lacks it: the
+    /// side's selection included the column, so it was not in what the side
+    /// read, and the side's column set covers the whole source. Under
+    /// [`PolicyScope::Observed`] the question is about what was read, so a
+    /// column set covering part of the source still decides. `unselected` is
+    /// the reason when the selection left the column out.
+    fn absence_status(
+        &self,
+        lacking: &ReportSide,
+        column: &str,
+        unselected: NotEvaluated,
+    ) -> CheckStatus {
+        match lacking.column_selection() {
+            None => CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded {
+                setting: "columns".to_string(),
+            }),
+            Some(selection) if !selection.includes(column) => CheckStatus::NotEvaluated(unselected),
+            Some(_) => match (self.scope, lacking.schema_evidence().gap()) {
+                (PolicyScope::FullSource, Some(gap)) => {
+                    CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+                }
+                _ => CheckStatus::Failed,
+            },
+        }
+    }
+
+    fn require_column_check(
+        &self,
+        current: &ReportSide,
+        current_names: &HashSet<&str>,
+        column: &str,
+    ) -> Check {
+        let status = if current_names.contains(column) {
+            CheckStatus::Passed
+        } else {
+            self.absence_status(current, column, NotEvaluated::ColumnNotProfiled)
+        };
+        let message = match &status {
+            CheckStatus::Passed => "the required column was profiled",
+            CheckStatus::Failed => "the required column is not in the source the report read",
+            CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled) => {
+                "the run's column selection left the required column out"
+            }
+            CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded { .. }) => {
+                "the report does not record which columns it selected, so a missing column \
+                 cannot be shown to be absent from the source"
+            }
+            CheckStatus::NotEvaluated(_) => {
+                "the required column is not in the records read, and the records that were not \
+                 read may hold it"
+            }
+        };
+        self.column_check(
+            CheckCode::RequireColumn,
+            column,
+            Expectation::Present,
+            current,
+            None,
+            status,
+            message,
+        )
+    }
+
+    fn forbid_removed_check(
+        &self,
+        baseline: &ReportSide,
+        current: &ReportSide,
+        current_names: &HashSet<&str>,
+        column: &str,
+    ) -> Check {
+        let status = if current_names.contains(column) {
+            CheckStatus::Passed
+        } else {
+            self.absence_status(
+                current,
+                column,
+                NotEvaluated::SettingChanged {
+                    setting: "columns".to_string(),
+                },
+            )
+        };
+        let message = match &status {
+            CheckStatus::Passed => "the column the baseline profiled is still profiled",
+            CheckStatus::Failed => {
+                "a column the baseline profiled is not in the source the report read"
+            }
+            CheckStatus::NotEvaluated(NotEvaluated::SettingChanged { .. }) => {
+                "the report's column selection left out a column the baseline profiled"
+            }
+            CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded { .. }) => {
+                "the report does not record which columns it selected, so a column the baseline \
+                 profiled cannot be shown to be absent from its source"
+            }
+            CheckStatus::NotEvaluated(_) => {
+                "a column the baseline profiled is not in the records the report read, and the \
+                 records that were not read may hold it"
+            }
+        };
+        self.column_check(
+            CheckCode::ForbidRemovedColumn,
+            column,
+            Expectation::Present,
+            current,
+            Some(baseline),
+            status,
+            message,
+        )
+    }
+
+    fn forbid_added_check(
+        &self,
+        baseline: &ReportSide,
+        current: &ReportSide,
+        baseline_names: &HashSet<&str>,
+        column: &str,
+    ) -> Check {
+        let status = if baseline_names.contains(column) {
+            CheckStatus::Passed
+        } else {
+            self.absence_status(
+                baseline,
+                column,
+                NotEvaluated::SettingChanged {
+                    setting: "columns".to_string(),
+                },
+            )
+        };
+        let message = match &status {
+            CheckStatus::Passed => "the column is one the baseline profiled",
+            CheckStatus::Failed => {
+                "the report profiled a column the baseline's source did not have"
+            }
+            CheckStatus::NotEvaluated(NotEvaluated::SettingChanged { .. }) => {
+                "the baseline's column selection left this column out"
+            }
+            CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded { .. }) => {
+                "the baseline does not record which columns it selected, so this column cannot be \
+                 shown to be new"
+            }
+            CheckStatus::NotEvaluated(_) => {
+                "this column is not in the records the baseline read, and the records it did not \
+                 read may hold it"
+            }
+        };
+        self.column_check(
+            CheckCode::ForbidAddedColumn,
+            column,
+            Expectation::InBaseline,
+            current,
+            Some(baseline),
+            status,
+            message,
+        )
+    }
+
+    /// The closed-schema rule's statement about the source columns the report
+    /// did not profile: never decided, since nothing profiled shows them.
+    fn unprofiled_columns_check(
+        &self,
+        baseline: &ReportSide,
+        current: &ReportSide,
+        reason: NotEvaluated,
+    ) -> Check {
+        let message = match &reason {
+            NotEvaluated::ColumnNotProfiled => {
+                "the run profiled a column selection, which may have left out a source column \
+                 the baseline lacked"
+            }
+            NotEvaluated::SettingUnrecorded { .. } => {
+                "the report does not record which columns it selected, so its columns may not \
+                 be all of its source's"
+            }
+            _ => {
+                "the report read part of its source, and the records it did not read may hold \
+                 a column the baseline lacked"
+            }
+        };
+        Check {
+            column: None,
+            ..self.column_check(
+                CheckCode::ForbidAddedColumn,
+                "",
+                Expectation::InBaseline,
+                current,
+                Some(baseline),
+                CheckStatus::NotEvaluated(reason),
+                message,
+            )
+        }
+    }
+
+    /// A rule about which columns a report has. Its evidence is the column
+    /// set's coverage of each side's source, not a number's.
+    #[allow(clippy::too_many_arguments)]
+    fn column_check(
+        &self,
+        code: CheckCode,
+        column: &str,
+        expected: Expectation,
+        current: &ReportSide,
+        baseline: Option<&ReportSide>,
+        status: CheckStatus,
+        message: &str,
+    ) -> Check {
+        Check {
+            code,
+            column: Some(column.to_string()),
+            dimension: None,
+            expected,
+            observed: None,
+            scope: self.scope,
+            evidence: current.schema_evidence(),
+            bounds: None,
+            baseline: baseline.map(|baseline| BaselineReading {
+                observed: None,
+                evidence: baseline.schema_evidence(),
+                change: None,
+            }),
+            status,
+            message: message.to_string(),
+        }
+    }
+
     /// Decide a change between two averages or ratios. Under
     /// [`PolicyScope::FullSource`] a side computed over part of its source
     /// bounds nothing about the rest, so either side's gap leaves the rule
@@ -1509,6 +1967,201 @@ impl QualityPolicy {
             _ => CheckStatus::Failed,
         }
     }
+}
+
+/// The schema changes between the two sides, at most one per column, in the
+/// delta's column order: the baseline's columns, then the added ones. A
+/// change is reported only where both sides recorded what it reads; a flat
+/// summary without a column's counts reports neither change for it, and one
+/// without its type no type change. Column order is not compared, since no
+/// rule reads it.
+fn schema_diagnostics(
+    baseline: &ReportSide,
+    current: &ReportSide,
+    delta: &ReportDelta,
+) -> Vec<Diagnostic> {
+    let diagnostic = |code, column: &str, data_type, message: &str| Diagnostic {
+        code,
+        column: column.to_string(),
+        data_type,
+        setting: None,
+        message: message.to_string(),
+    };
+    // Whether each side's identifier hint names the column, `None` when the
+    // side did not record its hints.
+    let identified = |side: &ReportSide, column: &str| {
+        side.identifier_order()
+            .map(|names| names.iter().any(|name| name == column))
+    };
+    // Built once, so a wide schema is not rescanned per column.
+    fn names(names: &[String]) -> HashSet<&str> {
+        names.iter().map(String::as_str).collect()
+    }
+    fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+        side.columns()
+            .iter()
+            .map(|column| (column.name.as_str(), column))
+            .collect()
+    }
+    let (added, removed) = (names(&delta.schema.added), names(&delta.schema.removed));
+    let (baseline_columns, current_columns) = (by_name(baseline), by_name(current));
+    delta
+        .columns
+        .iter()
+        .filter_map(|change| {
+            let column = change.name.as_str();
+            // The side without the column decides whether its source lacks
+            // it: a selection that includes the column would have profiled it
+            // or refused to run, so the column is not in what that side read.
+            let unselected = |side: &ReportSide| match side.column_selection() {
+                Some(selection) if selection.includes(column) => None,
+                Some(_) => Some(SettingDifference::SettingChanged {
+                    setting: "columns".to_string(),
+                }),
+                None => Some(SettingDifference::SettingUnrecorded {
+                    setting: "columns".to_string(),
+                }),
+            };
+            if added.contains(column) {
+                let setting = unselected(baseline);
+                let message = match setting {
+                    None => {
+                        "the report profiled a column the baseline did not find in its source, \
+                         so the baseline has nothing to measure its change from"
+                    }
+                    Some(_) => {
+                        "the report profiled a column the baseline has no profile for, and the \
+                         baseline's column selection is not shown to include it"
+                    }
+                };
+                return Some(Diagnostic {
+                    setting,
+                    ..diagnostic(DiagnosticCode::ColumnAdded, column, None, message)
+                });
+            }
+            if removed.contains(column) {
+                let setting = unselected(current);
+                let message = match setting {
+                    None => "the baseline profiled a column the report did not find in its source",
+                    Some(_) => {
+                        "the baseline profiled a column the report has no profile for, and the \
+                         report's column selection is not shown to include it"
+                    }
+                };
+                return Some(Diagnostic {
+                    setting,
+                    ..diagnostic(DiagnosticCode::ColumnRemoved, column, None, message)
+                });
+            }
+            let (a, b) = (
+                *baseline_columns.get(column)?,
+                *current_columns.get(column)?,
+            );
+            if a.populated()? && b.all_null()? {
+                return Some(diagnostic(
+                    DiagnosticCode::ColumnAllNull,
+                    column,
+                    None,
+                    "this column held values in the baseline, and every value read for it in \
+                     the report is null",
+                ));
+            }
+            match (&a.data_type, &b.data_type) {
+                (Some(type_a), Some(type_b))
+                    if type_a != type_b && a.populated()? && b.populated()? =>
+                {
+                    let mut retyped = diagnostic(
+                        DiagnosticCode::ColumnTypeChanged,
+                        column,
+                        Some(Sides {
+                            a: type_a.clone(),
+                            b: type_b.clone(),
+                        }),
+                        "this column holds values on both sides, and its inferred type differs",
+                    );
+                    // Only the identifier hint gives a column the identifier
+                    // type, so the hint can explain a change only to or from
+                    // it.
+                    if *type_a == DataType::Identifier || *type_b == DataType::Identifier {
+                        let setting = "identifier_columns".to_string();
+                        retyped.setting =
+                            match (identified(baseline, column), identified(current, column)) {
+                                (Some(a), Some(b)) if a == b => None,
+                                (Some(_), Some(_)) => {
+                                    Some(SettingDifference::SettingChanged { setting })
+                                }
+                                _ => Some(SettingDifference::SettingUnrecorded { setting }),
+                            };
+                        if retyped.setting.is_some() {
+                            retyped.message = "this column holds values on both sides, and its \
+                                               inferred type differs; the identifier hint, \
+                                               which sets the type, is not shown to be the \
+                                               same on both sides"
+                                .to_string();
+                        }
+                    }
+                    Some(retyped)
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// A delta's columns by name, built once per evaluation so a rule over every
+/// shared column does not rescan the schema for each one.
+struct ColumnIndex<'a> {
+    changes: HashMap<&'a str, &'a ColumnChange>,
+    /// Columns the evaluated report profiled.
+    in_report: HashSet<&'a str>,
+    /// Columns the baseline profiled.
+    in_baseline: HashSet<&'a str>,
+}
+
+impl<'a> ColumnIndex<'a> {
+    fn new(delta: &'a ReportDelta) -> Self {
+        let schema = &delta.schema;
+        let names = |lists: [&'a [String]; 2]| {
+            lists
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        };
+        Self {
+            changes: delta
+                .columns
+                .iter()
+                .map(|change| (change.name.as_str(), change))
+                .collect(),
+            in_report: names([&schema.common, &schema.added]),
+            in_baseline: names([&schema.common, &schema.removed]),
+        }
+    }
+}
+
+/// Why a side's profiled columns may not be all of its source's columns, or
+/// `None` when they are: every column was selected and the column set covers
+/// the source. The selection is named ahead of the coverage, since a
+/// projection leaves columns out however much of the source was read.
+fn unenumerated_columns(side: &ReportSide) -> Option<NotEvaluated> {
+    match side.column_selection() {
+        None => Some(NotEvaluated::SettingUnrecorded {
+            setting: "columns".to_string(),
+        }),
+        Some(ColumnSelection::All) => side
+            .schema_evidence()
+            .gap()
+            .map(|gap| NotEvaluated::EvidenceIncomplete { gap }),
+        Some(_) => Some(NotEvaluated::ColumnNotProfiled),
+    }
+}
+
+fn column_names(side: &ReportSide) -> HashSet<&str> {
+    side.columns()
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect()
 }
 
 fn baseline_reading(
@@ -1573,6 +2226,12 @@ enum Definition {
     NullTokens,
     /// What a pattern match counts, behind the validity score.
     PatternMatchCount,
+    /// What the range and sign rules count, behind the accuracy score.
+    RangeRuleCount,
+    /// What key uniqueness divides by, behind the uniqueness score.
+    KeyUniquenessUnits,
+    /// What the outlier ratio is measured over, behind the accuracy score.
+    OutlierUnits,
 }
 
 impl Definition {
@@ -1580,6 +2239,9 @@ impl Definition {
         match self {
             Self::NullTokens => "null_tokens",
             Self::PatternMatchCount => "pattern_match_count",
+            Self::RangeRuleCount => "range_rule_count",
+            Self::KeyUniquenessUnits => "key_uniqueness_units",
+            Self::OutlierUnits => "outlier_units",
         }
     }
 
@@ -1591,6 +2253,9 @@ impl Definition {
         match self {
             Self::NullTokens => agree(&a.null_tokens, &b.null_tokens),
             Self::PatternMatchCount => agree(&a.pattern_match_count, &b.pattern_match_count),
+            Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
+            Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
+            Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
         }
     }
 }
@@ -1599,8 +2264,23 @@ impl Definition {
 /// feed no score.
 fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definition] {
     match dimension {
-        None | Some(QualityDimension::Validity) => {
+        None => &[
+            Definition::NullTokens,
+            Definition::PatternMatchCount,
+            Definition::RangeRuleCount,
+            Definition::KeyUniquenessUnits,
+            Definition::OutlierUnits,
+        ],
+        Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
+        }
+        Some(QualityDimension::Accuracy) => &[
+            Definition::NullTokens,
+            Definition::RangeRuleCount,
+            Definition::OutlierUnits,
+        ],
+        Some(QualityDimension::Uniqueness) => {
+            &[Definition::NullTokens, Definition::KeyUniquenessUnits]
         }
         Some(_) => &[Definition::NullTokens],
     }
@@ -2182,6 +2862,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 5,
                 key_column: None,
+                key_values_checked: None,
                 duplicate_rows_approximate: approximate,
             }),
             ..QualityMetrics::default()

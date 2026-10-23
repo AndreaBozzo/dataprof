@@ -13,6 +13,9 @@ CURRENT = {
     "null_tokens": "common_markers",
     "pattern_match_count": "validated",
     "shape_moments": "adjusted_sample",
+    "range_rule_count": "violating_values",
+    "key_uniqueness_units": "non_null_values",
+    "outlier_units": "tested_values",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -147,6 +150,12 @@ def _through_both_readers(value):
         {"pattern_match_count": None},
         {"shape_moments": "population"},
         {"shape_moments": None},
+        {"range_rule_count": "rule_failures"},
+        {"range_rule_count": None},
+        {"key_uniqueness_units": "rows"},
+        {"key_uniqueness_units": None},
+        {"outlier_units": "numeric_values"},
+        {"outlier_units": None},
     ],
     ids=[
         "null",
@@ -160,6 +169,12 @@ def _through_both_readers(value):
         "null-pattern-count",
         "unknown-shape-moments",
         "null-shape-moments",
+        "unknown-range-rule-count",
+        "null-range-rule-count",
+        "unknown-key-uniqueness-units",
+        "null-key-uniqueness-units",
+        "unknown-outlier-units",
+        "null-outlier-units",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -192,8 +207,20 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"null_tokens": None},
         {"pattern_match_count": None},
         {"shape_moments": None},
+        {"range_rule_count": None},
+        {"key_uniqueness_units": None},
+        {"outlier_units": None},
     ],
-    ids=["null", "null-unit", "null-null-tokens", "null-pattern-count", "null-shape-moments"],
+    ids=[
+        "null",
+        "null-unit",
+        "null-null-tokens",
+        "null-pattern-count",
+        "null-shape-moments",
+        "null-range-rule-count",
+        "null-key-uniqueness-units",
+        "null-outlier-units",
+    ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):
     report = dataprof.profile(CITIES)

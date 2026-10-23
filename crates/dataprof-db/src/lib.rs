@@ -96,7 +96,7 @@ pub fn create_connector(
         )?))
     } else if connection_str.starts_with("mysql://") {
         Ok(Box::new(connectors::mysql::MySqlConnector::new(config)?))
-    } else if connection_str.starts_with("sqlite://")
+    } else if connection_str.starts_with("sqlite:")
         || connection_str.ends_with(".db")
         || connection_str.ends_with(".sqlite")
         || connection_str == ":memory:"
@@ -347,4 +347,22 @@ fn extract_database_name(connection_string: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_connector_routes_sqlite_memory() {
+        let config = DatabaseConfig {
+            connection_string: "sqlite::memory:".to_string(),
+            ..Default::default()
+        };
+        let connector = create_connector(config);
+        assert!(
+            connector.is_ok(),
+            "sqlite::memory: must route to SqliteConnector"
+        );
+    }
 }
