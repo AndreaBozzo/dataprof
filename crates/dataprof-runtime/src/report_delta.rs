@@ -781,6 +781,45 @@ impl ReportSide {
     }
 }
 
+/// The field's absence represents a legacy summary; JSON null is malformed.
+/// Include its name because serde_json's default type error omits the key.
+fn summary_metric_semantics<'de, D>(deserializer: D) -> Result<Option<MetricSemantics>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("metric_semantics: {error}"))
+    })
+}
+
+fn summary_schema_version<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("schema_version: {error}")))
+}
+
+/// An absent value belongs to a legacy summary; an explicit null does not.
+fn summary_analysis_settings<'de, D>(deserializer: D) -> Result<Option<AnalysisSettings>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("analysis_settings: {error}"))
+    })
+}
+
+/// Only an absent key may use the summary version's legacy weight semantics.
+fn summary_score_weights<'de, D>(deserializer: D) -> Result<Option<QualityScoreWeights>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("quality.score_weights: {error}"))
+    })
+}
+
 /// The fields of a flat summary a comparison reads. Everything else in the
 /// document is ignored.
 #[derive(serde::Deserialize)]
@@ -792,16 +831,16 @@ struct Summary {
     execution: SummaryExecution,
     columns: Vec<SummaryColumn>,
     quality: Option<SummaryQuality>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "summary_metric_semantics")]
     metric_semantics: Option<MetricSemantics>,
     /// Absent before 0.10, whose summaries did not record hints either.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "summary_schema_version")]
     schema_version: Option<u32>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
     /// Absent before 0.13. An explicit null is malformed, as in the
     /// canonical reader and Python's `from_dict()`.
-    #[serde(default, deserialize_with = "crate::profile_report::present_value")]
+    #[serde(default, deserialize_with = "summary_analysis_settings")]
     analysis_settings: Option<AnalysisSettings>,
 }
 
@@ -861,8 +900,9 @@ struct SummaryQuality {
     /// as unrecorded coverage, never as "nothing was sampled".
     sampled_dimensions: Option<Vec<String>>,
     /// Written whatever the weights since 0.13; a 0.12 summary omitted only
-    /// the defaults, and earlier ones did not record them.
-    #[serde(default)]
+    /// the defaults, and earlier ones did not record them. Explicit null is
+    /// malformed, as in Python's `from_dict()`.
+    #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
 }
 

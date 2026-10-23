@@ -194,6 +194,67 @@ fn a_summary_from_before_0_12_reads_as_unrecorded() {
 }
 
 #[test]
+fn flat_summary_null_recorded_fields_fail_but_absence_is_legacy() {
+    let report = profile(CLEAN);
+    let complete: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    for field in ["metric_semantics", "schema_version", "analysis_settings"] {
+        let mut malformed = complete.clone();
+        malformed[field] = Value::Null;
+        let error = ReportSide::from_summary_json(&malformed.to_string()).unwrap_err();
+        assert!(
+            error.to_string().contains(field),
+            "{field}: error must name the null field, got {error}"
+        );
+
+        let mut legacy = complete.clone();
+        legacy.as_object_mut().unwrap().remove(field);
+        ReportSide::from_summary_json(&legacy.to_string())
+            .unwrap_or_else(|error| panic!("absent {field} should remain valid: {error}"));
+    }
+}
+
+#[test]
+fn flat_summary_null_score_weights_fails_but_absence_keeps_legacy_semantics() {
+    let report = profile(CLEAN);
+    let complete: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    let current = ReportSide::from_report(&report);
+
+    let mut malformed = complete.clone();
+    malformed["quality"]["score_weights"] = Value::Null;
+    let error = ReportSide::from_summary_json(&malformed.to_string()).unwrap_err();
+    assert!(
+        error.to_string().contains("quality.score_weights"),
+        "error must name the null field, got {error}"
+    );
+
+    let mut legacy = complete;
+    legacy["quality"]
+        .as_object_mut()
+        .unwrap()
+        .remove("score_weights");
+    let side = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+    // A 0.12 summary recorded metric semantics and omitted only default weights.
+    assert_eq!(
+        ReportDelta::between_sides(&side, &current)
+            .configuration
+            .score_weights
+            .same,
+        Some(true)
+    );
+
+    // Earlier summaries could omit custom weights, so their weights stay unknown.
+    legacy.as_object_mut().unwrap().remove("metric_semantics");
+    let side = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+    assert_eq!(
+        ReportDelta::between_sides(&side, &current)
+            .configuration
+            .score_weights
+            .same,
+        None
+    );
+}
+
+#[test]
 fn a_summary_without_columns_is_an_error() {
     let report = profile(CLEAN);
     let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
