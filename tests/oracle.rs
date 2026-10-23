@@ -1,16 +1,20 @@
-//! Profile the oracle-v1 matrix through the file engines and check it against
+//! Profile the oracle matrix through the file engines and check it against
 //! answers computed without dataprof (#829).
 //!
-//! `tests/fixtures/oracle-v1.json` holds 20 cases whose expected values were
-//! computed with exact rational arithmetic, independently of this code. This
-//! runs each case as CSV through the incremental and columnar engines and as
-//! JSON and JSONL, compares at the serialized precision, and collects every
-//! disagreement before asserting. `KNOWN` lists the ones an open issue owns,
-//! strictly: a listed disagreement that stops occurring fails too.
+//! `tests/fixtures/oracle-v2.json` holds cases whose exact expected values
+//! `python/tests/_oracle_fixture.py` computes with rational arithmetic,
+//! independently of this code. This runs each case that has a text spelling
+//! as CSV through the incremental and columnar engines and as JSON and JSONL,
+//! rounds the exact answers as the output contract serializes them, and
+//! collects every disagreement before asserting. `KNOWN` lists the ones an
+//! open issue owns, strictly: a listed disagreement that stops occurring
+//! fails too.
 //!
 //! `python/tests/test_oracle.py` is the Python twin, and adds the in-memory
-//! routes (dicts, records, pandas, polars, Arrow) and Parquet.
+//! routes (dicts, records, pandas, polars, Arrow tables and streams) and
+//! Parquet in each writer layout, which carry the Float32 and decimal cases.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use dataprof::{EngineType, ProfileReport, Profiler};
@@ -18,10 +22,12 @@ use serde_json::{Value, json};
 
 const ROUTES: [&str; 4] = ["csv_incremental", "csv_columnar", "json", "jsonl"];
 
-/// Half a unit of the 4dp serialized precision, plus room for the binary
-/// representation of the rounded value.
-const ABS_TOLERANCE: f64 = 0.000051;
-/// For magnitudes where 4dp carries no information (around 1e307).
+/// How many ulps of the exact answer a binary64 computation may land from it:
+/// a tie at the serialized precision closer than this may round either way.
+/// Measured in ulps, so the allowance never spans a serialized unit for a
+/// value whose binary64 spacing is finer than that unit.
+const TIE_ULPS: f64 = 8.0;
+/// Compares the statistics of a `relative` case, where 4dp says nothing.
 const REL_TOLERANCE: f64 = 1e-12;
 
 /// (case, route, field) and the issue that owns the disagreement. A route of
@@ -31,17 +37,17 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
     // 64-bit integer extrema and order statistics are taken in f64, so values
     // past 2^53 collapse: the extremes round, distinct values tie for a mode,
     // and the quartiles of a narrow spread coincide.
-    ("above_2_pow_53", "*", "min", "#877"),
-    ("above_2_pow_53", "*", "max", "#877"),
-    ("above_2_pow_53", "*", "mode", "#877"),
-    ("epoch_nanoseconds", "*", "min", "#877"),
-    ("epoch_nanoseconds", "*", "max", "#877"),
-    ("epoch_nanoseconds", "*", "mode", "#877"),
-    ("epoch_nanoseconds", "*", "quartiles.iqr", "#877"),
-    ("uint64_edge", "*", "min", "#877"),
-    ("uint64_edge", "*", "max", "#877"),
-    ("uint64_edge", "*", "mode", "#877"),
-    ("uint64_edge", "*", "quartiles.iqr", "#877"),
+    ("above_2_pow_53", "*", "min", "#1038"),
+    ("above_2_pow_53", "*", "max", "#1038"),
+    ("above_2_pow_53", "*", "mode", "#1038"),
+    ("epoch_nanoseconds", "*", "min", "#1038"),
+    ("epoch_nanoseconds", "*", "max", "#1038"),
+    ("epoch_nanoseconds", "*", "mode", "#1038"),
+    ("epoch_nanoseconds", "*", "quartiles.iqr", "#1038"),
+    ("uint64_edge", "*", "min", "#1038"),
+    ("uint64_edge", "*", "max", "#1038"),
+    ("uint64_edge", "*", "mode", "#1038"),
+    ("uint64_edge", "*", "quartiles.iqr", "#1038"),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,8 +60,15 @@ struct Mismatch {
 }
 
 fn fixture() -> Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/oracle-v1.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/oracle-v2.json");
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Whether the case's `routes` list, if any, names `route`.
+fn allowed(case: &Value, route: &str) -> bool {
+    case["routes"]
+        .as_array()
+        .is_none_or(|routes| routes.iter().any(|r| r == route))
 }
 
 /// The case's values as JSON, typed by its dtype: numeric values are strings
@@ -66,22 +79,23 @@ fn values(case: &Value) -> Vec<Value> {
         return raw.clone();
     }
     raw.iter()
-        .map(|value| {
-            let text = value.as_str().unwrap();
-            // serde_json keeps an integer exact up to u64; a float parses as f64.
-            serde_json::from_str::<Value>(text).unwrap_or_else(|_| json!(text))
+        .map(|value| match value.as_str() {
+            // serde_json keeps an integer exact up to u64; a decimal or a
+            // float parses as the nearest f64, as any JSON reader holds it.
+            Some(text) => serde_json::from_str::<Value>(text).unwrap(),
+            None => Value::Null,
         })
         .collect()
 }
 
-fn csv_text(values: &[Value]) -> String {
+/// One quoted cell per value: the fixture's literal for a number, so the CSV
+/// holds exactly the spelling the case states.
+fn csv_text(case: &Value) -> String {
     let mut text = String::from("\"v\"\n");
-    for value in values {
+    for value in case["values"].as_array().unwrap() {
         let cell = match value {
             Value::Null => String::new(),
             Value::String(text) => text.replace('"', "\"\""),
-            // Python's csv writer prints a float with repr; the fixture's
-            // float strings are already that form.
             other => other.to_string(),
         };
         text.push_str(&format!("\"{cell}\"\n"));
@@ -90,25 +104,23 @@ fn csv_text(values: &[Value]) -> String {
 }
 
 fn profile(case: &Value, route: &str, dir: &Path) -> Option<ProfileReport> {
-    let values = values(case);
-    let records: Vec<Value> = values.iter().map(|value| json!({"v": value})).collect();
+    let records: Vec<Value> = values(case)
+        .into_iter()
+        .map(|value| json!({"v": value}))
+        .collect();
     let id = case["id"].as_str().unwrap();
-    let wanted = case["routes"].as_array();
-    let allowed = |name: &str| wanted.is_none_or(|routes| routes.iter().any(|r| r == name));
     let path = match route {
-        // A container in a CSV cell is text, not the same logical value.
-        "csv_incremental" | "csv_columnar" if case["kind"] == "nested" => return None,
-        "csv_incremental" | "csv_columnar" => {
+        "csv_incremental" | "csv_columnar" if allowed(case, "csv") => {
             let path = dir.join(format!("{id}.csv"));
-            std::fs::write(&path, csv_text(&values)).unwrap();
+            std::fs::write(&path, csv_text(case)).unwrap();
             path
         }
-        "json" if allowed("json") => {
+        "json" if allowed(case, "json") => {
             let path = dir.join(format!("{id}.json"));
             std::fs::write(&path, serde_json::to_string(&records).unwrap()).unwrap();
             path
         }
-        "jsonl" if allowed("jsonl") => {
+        "jsonl" if allowed(case, "jsonl") => {
             let path = dir.join(format!("{id}.jsonl"));
             let lines: String = records.iter().map(|row| format!("{row}\n")).collect();
             std::fs::write(&path, lines).unwrap();
@@ -128,12 +140,21 @@ fn profile(case: &Value, route: &str, dir: &Path) -> Option<ProfileReport> {
     )
 }
 
-/// A fraction such as `"5/3"`, or a decimal, as the nearest f64.
+/// A fraction such as `"5/3"`, or a decimal, as a near f64.
 fn number(text: &str) -> f64 {
-    match text.split_once('/') {
-        Some((num, den)) => num.parse::<f64>().unwrap() / den.parse::<f64>().unwrap(),
+    let value = match text.split_once('/') {
+        Some((num, den)) => {
+            // A numerator past f64::MAX parses as infinity, though the
+            // quotient fits: scale both terms down before dividing.
+            let shift = num.trim_start_matches('-').len().saturating_sub(17);
+            let num = format!("{num}e-{shift}").parse::<f64>().unwrap();
+            let den = format!("{den}e-{shift}").parse::<f64>().unwrap();
+            num / den
+        }
         None => text.parse().unwrap(),
-    }
+    };
+    assert!(value.is_finite(), "{text} has no finite f64 value");
+    value
 }
 
 /// An exact rational over i128, for integer cases past 2^53: an integer, a
@@ -154,7 +175,7 @@ fn rational(text: &str) -> (i128, i128) {
 
 /// A reported number as an exact integer when it is one. A JSON integer is
 /// read as an integer: `as_f64` would round `9007199254740993` to a
-/// neighbour, and a fixed #877 would then still read as wrong.
+/// neighbour, and a fixed #1038 would then still read as wrong.
 fn exact_integer(value: &Value) -> Option<i128> {
     value
         .as_i64()
@@ -168,11 +189,31 @@ fn exact_integer(value: &Value) -> Option<i128> {
         })
 }
 
+/// Whether `actual` is the exact `wanted` as the contract serializes it:
+/// rounded at `places`, ties away from zero ([`f64::round`]). A binary64
+/// computation of a value within float error of a tie may land on either
+/// side of it, so there, and only there, both neighbours are right.
+fn serialized(actual: &Value, wanted: &str, places: i32) -> bool {
+    let Some(actual) = actual.as_f64() else {
+        return false;
+    };
+    let exact = number(wanted);
+    let slack = ulp(exact) * TIE_ULPS;
+    let scale = 10_f64.powi(places);
+    let lowest = ((exact - slack) * scale).round();
+    let highest = ((exact + slack) * scale).round();
+    let scaled = actual * scale;
+    let units = scaled.round();
+    // A serialized value sits on the grid, up to its binary representation.
+    let on_grid = (scaled - units).abs() <= 1e-9 * units.abs().max(1.0);
+    on_grid && lowest <= units && units <= highest
+}
+
 /// Whether `actual` is a faithful binary64 rendering of the exact `wanted`.
 ///
-/// Past 2^53 adjacent floats are hundreds apart, so neither a 4dp nor a
-/// relative tolerance says anything there: the bound is half an ulp of the
-/// exact value, the error rounding to the nearest float may carry.
+/// Past 2^53 adjacent floats are hundreds apart, so the serialized precision
+/// says nothing there: the bound is half an ulp of the exact value, the error
+/// rounding to the nearest float may carry.
 fn faithful(actual: &Value, wanted: &str) -> bool {
     let (num, den) = rational(wanted);
     let target = num as f64 / den as f64;
@@ -182,6 +223,27 @@ fn faithful(actual: &Value, wanted: &str) -> bool {
             .as_f64()
             .is_some_and(|a| (a - target).abs() <= ulp(target)),
     }
+}
+
+/// The gap from `value` to the next f64 away from zero.
+fn ulp(value: f64) -> f64 {
+    let magnitude = value.abs();
+    f64::from_bits(magnitude.to_bits() + 1) - magnitude
+}
+
+/// Decimal places the output contract serializes for `field`.
+fn places(field: &str) -> i32 {
+    match field.split('.').next().unwrap() {
+        "null_percentage" | "coefficient_of_variation" | "quartiles" => 2,
+        _ => 4,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum How {
+    Serialized,
+    Faithful,
+    Relative,
 }
 
 /// Collects the fields of one (case, route) run that disagree with the oracle.
@@ -202,54 +264,28 @@ impl Checker<'_> {
         });
     }
 
-    /// Compare at the serialized precision; `relative` for magnitudes where
-    /// 4dp carries no information.
-    fn compare(&mut self, field: &str, actual: &Value, wanted: &Value, relative: bool) {
+    fn compare(&mut self, field: &str, actual: &Value, wanted: &Value, how: How) {
         let good = match wanted {
             Value::Null => actual.is_null(),
-            Value::String(text) if field != "data_type" => actual.as_f64().is_some_and(|a| {
-                let target = number(text);
-                if relative {
-                    (a - target).abs() <= REL_TOLERANCE * target.abs()
-                } else {
-                    (a - target).abs() <= ABS_TOLERANCE
-                }
-            }),
+            Value::String(text) if field != "data_type" => match how {
+                How::Serialized => serialized(actual, text, places(field)),
+                How::Faithful => faithful(actual, text),
+                How::Relative => actual.as_f64().is_some_and(|a| {
+                    (a - number(text)).abs() <= REL_TOLERANCE * number(text).abs()
+                }),
+            },
             other => actual == other,
         };
         if !good {
             self.record(field, wanted, actual);
         }
     }
-
-    /// Compare against an exact value within half an ulp; for values past
-    /// 2^53, where 4dp and relative tolerances say nothing.
-    fn compare_faithful(&mut self, field: &str, actual: &Value, wanted: &Value) {
-        let good = match wanted {
-            Value::Null => actual.is_null(),
-            Value::String(text) => faithful(actual, text),
-            other => actual == other,
-        };
-        if !good {
-            self.record(field, wanted, actual);
-        }
-    }
-}
-
-/// The gap from `value` to the next f64 away from zero.
-fn ulp(value: f64) -> f64 {
-    let magnitude = value.abs();
-    f64::from_bits(magnitude.to_bits() + 1) - magnitude
 }
 
 fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Mismatch> {
     let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
     let column = &summary["columns"][0];
-    let expected = if case["expected"].is_object() {
-        &case["expected"]
-    } else {
-        &case["expected_common_markers"]
-    };
+    let expected = &case["expected"];
     let id = case["id"].as_str().unwrap();
     let mut checker = Checker {
         case: id,
@@ -260,21 +296,21 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
     for field in [
         "total_count",
         "null_count",
+        "null_percentage",
         "unique_count",
         "data_type",
         "stats",
-        "null_percentage",
     ] {
         if let Some(wanted) = expected.get(field) {
-            checker.compare(field, &column[field], wanted, false);
+            checker.compare(field, &column[field], wanted, How::Serialized);
         }
     }
-    if let Some(wanted) = expected.get("duplicate_rows_single_column") {
+    if let Some(wanted) = expected.get("duplicate_rows") {
         checker.compare(
             "duplicate_rows",
             &summary["quality"]["uniqueness"]["duplicate_rows"],
             wanted,
-            false,
+            How::Serialized,
         );
     }
     if case["kind"] != "numeric" {
@@ -282,91 +318,56 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
     }
 
     let stats = &column["stats"];
-    let wide = case["dtype"] != "float64"
+    let field = |name: &str| stats.get(name).cloned().unwrap_or(Value::Null);
+    if case["relative"] == true {
+        // 4dp carries no information at this magnitude.
+        for name in ["mean", "variance", "std_dev", "min", "max"] {
+            checker.compare(name, &field(name), &expected[name], How::Relative);
+        }
+        return checker.found;
+    }
+    // Past 2^53 an exact integer can fall between two binary64 values; either
+    // neighbour is a faithful float, so the bound is half an ulp.
+    let wide = ["int64", "uint64"].contains(&case["dtype"].as_str().unwrap())
         && case["values"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|v| rational(v.as_str().unwrap()).0.unsigned_abs() > 1 << 53);
-    let extreme = id == "variance_fits_m2_does_not";
-    let variance = if extreme {
-        &expected["sample_variance_binary64"]
-    } else {
-        &expected["variance_4dp"]
-    };
-    checker.compare("variance", &stats["variance"], variance, extreme);
-    checker.compare(
-        "std_dev",
-        &stats["std_dev"],
-        &expected["std_dev_4dp"],
-        extreme,
-    );
+            .filter_map(Value::as_str)
+            .any(|v| rational(v).0.unsigned_abs() > 1 << 53);
 
-    if wide {
-        // Past 2^53 every f64 is an integer, and an exact mean can fall between
-        // two of them; either neighbour is faithful, so the bound is half an ulp.
-        checker.compare_faithful("mean", &stats["mean"], &expected["mean_exact"]);
-        // An exact integer extreme needs an integer-preserving value;
-        // comparing after a float conversion would erase the defect (#877).
-        for name in ["min", "max"] {
-            let wanted = expected[format!("{name}_exact")].as_str().unwrap();
-            let actual = &stats[name];
-            if exact_integer(actual) != Some(rational(wanted).0) {
-                checker.record(name, wanted, actual);
-            }
-        }
-    } else {
-        checker.compare("mean", &stats["mean"], &expected["mean_4dp"], extreme);
-        for name in ["min", "max"] {
-            let exact = number(expected[format!("{name}_exact")].as_str().unwrap());
-            checker.compare(name, &stats[name], &json!(exact.to_string()), extreme);
-        }
-    }
-    if extreme {
-        return checker.found;
-    }
-    checker.compare(
+    for name in [
+        "variance",
+        "std_dev",
         "skewness",
-        &stats["skewness"],
-        &expected["adjusted_sample_skewness_4dp"],
-        false,
-    );
-    checker.compare(
         "kurtosis",
-        &stats["kurtosis"],
-        &expected["adjusted_sample_excess_kurtosis_4dp"],
-        false,
-    );
-    let mode = stats.get("mode").cloned().unwrap_or(Value::Null);
-    if wide {
-        checker.compare_faithful("median", &stats["median"], &expected["median_exact"]);
-        checker.compare_faithful("mode", &mode, &expected["mode_exact"]);
-    } else {
-        checker.compare("median", &stats["median"], &expected["median_exact"], false);
-        checker.compare("mode", &mode, &expected["mode_exact"], false);
-    }
-    checker.compare(
+        "coefficient_of_variation",
         "outlier_count",
-        &stats["outlier_count"],
-        &expected["outlier_count"],
-        false,
-    );
-    match expected["quartiles_4dp"].as_object() {
-        None => checker.compare(
-            "quartiles",
-            stats.get("quartiles").unwrap_or(&Value::Null),
-            &Value::Null,
-            false,
-        ),
+    ] {
+        checker.compare(name, &field(name), &expected[name], How::Serialized);
+    }
+    for name in ["min", "max"] {
+        if wide {
+            // An exact integer extreme needs an integer-preserving value;
+            // comparing after a float conversion would erase the defect (#1038).
+            let wanted = expected[name].as_str().unwrap();
+            if exact_integer(&field(name)) != Some(rational(wanted).0) {
+                checker.record(name, wanted, &field(name));
+            }
+        } else {
+            checker.compare(name, &field(name), &expected[name], How::Serialized);
+        }
+    }
+    let how = if wide { How::Faithful } else { How::Serialized };
+    for name in ["mean", "median", "mode"] {
+        checker.compare(name, &field(name), &expected[name], how);
+    }
+    match expected["quartiles"].as_object() {
+        None => checker.compare("quartiles", &field("quartiles"), &Value::Null, how),
         Some(quartiles) => {
             for (name, wanted) in quartiles {
-                let field = format!("quartiles.{name}");
                 let actual = &stats["quartiles"][name];
-                if wide {
-                    checker.compare_faithful(&field, actual, wanted);
-                } else {
-                    checker.compare(&field, actual, wanted, false);
-                }
+                checker.compare(&format!("quartiles.{name}"), actual, wanted, how);
             }
         }
     }
@@ -385,9 +386,10 @@ fn owner(m: &Mismatch) -> Option<&'static str> {
 #[test]
 fn every_file_engine_matches_the_independent_answer() {
     let dir = tempfile::tempdir().unwrap();
+    let cases = fixture()["cases"].as_array().unwrap().clone();
     let mut runs = Vec::new();
     let mut mismatches = Vec::new();
-    for case in fixture()["cases"].as_array().unwrap() {
+    for case in &cases {
         for route in ROUTES {
             if let Some(report) = profile(case, route, dir.path()) {
                 runs.push((case["id"].as_str().unwrap().to_string(), route));
@@ -432,21 +434,21 @@ fn every_file_engine_matches_the_independent_answer() {
         "known disagreements that no longer occur:\n{}",
         stale.join("\n")
     );
-    // Every case ran through at least one route.
-    assert_eq!(
-        runs.iter()
-            .map(|(case, _)| case.as_str())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        20
-    );
+    // Every case with a text spelling ran.
+    let text_cases: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| ["csv", "json", "jsonl"].iter().any(|r| allowed(case, r)))
+        .map(|case| case["id"].as_str().unwrap())
+        .collect();
+    let ran: BTreeSet<&str> = runs.iter().map(|(case, _)| case.as_str()).collect();
+    assert_eq!(ran, text_cases);
 }
 
-/// The comparison helpers for values past 2^53, on inputs the current data
-/// cannot reach: an exact JSON integer (what a fixed #877 would report), and a
-/// median a million away from the truth.
+/// The comparison helpers on inputs the current data cannot reach: an exact
+/// JSON integer past 2^53 (what a fixed #1038 would report), a median a
+/// million away from the truth, and values either side of a 4dp midpoint.
 #[test]
-fn the_wide_value_helpers_are_exact() {
+fn the_comparison_helpers_are_exact() {
     let exact = json!(9_007_199_254_740_993_u64);
     assert_eq!(exact_integer(&exact), Some(9_007_199_254_740_993));
     assert!(faithful(&exact, "9007199254740993"));
@@ -469,4 +471,49 @@ fn the_wide_value_helpers_are_exact() {
         (184_467_440_737_095_516_127_500, 10_000)
     );
     assert_eq!(rational("-5/3"), (-5, 3));
+
+    // 1.23495 as binary32 is 1.2349499464...: below the midpoint, so 1.2349
+    // and never 1.235 (#1041), on both signs.
+    let held = "1.2349499464035034179687500";
+    assert!(serialized(&json!(1.2349), held, 4));
+    assert!(!serialized(&json!(1.235), held, 4));
+    assert!(serialized(
+        &json!(-1.2349),
+        "-1.2349499464035034179687500",
+        4
+    ));
+    assert!(!serialized(
+        &json!(-1.235),
+        "-1.2349499464035034179687500",
+        4
+    ));
+    // An exact tie rounds away from zero; a computed one may land either side.
+    assert!(serialized(&json!(3.38), "27/8", 2));
+    assert!(serialized(&json!(3.37), "27/8", 2));
+    assert!(!serialized(&json!(3.36), "27/8", 2));
+    // Off the 4dp grid is wrong even when close.
+    assert!(!serialized(&json!(1.23495), held, 4));
+    // The tie allowance stays within float error at any magnitude: at 1e12 a
+    // whole unit off is wrong.
+    assert!(serialized(&json!(1_000_000_000_000.0), "1000000000000", 4));
+    assert!(!serialized(&json!(1_000_000_000_001.0), "1000000000000", 4));
+    assert!(serialized(
+        &json!(1_000_000_000_001.5),
+        "2000000000003/2",
+        4
+    ));
+
+    // The expected variance of `variance_fits_m2_does_not` has a numerator
+    // past f64::MAX over a denominator that brings it back in range:
+    // 4 * (7e153)^2 / 3.
+    let cases = fixture()["cases"].as_array().unwrap().clone();
+    let case = cases
+        .iter()
+        .find(|case| case["id"] == "variance_fits_m2_does_not")
+        .unwrap();
+    let variance = number(case["expected"]["variance"].as_str().unwrap());
+    assert!(
+        (variance / (7e153 * 7e153 / 3.0 * 4.0) - 1.0).abs() < 1e-12,
+        "{variance}"
+    );
 }
