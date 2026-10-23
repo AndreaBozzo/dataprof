@@ -3,8 +3,9 @@
 import json
 from pathlib import Path
 
-from dataprof._gate import _QUALITY_DIMENSIONS, _SCOPES
-from dataprof.check.__main__.py import _POLICY_DEFAULTS
+from dataprof._gate import _SCOPES
+from dataprof._report_schema import _QUALITY_DIMENSIONS
+from dataprof.check.__main__ import _POLICY_DEFAULTS
 
 
 def test_quality_policy_schema_matches_policy_defaults():
