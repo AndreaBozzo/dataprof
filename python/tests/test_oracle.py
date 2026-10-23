@@ -52,11 +52,13 @@ pl = pytest.importorskip("polars")
 FIXTURE = _oracle_fixture.FIXTURE
 CASES = json.loads(FIXTURE.read_text(encoding="utf-8"))["cases"]
 
-#: The float error a binary64 computation may carry, relative to the exact
-#: answer: a tie at the serialized precision closer than this may round either
-#: way. The same bound compares the statistics of a `relative` case.
+#: How many ulps of the exact answer a binary64 computation may land from it:
+#: a tie at the serialized precision closer than this may round either way.
+#: Measured in ulps, so the allowance never spans a serialized unit for a value
+#: whose binary64 spacing is finer than that unit.
+TIE_ULPS = 8
+#: Compares the statistics of a `relative` case, where 4dp says nothing.
 REL_TOLERANCE = 1e-12
-ABS_TOLERANCE = 1e-12
 
 #: Decimal places the output contract serializes, by field; 4 otherwise.
 PLACES = {"null_percentage": 2, "coefficient_of_variation": 2, "quartiles": 2}
@@ -128,7 +130,8 @@ def _layouts(column_type: Any) -> dict[str, dict[str, Any]]:
         "plain": {"use_dictionary": False},
         "page_v2": {"data_page_version": "2.0"},
         "page_v2_plain": {"data_page_version": "2.0", "use_dictionary": False},
-        # Many row groups of several pages each, zstd-compressed.
+        # Row groups of three rows, written two values at a time against a
+        # one-byte page target, zstd-compressed.
         "small_pages": {
             "row_group_size": 3,
             "data_page_size": 1,
@@ -246,7 +249,7 @@ def _serialized(actual: Any, wanted: str, places: int) -> bool:
     if not isinstance(actual, (int, float)) or isinstance(actual, bool):
         return False
     exact = Fraction(wanted)
-    slack = abs(exact) * Fraction(REL_TOLERANCE) + Fraction(ABS_TOLERANCE)
+    slack = Fraction(math.ulp(float(exact))) * TIE_ULPS
     scale = 10**places
     lowest = _half_away((exact - slack) * scale)
     highest = _half_away((exact + slack) * scale)
@@ -378,6 +381,22 @@ def test_every_case_names_known_routes():
     known = set(_oracle_fixture.TEXT_ROUTES + _oracle_fixture.TYPED_ROUTES)
     for case in CASES:
         assert set(case.get("routes", [])) <= known, case["id"]
+
+
+def test_the_comparison_is_exact_at_the_serialized_precision():
+    # 1.23495 as binary32 lies below the 4dp midpoint: 1.2349, never 1.235
+    # (#1041), on both signs.
+    held = str(Fraction(1.2349499464035034))
+    assert _serialized(1.2349, held, 4) and not _serialized(1.235, held, 4)
+    assert _serialized(-1.2349, f"-{held}", 4) and not _serialized(-1.235, f"-{held}", 4)
+    # An exact tie rounds away from zero; a computed one may land either side.
+    assert _serialized(3.38, "27/8", 2) and _serialized(3.37, "27/8", 2)
+    assert not _serialized(3.36, "27/8", 2)
+    # The tie allowance stays within float error at any magnitude: at 1e12 a
+    # whole unit off is wrong.
+    assert _serialized(1e12, "1000000000000", 4)
+    assert not _serialized(1e12 + 1, "1000000000000", 4)
+    assert _serialized(1e12 + 1.5, "2000000000003/2", 4)
 
 
 @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])

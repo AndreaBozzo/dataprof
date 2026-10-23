@@ -22,11 +22,13 @@ use serde_json::{Value, json};
 
 const ROUTES: [&str; 4] = ["csv_incremental", "csv_columnar", "json", "jsonl"];
 
-/// The float error a binary64 computation may carry, relative to the exact
-/// answer: a tie at the serialized precision closer than this may round
-/// either way. The same bound compares the statistics of a `relative` case.
+/// How many ulps of the exact answer a binary64 computation may land from it:
+/// a tie at the serialized precision closer than this may round either way.
+/// Measured in ulps, so the allowance never spans a serialized unit for a
+/// value whose binary64 spacing is finer than that unit.
+const TIE_ULPS: f64 = 8.0;
+/// Compares the statistics of a `relative` case, where 4dp says nothing.
 const REL_TOLERANCE: f64 = 1e-12;
-const ABS_TOLERANCE: f64 = 1e-12;
 
 /// (case, route, field) and the issue that owns the disagreement. A route of
 /// "*" covers every route the case runs on. The same entries as the Python
@@ -138,12 +140,21 @@ fn profile(case: &Value, route: &str, dir: &Path) -> Option<ProfileReport> {
     )
 }
 
-/// A fraction such as `"5/3"`, or a decimal, as the nearest f64.
+/// A fraction such as `"5/3"`, or a decimal, as a near f64.
 fn number(text: &str) -> f64 {
-    match text.split_once('/') {
-        Some((num, den)) => num.parse::<f64>().unwrap() / den.parse::<f64>().unwrap(),
+    let value = match text.split_once('/') {
+        Some((num, den)) => {
+            // A numerator past f64::MAX parses as infinity, though the
+            // quotient fits: scale both terms down before dividing.
+            let shift = num.trim_start_matches('-').len().saturating_sub(17);
+            let num = format!("{num}e-{shift}").parse::<f64>().unwrap();
+            let den = format!("{den}e-{shift}").parse::<f64>().unwrap();
+            num / den
+        }
         None => text.parse().unwrap(),
-    }
+    };
+    assert!(value.is_finite(), "{text} has no finite f64 value");
+    value
 }
 
 /// An exact rational over i128, for integer cases past 2^53: an integer, a
@@ -187,7 +198,7 @@ fn serialized(actual: &Value, wanted: &str, places: i32) -> bool {
         return false;
     };
     let exact = number(wanted);
-    let slack = exact.abs() * REL_TOLERANCE + ABS_TOLERANCE;
+    let slack = ulp(exact) * TIE_ULPS;
     let scale = 10_f64.powi(places);
     let lowest = ((exact - slack) * scale).round();
     let highest = ((exact + slack) * scale).round();
@@ -482,4 +493,27 @@ fn the_comparison_helpers_are_exact() {
     assert!(!serialized(&json!(3.36), "27/8", 2));
     // Off the 4dp grid is wrong even when close.
     assert!(!serialized(&json!(1.23495), held, 4));
+    // The tie allowance stays within float error at any magnitude: at 1e12 a
+    // whole unit off is wrong.
+    assert!(serialized(&json!(1_000_000_000_000.0), "1000000000000", 4));
+    assert!(!serialized(&json!(1_000_000_000_001.0), "1000000000000", 4));
+    assert!(serialized(
+        &json!(1_000_000_000_001.5),
+        "2000000000003/2",
+        4
+    ));
+
+    // The expected variance of `variance_fits_m2_does_not` has a numerator
+    // past f64::MAX over a denominator that brings it back in range:
+    // 4 * (7e153)^2 / 3.
+    let cases = fixture()["cases"].as_array().unwrap().clone();
+    let case = cases
+        .iter()
+        .find(|case| case["id"] == "variance_fits_m2_does_not")
+        .unwrap();
+    let variance = number(case["expected"]["variance"].as_str().unwrap());
+    assert!(
+        (variance / (7e153 * 7e153 / 3.0 * 4.0) - 1.0).abs() < 1e-12,
+        "{variance}"
+    );
 }
