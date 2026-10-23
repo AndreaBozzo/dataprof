@@ -223,7 +223,8 @@ impl DatabaseConnector for PostgresConnector {
     }
 }
 
-/// JSON and JSONB through serde_json, and arrays of any element type.
+/// JSON and JSONB through serde_json, arrays of any element type, and enums,
+/// whose value is their label (#952).
 ///
 /// An array renders as its binary wire encoding in hex, which is canonical: two
 /// equal arrays of one column encode alike, so duplicate rows still compare by
@@ -243,6 +244,19 @@ impl crate::DecodeStructured for sqlx::postgres::PgRow {
         use std::fmt::Write;
 
         let column_type = self.column(index).type_info();
+        if matches!(column_type.kind(), PgTypeKind::Enum(_)) {
+            // An enum's value is its label, as text in both wire formats, but
+            // `try_get::<String>` refuses it for the type mismatch (#952).
+            // Decoding skips that check.
+            // decode-audit: unknown — a label that is not text falls through
+            // to the chain's undecodable-value error, never to a default.
+            let raw = self.try_get_raw(index).ok()?;
+            let text = <String as sqlx::Decode<sqlx::Postgres>>::decode(raw).ok()?;
+            return Some(crate::StructuredValue {
+                text,
+                container: false,
+            });
+        }
         let is_jsonb = column_type.name() == "JSONB";
         let is_json = is_jsonb || column_type.name() == "JSON";
         if !is_json && !matches!(column_type.kind(), PgTypeKind::Array(_)) {

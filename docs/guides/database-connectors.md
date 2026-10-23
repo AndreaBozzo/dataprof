@@ -6,17 +6,27 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 > Before 0.9.0, every column was read as text and non-text columns profiled as
 > all-null strings. Integers, floats and booleans decode from 0.9.0; temporal
 > columns, `NUMERIC`/`DECIMAL`, `UUID` and MySQL's `BIGINT UNSIGNED` and `TIME`
-> decode from 0.12; PostgreSQL `json`, `jsonb` and arrays and MySQL `JSON`
-> decode from 0.13.
+> decode from 0.12; PostgreSQL `json`, `jsonb`, arrays and enums and MySQL
+> `JSON` decode from 0.13.
+>
+> From 0.13 a non-null value of a type the connector cannot decode fails the
+> query, naming the column and its type; before, it was recorded as null, so the
+> column read as entirely missing. On PostgreSQL that covers `interval`,
+> `inet`, `cidr`, `macaddr`, `money`, `bit`/`varbit`, the geometric types,
+> ranges, composites, `tsvector`/`tsquery`, `xml`, `oid` and the `reg*` types,
+> and `timetz`; on MySQL, `GEOMETRY`. Cast such a column to text in the query
+> (PostgreSQL `col::text`, MySQL `CAST(col AS CHAR)`) or leave it out. A NULL
+> of any type still reads as null.
 >
 > A JSON or array column whose non-null values are all objects or arrays is
 > reported as `nested`, counts only, as the same records are from a JSONL or
 > Parquet file. A JSON column of scalars is typed from its values, and one
 > mixing scalars with containers stays text, as in the JSON readers.
 >
-> `BLOB`/`BYTEA` is still unsupported and still profiles as null: it needs a
-> binary column type rather than a decode arm. Profile an exported CSV or
-> Parquet file if you need statistics for it.
+> Binary columns are the exception: `BYTEA`, and MySQL and SQLite `BLOB`,
+> `BINARY` and `VARBINARY`, still profile as null rather than failing, until
+> they get a binary column type (#645). Profile an exported CSV or Parquet file
+> if you need statistics for one.
 >
 > Timestamps render in dataprof's naive ISO form (`YYYY-MM-DDTHH:MM:SS`) rather
 > than RFC 3339. A `TIMESTAMPTZ` is converted to UTC and its offset dropped: the
