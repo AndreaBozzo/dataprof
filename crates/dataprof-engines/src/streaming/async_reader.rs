@@ -338,7 +338,8 @@ impl AsyncStreamingProfiler {
         let byte_budget = self.stop_condition.max_bytes();
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
-        let reader_handle = tokio::task::spawn_blocking(move || match format {
+        let reader_format = format.clone();
+        let reader_handle = tokio::task::spawn_blocking(move || match reader_format {
             FileFormat::Csv => Self::reader_task(
                 sync_reader,
                 tx,
@@ -347,24 +348,23 @@ impl AsyncStreamingProfiler {
                 csv_flexible,
                 csv_delimiter,
             ),
-            FileFormat::Json | FileFormat::Jsonl => {
-                Self::json_reader_task(sync_reader, tx, bytes_per_chunk, format, json_error_policy)
-                    .map(|malformed_records| ReaderOutcome {
-                        malformed_records,
-                        ..ReaderOutcome::default()
-                    })
-            }
+            FileFormat::Json | FileFormat::Jsonl => Self::json_reader_task(
+                sync_reader,
+                tx,
+                bytes_per_chunk,
+                reader_format,
+                json_error_policy,
+            )
+            .map(|malformed_records| ReaderOutcome {
+                malformed_records,
+                ..ReaderOutcome::default()
+            }),
             _ => unreachable!(),
         });
 
         // Process chunks on the current task
         let process_result = self
-            .process_chunks(
-                rx,
-                source_info.format.clone(),
-                source_info.size_hint,
-                exact_total_rows,
-            )
+            .process_chunks(rx, format.clone(), source_info.size_hint, exact_total_rows)
             .await;
 
         // If processing failed, prefer the reader's error when it also failed:
