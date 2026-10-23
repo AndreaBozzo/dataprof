@@ -17,7 +17,9 @@ Keep changes within that identity.
 
 ## Build, test, lint
 
-Prerequisites: Rust 1.96+, Python 3.10+, [uv](https://docs.astral.sh/uv/).
+Prerequisites: Rust 1.96+, Python 3.11+, [uv](https://docs.astral.sh/uv/).
+Local development runs on CPython 3.15, pinned in `.python-version`, which uv
+reads and installs on its own; ty still checks against the 3.11 floor.
 
 1.96 is the MSRV (`rust-version` in `Cargo.toml`). CI lints and tests on the
 toolchain pinned in `rust-toolchain.toml`, and rustup reads that file, so plain

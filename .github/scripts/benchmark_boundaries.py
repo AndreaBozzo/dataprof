@@ -12,7 +12,7 @@ import random
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import benchmark_comparison as common
@@ -336,7 +336,7 @@ def main(argv=None) -> int:
         "schema_version": 1,
         "status": "incomplete",
         "suite": "python-boundaries",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "config": {
             **{k: v for k, v in vars(args).items() if k != "output"},
             "metrics": METRICS,

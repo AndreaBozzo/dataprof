@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -453,8 +453,9 @@ def cpu_model() -> str:
 
 
 def environment_metadata() -> dict:
-    import psutil
     import tomllib
+
+    import psutil
 
     versions = dict(
         sorted((dist.metadata["Name"], dist.version) for dist in importlib.metadata.distributions())
@@ -517,7 +518,7 @@ def new_document(args: argparse.Namespace) -> dict:
     return {
         "schema_version": 1,
         "status": "incomplete",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "config": {
             "protocol_version": 2,
             "mode": "publication" if args.publication else "routine",

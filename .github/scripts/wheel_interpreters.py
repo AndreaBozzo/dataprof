@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from email.parser import Parser
 from pathlib import Path
 from zipfile import ZipFile
@@ -49,11 +50,6 @@ def matches_requires_python(value: str | None, versions: list[str]) -> bool:
 
 def validate_metadata(versions: list[str], root: Path = REPO_ROOT) -> None:
     """Reject package requirements or classifiers that disagree with support."""
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        import tomli as tomllib
-
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     expected = requires_python(versions)
     if not matches_requires_python(project["requires-python"], versions):

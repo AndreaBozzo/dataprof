@@ -16,7 +16,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Supports standard, GIL-enabled CPython 3.10–3.14. PyPy, preview Python and
+Supports standard, GIL-enabled CPython 3.11–3.15. PyPy, preview Python and
 free-threaded builds are outside the supported wheel set; see the
 [interpreter policy](../CONTRIBUTING.md#python-interpreters-and-release-wheels).
 The package ships pre-built wheels for Linux, macOS, and Windows, and declares **no Python dependencies**. The base API needs nothing else: local file profiling, DataFrame and Arrow inputs, ad-hoc dict/bytes inputs, and report exports. Install the `pandas` extra only for pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame).

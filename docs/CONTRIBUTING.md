@@ -10,7 +10,8 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
   lints and tests on the toolchain in `rust-toolchain.toml`, which rustup
   installs and uses for `cargo` in this checkout on its own
 - **Cargo** (comes with Rust)
-- **Python 3.10** or later
+- **Python 3.11** or later. Local development runs on CPython 3.15, pinned in
+  `.python-version`; uv reads that file and installs the interpreter itself
 - **uv** for Python dependency and test commands ([install](https://docs.astral.sh/uv/))
 - **Git**
 
@@ -129,7 +130,7 @@ loudly if the toolchain pin and `rust-version` drift apart.
 ### Python interpreters and release wheels
 
 Starting with 0.12, `.github/python-interpreters.json` declares the release
-interpreter set: standard, GIL-enabled CPython 3.10–3.14. CI runs the Python
+interpreter set: standard, GIL-enabled CPython 3.11–3.15. CI runs the Python
 suite on every declared version and wheel smoke tests on every declared version
 on Linux, macOS and Windows. PyPy, preview Python and free-threaded builds are
 outside this support policy; they are not published. Adopting free-threading or
@@ -144,12 +145,17 @@ and optimized builds pass this check before optimized artifacts are renamed.
 Linux wheels select interpreters inside the manylinux container; host Python
 installation does not control those builds (see the
 [maturin action documentation](https://github.com/PyO3/maturin-action#usage)).
+The aarch64 leg cross-compiles in a `manylinux_2_28-cross` image, where maturin
+takes each interpreter's configuration from its bundled sysconfig rather than
+from a target interpreter.
 
 When changing support, update the JSON declaration and the version classifiers
 and `requires-python` in `pyproject.toml`, then refresh `uv.lock`. Metadata must
 agree with the declaration or both CI and the release fail. The bound excludes
-Python 3.15+ from source installs too; extending support is a tested release
+Python 3.16+ from source installs too; extending support is a tested release
 change, rather than an implicit promise made by an open-ended requirement.
+Local development follows the newest declared version through `.python-version`;
+CI jobs pinned to the floor set `UV_PYTHON`, so that file does not move them.
 Python package metadata cannot exclude the free-threaded ABI or PyPy by itself;
 the artifact check and this policy define that boundary.
 

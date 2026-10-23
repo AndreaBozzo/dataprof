@@ -250,7 +250,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Compile MSRV feature graphs
         run: python3 .github/scripts/msrv_check.py
@@ -443,6 +443,10 @@ jobs:
     # (run 35999584206), so 20 was hit during the post-job cache save and left
     # the next run on that lockfile cold as well.
     timeout-minutes: 30
+    # The root .python-version asks uv for the local development interpreter;
+    # this job runs on the supported floor, so name it for both setup steps.
+    env:
+      UV_PYTHON: '3.11'
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -458,7 +462,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: ${{ env.UV_PYTHON }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -498,6 +502,9 @@ jobs:
             features: "python,python-async,async-streaming"
           - variant: parquet-async
             features: "python,python-async,parquet-async"
+    # Pinned for uv as well, over the root .python-version (see examples-smoke).
+    env:
+      UV_PYTHON: '3.11'
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -513,7 +520,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: ${{ env.UV_PYTHON }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -606,6 +613,9 @@ jobs:
     name: Python Database Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Pinned for uv as well, over the root .python-version (see examples-smoke).
+    env:
+      UV_PYTHON: '3.11'
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -622,7 +632,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: ${{ env.UV_PYTHON }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

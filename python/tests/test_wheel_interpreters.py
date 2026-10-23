@@ -20,6 +20,11 @@ assert SPEC is not None and SPEC.loader is not None
 contract = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(contract)
 
+DECLARED = contract.load_versions()
+#: The oldest published interpreter, and the next CPython, which is not.
+FLOOR = "cp" + DECLARED[0].replace(".", "")
+UNRELEASED = f"cp3{int(DECLARED[-1].split('.')[1]) + 1}"
+
 
 def wheel(
     directory: Path,
@@ -28,9 +33,10 @@ def wheel(
     *,
     platform: str = "manylinux_2_17_x86_64.manylinux2014_x86_64",
     archive_tag: str | None = None,
-    requires: str = "<3.15,>=3.10",
+    requires: str | None = None,
 ) -> Path:
     """Create a minimal wheel with controllable filename and archive metadata."""
+    requires = requires or contract.requires_python(DECLARED)
     abi = abi or interpreter
     path = directory / f"dataprof-0.12.0-{interpreter}-{abi}-{platform}.whl"
     tags = (
@@ -78,14 +84,20 @@ def test_compressed_platform_tags_pass(tmp_path, versions):
 def test_missing_interpreters_fail(tmp_path, versions, populated):
     """Reject both an empty output directory and an incomplete interpreter set."""
     if populated:
-        wheel(tmp_path, "cp310")
+        wheel(tmp_path, FLOOR)
     with pytest.raises(ValueError, match="missing interpreter wheels"):
         contract.verify_wheels(tmp_path, versions)
 
 
 @pytest.mark.parametrize(
     ("interpreter", "abi"),
-    [("cp315", "cp315"), ("cp314", "cp314t"), ("pp311", "pypy311_pp73"), ("cp310", "abi3")],
+    [
+        (UNRELEASED, UNRELEASED),
+        ("cp310", "cp310"),
+        ("cp314", "cp314t"),
+        ("pp311", "pypy311_pp73"),
+        (FLOOR, "abi3"),
+    ],
 )
 def test_unpublished_interpreters_and_abis_fail(tmp_path, versions, interpreter, abi):
     """Prevent runner discovery from silently extending supported interpreters."""
@@ -103,15 +115,15 @@ def test_filename_cannot_hide_free_threaded_archive(tmp_path, versions):
 
 def test_wheel_metadata_cannot_advertise_untested_python(tmp_path, versions):
     """Check the install requirement in the built artifact itself."""
-    wheel(tmp_path, "cp310", requires=">=3.10")
+    wheel(tmp_path, FLOOR, requires=f">={DECLARED[0]}")
     with pytest.raises(ValueError, match="Requires-Python differs"):
         contract.verify_wheels(tmp_path, versions)
 
 
 def test_duplicate_interpreter_fails(tmp_path, versions):
     """Require one wheel per interpreter in each platform/CPU build leg."""
-    wheel(tmp_path, "cp310", platform="win_amd64")
-    wheel(tmp_path, "cp310", platform="win32")
+    wheel(tmp_path, FLOOR, platform="win_amd64")
+    wheel(tmp_path, FLOOR, platform="win32")
     with pytest.raises(ValueError, match="duplicate interpreter"):
         contract.verify_wheels(tmp_path, versions)
 
@@ -128,8 +140,8 @@ def test_invalid_declaration_fails(tmp_path, declared):
 @pytest.mark.parametrize(
     ("old", "new"),
     [
-        ('requires-python = ">=3.10,<3.15"', 'requires-python = ">=3.10"'),
-        ('    "Programming Language :: Python :: 3.14",', ""),
+        ('requires-python = ">=3.11,<3.16"', 'requires-python = ">=3.11"'),
+        ('    "Programming Language :: Python :: 3.15",', ""),
         ("Implementation :: CPython", "Implementation :: PyPy"),
     ],
 )
