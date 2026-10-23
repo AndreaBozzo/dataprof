@@ -763,10 +763,11 @@ impl StreamingColumnCollection {
             self.hint_bindings.observe(header, &value);
         }
 
-        if !headers.is_empty() {
-            self.row_tracker.observe(row_signature.finish());
-            self.completeness_tracker.observe(row_has_null);
-        }
+        // A fieldless JSON object is still a record. If a column appears
+        // later, init_column_with_missing marks these earlier rows incomplete;
+        // their empty signatures already match rows of trailing absent fields.
+        self.row_tracker.observe(row_signature.finish());
+        self.completeness_tracker.observe(row_has_null);
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen.

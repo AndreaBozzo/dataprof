@@ -338,7 +338,8 @@ impl AsyncStreamingProfiler {
         let byte_budget = self.stop_condition.max_bytes();
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
-        let reader_handle = tokio::task::spawn_blocking(move || match format {
+        let reader_format = format.clone();
+        let reader_handle = tokio::task::spawn_blocking(move || match reader_format {
             FileFormat::Csv => Self::reader_task(
                 sync_reader,
                 tx,
@@ -347,19 +348,23 @@ impl AsyncStreamingProfiler {
                 csv_flexible,
                 csv_delimiter,
             ),
-            FileFormat::Json | FileFormat::Jsonl => {
-                Self::json_reader_task(sync_reader, tx, bytes_per_chunk, format, json_error_policy)
-                    .map(|malformed_records| ReaderOutcome {
-                        malformed_records,
-                        ..ReaderOutcome::default()
-                    })
-            }
+            FileFormat::Json | FileFormat::Jsonl => Self::json_reader_task(
+                sync_reader,
+                tx,
+                bytes_per_chunk,
+                reader_format,
+                json_error_policy,
+            )
+            .map(|malformed_records| ReaderOutcome {
+                malformed_records,
+                ..ReaderOutcome::default()
+            }),
             _ => unreachable!(),
         });
 
         // Process chunks on the current task
         let process_result = self
-            .process_chunks(rx, source_info.size_hint, exact_total_rows)
+            .process_chunks(rx, format.clone(), source_info.size_hint, exact_total_rows)
             .await;
 
         // If processing failed, prefer the reader's error when it also failed:
@@ -1091,6 +1096,7 @@ impl AsyncStreamingProfiler {
     async fn process_chunks(
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
+        format: FileFormat,
         size_hint: Option<u64>,
         exact_total_rows: Option<u64>,
     ) -> Result<
@@ -1159,23 +1165,25 @@ impl AsyncStreamingProfiler {
             .next()
             .expect("non-empty header chunk has a first record");
 
-        // Both parsers explicitly send an empty schema for an empty source.
-        // It is analyzed with no columns, just like the synchronous paths (#723).
-        // Headers are the declared schema even when the stream contains no
-        // records. Pre-register them so the public async path preserves the
-        // same header-only CSV invariant as the file-based engines.
-        column_stats.init_columns(&headers);
-        // Columns with statistics so far; a JSON key first seen later joins
-        // `headers` through a chunk's `new_columns` and is registered by the
-        // first row that covers it.
-        let mut registered = headers.len();
+        // CSV declares a schema even without data rows. JSON's initial header
+        // includes every key in the first chunk, including rows a cap may leave
+        // unread. Register those keys only when a consumed row covers them, as
+        // fold_row already does for keys announced by later chunks.
+        let mut registered = if format == FileFormat::Csv {
+            column_stats.init_columns(&headers);
+            headers.len()
+        } else {
+            0
+        };
         // Columns the consumed rows reach, whether or not the sampler kept
         // them. A column only rejected rows reach is still in the source read.
         let mut discovered = registered;
 
         let header_bytes = total_bytes;
         progress_tracker.emit_started(estimated_total.map(|rows| rows as usize), size_hint);
-        progress_tracker.emit_schema(&headers);
+        if format == FileFormat::Csv {
+            progress_tracker.emit_schema(&headers);
+        }
 
         // A row cap is a hard ceiling on what the caller authorized us to
         // analyze, so it is checked per row. Evaluating it only per chunk
@@ -1330,6 +1338,10 @@ impl AsyncStreamingProfiler {
                 break;
             }
         }
+
+        // An empty JSON source has no data chunk to announce its empty schema.
+        // For other sources the tracker suppresses this unchanged schema.
+        progress_tracker.emit_schema(&headers[..discovered]);
 
         // A fixed-size sample is only final once reading stops, so it is folded
         // in here rather than row by row.
