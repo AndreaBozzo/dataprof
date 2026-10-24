@@ -1082,6 +1082,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "reqwest",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

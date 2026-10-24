@@ -12,6 +12,8 @@ from typing import Any, NoReturn
 
 __version__: str
 _compiled_capabilities: dict[str, bool]
+_build_commit: str | None
+_build_dirty: bool | None
 
 # --- Configuration ---
 
@@ -400,6 +402,8 @@ class ProfileReport:
     def metric_semantics(self) -> dict[str, str] | None: ...
     @property
     def analysis_settings(self) -> dict[str, Any] | None: ...
+    @property
+    def generator(self) -> dict[str, Any] | None: ...
     @staticmethod
     def from_json(text: str) -> ProfileReport: ...
     def quality_gate_json(

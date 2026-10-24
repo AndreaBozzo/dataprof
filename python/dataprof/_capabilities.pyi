@@ -24,6 +24,8 @@ class Capabilities:
     remote_parquet: bool
     database: bool
     database_connectors: tuple[str, ...]
+    commit: str | None
+    dirty: bool | None
 
 def capabilities() -> Capabilities:
     """Return a side-effect-free snapshot of installed dataprof capabilities."""

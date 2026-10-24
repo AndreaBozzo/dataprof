@@ -1372,6 +1372,10 @@
           "$ref": "#/$defs/ExecutionMetadata",
           "description": "Execution metadata (timing, rows processed, truncation info, etc.)"
         },
+        "generator": {
+          "$ref": "#/$defs/ReportGenerator",
+          "description": "The dataprof build that produced the report; see [`ReportGenerator`].\n\nEvery report this build produces records [`ReportGenerator::current`].\n`None` is a document written before dataprof recorded it. Loading and\nsaving keep the value the document had rather than the reader's.\nAdditive field."
+        },
         "id": {
           "description": "Unique identifier for this report (UUID v4)",
           "type": "string"
@@ -1859,6 +1863,9 @@
         },
         "execution": {
           "$ref": "#/$defs/PythonExecutionDocument"
+        },
+        "generator": {
+          "$ref": "#/$defs/ReportGenerator"
         },
         "metric_semantics": {
           "$ref": "#/$defs/MetricSemantics"
@@ -2550,6 +2557,27 @@
         "csv_auto_recovery"
       ],
       "type": "string"
+    },
+    "ReportGenerator": {
+      "description": "The dataprof build that produced a report.\n\n`version` alone cannot tell a development build from the release it\nfollows: both carry the workspace version until the next release bumps it.\nThe commit and the dirty flag tell them apart where the build knows them.\n\nAbsent `commit` and `dirty` mean the build did not record them: a crate\nbuilt from a package rather than a git checkout, or a build without a\nusable `git`. An explicit null is malformed, so neither the reader nor the\nschema accepts one.",
+      "properties": {
+        "commit": {
+          "description": "The full git commit hash the build was compiled from.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the compiled sources (`Cargo.toml`, `Cargo.lock` and `crates/`)\nhad uncommitted changes when the build ran.",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "The dataprof package version, such as `\"0.13.0\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
     },
     "ScoreBounds": {
       "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
