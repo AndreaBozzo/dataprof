@@ -244,14 +244,14 @@ def acceptance_wheel_names_its_commit() -> None:
     """A wheel built from a checkout records the commit, and reports carry it.
 
     The extension's build.rs reads git, so this holds only for the built
-    artifact: CI builds it from a clean checkout of GITHUB_SHA. Locally there
-    is no expected commit to compare with.
+    artifact: CI builds it from a clean checkout and passes the commit it checked
+    out as DATAPROF_EXPECTED_COMMIT. Locally there is none to compare with.
     """
     print("acceptance: the wheel names its commit")
     caps = dp.capabilities()
-    expected = os.environ.get("GITHUB_SHA")
+    expected = os.environ.get("DATAPROF_EXPECTED_COMMIT")
     if expected is None:
-        print(f"  (no GITHUB_SHA; commit={caps.commit}, dirty={caps.dirty})")
+        print(f"  (no expected commit; commit={caps.commit}, dirty={caps.dirty})")
         return
     check(caps.commit == expected, f"capabilities() names commit {expected}: {caps.commit}")
     check(caps.dirty is False, f"a clean checkout builds a clean wheel: {caps.dirty}")
