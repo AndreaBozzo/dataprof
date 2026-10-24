@@ -141,6 +141,16 @@ def _report_error(kind: str, message: str, *, path: Path | None, json_output: bo
     return _ERROR_EXIT_CODE
 
 
+def _version() -> str:
+    """The version, with the commit where the build recorded one: a development
+    build carries the version of the release it follows."""
+    build = dataprof.capabilities()
+    if build.commit is None:
+        return f"dataprof {dataprof.__version__}"
+    dirty = ", dirty" if build.dirty else ""
+    return f"dataprof {dataprof.__version__} ({build.commit[:12]}{dirty})"
+
+
 def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     parser = _CheckArgumentParser(
         prog="python -m dataprof.check",
@@ -176,7 +186,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"dataprof {dataprof.__version__}",
+        version=_version(),
     )
     parser.add_argument(
         "--min-rows",

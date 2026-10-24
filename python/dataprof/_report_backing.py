@@ -349,6 +349,33 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
     return {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
 
 
+def _read_generator(document: dict[str, Any]) -> dict[str, Any] | None:
+    """Read `generator` as the Rust reader reads `ReportGenerator`.
+
+    A missing key is a document written before dataprof recorded it: None.
+    `commit` and `dirty` are absent where the build did not record them; an
+    explicit null or a value of the wrong type is an error, as it is in Rust.
+    Unknown fields from a later writer are ignored.
+    """
+    if "generator" not in document:
+        return None
+    generator = document["generator"]
+    if not isinstance(generator, dict):
+        raise ValueError(f"from_dict(): 'generator' must be a mapping, got {generator!r}.")
+    version = generator.get("version")
+    if not isinstance(version, str):
+        raise ValueError(f"from_dict(): 'generator.version' must be a string, got {version!r}.")
+    read: dict[str, Any] = {"version": version}
+    for name, kind, expected in (("commit", str, "a string"), ("dirty", bool, "a boolean")):
+        if name not in generator:
+            continue
+        value = generator[name]
+        if not isinstance(value, kind):
+            raise ValueError(f"from_dict(): 'generator.{name}' must be {expected}, got {value!r}.")
+        read[name] = value
+    return read
+
+
 def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
     """Read `metric_semantics` as the Rust reader reads `MetricSemantics`.
 
@@ -417,6 +444,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     )
     values["metric_semantics"] = _read_metric_semantics(document)
     values["analysis_settings"] = _read_analysis_settings(document)
+    values["generator"] = _read_generator(document)
     quality = _read_field(
         document,
         "quality",

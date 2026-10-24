@@ -802,3 +802,26 @@ quality gate leaves the accuracy and overall score rules over it
 written before it; those are assessed and scored as their release did. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `outlier_units` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `generator`
+
+Both dialects gain a top-level `generator` object naming the dataprof build
+that produced the report (#907):
+
+| field | values | meaning |
+| --- | --- | --- |
+| `version` | string | the dataprof package version |
+| `commit` | string | the full git hash the build was compiled from |
+| `dirty` | boolean | whether the compiled Rust sources (`Cargo.toml`, `Cargo.lock`, `crates/`) had uncommitted changes when it was built |
+
+A development build carries the version of the release it follows, so
+`version` alone cannot tell them apart; `commit` and `dirty` can. Both are
+absent where the build did not record them: a crate built from a package, an
+sdist, or a build without a usable `git`. The Python extension records them;
+a Rust program built against the crates records `version` alone.
+
+A stored report keeps the generator it was written with. The object is absent
+from documents written before 0.13. An explicit `null`, for the object or for
+`commit` or `dirty`, a missing `version`, and a value of the wrong type are
+malformed. A field a later release adds is ignored by this reader. Stored v1
+reports remain valid.

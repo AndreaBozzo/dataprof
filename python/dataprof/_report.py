@@ -347,6 +347,24 @@ class ProfileReport:
         return None if settings is None else dict(settings)
 
     @property
+    def generator(self) -> dict[str, _Any] | None:
+        """The dataprof build that produced this report.
+
+        ``version`` is the package version. A development build carries the
+        version of the release it follows, so where the build recorded them,
+        ``commit`` is the full git hash it was compiled from and ``dirty``
+        whether the compiled Rust sources had uncommitted changes. Both are
+        absent from a build that did not record them, such as one from an
+        sdist. :func:`dataprof.capabilities` reports the same for the
+        installed build.
+
+        ``None`` for a report loaded from a document written before dataprof
+        recorded it. A stored report keeps the value it was written with.
+        """
+        generator = self._report.generator
+        return None if generator is None else dict(generator)
+
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
         """Per-column evidence of how each semantic hint bound to the data.
 
@@ -575,6 +593,9 @@ class ProfileReport:
         settings = self.analysis_settings
         if settings is not None:
             document["analysis_settings"] = settings
+        generator = self.generator
+        if generator is not None:
+            document["generator"] = generator
         return document
 
     def to_json(self, indent: int = 2) -> str:

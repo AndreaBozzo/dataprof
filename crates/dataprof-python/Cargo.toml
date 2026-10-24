@@ -37,3 +37,6 @@ database = ["dataprof/database"]
 postgres = ["database", "dataprof/postgres"]
 mysql = ["database", "dataprof/mysql"]
 sqlite = ["database", "dataprof/sqlite"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

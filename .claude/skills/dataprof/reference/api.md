@@ -78,6 +78,7 @@ Read these before reporting any number. See the trust-signal step in SKILL.md.
 | `report.execution_time_ms` / `report.throughput` / `report.memory_peak_mb` | cost |
 | `report.semantic_hint_bindings` | which columns the semantic policies bound to |
 | `report.metric_semantics` | how measurements were defined; `None` = written before 0.12, unknown |
+| `report.generator` | the build that wrote it: `version`, and `commit`/`dirty` where recorded; `None` = written before 0.13 |
 
 ## ProfileReport: output formats
 
@@ -182,7 +183,7 @@ column's **type**, not of its counters.
 `version`, `local_csv`, `local_json`, `local_jsonl`, `local_parquet`,
 `pandas_interop`, `pandas_installed`, `polars_interop`, `polars_installed`,
 `arrow_interop`, `pyarrow_installed`, `async_streaming`, `url_profiling`,
-`remote_parquet`, `database`, `database_connectors`.
+`remote_parquet`, `database`, `database_connectors`, `commit`, `dirty`.
 
 The `*_interop` flags mean dataprof was compiled with the bridge; the
 `*_installed` flags mean the third-party package is importable. Both must be

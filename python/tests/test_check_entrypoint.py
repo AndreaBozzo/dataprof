@@ -980,8 +980,15 @@ def test_help_documents_flags_and_exit_codes():
 def test_version_flag():
     result = run_check("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == f"dataprof {dp.__version__}"
     assert result.stderr == ""
+    # A development build carries the version of the release it follows, so
+    # the line names the commit where the build recorded one.
+    build = dp.capabilities()
+    if build.commit is None:
+        assert result.stdout.strip() == f"dataprof {dp.__version__}"
+    else:
+        dirty = ", dirty" if build.dirty else ""
+        assert result.stdout.strip() == f"dataprof {dp.__version__} ({build.commit[:12]}{dirty})"
 
 
 def test_verdict_summary_includes_version(source: Path):
