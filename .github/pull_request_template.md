@@ -5,6 +5,14 @@
 
 **Related issue:** Closes #
 
+## Acceptance criteria
+
+<!-- One line per acceptance criterion of the issue: where it is met (the file,
+     function or test), or that this PR leaves it out and why. Delete this
+     section if the issue has no criteria. -->
+
+- [ ] Criterion: met in `path/to/file` / left for a follow-up because ...
+
 ## How it was verified
 
 <!-- Replace the example below with the commands you actually ran and what they

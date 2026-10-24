@@ -78,6 +78,11 @@ change; run what matches the change and list the commands in the PR body.
   explicit tolerances (relative `1e-9`, absolute `1e-12`). Preserve absence as
   well as numbers. See [the numeric contract](docs/schema/README.md#numeric-equality-contract).
   If you touch an engine or parser, check the other paths for parity.
+- **PR descriptions**: derive behaviour from the code the issue names, not
+  from the issue text alone. Every sentence of the description must be true of
+  the diff, and each acceptance criterion of the issue is either met (say
+  where) or stated as left out. See
+  [Understanding Your Change](docs/CONTRIBUTING.md#understanding-your-change).
 
 ## Project board rules
 
