@@ -47,9 +47,11 @@ pub struct UniquenessMetrics {
     /// to assess and it is excluded from the overall score.
     #[serde(default)]
     pub rows_checked: usize,
-    /// Column whose uniqueness `key_uniqueness` describes. `None` means no
-    /// key column was identified; `key_uniqueness` then carries no signal
-    /// and does not contribute to the dimension score.
+    /// Column whose uniqueness `key_uniqueness` describes: the first
+    /// `identifier_columns` entry the source has. `None` means no declared
+    /// key was found; `key_uniqueness` then carries no signal and does not
+    /// contribute to the dimension score. Before 0.13 an undeclared column
+    /// with an id-like name could be the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_column: Option<String>,
     /// Non-null values of `key_column`: the units `key_uniqueness` divides

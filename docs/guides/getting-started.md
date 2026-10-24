@@ -190,9 +190,12 @@ Measures duplication in the data.
   as a value, so two objects, or two Arrow maps, with the same entries in a
   different order are equal, and a string never equals an object or array,
   even one that spells its JSON
-- `key_uniqueness` -- distinct values of the likely-key column over its
-  non-null values (`key_values_checked`); nulls are completeness's finding,
-  and a key holding no value leaves this component out of the score
+- `key_uniqueness` -- distinct values of the declared key, the first
+  `identifier_columns` entry present, over its non-null values
+  (`key_values_checked`); nulls are completeness's finding, and a key
+  holding no value leaves this component out of the score. With no key
+  declared there is no key component: a column name cannot tell a table's
+  key from a foreign key
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
 ### Accuracy

@@ -892,6 +892,16 @@
       ],
       "type": "object"
     },
+    "KeyColumnSource": {
+      "description": "Which column `key_uniqueness` may measure, as recorded in a report's\nmetric semantics.\n\nOnly the current definition has a value. Through 0.12, with no column\ndeclared, the first column whose name had an `id`, `key` or `pk` word was\nthe key, so a foreign key listed first was scored as the table key and\ncolumn order moved the score; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "declared",
+          "description": "The first `identifier_columns` entry the source has. With none\ndeclared there is no key component.",
+          "type": "string"
+        }
+      ]
+    },
     "KeyUniquenessUnits": {
       "description": "What `key_uniqueness` divides the key column's distinct values by, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 it divided by every\nrow, nulls included, so a nullable key lost uniqueness for each null the\ncompleteness score already counted; those releases recorded no\ndefinition.",
       "oneOf": [
@@ -991,6 +1001,10 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "key_column_source": {
+          "$ref": "#/$defs/KeyColumnSource",
+          "description": "Which column `key_uniqueness` may measure.\n\nAbsent means not recorded: through 0.12 the first column with an\nid-like name was the key when none was declared."
+        },
         "key_uniqueness_units": {
           "$ref": "#/$defs/KeyUniquenessUnits",
           "description": "What `key_uniqueness` divides the key's distinct values by.\n\nAbsent means not recorded: through 0.12 it divided by every row,\nnulls included."
@@ -2969,7 +2983,7 @@
           "type": "boolean"
         },
         "key_column": {
-          "description": "Column whose uniqueness `key_uniqueness` describes. `None` means no\nkey column was identified; `key_uniqueness` then carries no signal\nand does not contribute to the dimension score.",
+          "description": "Column whose uniqueness `key_uniqueness` describes: the first\n`identifier_columns` entry the source has. `None` means no declared\nkey was found; `key_uniqueness` then carries no signal and does not\ncontribute to the dimension score. Before 0.13 an undeclared column\nwith an id-like name could be the key.",
           "type": [
             "string",
             "null"

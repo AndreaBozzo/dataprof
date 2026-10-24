@@ -1,9 +1,9 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyUniquenessUnits, Locale,
-    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
-    SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyColumnSource,
+    KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights,
+    RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -158,6 +158,17 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "OutlierUnits")]
     pub outlier_units: Option<OutlierUnits>,
+    /// Which column `key_uniqueness` may measure.
+    ///
+    /// Absent means not recorded: through 0.12 the first column with an
+    /// id-like name was the key when none was declared.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "KeyColumnSource")]
+    pub key_column_source: Option<KeyColumnSource>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -181,6 +192,7 @@ impl MetricSemantics {
             range_rule_count: Some(RangeRuleCount::ViolatingValues),
             key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
             outlier_units: Some(OutlierUnits::TestedValues),
+            key_column_source: Some(KeyColumnSource::Declared),
         }
     }
 
@@ -197,6 +209,7 @@ impl MetricSemantics {
             range_rule_count,
             key_uniqueness_units,
             outlier_units,
+            key_column_source,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -205,6 +218,7 @@ impl MetricSemantics {
             && range_rule_count.is_some()
             && key_uniqueness_units.is_some()
             && outlier_units.is_some()
+            && key_column_source.is_some()
     }
 }
 
@@ -1452,6 +1466,7 @@ mod tests {
             "range_rule_count": "violating_values",
             "key_uniqueness_units": "non_null_values",
             "outlier_units": "tested_values",
+            "key_column_source": "declared",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1487,6 +1502,8 @@ mod tests {
             json!({"key_uniqueness_units": null}),
             json!({"outlier_units": "numeric_values"}),
             json!({"outlier_units": null}),
+            json!({"key_column_source": "name_heuristic"}),
+            json!({"key_column_source": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

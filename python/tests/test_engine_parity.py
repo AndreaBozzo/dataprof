@@ -280,6 +280,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "range_rule_count": "violating_values",
         "key_uniqueness_units": "non_null_values",
         "outlier_units": "tested_values",
+        "key_column_source": "declared",
     }
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected

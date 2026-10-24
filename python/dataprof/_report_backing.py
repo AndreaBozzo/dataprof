@@ -301,6 +301,7 @@ _METRIC_SEMANTICS = {
     "range_rule_count": ("violating_values",),
     "key_uniqueness_units": ("non_null_values",),
     "outlier_units": ("tested_values",),
+    "key_column_source": ("declared",),
 }
 
 

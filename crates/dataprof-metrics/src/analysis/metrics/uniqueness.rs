@@ -145,7 +145,7 @@ impl<'a> UniquenessCalculator<'a> {
     /// Calculate key uniqueness percentage, the column it describes and the
     /// key values it was measured over.
     ///
-    /// Returns no column when no key column was identified or its unique
+    /// Returns no column when no key column was declared or its unique
     /// count is unavailable — the caller treats that as "no key signal"
     /// rather than "perfect key". A key column with no non-null value is
     /// named, with 0 values checked: identified, but nothing to measure.
@@ -153,20 +153,14 @@ impl<'a> UniquenessCalculator<'a> {
         column_profiles: &[ColumnProfile],
         identifier_columns: &[String],
     ) -> Result<KeyUniqueness, DataProfilerError> {
-        // Explicit semantic hints take precedence and retain user-supplied
-        // order. Fall back to the conservative name heuristic when absent.
-        let key_column = identifier_columns
-            .iter()
-            .find_map(|name| {
-                column_profiles
-                    .iter()
-                    .find(|profile| profile.name == name.as_str())
-            })
-            .or_else(|| {
-                column_profiles
-                    .iter()
-                    .find(|profile| is_likely_id_column(&profile.name))
-            });
+        // Only a declared key, the first `identifier_columns` entry the
+        // source has. A name cannot tell a table's key from a foreign key, so
+        // guessing from names let column order pick the key (#1065).
+        let key_column = identifier_columns.iter().find_map(|name| {
+            column_profiles
+                .iter()
+                .find(|profile| profile.name == name.as_str())
+        });
 
         let Some(key_col) = key_column else {
             // No key column found: no key signal
@@ -259,6 +253,8 @@ mod tests {
             total_rows: usize,
             duplicate_rows: usize,
             rows_checked: usize,
+            /// `identifier_columns`, the only source of a key.
+            declared: &'static [&'static str],
             key_uniqueness: f64,
             key_column: Option<&'static str>,
             high_cardinality_warning: bool,
@@ -272,6 +268,7 @@ mod tests {
                 total_rows: 3,
                 duplicate_rows: 0,
                 rows_checked: 3,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: true, // 3/3 unique, non-id column
@@ -283,6 +280,7 @@ mod tests {
                 total_rows: 3,
                 duplicate_rows: 1,
                 rows_checked: 3,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: false,
@@ -294,6 +292,7 @@ mod tests {
                 total_rows: 4,
                 duplicate_rows: 3,
                 rows_checked: 4,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: false,
@@ -305,6 +304,7 @@ mod tests {
                 total_rows: 3,
                 duplicate_rows: 0,
                 rows_checked: 3,
+                declared: &["user_id"],
                 key_uniqueness: 100.0,
                 key_column: Some("user_id"),
                 high_cardinality_warning: false, // id columns are excluded
@@ -316,8 +316,22 @@ mod tests {
                 total_rows: 4,
                 duplicate_rows: 1,
                 rows_checked: 4,
+                declared: &["user_id"],
                 key_uniqueness: 75.0,
                 key_column: Some("user_id"),
+                high_cardinality_warning: false,
+            },
+            Case {
+                // A name cannot tell a table's key from a foreign key (#1065).
+                name: "undeclared identifier-like column is no key",
+                data: HashMap::from([("user_id".to_string(), column(&["1", "2", "2", "3"]))]),
+                profiles: vec![profile("user_id", 4, Some(3))],
+                total_rows: 4,
+                duplicate_rows: 1,
+                rows_checked: 4,
+                declared: &[],
+                key_uniqueness: 100.0,
+                key_column: None,
                 high_cardinality_warning: false,
             },
             Case {
@@ -327,6 +341,7 @@ mod tests {
                 total_rows: 100,
                 duplicate_rows: 6,
                 rows_checked: 100,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: false,
@@ -338,6 +353,7 @@ mod tests {
                 total_rows: 100,
                 duplicate_rows: 5,
                 rows_checked: 100,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 // 95/100 == threshold exactly; the check requires strictly above
@@ -350,6 +366,7 @@ mod tests {
                 total_rows: 100,
                 duplicate_rows: 4,
                 rows_checked: 100,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: true,
@@ -361,6 +378,7 @@ mod tests {
                 total_rows: 0,
                 duplicate_rows: 0,
                 rows_checked: 0,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: false,
@@ -372,6 +390,7 @@ mod tests {
                 total_rows: 1,
                 duplicate_rows: 0,
                 rows_checked: 1,
+                declared: &[],
                 key_uniqueness: 100.0,
                 key_column: None,
                 high_cardinality_warning: true, // 1/1 unique, non-id column
@@ -383,7 +402,17 @@ mod tests {
 
         for case in cases {
             let metrics = calculator
-                .calculate(&case.data, &case.profiles, case.total_rows, &[], None)
+                .calculate(
+                    &case.data,
+                    &case.profiles,
+                    case.total_rows,
+                    &case
+                        .declared
+                        .iter()
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>(),
+                    None,
+                )
                 .unwrap_or_else(|e| panic!("{}: calculation failed: {e}", case.name));
 
             assert_eq!(
