@@ -354,6 +354,27 @@ Run the checks that match what you touched rather than the whole workspace. The
 template collapses the usual ones per area into a `<details>` block, drawn from
 the lint and format commands in [Build & Test](#build--test) above.
 
+When the issue lists acceptance criteria, the template asks for one line per
+criterion: where the PR meets it, or why it leaves it out. Leaving one for a
+follow-up is fine when the PR says so.
+
+### Understanding Your Change
+
+AI coding tools are welcome here. The PR is still yours, and review assumes you
+understand it:
+
+- Read the code the issue names before changing it, and derive the behaviour
+  from that code. The issue describes intent; the code is what your change has
+  to agree with.
+- Be able to explain every line of the diff and answer review questions
+  yourself.
+- Make every sentence of the PR description true of the diff. A claim such as
+  "covers every input path" is something a reviewer will check.
+
+A PR whose description does not match its diff, or that shows the code it
+changes was not read, gets one comment saying so instead of a line-by-line
+review. The full review follows once a revision addresses it.
+
 ### Review Process
 
 1. **Automated checks** run first (format, lint, tests)
