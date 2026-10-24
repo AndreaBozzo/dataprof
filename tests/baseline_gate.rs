@@ -428,6 +428,7 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
         ("range_rule_count", "accuracy", "uniqueness"),
         ("key_uniqueness_units", "uniqueness", "accuracy"),
         ("outlier_units", "accuracy", "uniqueness"),
+        ("key_column_source", "uniqueness", "accuracy"),
     ] {
         let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         summary["metric_semantics"]

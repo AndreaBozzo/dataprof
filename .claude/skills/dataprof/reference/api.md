@@ -151,6 +151,10 @@ meaning the computation was asked for and broke, with the message in
 | `validity` | `valid_values_ratio`, `invalid_values`, `values_checked` |
 | `precision` | `decimal_places_consistency`, `inconsistent_precision_values`, `numeric_values_checked` |
 
+`key_column` names the declared key, the first `identifier_columns` entry the
+source has, and is `None` without one; `key_values_checked` is then absent and
+`key_uniqueness` carries no signal.
+
 <details>
 <summary>Old patterns: flat evidence accessors</summary>
 

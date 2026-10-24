@@ -933,8 +933,10 @@ fn test_streaming_bifurcation_with_large_dataset() {
     }
     f.flush().unwrap();
 
+    // Only a declared key is measured (#1065).
     let report = Profiler::new()
         .engine(EngineType::Incremental)
+        .identifier_columns(vec!["id".to_string()])
         .analyze_file(f.path())
         .expect("Large streaming analysis should succeed");
 

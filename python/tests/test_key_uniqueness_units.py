@@ -26,6 +26,8 @@ except ImportError:
     )
 
 ROWS = 200
+#: Only a declared key is measured (#1065).
+KEY = ["customer_id"]
 
 #: Name, the key and the `amount` per row, and the expected `key_uniqueness`,
 #: `key_values_checked` and uniqueness score. A distinct `amount` keeps every
@@ -70,19 +72,19 @@ def _routes(tmp_path: Path) -> dict[str, Route]:
                 *(f"{row['customer_id'] or ''},{row['amount']}" for row in rows(table)),
             ]
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return dp.profile(str(path), engine=engine)
+            return dp.profile(str(path), engine=engine, identifier_columns=KEY)
 
         return route
 
     def json_file(table: Table) -> Any:
         path = tmp_path / "table.json"
         path.write_text(json.dumps(rows(table)), encoding="utf-8")
-        return dp.profile(str(path))
+        return dp.profile(str(path), identifier_columns=KEY)
 
     def jsonl_file(table: Table) -> Any:
         path = tmp_path / "table.jsonl"
         path.write_text("\n".join(json.dumps(row) for row in rows(table)) + "\n", encoding="utf-8")
-        return dp.profile(str(path))
+        return dp.profile(str(path), identifier_columns=KEY)
 
     def arrow_table(table: Table) -> Any:
         import pyarrow as pa
@@ -99,18 +101,19 @@ def _routes(tmp_path: Path) -> dict[str, Route]:
 
         path = tmp_path / "table.parquet"
         pq.write_table(arrow_table(table), path)
-        return dp.profile(str(path))
+        return dp.profile(str(path), identifier_columns=KEY)
 
     def pandas(table: Table) -> Any:
         import pandas as pd
 
-        return dp.profile(pd.DataFrame(table))
+        return dp.profile(pd.DataFrame(table), identifier_columns=KEY)
 
     def polars(table: Table) -> Any:
         import polars as pl
 
         return dp.profile(
-            pl.DataFrame(table, schema={"customer_id": pl.String, "amount": pl.Int64})
+            pl.DataFrame(table, schema={"customer_id": pl.String, "amount": pl.Int64}),
+            identifier_columns=KEY,
         )
 
     routes: dict[str, Route] = {
@@ -119,14 +122,14 @@ def _routes(tmp_path: Path) -> dict[str, Route]:
         "columnar": csv_file("columnar"),
         "json": json_file,
         "jsonl": jsonl_file,
-        "dict": dp.profile,
-        "rows": lambda table: dp.profile(rows(table)),
+        "dict": lambda table: dp.profile(table, identifier_columns=KEY),
+        "rows": lambda table: dp.profile(rows(table), identifier_columns=KEY),
     }
     # An optional library drops only its own routes; skipping inside a route
     # would skip the whole test and every route it had not reached yet.
     optional = {
         "parquet": ("pyarrow", parquet_file),
-        "arrow": ("pyarrow", lambda table: dp.profile(arrow_table(table))),
+        "arrow": ("pyarrow", lambda table: dp.profile(arrow_table(table), identifier_columns=KEY)),
         "pandas": ("pandas", pandas),
         "polars": ("polars", polars),
     }

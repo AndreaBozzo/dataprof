@@ -107,6 +107,23 @@ pub enum OutlierUnits {
     TestedValues,
 }
 
+/// Which column `key_uniqueness` may measure, as recorded in a report's
+/// metric semantics.
+///
+/// Only the current definition has a value. Through 0.12, with no column
+/// declared, the first column whose name had an `id`, `key` or `pk` word was
+/// the key, so a foreign key listed first was scored as the table key and
+/// column order moved the score; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyColumnSource {
+    /// The first `identifier_columns` entry the source has. With none
+    /// declared there is no key component.
+    Declared,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

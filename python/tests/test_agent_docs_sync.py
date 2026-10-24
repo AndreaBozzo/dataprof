@@ -287,8 +287,18 @@ def test_documented_quality_dimension_keys_exist() -> None:
     exercise every dimension.
     """
     observed: dict[str, set[str]] = {}
-    for fixture in sorted((EVALS / "fixtures").glob("*.csv")):
-        quality = dataprof.profile(str(fixture)).quality
+    fixtures = sorted((EVALS / "fixtures").glob("*.csv"))
+    # The key fields appear only for a declared key (#1065), so each fixture
+    # is also profiled with its first column declared.
+    runs = [dataprof.profile(str(fixture)) for fixture in fixtures] + [
+        dataprof.profile(
+            str(fixture),
+            identifier_columns=[fixture.read_text(encoding="utf-8").split(",", 1)[0]],
+        )
+        for fixture in fixtures
+    ]
+    for report in runs:
+        quality = report.quality
         for dimension in (
             "completeness",
             "consistency",
