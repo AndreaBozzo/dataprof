@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataprof.dev/schema/quality-policy.v1.schema.json",
+  "title": "DataProf Quality Policy",
+  "description": "Validation contract for dataprof quality gate policies (--policy FILE). Validates accepted keys, types, ranges, dimension vocabularies, and scopes. Runtime requirement: at least one quality constraint must be specified when executed by check().",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "min_rows": {
+      "description": "Minimum row count required for the source.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "min_quality_score": {
+      "description": "Minimum overall data quality score required (0 to 100).",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "min_dimension_scores": {
+      "description": "Per-dimension minimum quality scores.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "completeness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "consistency": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "uniqueness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "accuracy": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "timeliness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "validity": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "precision": { "type": "number", "minimum": 0.0, "maximum": 100.0 }
+      }
+    },
+    "max_null_percentage": {
+      "description": "Maximum allowable null percentage across columns (0 to 100).",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "max_duplicate_rows": {
+      "description": "Maximum allowable count of duplicate rows.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "require_metrics": {
+      "description": "Required metric packs that must be computed.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["schema", "statistics", "patterns", "quality"]
+      },
+      "uniqueItems": true
+    },
+    "require_columns": {
+      "description": "Required column names that must exist in the dataset.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "scope": {
+      "description": "Analysis scope to evaluate.",
+      "type": "string",
+      "enum": ["full_source", "observed"]
+    },
+    "max_quality_score_drop": {
+      "description": "Maximum allowed drop in overall quality score relative to baseline (0 to 100).",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "max_dimension_score_drops": {
+      "description": "Maximum allowed score drops per quality dimension relative to baseline.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "completeness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "consistency": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "uniqueness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "accuracy": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "timeliness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "validity": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "precision": { "type": "number", "minimum": 0.0, "maximum": 100.0 }
+      }
+    },
+    "max_null_percentage_increase": {
+      "description": "Maximum allowed increase in null percentage relative to baseline (0 to 100).",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "forbid_removed_columns": {
+      "description": "Whether to fail the gate if any baseline column is missing from the source.",
+      "type": "boolean"
+    },
+    "forbid_added_columns": {
+      "description": "Whether to fail the gate if the source contains columns not present in the baseline.",
+      "type": "boolean"
+    }
+  }
+}

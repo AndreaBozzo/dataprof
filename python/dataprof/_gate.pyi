@@ -70,6 +70,8 @@ class QualityGateResult:
 
 def _real_number(value: Any) -> float: ...
 
+_SCOPES: tuple[str, ...]
+
 class _PolicyFieldError(ValueError):
     key: str
 
