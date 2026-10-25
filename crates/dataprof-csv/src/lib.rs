@@ -185,10 +185,11 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 /// records, measured against the first one, the header: it sets the column
 /// count, and the readers cut or pad a wider or narrower record to it, or
 /// reject it under strict parsing. A delimiter that splits the header always
-/// beats one that does not, then more records agreeing with the header and a
-/// wider header win; comma wins a tie. A record agrees when it reads at the
-/// header's width without losing a value: the same field count, or extra
-/// fields that are all empty, as an exporter's trailing delimiter leaves.
+/// beats one that does not; then more records agreeing with the header win,
+/// then more records at exactly the header's width, then a wider header, and
+/// comma wins a tie. A record agrees when it reads at the header's width
+/// without losing a value: the same field count, or extra fields that are all
+/// empty, as an exporter's trailing delimiter leaves.
 ///
 /// Judging by the data rows alone let a delimiter that never occurs in the
 /// header win, and the readers then cut every row back to its first field: a
@@ -201,7 +202,11 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     take.read_to_end(&mut preamble)?;
     let truncated = preamble.len() as u64 == SAMPLE_BYTES;
 
-    let preamble_str = String::from_utf8_lossy(&preamble);
+    // A UTF-8 BOM marks the encoding, as in the readers, and is no part of
+    // the first record: left in, a BOM followed by a blank line was scored as
+    // a one-field header and outvoted the real one.
+    let sample = preamble.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&preamble);
+    let preamble_str = String::from_utf8_lossy(sample);
     let (mut records, last_unterminated) = split_sample_records(&preamble_str);
     // A full sample buffer that ends mid-record leaves a fragment; never score
     // it. A sample ending on a clean newline keeps all its records.
@@ -224,20 +229,26 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     let delimiters = *b",;\t|";
     let mut best_delimiter = b',';
     // (splits the header into >1 field, records agreeing with the header,
-    //  header field count) — compared lexicographically, first wins ties.
-    let mut best_score = (false, 0usize, 0usize);
+    //  records at exactly the header's width, header field count) — compared
+    //  lexicographically, first wins ties. Exact width only breaks a tie: a
+    //  candidate that reads every record as it stands beats one that needs
+    //  trailing empty fields cut to agree.
+    let mut best_score = (false, 0usize, 0usize, 0usize);
 
     for &delimiter in &delimiters {
         let (header_fields, _) = count_fields(header, delimiter as char);
-        let agreeing = 1 + rows
-            .iter()
-            .filter(|record| {
-                let (fields, trailing_empty) = count_fields(record, delimiter as char);
-                agrees_with_header(fields, trailing_empty, header_fields)
-            })
-            .count();
+        let (mut agreeing, mut exact) = (1, 1);
+        for record in rows {
+            let (fields, trailing_empty) = count_fields(record, delimiter as char);
+            if agrees_with_header(fields, trailing_empty, header_fields) {
+                agreeing += 1;
+            }
+            if fields == header_fields {
+                exact += 1;
+            }
+        }
 
-        let score = (header_fields > 1, agreeing, header_fields);
+        let score = (header_fields > 1, agreeing, exact, header_fields);
         if score > best_score {
             best_score = score;
             best_delimiter = delimiter;
@@ -862,6 +873,28 @@ mod tests {
         // semicolon let comma win and invent a null column (gh #1096).
         let data = b"id;amount,EUR\n1;10,50;\n2;20;\n";
         assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_exact_width_beats_cut_trailing_fields() {
+        // Both candidates split the header and keep every value; semicolon
+        // reads each row as it stands, comma only after cutting an empty
+        // trailing field. Comma won the tie and renamed the columns.
+        let data = b"id,part;value\nx;y,z,\nu;v,w,\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_skips_a_utf8_bom() {
+        // A BOM then a blank line: the BOM alone was scored as a one-field
+        // header, and comma won over the real semicolon header.
+        let data = b"\xEF\xBB\xBF\nid;value\n1;2\n3;4\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+        let no_blank = b"\xEF\xBB\xBFid;value\n1;2\n";
+        assert_eq!(
+            detect_delimiter(Cursor::new(no_blank.as_ref())).unwrap(),
+            b';'
+        );
     }
 
     #[test]

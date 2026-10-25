@@ -44,6 +44,16 @@ CASES: dict[str, tuple[bytes, list[tuple[str, int]], int]] = {
         [("payload", 0), ("amount", 1)],
         0,
     ),
+    "semicolon rows that comma reads only after cutting": (
+        b"id,part;value\nx;y,z,\nu;v,w,\n",
+        [("id,part", 0), ("value", 0)],
+        0,
+    ),
+    "BOM, then a blank line": (
+        b"\xef\xbb\xbf\nid;value\n1;2\n3;\n",
+        [("id", 0), ("value", 1)],
+        0,
+    ),
 }
 
 #: Synchronous bytes refuse a ragged row rather than cut it, on every release.
