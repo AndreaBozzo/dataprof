@@ -233,6 +233,11 @@ pub struct JsonScanSummary {
     /// The scan stopped at `max_rows` while records still remained. A source
     /// holding exactly `max_rows` records was read in full, so this stays false.
     pub truncated: bool,
+    /// Under the skip policy, the array scanner stopped at an element it could
+    /// not read past and left input after it unread. Whether that input held
+    /// records is unknown, so the source was not exhausted: reporting it as
+    /// read in full let a drained remainder pass as a complete profile (#1106).
+    pub unread_after_fault: bool,
 }
 
 /// Scan JSON or JSONL input and invoke `on_object` for each object record.
@@ -343,6 +348,7 @@ where
 
     let mut rows_read = 0;
     let mut malformed_lines = 0;
+    let mut unread_after_fault = false;
     let mut truncated = false;
 
     match format {
@@ -537,6 +543,9 @@ where
                 }
 
                 if drain_remainder {
+                    // Something left unread after the fault means the read
+                    // stopped short, whatever that input held (#1106).
+                    unread_after_fault = consume_leading_whitespace(&mut reader)?.is_some();
                     drain_to_end(&mut reader)?;
                 } else if array_closed && consume_leading_whitespace(&mut reader)?.is_some() {
                     if config.error_policy == JsonErrorPolicy::Strict {
@@ -557,6 +566,7 @@ where
         malformed_lines,
         format,
         truncated,
+        unread_after_fault,
     })
 }
 
@@ -803,13 +813,15 @@ pub fn analyze_json_from_reader<R: BufRead>(
     DataProfilerError,
 > {
     let options = AnalysisOptions::default();
-    let (profiles, stats, rows_read, malformed_lines, format, _truncated) =
+    let (profiles, stats, rows_read, malformed_lines, format, _truncated, _unread) =
         analyze_json_from_reader_full(reader, config, &options)?;
     Ok((profiles, stats, rows_read, malformed_lines, format))
 }
 
 /// As [`analyze_json_from_reader`], but with the caller's analysis options, and
-/// also reports whether the scan stopped early. Kept private so the public tuple stays stable.
+/// also reports whether the scan stopped early at a row cap, and whether it
+/// left input unread after a fault. Kept private so the public tuple stays
+/// stable.
 #[allow(clippy::type_complexity)]
 fn analyze_json_from_reader_full<R: BufRead>(
     reader: R,
@@ -822,6 +834,7 @@ fn analyze_json_from_reader_full<R: BufRead>(
         usize,
         usize,
         FileFormat,
+        bool,
         bool,
     ),
     DataProfilerError,
@@ -872,6 +885,7 @@ fn analyze_json_from_reader_full<R: BufRead>(
         summary.malformed_lines,
         summary.format,
         summary.truncated,
+        summary.unread_after_fault,
     ))
 }
 
@@ -933,8 +947,15 @@ pub fn analyze_json_file_with_options(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read, malformed_lines, format, truncated) =
-        analyze_json_from_reader_full(buf_reader, config, options)?;
+    let (
+        column_profiles,
+        column_stats,
+        rows_read,
+        malformed_lines,
+        format,
+        truncated,
+        unread_after_fault,
+    ) = analyze_json_from_reader_full(buf_reader, config, options)?;
     let read_as_json_document = format == FileFormat::Json;
 
     let file_source = DataSource::File {
@@ -991,6 +1012,9 @@ pub fn analyze_json_file_with_options(
     // holding exactly `max_rows` records is reported as fully read, not cut short.
     if truncated && let Some(max) = config.max_rows {
         execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+    }
+    if unread_after_fault {
+        execution = execution.with_source_exhausted(false);
     }
 
     Ok(ReportAssembler::new(file_source, execution)

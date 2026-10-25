@@ -53,6 +53,9 @@ struct ReaderOutcome {
     /// Whether the CSV source ended inside a quoted field; `None` for JSON and
     /// for a scan that stopped before the end of its source.
     unterminated_quote: Option<bool>,
+    /// The JSON array scanner stopped at an element it could not read past and
+    /// left input after it unread, so the source was not exhausted (#1106).
+    unread_after_fault: bool,
 }
 
 /// Fold one row into the statistics, the way the sync JSON scanner does.
@@ -356,8 +359,9 @@ impl AsyncStreamingProfiler {
                 reader_format,
                 json_error_policy,
             )
-            .map(|malformed_records| ReaderOutcome {
+            .map(|(malformed_records, unread_after_fault)| ReaderOutcome {
                 malformed_records,
+                unread_after_fault,
                 ..ReaderOutcome::default()
             }),
             _ => unreachable!(),
@@ -474,6 +478,10 @@ impl AsyncStreamingProfiler {
             .with_ragged_row_count(reader_outcome.ragged_rows);
         if let Some(ended_inside_quotes) = unterminated_quote {
             execution = execution.with_unterminated_quote(ended_inside_quotes);
+        }
+
+        if reader_outcome.unread_after_fault && truncation_reason.is_none() {
+            execution = execution.with_source_exhausted(false);
         }
 
         let is_truncated = truncation_reason.is_some();
@@ -669,7 +677,7 @@ impl AsyncStreamingProfiler {
         bytes_per_chunk: usize,
         format: FileFormat,
         error_policy: JsonErrorPolicy,
-    ) -> Result<usize, DataProfilerError> {
+    ) -> Result<(usize, bool), DataProfilerError> {
         use serde_json::Value;
         use std::io::BufRead;
 
@@ -689,6 +697,7 @@ impl AsyncStreamingProfiler {
         // How many of `known_columns` the receiver has been sent.
         let mut sent_columns: usize = 0;
         let mut malformed_records: usize = 0;
+        let mut unread_after_fault = false;
         let mut emitted_records: usize = 0;
 
         // Helper closure: convert a JSON object into a row aligned to known_columns,
@@ -824,7 +833,7 @@ impl AsyncStreamingProfiler {
                                     false,
                                 )?
                             {
-                                return Ok(malformed_records);
+                                return Ok((malformed_records, unread_after_fault));
                             }
                         }
                         JsonRecord::NonObject(kind) => {
@@ -998,7 +1007,7 @@ impl AsyncStreamingProfiler {
                                         false,
                                     )?
                                 {
-                                    return Ok(malformed_records);
+                                    return Ok((malformed_records, unread_after_fault));
                                 }
                             }
                             JsonRecord::NonObject(kind) => {
@@ -1071,6 +1080,11 @@ impl AsyncStreamingProfiler {
                 }
 
                 if drain_remainder {
+                    // Something left unread after the fault means the read
+                    // stopped short, whatever that input held (#1106).
+                    let (rest, whitespace) = peek_non_whitespace(&mut buf_reader)?;
+                    bytes_in_chunk += whitespace as u64;
+                    unread_after_fault = rest.is_some();
                     bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
                 } else if array_closed {
                     let (trailing, whitespace) = peek_non_whitespace(&mut buf_reader)?;
@@ -1112,7 +1126,7 @@ impl AsyncStreamingProfiler {
             );
         }
 
-        Ok(malformed_records)
+        Ok((malformed_records, unread_after_fault))
     }
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
