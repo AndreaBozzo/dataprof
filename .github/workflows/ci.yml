@@ -492,6 +492,7 @@ jobs:
           uv run --no-sync python python/examples/messy_csv_inspection.py
           uv run --no-sync python python/examples/etl_quality_gate.py
           uv run --no-sync python python/examples/before_after_cleaning.py
+          uv run --no-sync python python/examples/baseline_checkpoint.py
 
   python-async-url-tests:
     name: Python Async URL Tests (${{ matrix.variant }})
