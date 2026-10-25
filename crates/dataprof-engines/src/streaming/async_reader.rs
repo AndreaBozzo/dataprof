@@ -13,8 +13,8 @@ use dataprof_runtime::{
 };
 
 use dataprof_json::record::{
-    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
-    json_value_text, malformed_array_error, non_object_record_error, read_json_record,
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
+    malformed_array_error, non_object_record_error, object_record, read_json_record,
     read_jsonl_line, wide_integer_record_error,
 };
 
@@ -36,6 +36,9 @@ struct ParsedChunk {
     /// the schema grows; each row covers the columns known when it was read,
     /// a prefix of the schema. Always empty for CSV, whose header is fixed.
     new_columns: Vec<String>,
+    /// The JSON reader stopped at the row cap with a record left unread, which
+    /// it did not decode. Such a chunk is the last one and holds no records.
+    past_cap: bool,
 }
 
 /// Structural violations the blocking reader task observed while parsing.
@@ -339,6 +342,16 @@ impl AsyncStreamingProfiler {
         // The task reports the structural violations it recovered from, so a
         // report can never describe a repaired scan as a clean one.
         let json_error_policy = self.json_error_policy;
+        // The JSON reader stops at the row cap, as the file scanner does, so a
+        // record past it is never decoded: under strict, one the caller did not
+        // ask for raised its error. That takes a cap counting every row read,
+        // which a systematic interval does not: it counts the rows it keeps.
+        let sampler = RowSampler::<()>::for_rows(&self.sampling_strategy)?;
+        let record_cap = self
+            .stop_condition
+            .max_rows()
+            .filter(|_| sampler.is_noop() || sampler.is_buffered())
+            .map(|cap| usize::try_from(cap).unwrap_or(usize::MAX));
         let byte_budget = self.stop_condition.max_bytes();
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
@@ -358,6 +371,7 @@ impl AsyncStreamingProfiler {
                 bytes_per_chunk,
                 reader_format,
                 json_error_policy,
+                record_cap,
             )
             .map(|(malformed_records, unread_after_fault)| ReaderOutcome {
                 malformed_records,
@@ -581,6 +595,7 @@ impl AsyncStreamingProfiler {
         let mut byte_offset = csv_reader.position().byte();
         let header_chunk = ParsedChunk {
             new_columns: Vec::new(),
+            past_cap: false,
             records: vec![header_fields],
             containers: Vec::new(),
             bytes_read: byte_offset,
@@ -634,6 +649,7 @@ impl AsyncStreamingProfiler {
             if bytes_in_chunk as usize >= chunk_target(sent) {
                 let chunk = ParsedChunk {
                     new_columns: Vec::new(),
+                    past_cap: false,
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
                     bytes_read: bytes_in_chunk,
@@ -651,6 +667,7 @@ impl AsyncStreamingProfiler {
         if !current_chunk.is_empty() {
             let chunk = ParsedChunk {
                 new_columns: Vec::new(),
+                past_cap: false,
                 records: current_chunk,
                 containers: Vec::new(),
                 bytes_read: bytes_in_chunk,
@@ -677,6 +694,7 @@ impl AsyncStreamingProfiler {
         bytes_per_chunk: usize,
         format: FileFormat,
         error_policy: JsonErrorPolicy,
+        record_cap: Option<usize>,
     ) -> Result<(usize, bool), DataProfilerError> {
         use serde_json::Value;
         use std::io::BufRead;
@@ -699,6 +717,8 @@ impl AsyncStreamingProfiler {
         let mut malformed_records: usize = 0;
         let mut unread_after_fault = false;
         let mut emitted_records: usize = 0;
+        let cap_reached = |emitted: usize| record_cap.is_some_and(|cap| emitted >= cap);
+        let mut past_cap = false;
 
         // Helper closure: convert a JSON object into a row aligned to known_columns,
         // with the positions of the fields that were an object or an array.
@@ -755,6 +775,7 @@ impl AsyncStreamingProfiler {
             if !*headers_sent && (!cols.is_empty() || final_flush) {
                 let header_chunk = ParsedChunk {
                     new_columns: Vec::new(),
+                    past_cap: false,
                     records: vec![cols.to_vec()],
                     containers: Vec::new(),
                     bytes_read: 0,
@@ -770,6 +791,7 @@ impl AsyncStreamingProfiler {
                 let (records, containers) = std::mem::take(chunk).into_iter().unzip();
                 let data_chunk = ParsedChunk {
                     new_columns: cols[*sent_columns..].to_vec(),
+                    past_cap: false,
                     records,
                     containers,
                     bytes_read: *bytes,
@@ -810,6 +832,10 @@ impl AsyncStreamingProfiler {
                         }
                     };
                     if !found {
+                        break;
+                    }
+                    if cap_reached(emitted_records) {
+                        past_cap = true;
                         break;
                     }
                     bytes_in_chunk += line.len() as u64;
@@ -892,24 +918,30 @@ impl AsyncStreamingProfiler {
                         .map_err(DataProfilerError::from)?;
                     bytes_in_chunk += text.len() as u64;
 
-                    if !text.trim().is_empty() {
+                    if !text.trim().is_empty() && cap_reached(0) {
+                        // A cap of zero rows leaves the document's one record
+                        // undecoded, as the file scanner does.
+                        past_cap = true;
+                    } else if !text.trim().is_empty() {
                         match serde_json::from_str::<serde_json::Value>(text.trim()) {
-                            Ok(serde_json::Value::Object(_))
-                                if has_wide_integer_literal(text.as_bytes()) =>
-                            {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(wide_integer_record_error("at position 1"));
-                                }
-                                malformed_records += 1;
-                            }
                             Ok(serde_json::Value::Object(obj)) => {
-                                let row = process_object(
-                                    &obj,
-                                    &mut known_columns,
-                                    &mut known_columns_set,
-                                );
-                                current_chunk.push(row);
-                                emitted_records += 1;
+                                match object_record(obj, text.as_bytes()) {
+                                    JsonRecord::Object(obj) => {
+                                        let row = process_object(
+                                            &obj,
+                                            &mut known_columns,
+                                            &mut known_columns_set,
+                                        );
+                                        current_chunk.push(row);
+                                        emitted_records += 1;
+                                    }
+                                    _ => {
+                                        if error_policy == JsonErrorPolicy::Strict {
+                                            return Err(wide_integer_record_error("at position 1"));
+                                        }
+                                        malformed_records += 1;
+                                    }
+                                }
                             }
                             Ok(value) => {
                                 if error_policy == JsonErrorPolicy::Strict {
@@ -970,6 +1002,13 @@ impl AsyncStreamingProfiler {
                             buf_reader.consume(1);
                             bytes_in_chunk += 1;
                             array_closed = true;
+                            break;
+                        }
+
+                        // A value remains, left unread with the rest of the
+                        // input: the suffix past the cap is not validated.
+                        if cap_reached(emitted_records) {
+                            past_cap = true;
                             break;
                         }
 
@@ -1124,6 +1163,15 @@ impl AsyncStreamingProfiler {
                 &tx,
                 true,
             );
+        }
+        if past_cap {
+            let _ = tx.blocking_send(ParsedChunk {
+                records: Vec::new(),
+                containers: Vec::new(),
+                bytes_read: 0,
+                new_columns: Vec::new(),
+                past_cap: true,
+            });
         }
 
         Ok((malformed_records, unread_after_fault))
@@ -1313,7 +1361,10 @@ impl AsyncStreamingProfiler {
                 // otherwise ask the reader for one more chunk, which resolves
                 // to `None` when the source is exhausted.
                 let more_rows_remain = rows_consumed < chunk_rows
-                    || rx.recv().await.is_some_and(|next| !next.records.is_empty());
+                    || rx
+                        .recv()
+                        .await
+                        .is_some_and(|next| !next.records.is_empty() || next.past_cap);
 
                 if more_rows_remain {
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
@@ -1924,6 +1975,98 @@ mod tests {
             .unwrap();
         assert_eq!(report.execution.rows_processed, 2);
         assert_eq!(report.execution.error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_async_row_cap_leaves_the_records_past_it_undecoded() {
+        // Each record past the first is refused under strict; a capped read
+        // must not decode it, as the file scanner does not.
+        for (data, format) in [
+            (
+                b"[{\"a\":1},{\"a\":18446744073709551616}]".as_ref(),
+                FileFormat::Json,
+            ),
+            (
+                b"{\"a\":1}\n{\"a\":18446744073709551616}\n".as_ref(),
+                FileFormat::Jsonl,
+            ),
+            (b"[{\"a\":1},oops".as_ref(), FileFormat::Json),
+            (b"{\"a\":1}\noops\n".as_ref(), FileFormat::Jsonl),
+        ] {
+            for cap in [0, 1] {
+                let source = BytesSource::new(
+                    bytes::Bytes::from_static(data),
+                    AsyncSourceInfo::new("test", format.clone()),
+                );
+                let report = AsyncStreamingProfiler::new()
+                    .json_error_policy(JsonErrorPolicy::Strict)
+                    .stop_condition(StopCondition::MaxRows(cap))
+                    .analyze_stream(source)
+                    .await
+                    .unwrap_or_else(|error| panic!("{data:?} cap {cap}: {error}"));
+                assert_eq!(report.execution.rows_processed, cap as usize);
+                assert_eq!(report.execution.error_count, 0);
+                assert!(matches!(
+                    report.execution.truncation_reason,
+                    Some(TruncationReason::MaxRows(n)) if n == cap
+                ));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_zero_row_cap_leaves_a_single_object_document_undecoded() {
+        let report = AsyncStreamingProfiler::new()
+            .json_error_policy(JsonErrorPolicy::Strict)
+            .stop_condition(StopCondition::MaxRows(0))
+            .analyze_stream(json_source(b"{\"a\":18446744073709551616}"))
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 0);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(TruncationReason::MaxRows(0))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_async_row_cap_under_systematic_sampling_counts_the_rows_kept() {
+        // A systematic interval counts the rows it keeps against the cap, so
+        // the reader must not stop after `cap` records read.
+        let report = AsyncStreamingProfiler::new()
+            .sampling(SamplingStrategy::Systematic { interval: 2 })
+            .stop_condition(StopCondition::MaxRows(2))
+            .analyze_stream(jsonl_source(
+                b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n{\"a\":4}\n{\"a\":5}\n{\"a\":6}\n",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 2);
+    }
+
+    #[tokio::test]
+    async fn test_async_row_cap_met_by_the_last_record_is_not_a_truncation() {
+        for cap in [1, 2] {
+            let source = json_source(b"[{\"a\":1}]");
+            let report = AsyncStreamingProfiler::new()
+                .json_error_policy(JsonErrorPolicy::Strict)
+                .stop_condition(StopCondition::MaxRows(cap))
+                .analyze_stream(source)
+                .await
+                .unwrap();
+            assert_eq!(report.execution.rows_processed, 1);
+            assert!(report.execution.truncation_reason.is_none(), "cap {cap}");
+            assert!(report.execution.source_exhausted, "cap {cap}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_single_object_reads_integer_negative_zero_as_zero() {
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(json_source(b"{\"v\":-0}"))
+            .await
+            .unwrap();
+        assert_eq!(report.column_profiles[0].data_type, DataType::Integer);
     }
 
     #[tokio::test]
