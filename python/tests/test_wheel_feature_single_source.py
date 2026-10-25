@@ -1,12 +1,12 @@
 """The shipped wheel feature set lives in exactly one place.
 
-`pip install dataprof` gets a wheel built by `.github/workflows/release.yml`
-while `pip install --no-binary dataprof` builds the sdist through the PEP 517
-backend (maturin reading `pyproject.toml`). If the feature list is declared
-in both places and they drift, the two install paths silently diverge in
-capability. The rule: `[tool.maturin] features` in `pyproject.toml` is the
+`pip install dataprof` gets a wheel the release builds in
+`.github/workflows/python-dist.yml`, while `pip install --no-binary dataprof`
+builds the sdist through the PEP 517 backend (maturin reading `pyproject.toml`).
+If the feature list is declared in both places and they drift, the two install
+paths silently diverge in capability. The rule: `[tool.maturin] features` in `pyproject.toml` is the
 single declaration, and neither the wheel nor the sdist step in the release
-workflow passes `--features` (maturin falls back to the pyproject config when
+build passes `--features` (maturin falls back to the pyproject config when
 the CLI flag is absent).
 """
 
@@ -20,8 +20,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _release_workflow() -> str:
-    return (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+def _release_build_workflow() -> str:
+    """The workflow holding the release's maturin steps, called by release.yml."""
+    return (REPO_ROOT / ".github/workflows/python-dist.yml").read_text(encoding="utf-8")
 
 
 def _pyproject() -> dict[str, Any]:
@@ -92,8 +93,8 @@ def test_release_workflow_does_not_duplicate_the_feature_flag():
     flag is absent, so a second declaration here is how the two install paths
     drift. (Cargo `cargo check/test --features` lines in the same file are CI
     matrix checks, not packaging, and are not governed by this rule.)"""
-    args = _maturin_args_lines(_release_workflow())
-    assert args, "expected at least one maturin build/sdist step in the release workflow"
+    args = _maturin_args_lines(_release_build_workflow())
+    assert args, "expected at least one maturin build/sdist step in the release build"
     for line in args:
         assert "--features" not in line, (
             f"maturin step must not pass --features ({line!r}); the shipped set is "
