@@ -374,9 +374,14 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """
     rows: list[dict] = []
     skipped = 0
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    lines = text.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    for lineno, raw_line in enumerate(lines, start=1):
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
         if not line.strip():
             continue
+
         try:
             value = _strict_json_loads(line)
         except _json.JSONDecodeError as exc:

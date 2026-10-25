@@ -105,8 +105,30 @@ JSONL_CASES = [
     ids=[case[0] for case in JSONL_CASES],
 )
 def test_jsonl_record_boundaries_agree_on_every_transport(label, payload, expected, tmp_path):
+    """Verify JSONL record boundary cases yield identical profiles across all transports."""
     results = _all_transports(payload, "jsonl", tmp_path)
     assert _agree(results) == expected, f"{label}: {results}"
+
+
+@pytest.mark.parametrize(
+    "sep",
+    [
+        "\u2028",  # LINE SEPARATOR
+        "\u2029",  # PARAGRAPH SEPARATOR
+        "\x85",  # NEXT LINE (NEL)
+    ],
+)
+def test_unicode_line_boundaries_parity_between_file_and_bytes(sep, tmp_path):
+    """Unicode line boundaries inside a string profile identically across transports (#1087)."""
+    # Inside a JSON string: valid string, must yield 2 clean rows with 0 errors
+    inside_payload = f'{{"v":"a{sep}b"}}\n{{"v":"safe"}}\n'.encode()
+    inside_results = _all_transports(inside_payload, "jsonl", tmp_path)
+    assert _agree(inside_results) == (2, 0)
+
+    # Between records on one line without newline: must be rejected across all transports
+    between_payload = f'{{"x":1}}{sep}{{"x":2}}\n'.encode()
+    between_results = _all_transports(between_payload, "jsonl", tmp_path)
+    assert _agree(between_results) == REJECTED
 
 
 # ---------------------------------------------------------------------------
