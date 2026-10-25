@@ -42,8 +42,8 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 use record::{
-    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
-    json_value_text, malformed_array_error, non_object_record_error, read_json_record,
+    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
+    malformed_array_error, non_object_record_error, object_record, read_json_record,
     read_jsonl_line, skip_ascii_whitespace, wide_integer_record_error,
 };
 use serde_json::Value;
@@ -627,16 +627,18 @@ where
     }
 
     match serde_json::from_str::<Value>(text.trim()) {
-        Ok(Value::Object(_)) if has_wide_integer_literal(text.as_bytes()) => {
-            if config.error_policy == JsonErrorPolicy::Strict {
-                return Err(wide_integer_record_error("at position 1"));
+        Ok(Value::Object(obj)) => match object_record(obj, text.as_bytes()) {
+            JsonRecord::Object(obj) => {
+                on_object(&obj);
+                Ok((1, 0, false))
             }
-            Ok((0, 1, false))
-        }
-        Ok(Value::Object(obj)) => {
-            on_object(&obj);
-            Ok((1, 0, false))
-        }
+            _ => {
+                if config.error_policy == JsonErrorPolicy::Strict {
+                    return Err(wide_integer_record_error("at position 1"));
+                }
+                Ok((0, 1, false))
+            }
+        },
         Ok(value) => {
             if config.error_policy == JsonErrorPolicy::Strict {
                 return Err(non_object_record_error(json_value_kind(&value), 1));
@@ -1483,6 +1485,27 @@ mod tests {
         assert_eq!(format, FileFormat::Json);
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
+    }
+
+    #[test]
+    fn test_integer_negative_zero_profiles_as_integer_zero_in_every_shape() {
+        for (data, config) in [
+            (
+                &b"[{\"v\":0},{\"v\":-0}]"[..],
+                JsonParserConfig::json_document(),
+            ),
+            (&b"{\"v\":0}\n{\"v\":-0}\n"[..], JsonParserConfig::jsonl()),
+            (&b"{\"v\":-0}"[..], JsonParserConfig::json_document()),
+        ] {
+            let (profiles, _stats, _rows, _malformed, _format) =
+                analyze_json_from_reader(Cursor::new(data), &config).unwrap();
+            assert_eq!(
+                profiles[0].data_type,
+                dataprof_core::DataType::Integer,
+                "{data:?}"
+            );
+            assert_eq!(profiles[0].unique_count, Some(1), "{data:?}");
+        }
     }
 
     #[test]

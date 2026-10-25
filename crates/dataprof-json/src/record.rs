@@ -59,10 +59,7 @@ pub fn read_json_record<R: BufRead>(
         Value::deserialize(&mut deserializer)
     };
     Ok(match parsed {
-        Ok(Value::Object(_)) if has_wide_integer_literal(&recorded.bytes) => {
-            JsonRecord::WideInteger
-        }
-        Ok(Value::Object(obj)) => JsonRecord::Object(obj),
+        Ok(Value::Object(obj)) => object_record(obj, &recorded.bytes),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
         Err(err) if err.is_io() => {
             // A failed read is not a malformed record that the caller can
@@ -117,35 +114,85 @@ pub fn may_hold_wide_integer(value: &Value) -> bool {
 /// that fits neither `i64` nor `u64`. String contents are skipped, and a token
 /// shorter than 19 digits, which always fits, is not parsed.
 pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
+    integer_literals(raw).any(|(_, token)| is_wide_integer(token))
+}
+
+/// The integer literals (no fraction, no exponent) of `raw` JSON text, each
+/// with the offset it starts at. String contents are skipped.
+fn integer_literals(raw: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
     let mut index = 0;
-    while index < raw.len() {
-        match raw[index] {
-            b'"' => {
-                index += 1;
-                while index < raw.len() && raw[index] != b'"' {
-                    index += if raw[index] == b'\\' { 2 } else { 1 };
-                }
-                index += 1;
-            }
-            byte if byte == b'-' || byte.is_ascii_digit() => {
-                let start = index;
-                while index < raw.len() && is_json_number_byte(raw[index]) {
+    std::iter::from_fn(move || {
+        while index < raw.len() {
+            match raw[index] {
+                b'"' => {
+                    index += 1;
+                    while index < raw.len() && raw[index] != b'"' {
+                        index += if raw[index] == b'\\' { 2 } else { 1 };
+                    }
                     index += 1;
                 }
-                let token = &raw[start..index];
-                let digits = token.len() - usize::from(token[0] == b'-');
-                if digits >= 19 && !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
-                    // decode-audit: impossible — every number byte is ASCII.
-                    let text = std::str::from_utf8(token).expect("JSON number bytes are ASCII");
-                    if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
-                        return true;
+                byte if byte == b'-' || byte.is_ascii_digit() => {
+                    let start = index;
+                    while index < raw.len() && is_json_number_byte(raw[index]) {
+                        index += 1;
+                    }
+                    let token = &raw[start..index];
+                    if !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                        return Some((start, token));
                     }
                 }
+                _ => index += 1,
             }
-            _ => index += 1,
+        }
+        None
+    })
+}
+
+fn is_wide_integer(token: &[u8]) -> bool {
+    let digits = token.len() - usize::from(token.first() == Some(&b'-'));
+    if digits < 19 {
+        return false;
+    }
+    // decode-audit: impossible — every number byte is ASCII.
+    let text = std::str::from_utf8(token).expect("JSON number bytes are ASCII");
+    text.parse::<i64>().is_err() && text.parse::<u64>().is_err()
+}
+
+/// The record an object parsed from `raw` profiles as: always
+/// [`JsonRecord::Object`] or [`JsonRecord::WideInteger`].
+///
+/// An object whose text holds an integer outside the 64-bit range is
+/// [`JsonRecord::WideInteger`]. serde_json reads the integer literal `-0` as
+/// the float `-0.0`, while Python's `json` reads it as the integer `0`, so
+/// `{"v":0}` and `{"v":-0}` were duplicates over Python bytes and distinct
+/// floats over the file and async readers. Such an object is read again with
+/// each `-0` as `0`, which keeps its type and its duplicates the same on every
+/// route. A float literal like `-0.0` keeps its sign on every route already.
+pub fn object_record(obj: JsonObject, raw: &[u8]) -> JsonRecord {
+    let mut negative_zeros = Vec::new();
+    for (start, token) in integer_literals(raw) {
+        if is_wide_integer(token) {
+            return JsonRecord::WideInteger;
+        }
+        if token == b"-0" {
+            negative_zeros.push(start);
         }
     }
-    false
+    if negative_zeros.is_empty() {
+        return JsonRecord::Object(obj);
+    }
+    // Blanking the sign leaves `0` where `-0` stood; whitespace is legal
+    // between any two JSON tokens, so the text stays the same document.
+    let mut unsigned = raw.to_vec();
+    for start in negative_zeros {
+        unsigned[start] = b' ';
+    }
+    // decode-audit: impossible — `raw` parsed as this object, and only a sign
+    // was replaced by whitespace.
+    JsonRecord::Object(
+        serde_json::from_slice::<JsonObject>(&unsigned)
+            .expect("an object with its `-0` signs blanked is still an object"),
+    )
 }
 
 /// Build the error for a record refused as [`JsonRecord::WideInteger`].
@@ -341,10 +388,7 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
 /// JSON values.
 pub fn read_jsonl_line(line: &str) -> JsonRecord {
     match serde_json::from_str::<Value>(line.trim()) {
-        Ok(Value::Object(_)) if has_wide_integer_literal(line.as_bytes()) => {
-            JsonRecord::WideInteger
-        }
-        Ok(Value::Object(obj)) => JsonRecord::Object(obj),
+        Ok(Value::Object(obj)) => object_record(obj, line.as_bytes()),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
         // An integer too long even for f64 fails to parse at all; the line is
         // consumed either way, so name it as what it holds.
@@ -373,6 +417,29 @@ mod tests {
     impl Read for LocalReadFailure {
         fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, Self))
+        }
+    }
+
+    #[test]
+    fn integer_negative_zero_reads_as_zero_and_float_negative_zero_keeps_its_sign() {
+        let text = r#"{"v":-0,"w":[-0,{"k":-0}],"s":"-0","-0":1,"f":-0.0,"e":-0e0}"#;
+        let from_line = match read_jsonl_line(text) {
+            JsonRecord::Object(obj) => obj,
+            _ => panic!("a JSONL object"),
+        };
+        let mut reader = Cursor::new(text.as_bytes());
+        let from_array = match read_json_record(&mut reader, b'{').unwrap() {
+            JsonRecord::Object(obj) => obj,
+            _ => panic!("an array element object"),
+        };
+
+        for obj in [from_line, from_array] {
+            assert_eq!(json_value_text(&obj["v"]), "0");
+            assert_eq!(json_value_text(&obj["w"]), r#"[0,{"k":0}]"#);
+            assert_eq!(json_value_text(&obj["s"]), "-0");
+            assert!(obj.contains_key("-0"));
+            assert_eq!(json_value_text(&obj["f"]), "-0.0");
+            assert_eq!(json_value_text(&obj["e"]), "-0.0");
         }
     }
 

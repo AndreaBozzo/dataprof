@@ -118,3 +118,40 @@ def test_in_range_integers_floats_and_strings_stay_accepted(tmp_path: Path) -> N
     path.write_bytes(data)
     outcomes = _routes(path, data, "json", "strict")
     assert outcomes == dict.fromkeys(outcomes, (4, 0)), outcomes
+
+
+#: The wide integer sits past the cap, so a capped read never decodes it.
+CAPPED: dict[str, tuple[str, bytes]] = {
+    "array": ("json", b'[{"a":1},{"a":18446744073709551616}]'),
+    "jsonl": ("jsonl", b'{"a":1}\n{"a":18446744073709551616}\n'),
+    "array, malformed suffix": ("json", b'[{"a":1},{"a":1e400},oops'),
+}
+
+
+@pytest.mark.parametrize("on_error", ["strict", "skip"])
+@pytest.mark.parametrize("cap", [0, 1])
+@pytest.mark.parametrize("label", list(CAPPED))
+def test_a_capped_async_read_leaves_the_records_past_the_cap_undecoded(
+    tmp_path: Path, label: str, cap: int, on_error: str
+) -> None:
+    # The async reader decoded ahead of the cap: strict raised on a record the
+    # caller did not ask for, and skip counted it and called the source read
+    # in full. The file scanner stops before decoding the next record.
+    fmt, data = CAPPED[label]
+    path = tmp_path / f"capped.{fmt}"
+    path.write_bytes(data)
+
+    def summary(report) -> tuple:
+        execution = report.to_dict()["execution"]
+        keys = ("rows_processed", "error_count", "source_exhausted", "truncation_reason")
+        return tuple(execution[key] for key in keys)
+
+    expected = summary(dp.profile(path, max_rows=cap, jsonl_on_error=on_error))
+    assert expected == (cap, 0, False, f"max_rows({cap})")
+    for chunk_size in (None, 1):
+        from_file = profile_file(path, max_rows=cap, jsonl_on_error=on_error, chunk_size=chunk_size)
+        from_bytes = profile_bytes(
+            data, format=fmt, max_rows=cap, jsonl_on_error=on_error, chunk_size=chunk_size
+        )
+        assert summary(asyncio.run(from_file)) == expected
+        assert summary(asyncio.run(from_bytes)) == expected
