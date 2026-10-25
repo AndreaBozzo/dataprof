@@ -27,6 +27,11 @@ and where dataprof fits. It makes no performance comparisons.
   sample with a full scan or promise parity with another profiling tool.
 - **Reports you can retain.** `save()`, `load()` and `compare()` support
   inspecting changes between runs without re-profiling the earlier input.
+- **A summary for an agent.** `to_llm_context()` emits shape, provenance
+  caveats, quality flags, schema and detected pattern names. Raw cell values
+  are redacted by default; detected sensitive-pattern values are never echoed.
+  Its token budget is approximate, and the dataset header is always emitted
+  even when it exceeds that budget.
 - **File profiling without a DataFrame dependency.** The base Python install has no
   Python runtime dependencies. Profiling local files does not require pandas
   or Polars. This is an installation choice, not a memory-use comparison.
@@ -124,6 +129,10 @@ when it already expresses the requirements you need to enforce.
 dataprof fits when the requirement is a threshold over the profile it already
 produces, and you want the decision tied to the available evidence. It does
 not replace arbitrary row-level expectations or business logic in these tools.
+In particular, `check()` has no rule for repeated key values, per-column value
+bounds, allowed-value sets or declared column types. Use a validation tool for
+those requirements. `max_duplicate_rows` checks repeated whole rows, which
+does not establish that a business key is unique.
 
 ## Rule of thumb
 
