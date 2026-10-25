@@ -654,7 +654,7 @@ score either.
 Flat `DataQualityMetrics` accessors, deprecated in 0.9, are removed in 0.12.
 The old names raise `AttributeError` naming the replacement key. Use nested
 dimensions so skipped dimensions are explicit (see the
-[migration table](../release-notes.md#removed-flat-quality-accessors)):
+[migration table](https://github.com/AndreaBozzo/dataprof/blob/v0.12.0/docs/release-notes.md#removed-flat-quality-accessors)):
 
 ```python
 if q.completeness is not None:

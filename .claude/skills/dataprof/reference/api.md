@@ -160,7 +160,7 @@ source has, and is `None` without one; `key_values_checked` is then absent and
 
 Flat evidence accessors were removed in 0.12 and raise `AttributeError`.
 Read the nested dimension dicts listed above, checking for `None` first.
-See the [migration table](../../../../docs/release-notes.md#removed-flat-quality-accessors).
+See the [migration table](https://github.com/AndreaBozzo/dataprof/blob/v0.12.0/docs/release-notes.md#removed-flat-quality-accessors).
 
 </details>
 
