@@ -30,6 +30,8 @@ jobs:
       setup-versions: ${{ steps.contract.outputs.setup-versions }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -107,6 +109,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
     - uses: actions/setup-python@v7
       with:
         # Install every declared version on Windows/macOS. Linux builds run
@@ -226,6 +230,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
     - uses: actions/setup-python@v7
       with:
         python-version: '3.11'
@@ -286,6 +292,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
     - uses: actions/setup-python@v7
       with:
         python-version: ${{ needs.python-interpreters.outputs.setup-versions }}
@@ -364,6 +372,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
     - uses: actions/setup-python@v7
       with:
         python-version: '3.11'

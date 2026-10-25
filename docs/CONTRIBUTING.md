@@ -179,7 +179,8 @@ uploaded and nothing is published to crates.io or PyPI.
 
 The `Release Rehearsal` workflow runs the same file and publishes nothing: no
 GitHub release, no upload, no crates.io or PyPI. Run it after changing the
-interpreter set, the build images or the maturin version:
+interpreter set, the shipped feature set (`[tool.maturin] features`), the build
+images or the maturin version:
 
 ```bash
 gh workflow run release-rehearsal.yml --ref <branch>

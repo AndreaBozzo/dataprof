@@ -3,8 +3,9 @@ name: Release Rehearsal
 # Builds, installs and smoke-tests every release wheel and the sdist through the
 # release's own python-dist.yml, and publishes nothing: no GitHub release, no
 # upload, no crates.io or PyPI. Run it after changing the interpreter set, the
-# build images or the maturin version (docs/CONTRIBUTING.md); a pull request
-# that changes the release's Python build runs it on its own.
+# shipped feature set, the build images or the maturin version
+# (docs/CONTRIBUTING.md); a pull request that changes the release's Python
+# build runs it on its own.
 
 on:
   workflow_dispatch:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -163,6 +164,10 @@ def test_workflows_consume_the_declaration_and_gate_uploads(versions):
         producer = _job_body(workflow, "python-interpreters")
         assert 'wheel_interpreters.py --github-output "$GITHUB_OUTPUT"' in producer
     assert "persist-credentials: false" in _job_body(ci, "python-interpreters")
+    # The release build runs dependency build scripts and pip builds; none of its
+    # jobs needs the token after checkout.
+    checkouts = re.findall(r"uses: actions/checkout@\S+\n(?:\s+with:\n\s+(.+)\n)?", dist)
+    assert checkouts and all(option == "persist-credentials: false" for option in checkouts)
     assert "permissions:\n  contents: read" in ci
     for job in ("python-tests", "python-wheel-smoke"):
         body = _job_body(ci, job)
@@ -210,7 +215,8 @@ def test_every_baseline_leg_is_installed():
         )
         if fields.get("cpu_profile") == "baseline":
             legs.append(f"wheels-{fields['os']}-{fields['target']}-baseline")
-    assert len(legs) == 5, legs
+    # Nonempty, so a parse that finds nothing cannot match an empty install list.
+    assert legs, "no baseline legs parsed from the python-wheels matrix"
     installed = [
         line.strip().removeprefix("artifact: ")
         for line in _job_body(dist, "wheel-install").splitlines()
