@@ -58,11 +58,24 @@ def _parse_json_int(token: str) -> int:
     return value
 
 
+def _parse_json_float(token: str) -> float:
+    # A numeric token that overflows a float decodes to infinity in standard
+    # json.loads. The file and async readers refuse such numbers as out of range;
+    # bytes refuse them too (#1086).
+    value = float(token)
+    if _math.isinf(value):
+        raise _NonStandardJsonConstant(token, "number out of range")
+    return value
+
+
 def _strict_json_loads(text: str) -> _Any:
-    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions and
-    integers outside the 64-bit range."""
+    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions,
+    integers outside the 64-bit range, and float overflow."""
     return _json.loads(
-        text, parse_constant=_reject_nonstandard_json_constant, parse_int=_parse_json_int
+        text,
+        parse_constant=_reject_nonstandard_json_constant,
+        parse_int=_parse_json_int,
+        parse_float=_parse_json_float,
     )
 
 
