@@ -1263,7 +1263,11 @@ A score decided on its interval also carries `bounds`:
 so nothing depends on how a float was formatted into a sentence.
 
 See [`python/examples/etl_quality_gate.py`](../../python/examples/etl_quality_gate.py)
-for a runnable gate over four drops.
+for a runnable gate over four drops, and
+[`python/examples/baseline_checkpoint.py`](../../python/examples/baseline_checkpoint.py)
+for one that judges each drop against the last accepted report, promotes only
+on a pass, and shows a schema change, a metric that was not analyzed and a
+baseline written by an older release reaching their verdicts.
 
 ### `python -m dataprof.check` -- CI entrypoint (0.12+)
 
@@ -1374,6 +1378,10 @@ python -m dataprof.check orders.csv --min-quality 90 \
   --forbid-removed-columns --report candidate.json --json > verdict.json \
   && mv candidate.json baseline.json
 ```
+
+The [baseline checkpoint example](../../examples/README.md#4-baseline-checkpoint)
+runs this cycle over seven drops, including the ones that must not become the
+baseline, and shows it as a CI job that keeps the baseline in the repository.
 
 For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
 GitHub Actions job runs the gate and retains its result even when it fails:
