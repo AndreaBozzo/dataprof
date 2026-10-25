@@ -1,10 +1,13 @@
-"""Delimiter detection never chooses a delimiter the header does not use.
+"""Delimiter detection reads each file the way its header and records say.
 
-Every reader cuts a record to the header's width. When detection picked a
-delimiter that split the data rows but left the header as one field, a
-one-column file of composite keys was profiled as the keys' first parts:
-``123|456`` and ``123|789`` became two ``123``, and ``max_duplicate_rows=0``
-failed on a duplicate the input does not contain (#1092).
+Every reader holds a record to the header's width. Detection that chose a
+delimiter the header did not split, scored a CR-only file as one header
+record, or counted a trailing empty field against its delimiter, made the
+readers cut or pad the rows: composite keys ``123|456`` and ``123|789`` became
+two ``123`` and ``max_duplicate_rows=0`` failed (#1092, #1097), and a semicolon
+export with trailing ``;`` gained an invented null column (#1096). Synchronous
+bytes detected with ``csv.Sniffer`` instead, which fell back to comma on a long
+first row and hid a null from ``max_null_percentage=0`` (#1095).
 
 ``tests/csv_delimiter_header.rs`` is the Rust twin.
 """
@@ -26,39 +29,66 @@ except ImportError:
         allow_module_level=True,
     )
 
-DATA = b"key\n123|456\n123|789\n"
+#: label -> (bytes, expected columns as (name, null_count), duplicate rows)
+CASES: dict[str, tuple[bytes, list[tuple[str, int]], int]] = {
+    "composite keys, LF": (b"key\n123|456\n123|789\n", [("key", 0)], 0),
+    "composite keys, CR": (b"key\r123|456\r123|789\r", [("key", 0)], 0),
+    "semicolon rows with a trailing empty field": (
+        b"id;amount,EUR\n1;10,50;\n2;20;\n",
+        [("id", 0), ("amount,EUR", 0)],
+        0,
+    ),
+    "semicolon, CR": (b"id;value\r1;10\r2;\r", [("id", 0), ("value", 1)], 0),
+    "semicolon, long first row": (
+        ("payload;amount\n" + "x" * 8192 + ";\n").encode(),
+        [("payload", 0), ("amount", 1)],
+        0,
+    ),
+    "semicolon rows that comma reads only after cutting": (
+        b"id,part;value\nx;y,z,\nu;v,w,\n",
+        [("id,part", 0), ("value", 0)],
+        0,
+    ),
+    "BOM, then a blank line": (
+        b"\xef\xbb\xbf\nid;value\n1;2\n3;\n",
+        [("id", 0), ("value", 1)],
+        0,
+    ),
+}
+
+#: Synchronous bytes refuse a ragged row rather than cut it, on every release.
+STRICT_BYTES = {"semicolon rows with a trailing empty field"}
 
 
 def _shape(report: dp.ProfileReport) -> dict[str, Any]:
     doc = report.to_dict()
-    column = doc["columns"][0]
     return {
-        "columns": len(doc["columns"]),
-        "data_type": column["data_type"],
-        "unique_count": column["unique_count"],
+        "columns": [(c["name"], c["null_count"]) for c in doc["columns"]],
         "duplicate_rows": doc["quality"]["uniqueness"]["duplicate_rows"],
-        "verdict": report.check(max_duplicate_rows=0).verdict,
     }
 
 
-def test_composite_keys_keep_their_full_value(tmp_path: Path) -> None:
-    path = tmp_path / "keys.csv"
-    path.write_bytes(DATA)
+def test_detected_delimiter_keeps_every_value(tmp_path: Path) -> None:
+    wrong = {}
+    for label, (data, columns, duplicates) in CASES.items():
+        path = tmp_path / "probe.csv"
+        path.write_bytes(data)
+        routes = {
+            "async bytes": _shape(asyncio.run(profile_bytes(data, format="csv"))),
+            "async file": _shape(asyncio.run(profile_file(path))),
+        }
+        if label not in STRICT_BYTES:
+            routes["bytes"] = _shape(dp.profile(data, format="csv"))
+        for engine in ("auto", "incremental", "columnar"):
+            routes[engine] = _shape(dp.profile(path, engine=engine))
 
-    routes = {
-        "bytes": _shape(dp.profile(DATA, format="csv")),
-        "async bytes": _shape(asyncio.run(profile_bytes(DATA, format="csv"))),
-        "async file": _shape(asyncio.run(profile_file(path))),
-    }
-    for engine in ("auto", "incremental", "columnar"):
-        routes[engine] = _shape(dp.profile(path, engine=engine))
-
-    expected = {
-        "columns": 1,
-        "data_type": "string",
-        "unique_count": 2,
-        "duplicate_rows": 0,
-        "verdict": "pass",
-    }
-    wrong = {route: shape for route, shape in routes.items() if shape != expected}
+        expected = {"columns": columns, "duplicate_rows": duplicates}
+        wrong.update(
+            {f"[{label}] {route}": shape for route, shape in routes.items() if shape != expected}
+        )
     assert not wrong, wrong
+
+
+def test_bytes_gate_sees_the_null_a_file_sees() -> None:
+    data = ("payload;amount\n" + "x" * 8192 + ";\n").encode()
+    assert dp.profile(data, format="csv").check(max_null_percentage=0).verdict == "fail"

@@ -20,6 +20,7 @@ bytes = { workspace = true, optional = true }
 csv = { workspace = true, optional = true }
 dataprof = { workspace = true, default-features = true }
 dataprof-core = { workspace = true }
+dataprof-csv = { workspace = true }
 dataprof-parquet = { workspace = true, features = ["arrow"] }
 dataprof-runtime = { workspace = true }
 pyo3 = { workspace = true }

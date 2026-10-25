@@ -1076,6 +1076,7 @@ dependencies = [
  "csv",
  "dataprof",
  "dataprof-core",
+ "dataprof-csv",
  "dataprof-parquet",
  "dataprof-runtime",
  "pyo3",
