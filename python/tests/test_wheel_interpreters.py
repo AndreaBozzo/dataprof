@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -158,10 +159,15 @@ def test_workflows_consume_the_declaration_and_gate_uploads(versions):
     """Ensure generated build inputs and artifact checks remain wired into CI."""
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for workflow in (ci, release):
+    dist = (ROOT / ".github/workflows/python-dist.yml").read_text(encoding="utf-8")
+    for workflow in (ci, dist):
         producer = _job_body(workflow, "python-interpreters")
         assert 'wheel_interpreters.py --github-output "$GITHUB_OUTPUT"' in producer
     assert "persist-credentials: false" in _job_body(ci, "python-interpreters")
+    # The release build runs dependency build scripts and pip builds; none of its
+    # jobs needs the token after checkout.
+    checkouts = re.findall(r"uses: actions/checkout@\S+\n(?:\s+with:\n\s+(.+)\n)?", dist)
+    assert checkouts and all(option == "persist-credentials: false" for option in checkouts)
     assert "permissions:\n  contents: read" in ci
     for job in ("python-tests", "python-wheel-smoke"):
         body = _job_body(ci, job)
@@ -169,24 +175,77 @@ def test_workflows_consume_the_declaration_and_gate_uploads(versions):
         assert "python: ${{ fromJSON(needs.python-interpreters.outputs.versions) }}" in body
         assert "python-version: ${{ matrix.python }}" in body
         assert "UV_PYTHON: ${{ matrix.python }}" in body
-    build = _job_body(release, "python-wheels")
-    assert "rust-release-checks, python-interpreters]" in build
+    build = _job_body(dist, "python-wheels")
+    assert "needs: python-interpreters\n" in build
     assert "python-version: ${{ needs.python-interpreters.outputs.setup-versions }}" in build
     assert "--interpreter ${{ steps.build-interpreters.outputs.interpreters }}" in build
     assert "if: runner.os != 'Linux'\n      uses: astral-sh/setup-uv@v7" in build
     assert "${{ runner.os != 'Linux' && '--resolve-interpreters' || '' }}" in build
     assert build.index("id: build-interpreters") < build.index("args: --release")
     assert "--find-interpreter" not in build
-    assert "PYO3_USE_ABI3_FORWARD_COMPATIBILITY" not in release
+    assert "PYO3_USE_ABI3_FORWARD_COMPATIBILITY" not in dist
     verify = build.index("wheel_interpreters.py --wheels dist")
     assert build.index("args: --release") < verify < build.index("Rename wheels")
-    assert verify < build.index("uses: actions/upload-artifact") < build.index("gh release upload")
+    assert verify < build.index("uses: actions/upload-artifact")
+    # Only verified artifacts reach the release: its upload job waits for the
+    # whole build, installs included, and the build itself uploads nothing.
+    assert "gh release" not in dist
+    uploads = _job_body(release, "python-release-assets")
+    assert "needs: [create-release, python-dist]" in uploads
+    assert "gh release upload" in uploads
     outputs = contract.github_outputs(versions)
     assert f"versions={json.dumps(versions)}\n" in outputs
     assert "interpreters=" + " ".join("python" + v for v in versions) + "\n" in outputs
     assert (
         "setup-versions<<PYTHON_VERSIONS\n" + "\n".join(versions) + "\nPYTHON_VERSIONS\n" in outputs
     )
+
+
+def test_every_baseline_leg_is_installed():
+    """A baseline leg without an install job would ship wheels nothing has run.
+
+    The install job pairs each baseline artifact with a runner of its platform;
+    a build leg added to the matrix needs its pair there too.
+    """
+    dist = (ROOT / ".github/workflows/python-dist.yml").read_text(encoding="utf-8")
+    legs = []
+    for entry in _job_body(dist, "python-wheels").split("- os: ")[1:]:
+        fields = dict(
+            line.strip().split(": ", 1) for line in ("os: " + entry).splitlines() if ": " in line
+        )
+        if fields.get("cpu_profile") == "baseline":
+            legs.append(f"wheels-{fields['os']}-{fields['target']}-baseline")
+    # Nonempty, so a parse that finds nothing cannot match an empty install list.
+    assert legs, "no baseline legs parsed from the python-wheels matrix"
+    installed = [
+        line.strip().removeprefix("artifact: ")
+        for line in _job_body(dist, "wheel-install").splitlines()
+        if line.strip().startswith("artifact: ")
+    ]
+    assert sorted(installed) == sorted(legs)
+
+
+def test_release_and_rehearsal_share_one_build():
+    """The rehearsal proves what the release runs only while both call one build.
+
+    Neither caller may carry a maturin step of its own, and the rehearsal must
+    have no way to publish: no release, upload, crates.io or PyPI step, and a
+    read-only token.
+    """
+    workflows = ROOT / ".github/workflows"
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    rehearsal = (workflows / "release-rehearsal.yml").read_text(encoding="utf-8")
+    for caller in (release, rehearsal):
+        job = _job_body(caller, "python-dist")
+        assert "uses: ./.github/workflows/python-dist.yml" in job
+        assert "maturin-action" not in caller
+    code = "\n".join(
+        line for line in rehearsal.lower().splitlines() if not line.lstrip().startswith("#")
+    )
+    for publishing in ("gh release", "cargo publish", "pypi", "secrets."):
+        assert publishing not in code, publishing
+    assert "permissions:\n  contents: read\n" in rehearsal
+    assert "contents: write" not in rehearsal
 
 
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):

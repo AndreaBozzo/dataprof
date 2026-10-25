@@ -15,20 +15,6 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  python-interpreters:
-    name: Python Interpreter Contract
-    runs-on: ubuntu-latest
-    outputs:
-      setup-versions: ${{ steps.contract.outputs.setup-versions }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.14'
-      - name: Validate metadata and generate build interpreters
-        id: contract
-        run: python .github/scripts/wheel_interpreters.py --github-output "$GITHUB_OUTPUT"
-
   # Step 1: Generate release notes and create GitHub release
   create-release:
     name: Create GitHub Release
@@ -281,7 +267,7 @@ jobs:
   rust-crates:
     name: Publish Rust Crates
     runs-on: ubuntu-latest
-    needs: [rust-package-checks, python-wheels]
+    needs: [rust-package-checks, python-dist]
     steps:
     - uses: actions/checkout@v7.0.1
 
@@ -395,256 +381,56 @@ jobs:
         done
       shell: bash
 
-  # Step 5: Build Python wheels for the base public package API.
-  python-wheels:
-    name: Build Python Wheels (${{ matrix.os }}-${{ matrix.target }}-${{ matrix.cpu_profile }})
-    runs-on: ${{ matrix.os }}
-    needs: [create-release, rust-release-checks, python-interpreters]
-    strategy:
-      # One runner failing (sccache server startup on macos-15-intel timed out
-      # during the first v0.9.0 attempt) must not cancel the other eight wheels.
-      # Let them finish so a re-run only has to retry the one that broke.
-      fail-fast: false
-      matrix:
-        include:
-          # Baseline compatibility builds (maximum compatibility)
-          - os: ubuntu-latest
-            target: x86_64
-            cpu_profile: baseline
-            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
-          - os: ubuntu-latest
-            target: aarch64
-            cpu_profile: baseline
-            rustflags: "-C target-cpu=generic -C opt-level=2"
-            # manylinux2014's aarch64 cross image ships GCC 4.8.5, which does
-            # not define __ARM_ARCH; ring's assembly refuses to build without
-            # it and upstream closed that WONTFIX (briansmith/ring#1728).
-            # 2_28 ships GCC 7.5. Raises this arch's glibc floor 2.17 -> 2.28.
-            manylinux: '2_28'
-          - os: windows-latest
-            target: x64
-            cpu_profile: baseline
-            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
-          - os: macos-15-intel
-            target: x86_64
-            cpu_profile: baseline
-            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
-          - os: macos-latest
-            target: aarch64
-            cpu_profile: baseline
-            # No -C target-cpu: `generic` strips neon/aes/sha2/pmull, which
-            # ring asserts are statically present on aarch64-apple-darwin
-            # (src/cpu/arm/darwin.rs). Every arm64 Mac has them, so `generic`
-            # bought no compatibility and cost performance.
-            rustflags: "-C opt-level=2"
+  # Step 5: Build every Python wheel and the sdist, then install and smoke-test
+  # them. release-rehearsal.yml runs the same workflow without publishing.
+  python-dist:
+    name: Python Distributions
+    needs: [create-release, rust-release-checks]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/python-dist.yml
+    with:
+      sccache: true
 
-          # Optimized builds (performance optimized)
-          - os: ubuntu-latest
-            target: x86_64
-            cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
-          - os: windows-latest
-            target: x64
-            cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
-          - os: macos-15-intel
-            target: x86_64
-            cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
-          - os: macos-latest
-            target: aarch64
-            cpu_profile: optimized
-            # The same ring constraint as the baseline leg above, from the
-            # other side. ring asserts `CAPS_STATIC == MIN_STATIC_FEATURES`
-            # exactly on aarch64-apple-darwin (src/cpu/arm/darwin.rs), so
-            # `native` fails on a current Apple Silicon runner by enabling
-            # more than that baseline, just as `generic` failed by enabling
-            # less. rustc already defaults this target to apple-m1, which is
-            # what `native` was reaching for, so dropping it costs nothing.
-            rustflags: "-C opt-level=3"
-
+  # Step 6: Attach the wheels and the sdist to the draft release.
+  python-release-assets:
+    name: Upload Python Distributions to Release
+    runs-on: ubuntu-latest
+    needs: [create-release, python-dist]
     steps:
-    - uses: actions/checkout@v7.0.1
-    - uses: actions/setup-python@v7
+    - name: Download wheels
+      uses: actions/download-artifact@v8
       with:
-        # Install every declared version on Windows/macOS. Linux builds run
-        # inside manylinux, where maturin selects the explicit names below.
-        python-version: ${{ needs.python-interpreters.outputs.setup-versions }}
-
-    - name: Install uv for host interpreter discovery
-      if: runner.os != 'Linux'
-      uses: astral-sh/setup-uv@v7
-
-    - name: Select build interpreters
-      id: build-interpreters
-      # Linux needs names inside manylinux; Windows/macOS use installed host paths.
-      run: python .github/scripts/wheel_interpreters.py --github-output "$GITHUB_OUTPUT" ${{ runner.os != 'Linux' && '--resolve-interpreters' || '' }}
-      shell: bash
-
-    - name: Read the pinned toolchain
-      id: toolchain
-      shell: bash
-      run: |
-        channel=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)
-        if [ -z "$channel" ]; then
-          echo "::error::no channel in rust-toolchain.toml"
-          exit 1
-        fi
-        echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-    - name: Build wheels (${{ matrix.cpu_profile }})
-      uses: PyO3/maturin-action@v1
-      with:
-        target: ${{ matrix.target }}
-        # The shipped feature set is declared once, in `[tool.maturin] features`
-        # in pyproject.toml; building without --features keeps the wheel and the
-        # PEP 517 sdist build from silently diverging (see issue #589).
-        args: --release --out dist --interpreter ${{ steps.build-interpreters.outputs.interpreters }}
-        sccache: 'true'
-        manylinux: ${{ matrix.manylinux || 'auto' }}
-        # Ensure compatibility flags are properly set
-        rust-toolchain: ${{ steps.toolchain.outputs.channel }}
-      env:
-        RUSTFLAGS: ${{ matrix.rustflags }}
-        # Additional environment variables to ensure compatibility for all targets
-        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
-        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: ${{ matrix.rustflags }}
-        CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
-        CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
-        # Disable CPU-specific optimizations in C dependencies (Linux/macOS x86_64 only)
-        CFLAGS: ${{ matrix.target == 'x86_64' && '-march=x86-64' || '' }}
-        CXXFLAGS: ${{ matrix.target == 'x86_64' && '-march=x86-64' || '' }}
-
-    - name: Verify published interpreter and ABI set
-      run: python .github/scripts/wheel_interpreters.py --wheels dist
-      shell: bash
-
-    - name: Verify wheel compatibility (baseline only)
-      if: matrix.cpu_profile == 'baseline'
-      run: |
-        # Install objdump/readelf for analysis (Linux only for now)
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          echo "Verifying baseline wheel has no advanced CPU instructions..."
-          cd dist
-
-          for wheel in *.whl; do
-            if [ -f "$wheel" ]; then
-              echo "Analyzing wheel: $wheel"
-
-              # Extract wheel and find .so files
-              python -m zipfile -e "$wheel" wheel_extracted/
-
-              # Check for advanced CPU instructions in shared libraries
-              find wheel_extracted/ -name "*.so" -exec sh -c '
-                echo "Checking $1 for advanced CPU instructions..."
-                if objdump -d "$1" 2>/dev/null | grep -E "(vzeroupper|vmovdqu|vpor|vpaddd)" >/dev/null; then
-                  echo "WARNING: Found AVX instructions in $1"
-                  echo "This wheel may not be compatible with older CPUs"
-                else
-                  echo "OK: No advanced CPU instructions found in $1"
-                fi
-              ' _ {} \;
-
-              rm -rf wheel_extracted/
-            fi
-          done
-        else
-          echo "Skipping compatibility check on ${{ matrix.os }}"
-        fi
-      shell: bash
-
-    - name: Rename wheels with CPU profile suffix
-      run: |
-        cd dist
-        for wheel in *.whl; do
-          if [ -f "$wheel" ]; then
-            # Only rename optimized wheels - baseline wheels keep standard names for PyPI
-            if [ "${{ matrix.cpu_profile }}" = "optimized" ]; then
-              base_name="${wheel%.whl}"
-              new_name="${base_name}-optimized.whl"
-              mv "$wheel" "$new_name"
-              echo "Renamed optimized wheel: $wheel -> $new_name"
-            else
-              echo "Keeping baseline wheel name: $wheel"
-            fi
-          fi
-        done
-      shell: bash
-
-    - name: Upload wheels as artifacts
-      uses: actions/upload-artifact@v7
-      with:
-        name: wheels-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.cpu_profile }}
+        pattern: wheels-*
+        merge-multiple: true
         path: dist
 
-    - name: Upload wheels to release
-      run: |
-        cd dist
-        for wheel in *.whl; do
-          if [ -f "$wheel" ]; then
-            echo "Uploading wheel: $wheel"
-            gh release upload ${{ needs.create-release.outputs.tag }} "$wheel" --clobber
-          fi
-        done
-      shell: bash
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Step 6: Build an sdist so unsupported environments still have an install path.
-  python-sdist:
-    name: Build Python sdist
-    runs-on: ubuntu-latest
-    needs: [create-release, rust-release-checks]
-    steps:
-    - uses: actions/checkout@v7.0.1
-    - uses: actions/setup-python@v7
-      with:
-        python-version: '3.11'
-
-    - name: Read the pinned toolchain
-      id: toolchain
-      shell: bash
-      run: |
-        channel=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)
-        if [ -z "$channel" ]; then
-          echo "::error::no channel in rust-toolchain.toml"
-          exit 1
-        fi
-        echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-    - name: Build sdist
-      uses: PyO3/maturin-action@v1
-      with:
-        command: sdist
-        args: --out dist
-        manylinux: auto
-        rust-toolchain: ${{ steps.toolchain.outputs.channel }}
-
-    - name: Upload sdist as artifact
-      uses: actions/upload-artifact@v7
+    - name: Download sdist
+      uses: actions/download-artifact@v8
       with:
         name: python-sdist
-        path: dist/*.tar.gz
+        path: dist
 
-    - name: Upload sdist to release
+    - name: Upload distributions to release
       run: |
         cd dist
-        for sdist in *.tar.gz; do
-          if [ -f "$sdist" ]; then
-            echo "Uploading sdist: $sdist"
-            gh release upload ${{ needs.create-release.outputs.tag }} "$sdist" --clobber
+        for file in *.whl *.tar.gz; do
+          if [ -f "$file" ]; then
+            echo "Uploading: $file"
+            gh release upload ${{ needs.create-release.outputs.tag }} "$file" --clobber
           fi
         done
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # No checkout in this job, so gh cannot read the repository from git.
+        GH_REPO: ${{ github.repository }}
 
   # Step 7: Publish to PyPI after Rust crates are published.
   pypi-publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [rust-crates, python-wheels, python-sdist]
+    needs: [rust-crates, python-dist]
     permissions:
       id-token: write
     steps:
@@ -694,7 +480,7 @@ jobs:
   finalize-release:
     name: Finalize Release
     runs-on: ubuntu-latest
-    needs: [create-release, rust-crates, pypi-publish]
+    needs: [create-release, rust-crates, pypi-publish, python-release-assets]
     steps:
     - uses: actions/checkout@v7.0.1
 
