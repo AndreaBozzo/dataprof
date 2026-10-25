@@ -1361,6 +1361,11 @@ impl QualityPolicy {
     /// only gap in the evidence is the quality sample and the report bounds
     /// the score. The interval settles the requirement when it lies wholly on
     /// one side of the minimum; a minimum inside it is left unevaluated.
+    ///
+    /// The score, its bounds and the minimum are compared at the serialized
+    /// precision, as the rules about change are: the result and the saved
+    /// report show them at two decimals, so a raw comparison failed a score
+    /// shown as meeting its minimum, and a reloaded report then passed (#1085).
     fn decide_score(
         &self,
         check: &mut Check,
@@ -1370,12 +1375,13 @@ impl QualityPolicy {
         subject: &str,
     ) {
         let sampled = check.evidence.gap() == Some(EvidenceGap::QualitySampled);
+        let min = rounded_2(min);
         match bounds {
             Some(bounds) if self.scope == PolicyScope::FullSource && sampled => {
                 check.bounds = Some(bounds);
-                check.status = if bounds.lower >= min {
+                check.status = if rounded_2(bounds.lower) >= min {
                     CheckStatus::Passed
-                } else if bounds.upper < min {
+                } else if rounded_2(bounds.upper) < min {
                     CheckStatus::Failed
                 } else {
                     CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
@@ -1385,7 +1391,7 @@ impl QualityPolicy {
                 check.message = bounded_message(&check.status, subject);
             }
             _ => {
-                check.status = self.decide_aggregate(check.evidence, score >= min);
+                check.status = self.decide_aggregate(check.evidence, rounded_2(score) >= min);
                 check.message = aggregate_message(&check.status, subject);
             }
         }
@@ -1459,7 +1465,9 @@ impl QualityPolicy {
             return check;
         };
         check.observed = Some(MetricValue::Percentage(percentage));
-        check.status = self.decide_aggregate(check.evidence, percentage <= max);
+        // At the precision `observed` is shown at, as for scores (#1085).
+        check.status =
+            self.decide_aggregate(check.evidence, rounded_2(percentage) <= rounded_2(max));
         check.message = match check.status {
             CheckStatus::Passed => "this column's null percentage is within the allowance",
             CheckStatus::Failed => "this column's null percentage is above the allowance",
@@ -2972,6 +2980,136 @@ mod tests {
 
         let (verdict, _) = decide(interval.upper + 0.01);
         assert_eq!(verdict, Verdict::Fail);
+    }
+
+    /// A threshold equal to the value a check shows is met, and a report that
+    /// was saved and loaded reaches the same verdict (#1085). The live report
+    /// holds raw scores, the loaded one their two-decimal serialization, so a
+    /// raw comparison failed `observed 66.67 >= 66.67` live and passed it
+    /// loaded. Every (report, rule) that goes wrong is collected first.
+    #[test]
+    fn a_threshold_at_the_shown_value_passes_live_and_after_a_round_trip() {
+        // One value in three missing: completeness and null share are thirds.
+        let thirds = ReportAssembler::new(source(), ExecutionMetadata::new(3, 1, 10))
+            .columns(vec![column("x", 3, 1)])
+            .with_quality_data(HashMap::from([(
+                "x".to_string(),
+                vec!["1".to_string(), "2".to_string(), String::new()],
+            )]))
+            .build();
+        let mut wrong = Vec::new();
+        for (label, report) in [
+            ("thirds", thirds),
+            ("reservoir", reservoir_report()),
+            ("complete", complete_report()),
+        ] {
+            let loaded: ProfileReport =
+                serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+            let quality = report.quality.as_ref().expect("quality was computed");
+            let mut policies = Vec::new();
+            // A sampled report's overall rule decides on its interval: the
+            // lower-bound case below covers it.
+            if quality
+                .score_bounds()
+                .and_then(|bounds| bounds.overall_score)
+                .is_none()
+            {
+                policies.push((
+                    "overall".to_string(),
+                    QualityPolicy::new()
+                        .min_quality_score(rounded_2(report.quality_score().unwrap())),
+                ));
+            }
+            for (name, score) in &quality.scores().dimension_scores {
+                let Some(score) = score else { continue };
+                // On a sampled report the full-source rule decides on the
+                // interval, so its threshold is the shown lower bound.
+                let shown = quality
+                    .score_bounds()
+                    .and_then(|bounds| bounds.dimension_scores.get(name).copied().flatten())
+                    .map_or(*score, |interval| interval.lower);
+                let dimension: QualityDimension = name.parse().unwrap();
+                policies.push((
+                    name.clone(),
+                    QualityPolicy::new().min_dimension_score(dimension, rounded_2(shown)),
+                ));
+            }
+            for column in &report.column_profiles {
+                let shown = rounded_2(null_percentage(column).unwrap());
+                policies.push((
+                    format!("null {}", column.name),
+                    QualityPolicy::new().max_null_percentage(column.name.clone(), shown),
+                ));
+            }
+            if let Some(interval) = quality
+                .score_bounds()
+                .and_then(|bounds| bounds.overall_score)
+            {
+                policies.push((
+                    "overall lower bound".to_string(),
+                    QualityPolicy::new().min_quality_score(rounded_2(interval.lower)),
+                ));
+            }
+            // A minimum written with more decimals than a check shows is
+            // compared as shown: `expected` reads 66.67 for 66.674, so a score
+            // shown as 66.67 meets it, as an allowance does for a change.
+            if label == "thirds" {
+                policies.push((
+                    "completeness at a third decimal".to_string(),
+                    QualityPolicy::new()
+                        .min_dimension_score(QualityDimension::Completeness, 66.674),
+                ));
+            }
+            for (rule, policy) in policies {
+                let live = policy.evaluate(&report).unwrap().verdict;
+                let reloaded = policy.evaluate(&loaded).unwrap().verdict;
+                if live != Verdict::Pass || reloaded != Verdict::Pass {
+                    wrong.push(format!(
+                        "{label} {rule}: live {live:?}, loaded {reloaded:?}"
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The interval half of #1085. A bound that rounds up when saved, such as
+    /// 79.426 shown as 79.43, decided a minimum of 79.43 one way live and the
+    /// other way loaded: inconclusive then pass at the lower bound, fail then
+    /// inconclusive at the upper one. The verdict must not change on reload.
+    #[test]
+    fn a_bound_that_rounds_up_decides_the_same_live_and_loaded() {
+        let mut report = reservoir_report();
+        let quality = report.quality.clone().expect("quality was computed");
+        let mut bounds = quality
+            .score_bounds()
+            .expect("a sampled report is bounded")
+            .clone();
+        let interval = bounds
+            .overall_score
+            .as_mut()
+            .expect("the overall score is bounded");
+        // Just below each shown value, so saving rounds both up.
+        interval.lower = rounded_2(interval.lower) - 0.004;
+        interval.upper = rounded_2(interval.upper) - 0.004;
+        let (lower, upper) = (interval.lower, interval.upper);
+        assert!(rounded_2(lower) > lower && rounded_2(upper) > upper && lower < upper);
+        report.quality = Some(quality.with_score_bounds(Some(bounds)));
+        let loaded: ProfileReport =
+            serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+
+        let mut wrong = Vec::new();
+        for (label, min) in [("lower", rounded_2(lower)), ("upper", rounded_2(upper))] {
+            let policy = QualityPolicy::new().min_quality_score(min);
+            let live = policy.evaluate(&report).unwrap().verdict;
+            let reloaded = policy.evaluate(&loaded).unwrap().verdict;
+            if live != reloaded {
+                wrong.push(format!(
+                    "min at the shown {label} bound {min}: live {live:?}, loaded {reloaded:?}"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

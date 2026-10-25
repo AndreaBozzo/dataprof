@@ -965,7 +965,10 @@ if not result.passed:
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
-0--1 ratios. A policy that cannot be evaluated as written -- a threshold
+0--1 ratios. A score, its bounds, a null percentage and the threshold are
+compared at the 2-decimal precision the check shows them at, so a score shown
+as `66.67` meets a floor of `66.67`, and a saved report reaches the verdict the
+live one did (0.13+). A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
 bad extract. A threshold must be a real number: text is refused even when it

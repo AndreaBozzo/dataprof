@@ -460,3 +460,27 @@ def test_an_estimated_duplicate_count_names_the_estimate_as_the_gap(report):
         "the duplicate-row count is an estimate, which can neither witness "
         "duplicates above the allowance nor rule them out"
     )
+
+
+@pytest.mark.parametrize(
+    ("data", "dimensions", "policy"),
+    [
+        # Both dimensions score 100; their weighted mean is 99.99999999999999.
+        (
+            {"email": ["a@example.com", "b@example.com"]},
+            ["consistency", "validity"],
+            {"min_quality_score": 100},
+        ),
+        # Completeness is 66.666..., shown and saved as 66.67.
+        ({"x": [None, 1, 2]}, ["completeness"], {"min_dimension_scores": {"completeness": 66.67}}),
+        # The null share is 33.333..., shown as 33.33.
+        ({"x": [None, 1, 2]}, ["completeness"], {"max_null_percentage": {"x": 33.33}}),
+    ],
+)
+def test_a_threshold_at_the_shown_value_passes_live_and_loaded(data, dimensions, policy):
+    """A threshold equal to the value a check shows is met, and a saved report
+    reaches the same verdict as the live one (#1085)."""
+    report = dp.profile(data, quality_dimensions=dimensions)
+    loaded = dp.ProfileReport.from_json(report.to_json())
+    verdicts = (report.check(**policy).verdict, loaded.check(**policy).verdict)
+    assert verdicts == ("pass", "pass")
