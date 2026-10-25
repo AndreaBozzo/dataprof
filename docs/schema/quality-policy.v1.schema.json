@@ -1,63 +1,79 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dataprof.dev/schema/quality-policy.v1.schema.json",
+  "$id": "https://andreabozzo.github.io/dataprof/schema/quality-policy.v1.schema.json",
   "title": "DataProf Quality Policy",
-  "description": "Validation contract for dataprof quality gate policies (--policy FILE). Validates accepted keys, types, ranges, dimension vocabularies, and scopes. Runtime requirement: at least one quality constraint must be specified when executed by check().",
+  "description": "Validation contract for dataprof quality gate policies (--policy FILE). Validates accepted keys, types, ranges, dimension vocabularies, and scopes. Runtime rules not enforced by this schema: (1) At least one quality requirement must be stated; policies stating no requirement (e.g. empty, or containing only scope or forbid_added_columns: false) raise a validation error when executed by check(). (2) Rules about change (max_quality_score_drop, max_dimension_score_drops, max_null_percentage_increase, forbid_removed_columns: true, forbid_added_columns: true) require a baseline report (--baseline PATH). (3) Whole numbers written with a decimal point (e.g. 1.0) are rejected as counts at runtime. (4) The $schema key is not permitted in policy files because additionalProperties is false.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "min_rows": {
       "description": "Minimum row count required for the source.",
-      "type": "integer",
-      "minimum": 0
+      "oneOf": [
+        { "$ref": "#/$defs/Count" },
+        { "type": "null" }
+      ]
     },
     "min_quality_score": {
       "description": "Minimum overall data quality score required (0 to 100).",
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 100.0
+      "oneOf": [
+        { "$ref": "#/$defs/Percentage" },
+        { "type": "null" }
+      ]
     },
     "min_dimension_scores": {
       "description": "Per-dimension minimum quality scores.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "completeness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "consistency": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "uniqueness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "accuracy": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "timeliness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "validity": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "precision": { "type": "number", "minimum": 0.0, "maximum": 100.0 }
-      }
+      "oneOf": [
+        { "$ref": "#/$defs/DimensionScoreMap" },
+        { "type": "null" }
+      ]
     },
     "max_null_percentage": {
-      "description": "Maximum allowable null percentage across columns (0 to 100).",
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 100.0
+      "description": "Maximum allowable null percentage per column (0 to 100), or a mapping from column name to limit with '*' as fallback.",
+      "oneOf": [
+        { "$ref": "#/$defs/PerColumnPercentage" },
+        { "type": "null" }
+      ]
     },
     "max_duplicate_rows": {
       "description": "Maximum allowable count of duplicate rows.",
-      "type": "integer",
-      "minimum": 0
+      "oneOf": [
+        { "$ref": "#/$defs/Count" },
+        { "type": "null" }
+      ]
     },
     "require_metrics": {
-      "description": "Required metric packs that must be computed.",
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": ["schema", "statistics", "patterns", "quality"]
-      },
-      "uniqueItems": true
+      "description": "Required metric packs or dimensions that must be computed.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "quality",
+              "completeness",
+              "consistency",
+              "uniqueness",
+              "accuracy",
+              "timeliness",
+              "validity",
+              "precision"
+            ]
+          }
+        },
+        { "type": "null" }
+      ]
     },
     "require_columns": {
       "description": "Required column names that must exist in the dataset.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "uniqueItems": true
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        { "type": "null" }
+      ]
     },
     "scope": {
       "description": "Analysis scope to evaluate.",
@@ -66,29 +82,24 @@
     },
     "max_quality_score_drop": {
       "description": "Maximum allowed drop in overall quality score relative to baseline (0 to 100).",
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 100.0
+      "oneOf": [
+        { "$ref": "#/$defs/Percentage" },
+        { "type": "null" }
+      ]
     },
     "max_dimension_score_drops": {
       "description": "Maximum allowed score drops per quality dimension relative to baseline.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "completeness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "consistency": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "uniqueness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "accuracy": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "timeliness": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "validity": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "precision": { "type": "number", "minimum": 0.0, "maximum": 100.0 }
-      }
+      "oneOf": [
+        { "$ref": "#/$defs/DimensionScoreMap" },
+        { "type": "null" }
+      ]
     },
     "max_null_percentage_increase": {
-      "description": "Maximum allowed increase in null percentage relative to baseline (0 to 100).",
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 100.0
+      "description": "Maximum allowed increase in null percentage relative to baseline (0 to 100), or a mapping from column name to limit with '*' as fallback.",
+      "oneOf": [
+        { "$ref": "#/$defs/PerColumnPercentage" },
+        { "type": "null" }
+      ]
     },
     "forbid_removed_columns": {
       "description": "Whether to fail the gate if any baseline column is missing from the source.",
@@ -97,6 +108,44 @@
     "forbid_added_columns": {
       "description": "Whether to fail the gate if the source contains columns not present in the baseline.",
       "type": "boolean"
+    }
+  },
+  "$defs": {
+    "Percentage": {
+      "description": "A score or percentage threshold between 0.0 and 100.0.",
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0
+    },
+    "Count": {
+      "description": "A non-negative whole-number count up to 2^64 - 1.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "DimensionScoreMap": {
+      "description": "Mapping from quality dimension names to percentage thresholds.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "completeness": { "$ref": "#/$defs/Percentage" },
+        "consistency": { "$ref": "#/$defs/Percentage" },
+        "uniqueness": { "$ref": "#/$defs/Percentage" },
+        "accuracy": { "$ref": "#/$defs/Percentage" },
+        "timeliness": { "$ref": "#/$defs/Percentage" },
+        "validity": { "$ref": "#/$defs/Percentage" },
+        "precision": { "$ref": "#/$defs/Percentage" }
+      }
+    },
+    "PerColumnPercentage": {
+      "description": "A percentage ceiling across all columns or a per-column map where '*' is the fallback ceiling for other columns.",
+      "anyOf": [
+        { "$ref": "#/$defs/Percentage" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/Percentage" }
+        }
+      ]
     }
   }
 }

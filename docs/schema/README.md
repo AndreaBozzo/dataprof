@@ -802,3 +802,60 @@ quality gate leaves the accuracy and overall score rules over it
 written before it; those are assessed and scored as their release did. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `outlier_units` is malformed, as for `text_length_unit`.
+
+---
+
+# Quality policy JSON Schema
+
+The versioned [`quality-policy.v1.schema.json`](quality-policy.v1.schema.json)
+document defines the machine-readable validation contract for dataprof quality
+gate policy files (`python -m dataprof.check ... --policy FILE`).
+
+Like the profile report schema, it uses **JSON Schema Draft 2020-12** and carries
+a stable project-owned `$id`:
+`https://andreabozzo.github.io/dataprof/schema/quality-policy.v1.schema.json`.
+
+### Validated properties and structures
+
+The schema validates all policy configuration keywords accepted by `_policy()`:
+
+- **`min_rows`**: Minimum row count (`integer`, 0 to 2^64 - 1, or `null`).
+- **`min_quality_score`**: Minimum overall score (`number`, 0.0 to 100.0, or `null`).
+- **`min_dimension_scores`**: Mapping of quality dimension names (`completeness`,
+  `consistency`, `uniqueness`, `accuracy`, `timeliness`, `validity`, `precision`)
+  to percentage thresholds (0.0 to 100.0), or `null`.
+- **`max_null_percentage`**: Either a single percentage ceiling across all columns
+  (0.0 to 100.0) or an object mapping column names to ceilings with `"*"` as the
+  default for other columns, or `null`.
+- **`max_duplicate_rows`**: Maximum duplicate row count (`integer`, 0 to 2^64 - 1, or `null`).
+- **`require_metrics`**: Array of required metric packs or quality dimensions
+  (`"quality"`, `"completeness"`, `"consistency"`, `"uniqueness"`, `"accuracy"`,
+  `"timeliness"`, `"validity"`, `"precision"`), or `null`.
+- **`require_columns`**: Array of string column names required to be profiled, or `null`.
+- **`scope`**: Analysis scope enum: `"full_source"` or `"observed"`.
+- **`max_quality_score_drop`**: Allowed drop relative to baseline (0.0 to 100.0, or `null`).
+- **`max_dimension_score_drops`**: Mapping of quality dimensions to allowed drops relative to baseline, or `null`.
+- **`max_null_percentage_increase`**: Either a single percentage ceiling or per-column mapping relative to baseline, or `null`.
+- **`forbid_removed_columns`**: Boolean flag.
+- **`forbid_added_columns`**: Boolean flag.
+
+### Editor association
+
+Because policy files enforce `additionalProperties: false` (both in the schema
+and at runtime via `_policy()`), a `"$schema"` property inside the policy file is
+rejected.
+
+To enable schema validation and autocompletion in your editor, associate the schema
+using your editor's workspace configuration. For example, in VS Code (`.vscode/settings.json`):
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["*quality-policy*.json", "*quality-gate*.json"],
+      "url": "./docs/schema/quality-policy.v1.schema.json"
+    }
+  ]
+}
+```
+

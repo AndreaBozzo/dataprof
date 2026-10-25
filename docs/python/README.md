@@ -1291,6 +1291,13 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 }
 ```
 
+The validation contract for policy files is defined in
+[`docs/schema/quality-policy.v1.schema.json`](../schema/quality-policy.v1.schema.json)
+(JSON Schema Draft 2020-12). Because policy files enforce a closed schema (`additionalProperties: false`),
+a `"$schema"` key inside the policy file is refused. To enable schema validation and autocompletion
+in your editor, configure a schema mapping in your editor's workspace settings (for example,
+VS Code's `json.schemas` with `"fileMatch": ["*quality-policy*.json", "*quality-gate*.json"]`).
+
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
