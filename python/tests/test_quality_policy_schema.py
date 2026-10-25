@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 
 
 def _get_schema_and_validator() -> tuple[dict[str, Any], Draft202012Validator]:
+    """Load and validate the quality policy draft 2020-12 JSON Schema."""
     schema_path = (
         Path(__file__).resolve().parents[2] / "docs" / "schema" / "quality-policy.v1.schema.json"
     )
@@ -22,11 +23,15 @@ def _get_schema_and_validator() -> tuple[dict[str, Any], Draft202012Validator]:
 
 
 class _DummyBaseline:
+    """Minimal baseline report mock implementing _delta_input for change-rule gate tests."""
+
     def _delta_input(self) -> str:
+        """Return dummy serialized JSON string."""
         return "{}"
 
 
 def _evaluate_gate(doc: dict[str, Any], with_baseline: bool, tmp_path: Path) -> tuple[bool, str]:
+    """Evaluate a candidate policy dictionary through the dataprof check policy parser."""
     policy_file = tmp_path / "policy.json"
     policy_file.write_text(json.dumps(doc), encoding="utf-8")
 
