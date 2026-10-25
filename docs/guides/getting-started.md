@@ -276,7 +276,13 @@ report = dp.profile("european_data.csv")  # semicolons auto-detected
 report = dp.profile("pipe_export.csv")    # pipes auto-detected
 ```
 
-For files with inconsistent column counts, enable flexible parsing:
+Detection judges each candidate by the header: one that does not split the
+header is never chosen, since the header sets the column count. When
+detection still gets a file wrong, name the delimiter with
+`csv_delimiter=";"`.
+
+For files with inconsistent column counts, enable flexible parsing. Delimiter
+detection still applies:
 
 ```python
 report = dp.profile("messy.csv", csv_flexible=True)
