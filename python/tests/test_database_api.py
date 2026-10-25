@@ -213,6 +213,30 @@ class TestDatabaseSchema:
 class TestDatabaseErrors:
     """Test error handling for invalid inputs."""
 
+    @pytest.mark.parametrize(
+        "helper_name,args",
+        [
+            ("test_connection_async", ()),
+            ("analyze_database_async", ("SELECT 1",)),
+            ("get_table_schema_async", ("test_users",)),
+            ("count_table_rows_async", ("test_users",)),
+        ],
+    )
+    def test_connection_failure_is_an_oserror(self, tmp_path, helper_name, args):
+        import dataprof as dp
+
+        # SQLite cannot connect when the parent directory does not exist.
+        # Exercise the real connector without depending on a database server.
+        connection = str(tmp_path / "missing-parent" / "database.db")
+        with pytest.raises(
+            OSError, match="^Analysis failed: Database connection failed:"
+        ) as caught:
+            _run(getattr(dp, helper_name), connection, *args)
+        assert "unable to open database file" in str(caught.value)
+        assert str(caught.value).endswith(
+            "Verify the connection string format and database server availability."
+        )
+
     def test_bad_connection_string(self):
         with pytest.raises(ValueError, match="Unsupported database connection string"):
             _run(analyze_database_async, "invalid://bad", "SELECT 1")
@@ -225,7 +249,7 @@ class TestDatabaseErrors:
                 _run(helper, "invalid://bad", "test_users")
 
     def test_invalid_query(self, sqlite_db):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="Database query failed:"):
             _run(analyze_database_async, sqlite_db, "SELECT * FROM nonexistent_table")
 
     def test_sql_injection_rejected(self, sqlite_db):
