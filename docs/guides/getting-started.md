@@ -24,7 +24,7 @@ uv pip install dataprof
 # or: pip install dataprof
 
 # Rust library -- add to Cargo.toml
-# dataprof = "0.12"
+# dataprof = "0.13"
 ```
 
 The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. Database helpers are not in the wheels: build the extension from source with the corresponding Rust features.

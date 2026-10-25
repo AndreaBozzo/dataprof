@@ -1,10 +1,10 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.12.0).
+Complete reference for the `dataprof` Python package (v0.13.0).
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
-[0.12.0 release notes and migration guide](../release-notes.md).
+[0.13.0 release notes and migration guide](../release-notes.md).
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -1400,7 +1400,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: python -m pip install dataprof==0.12.0
+      - run: python -m pip install dataprof==0.13.0
       - name: Check incoming data
         run: python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
       - uses: actions/upload-artifact@v7

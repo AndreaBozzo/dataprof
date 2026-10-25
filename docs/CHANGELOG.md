@@ -6,7 +6,285 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.12.0 release notes](release-notes.md).
+the [0.13.0 release notes](release-notes.md).
+
+## [0.13.0] - 2026-10-25
+
+### Added
+
+- **Report**: Name the dataprof build in every report and in capabilities() (#907) (#1064) by @AndreaBozzo
+
+- **Python**: Compare python -m dataprof.check against a saved baseline (#710) (#1057) by @AndreaBozzo
+
+- **Python**: Support CPython 3.15 and drop 3.10 after its end of life (#833, #834) (#1056) by @AndreaBozzo
+
+- **Gate**: Rules for required columns, and none removed from or added to a baseline (#1023) by @AndreaBozzo
+
+- **Report**: Record the column selection, so a gate can tell a dropped column from an unselected one (#1019) by @AndreaBozzo
+
+- **Gate**: Report schema changes from a baseline as diagnostics (#1016) by @AndreaBozzo
+
+- **Report**: Record the pattern locale, so two runs can be shown to use the same one (#1011) by @AndreaBozzo
+
+- **Gate**: Rules about change from a saved baseline (#1008) by @AndreaBozzo
+
+- **Delta**: Compare the settings that move a score, beside metric_semantics (#1003) by @AndreaBozzo
+
+- **Report**: Record score weights in every report, defaults included (#1002) by @AndreaBozzo
+
+- Compute compare() with a typed Rust report delta (#713) (#981) by @AndreaBozzo
+
+- **Metrics**: Declare timeliness start/end pairs explicitly (#942) (#968) by @majidninja
+
+- **Gate**: Check(min_rows=N), a minimum row count (#905) (#959) by @AndreaBozzo
+
+- **Check**: Add --report to save the checked profile (#870) by @Zhetao-Wang
+
+- **Python**: Add --version to dataprof.check and name the version in its summary (#856) by @Nikith20072002
+
+### Changed
+
+- **Db**: An undecodable value after NULL batches still fails on the streaming path (#1084) by @AndreaBozzo
+
+- Rehearse the release wheel and sdist build without publishing (#1055) (#1079) by @AndreaBozzo
+
+- **Oracle**: Float32, decimal, Arrow batch and Parquet layout cases, compared at the serialized precision (#829) (#1054) by @AndreaBozzo
+
+- **Core**: One DataType::name() for the lowercase type names (#1036) by @bercedev
+
+- **Oracle**: Name #1038 as the owner of the large-integer exceptions (#1039) by @AndreaBozzo
+
+- Pin the development toolchain in rust-toolchain.toml, on Rust 1.99 (#1009) by @AndreaBozzo
+
+- Check every input route against an independent oracle (#829) (#984) by @AndreaBozzo
+
+- **Fuzz**: A parity target comparing the CSV engines on the same bytes (#961) (#966) by @AndreaBozzo
+
+- **Metrics**: Remove looks_like_date, call is_inferred_date_token (#928) (#930) by @majidninja
+
+- Rebuild pattern detection and remove per-cell waste in streaming statistics (#924) by @AndreaBozzo
+
+- Remove dead legacy code and unused public surface (#919) by @AndreaBozzo
+
+- **Python**: Evaluate check() with the Rust quality gate (#883) (#910) by @AndreaBozzo
+
+- Mark the quality-gate types non_exhaustive (#894) (#900) by @AndreaBozzo
+
+### Dependencies
+
+- **Deps**: Bump the uv group across 1 directory with 2 updates (#1018) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.85 to 0.0.88 (#996) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.16.10 to 0.17.1 (#995) by @dependabot[bot]
+
+- **Deps**: Bump serde_json from 1.0.151 to 1.0.154 (#994) by @dependabot[bot]
+
+- **Deps**: Bump proptest from 1.11.0 to 1.12.0 (#993) by @dependabot[bot]
+
+- **Deps**: Bump tokio from 1.53.2 to 1.53.3 (#992) by @dependabot[bot]
+
+- **Deps**: Bump schemars from 1.2.2 to 1.2.3 (#991) by @dependabot[bot]
+
+- **Deps**: Bump polars from 1.44.2 to 2.0.0 in /benches (#938) by @dependabot[bot]
+
+- **Deps**: Bump pyarrow from 25.0.1 to 26.0.0 in /benches (#939) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.84 to 0.0.85 (#937) by @dependabot[bot]
+
+- **Deps-dev**: Bump polars from 1.44.2 to 2.0.0 (#936) by @dependabot[bot]
+
+- **Deps**: Bump tokio-util from 0.7.19 to 0.7.20 (#935) by @dependabot[bot]
+
+- **Deps**: Bump tokio from 1.53.1 to 1.53.2 (#934) by @dependabot[bot]
+
+- **Deps**: Bump uuid from 1.26.1 to 1.27.0 (#933) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.58.5 to 0.58.6 (#932) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.16.7 to 0.16.10 (#861) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.81 to 0.0.84 (#799) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.57.0 to 0.58.4 (#860) by @dependabot[bot]
+
+- **Deps**: Bump pyo3 from 0.29.2 to 0.29.3 (#859) by @dependabot[bot]
+
+- **Deps**: Bump thiserror from 2.0.20 to 2.0.21 (#797) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action from 4.38.0 to 4.38.2 (#844) by @dependabot[bot]
+
+### Documentation
+
+- **Examples**: A baseline checkpoint that promotes only on a pass (#711) (#1082) by @AndreaBozzo
+
+- Compare profiling and gating workflows (#1071) by @1932819331hy-debug
+
+- The published wheels ship the async helpers, only database needs a source build (#1075) by @AndreaBozzo
+
+- Ask PR authors to account for acceptance criteria and their own diff (#1062) by @AndreaBozzo
+
+- Promote the first baseline only on a pass, like every later one (#711) (#1058) by @AndreaBozzo
+
+- Load agent instructions from AGENTS.md alone, without a layout tour (#1052) by @AndreaBozzo
+
+- Cite the software without a version so CITATION.cff needs no bump (#902) by @AndreaBozzo
+
+- Update ScoreBounds docs for estimated counts with a floor (#827) (#878) by @furious-firebird
+
+- State that release notes are not edited in feature or fix PRs (#854) by @AndreaBozzo
+
+### Fixed
+
+- **Json**: Read the integer -0 as 0 on every route, stop async reads at the row cap (#1109) by @AndreaBozzo
+
+- **Json**: Report an array read that stopped at a fault as not exhausted (#1106) (#1107) by @AndreaBozzo
+
+- BOM in chunked CSV headers, quoted empty trailing fields, JSON integers beyond 64 bits (#1101, #1102, #1103, #1104) (#1105) by @AndreaBozzo
+
+- **Csv**: One delimiter detector for bytes, trailing empty fields and lone CR (#1095, #1096, #1097) (#1099) by @AndreaBozzo
+
+- **Csv**: Detect the delimiter from the header, with or without csv_flexible (#1091, #1092) (#1093) by @AndreaBozzo
+
+- **Gate**: Decide absolute rules on the two-decimal values a check shows (#1085) (#1090) by @AndreaBozzo
+
+- **Python**: Classify database connection failures as OSError (#1078) by @1932819331hy-debug
+
+- **Metrics**: Score key uniqueness only for a declared key (#1065) (#1069) by @AndreaBozzo
+
+- **Db**: Decode PostgreSQL enums and refuse values no decoder reads instead of recording null (#952) (#1059) by @AndreaBozzo
+
+- **Json**: Count leading fieldless records (#1053) by @KingEmma7
+
+- **Python**: Expose read-only report id and timestamp (#1007) (#1014) by @1932819331hy-debug
+
+- **Report**: Reject explicit null in flat-summary recorded metadata (#1012) (#1013) by @1932819331hy-debug
+
+- **Db**: Reject SQLite URLs specifying credentials or port numbers (#997) (#1040) by @slopgobblercobbler
+
+- **Metrics**: Leave an untested outlier component out of the accuracy score (#1051) by @AndreaBozzo
+
+- **Metrics**: Measure key uniqueness over the key's non-null values (#1049) by @AndreaBozzo
+
+- **Metrics**: Count a range or sign violation once, over the ruled columns' values (#1048) by @AndreaBozzo
+
+- **Streaming**: Announce async JSON columns added after the first chunk (#1046) by @bercedev
+
+- **Parquet**: Take Float32 samples from the promoted value (#1045) by @bercedev
+
+- **Python**: Raise ValueError for a malformed database connection string (#1043) by @AndreaBozzo
+
+- **Gate**: A closed schema is not passed by a report that read part of its source (#1037) by @AndreaBozzo
+
+- **Async**: Profile JSON keys first seen after the first chunk (#1022) by @AndreaBozzo
+
+- **Deps**: Update rustls-webpki and webpki-roots for RUSTSEC-2026-0381 and RUSTSEC-2026-0382 (#1017) by @AndreaBozzo
+
+- **Hints**: Count repeated semantic columns once (#1006) by @1932819331hy-debug
+
+- **Arrow**: Show first nonempty producer error line (#999) by @1932819331hy-debug
+
+- **Python**: Raise OSError for remote transport failures (#988) by @1932819331hy-debug
+
+- **Gate**: Read a computed component listed in neither confidence list as unrecorded (#1001) by @AndreaBozzo
+
+- **Gate**: Read an overall score with an unknown sampled component as unrecorded (#1000) by @AndreaBozzo
+
+- **Python**: Preserve container identity in pandas mixed-object fallback (#987) by @1932819331hy-debug
+
+- **Sqlite**: Preserve SQLite connection URI options (fixes #912) (#990) by @1932819331hy-debug
+
+- **Python**: Surface Arrow producer messages in top-level stream errors (#989) by @1932819331hy-debug
+
+- **Timeliness**: Reject a temporal pair declared in both orders (#986) by @majidninja
+
+- Report no statistics for a column without a non-null value (#983) (#985) by @AndreaBozzo
+
+- **Report**: Atomic report saving (#978) by @Lety8
+
+- **Python**: Handle mixed object columns in pandas DataFrames without Arrow errors (#979) by @1932819331hy-debug
+
+- **Python**: Refuse malformed values inside quality and type_homogeneity in from_dict (#980) by @1932819331hy-debug
+
+- Tell a JSON string from a container that spells it in duplicate-row signatures (#945) (#977) by @AndreaBozzo
+
+- **Streaming**: Reserve channel capacity for terminal progress event (#975) by @1932819331hy-debug
+
+- **Parquet**: Compare Arrow maps by their entries in duplicate-row signatures (#943) (#973) by @AndreaBozzo
+
+- **Engines**: Emit chunk progress before stop condition evaluation in async stream (#972) by @1932819331hy-debug
+
+- **Columnar**: Profile a CSV of only blank lines as empty (#964) (#971) by @AndreaBozzo
+
+- **Engines**: Count capped chunk rows in the incremental finished event (#967) by @Shaisolaris
+
+- **Parquet**: Refuse invalid UTF-8 on the columnar CSV engine as every other route does (#963) (#965) by @AndreaBozzo
+
+- **Check**: Drop path from --json policy errors that come from a flag (#955) (#960) by @majidninja
+
+- **Metrics**: Report a variance that fits when its sum of squares overflows (#805) (#958) by @AndreaBozzo
+
+- **Metrics**: Take the spread of 64-bit integers beyond 2^53 from their exact values (#877) (#957) by @AndreaBozzo
+
+- **Metrics**: Ignore a trailing date word when pairing timeliness columns (#941) (#956) by @majidninja
+
+- **Check**: Name file in policy value errors (#954) by @Chadokar
+
+- **Db**: Decode JSON, JSONB and array columns instead of reading them as null (#766) (#953) by @AndreaBozzo
+
+- **Metrics**: Pair timeliness start/end columns by the rest of their names (#913) (#940) by @majidninja
+
+- **Python**: Refuse malformed flat-summary fields in from_dict instead of defaulting them (#763) (#951) by @AndreaBozzo
+
+- **Metrics**: Apply accuracy range rules only where the name pins the unit (#880) (#948) by @AndreaBozzo
+
+- **Parquet**: Pin remote Parquet reads to one object version via ETag (#865) (#947) by @AndreaBozzo
+
+- Compare nested values by value in duplicate-row signatures (#767) (#944) by @AndreaBozzo
+
+- **Metrics**: Stop matching decimals as Phone (US) (#931) by @majidninja
+
+- Correct row counts, composed stops and statistical estimators (#922) by @AndreaBozzo
+
+- **Runtime**: Count the streaming date share over every sampled value (#915) (#917) by @AndreaBozzo
+
+- **Metrics**: Count mixed date formats over every value of a column (#873) (#916) by @AndreaBozzo
+
+- **Metrics**: Pair timeliness date columns by the words of their names (#882) (#914) by @AndreaBozzo
+
+- Keep the metrics of a saved quality assessment that lost its confidence (#911) by @AndreaBozzo
+
+- **Check**: Name policy file in all policy errors and report non-UTF-8 files (#863) by @RajGahoi
+
+- Name gzip, zstd, zip and Parquet files instead of parsing them as text (#893) (#901) by @AndreaBozzo
+
+- Return None from quick_quality_check when nothing was assessable (#889) (#899) by @AndreaBozzo
+
+- **Agents**: Round dp context quality output (#898) by @345942185-eng
+
+- **Db**: Fetch a profiled query in one pass instead of LIMIT/OFFSET pages (#895) by @AndreaBozzo
+
+- **Csv**: Record row-cap truncation and ragged rows in analyze_csv_file (#890) (#896) by @AndreaBozzo
+
+- **Metrics**: Read accuracy range rule names by words (#871) (#881) by @AndreaBozzo
+
+- **Parquet**: Advise downloading file when server ignores Range (#879) by @allmixedssa
+
+- Read date column names by words and count mixed date formats under any name (#869) (#872) by @AndreaBozzo
+
+- Type zero-padded codes and YYYYMMDD dates as text (#814) (#868) by @AndreaBozzo
+
+- **Python**: Improve --policy help, BOM and errors (#858) by @furious-firebird
+
+- Report no patterns for binary columns (#852) (#855) by @AndreaBozzo
+
+- Count binary values by their bytes and report no length statistics for them (#851) (#853) by @AndreaBozzo
+
+- **Python**: Report unknown --metric pack as an argument error (#848) by @akshatshahh
+
+- Count common null markers (NA, N/A, #N/A, \N, None) as nulls (#847) by @AndreaBozzo
+
+- **Python**: Give python -m dataprof.check errors their own exit code (#843) by @akshatshahh
 
 ## [0.12.0] - 2026-09-30
 
