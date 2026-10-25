@@ -56,11 +56,16 @@ impl MemoryMappedCsvReader {
         // run of blank lines, include the first non-blank logical record too so
         // header discovery has the same view as a full-file reader.
         if has_headers && offset == 0 {
-            let header_start = self
-                .mmap
-                .iter()
-                .take_while(|&&byte| matches!(byte, b'\r' | b'\n'))
-                .count();
+            // The CSV decoder strips a leading UTF-8 BOM, so the blank lines
+            // to step over start after it. Counting from byte 0 stopped at the
+            // BOM, and a chunk of BOM and line end became an empty header with
+            // the real one read as data (#1101).
+            let bom = self.leading_bom_len();
+            let header_start = bom
+                + self.mmap[bom..]
+                    .iter()
+                    .take_while(|&&byte| matches!(byte, b'\r' | b'\n'))
+                    .count();
             if end <= header_start && header_start < self.mmap.len() {
                 end = self.csv_record_boundary(header_start, 1, quote, delimiter);
             }
@@ -130,7 +135,13 @@ impl MemoryMappedCsvReader {
         delimiter: u8,
     ) -> usize {
         let target = start.saturating_add(chunk_size).min(self.mmap.len());
-        let mut index = start;
+        // A leading BOM is no field content: the byte after it starts the
+        // first field, so a quote there opens a quoted header (#1101).
+        let mut index = if start == 0 {
+            self.leading_bom_len()
+        } else {
+            start
+        };
         let mut in_quotes = false;
         let mut at_field_start = true;
         let mut last_boundary = None;
@@ -204,6 +215,16 @@ impl MemoryMappedCsvReader {
         }
 
         self.mmap.len()
+    }
+
+    /// Length of a UTF-8 BOM at the start of the file, which the CSV decoder
+    /// strips; 0 when there is none.
+    fn leading_bom_len(&self) -> usize {
+        if self.mmap.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        }
     }
 
     /// End offset for the CSV crate's default CR, LF, or CRLF terminator.

@@ -85,39 +85,40 @@ impl CsvParserConfig {
 /// Count the fields in a record for a given delimiter, respecting quoted
 /// sections, and how many of them at the end are empty.
 ///
-/// Returns `(fields, trailing_empty)`. A field is empty when nothing stands
-/// between its delimiters; a quoted empty string is not.
+/// Returns `(fields, trailing_empty)`. A field is empty when it decodes to
+/// nothing, as the readers decode it: nothing stands between its delimiters,
+/// or it is a quoted empty string `""`. Judging the raw text instead counted
+/// `""` as content, and a row ending in `;""` disagreed with its header
+/// (#1102).
 fn count_fields(line: &str, delimiter: char) -> (usize, usize) {
+    let decodes_empty = |field: &str| field.is_empty() || field == "\"\"";
     let mut fields = 1;
     let mut trailing_empty = 0;
-    let mut field_len = 0usize;
+    let mut field_start = 0;
     let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == delimiter && !in_quotes {
-            trailing_empty = if field_len == 0 {
+    let mut chars = line.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if ch == '"' {
+            if chars.peek().map(|&(_, next)| next) == Some('"') {
+                chars.next();
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if ch == delimiter && !in_quotes {
+            trailing_empty = if decodes_empty(&line[field_start..index]) {
                 trailing_empty + 1
             } else {
                 0
             };
             fields += 1;
-            field_len = 0;
-            continue;
-        }
-        field_len += 1;
-        if ch == '"' {
-            if chars.peek() == Some(&'"') {
-                chars.next();
-            } else {
-                in_quotes = !in_quotes;
-            }
+            field_start = index + ch.len_utf8();
         }
     }
-    if field_len == 0 {
-        trailing_empty += 1;
+    trailing_empty = if decodes_empty(&line[field_start..]) {
+        trailing_empty + 1
     } else {
-        trailing_empty = 0;
-    }
+        0
+    };
     (fields, trailing_empty)
 }
 
@@ -876,6 +877,14 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_delimiter_quoted_empty_trailing_field_still_agrees() {
+        // `""` decodes to an empty field in every reader; judged on its raw
+        // text it counted as content and comma won again (gh #1102).
+        let data = b"id;amount,EUR\n1;10,50;\"\"\n2;20;\"\"\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
     fn test_detect_delimiter_exact_width_beats_cut_trailing_fields() {
         // Both candidates split the header and keep every value; semicolon
         // reads each row as it stands, comma only after cutting an empty
@@ -914,7 +923,9 @@ mod tests {
     fn test_count_fields_reports_trailing_empty_fields() {
         assert_eq!(count_fields("1;10,50;", ';'), (3, 1));
         assert_eq!(count_fields("a;;", ';'), (3, 2));
-        assert_eq!(count_fields("a;\"\"", ';'), (2, 0));
+        assert_eq!(count_fields("a;\"\"", ';'), (2, 1));
+        assert_eq!(count_fields("a;\"\"\"\"", ';'), (2, 0));
+        assert_eq!(count_fields("a; ", ';'), (2, 0));
         assert_eq!(count_fields("a;b", ';'), (2, 0));
         assert_eq!(count_fields("\"x;y\";", ';'), (2, 1));
     }
