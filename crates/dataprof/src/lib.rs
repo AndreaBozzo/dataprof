@@ -25,14 +25,14 @@ pub use profiler::{
 pub use dataprof_core::{
     AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
     CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DateTimeStats,
-    ExecutionMetadata, FileFormat, FrequencyItem, IsoQualityConfig, KeyUniquenessUnits,
-    LexicalClass, Locale, MetricPack, NULL_MARKERS, NullTokenSet, NumericStats, OutlierUnits,
-    ParquetMetadata, Pattern, PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink,
-    QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent,
-    RecoveryKind, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder, StopCondition,
-    StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit, TextStats,
-    TruncationReason, TypeHomogeneity, validate_unique_column_names,
+    ExecutionMetadata, FileFormat, FrequencyItem, IsoQualityConfig, KeyColumnSource,
+    KeyUniquenessUnits, LexicalClass, Locale, MetricPack, NULL_MARKERS, NullTokenSet, NumericStats,
+    OutlierUnits, ParquetMetadata, Pattern, PatternCategory, PatternMatchCount, ProgressEvent,
+    ProgressSink, QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount,
+    RecoveryEvent, RecoveryKind, RowCountEstimate, SamplingStrategy, SchemaResult,
+    SemanticHintBinding, SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder,
+    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit,
+    TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
 };
 pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{

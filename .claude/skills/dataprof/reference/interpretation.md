@@ -77,8 +77,10 @@ whose name has a date word (`order_date`, `created_at`, but not `candidate_name`
 values look.
 
 **Uniqueness** — duplicate rows and key behavior. `key_uniqueness` and
-`duplicate_rows` are the evidence. A high-cardinality column is not a key, and
-`high_cardinality_warning` is not a defect.
+`duplicate_rows` are the evidence. `key_uniqueness` measures only a declared
+key (the first `identifier_columns` entry present); without one, `key_column`
+is absent and uniqueness rests on duplicate rows. A high-cardinality column
+is not a key, and `high_cardinality_warning` is not a defect.
 
 **Accuracy** — range and sign violations against declared expectations.
 `negative_values_in_positive` only means something if you passed

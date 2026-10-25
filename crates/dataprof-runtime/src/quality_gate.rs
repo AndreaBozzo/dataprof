@@ -2232,6 +2232,8 @@ enum Definition {
     KeyUniquenessUnits,
     /// What the outlier ratio is measured over, behind the accuracy score.
     OutlierUnits,
+    /// Which column key uniqueness may measure, behind the uniqueness score.
+    KeyColumnSource,
 }
 
 impl Definition {
@@ -2242,6 +2244,7 @@ impl Definition {
             Self::RangeRuleCount => "range_rule_count",
             Self::KeyUniquenessUnits => "key_uniqueness_units",
             Self::OutlierUnits => "outlier_units",
+            Self::KeyColumnSource => "key_column_source",
         }
     }
 
@@ -2256,6 +2259,7 @@ impl Definition {
             Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
             Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
             Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
+            Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
         }
     }
 }
@@ -2270,6 +2274,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::RangeRuleCount,
             Definition::KeyUniquenessUnits,
             Definition::OutlierUnits,
+            Definition::KeyColumnSource,
         ],
         Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
@@ -2279,9 +2284,11 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::RangeRuleCount,
             Definition::OutlierUnits,
         ],
-        Some(QualityDimension::Uniqueness) => {
-            &[Definition::NullTokens, Definition::KeyUniquenessUnits]
-        }
+        Some(QualityDimension::Uniqueness) => &[
+            Definition::NullTokens,
+            Definition::KeyUniquenessUnits,
+            Definition::KeyColumnSource,
+        ],
         Some(_) => &[Definition::NullTokens],
     }
 }

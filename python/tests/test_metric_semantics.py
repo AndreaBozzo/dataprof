@@ -16,6 +16,7 @@ CURRENT = {
     "range_rule_count": "violating_values",
     "key_uniqueness_units": "non_null_values",
     "outlier_units": "tested_values",
+    "key_column_source": "declared",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -156,6 +157,8 @@ def _through_both_readers(value):
         {"key_uniqueness_units": None},
         {"outlier_units": "numeric_values"},
         {"outlier_units": None},
+        {"key_column_source": "name_heuristic"},
+        {"key_column_source": None},
     ],
     ids=[
         "null",
@@ -175,6 +178,8 @@ def _through_both_readers(value):
         "null-key-uniqueness-units",
         "unknown-outlier-units",
         "null-outlier-units",
+        "unknown-key-column-source",
+        "null-key-column-source",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -210,6 +215,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"range_rule_count": None},
         {"key_uniqueness_units": None},
         {"outlier_units": None},
+        {"key_column_source": None},
     ],
     ids=[
         "null",
@@ -220,6 +226,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         "null-range-rule-count",
         "null-key-uniqueness-units",
         "null-outlier-units",
+        "null-key-column-source",
     ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):
