@@ -148,11 +148,16 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 /// The sample is split into logical records with quote handling, so quoted
 /// fields containing embedded newlines or delimiter characters do not skew
 /// detection. Tests comma, semicolon, tab, and pipe over the first 5 non-blank
-/// records: a delimiter whose modal field count is greater than one always
-/// beats one that only ever yields single-field records, then higher record
-/// agreement and higher field counts win.
+/// records, measured against the first one, the header: it sets the column
+/// count, and the readers cut or pad a wider or narrower record to it, or
+/// reject it under strict parsing. A delimiter that splits the header always
+/// beats one that does not, then more records agreeing with the header's field
+/// count and a wider header win; comma wins a tie.
 ///
-/// Falls back to comma if no candidate splits the sample.
+/// Judging by the data rows alone let a delimiter that never occurs in the
+/// header win, and the readers then cut every row back to its first field: a
+/// one-column file of `123|456` keys was profiled as `123` with fabricated
+/// duplicates (#1092).
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     const SAMPLE_BYTES: u64 = 4096;
     let mut preamble = Vec::new();
@@ -168,34 +173,33 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
         records.pop();
     }
 
+    // Blank records carry no delimiter signal: a header followed by trailing
+    // blank lines must not outvote the true delimiter with single-field
+    // "records" (gh #559).
+    let scored: Vec<&str> = records
+        .into_iter()
+        .filter(|record| !record.trim().is_empty())
+        .take(5)
+        .collect();
+    let Some((header, rows)) = scored.split_first() else {
+        return Ok(b',');
+    };
+
     let delimiters = *b",;\t|";
     let mut best_delimiter = b',';
-    // (splits records into >1 field, records agreeing on the modal count,
-    //  modal field count) — compared lexicographically, first wins ties.
+    // (splits the header into >1 field, records agreeing with the header's
+    //  field count, header field count) — compared lexicographically, first
+    //  wins ties.
     let mut best_score = (false, 0usize, 0usize);
 
     for &delimiter in &delimiters {
-        let mut counts = std::collections::HashMap::new();
-        // Blank records carry no delimiter signal: a header followed by
-        // trailing blank lines must not outvote the true delimiter with
-        // single-field "records" (gh #559).
-        let scored = records
+        let header_fields = count_fields(header, delimiter as char);
+        let agreeing = 1 + rows
             .iter()
-            .filter(|record| !record.trim().is_empty())
-            .take(5);
-        for record in scored {
-            let fields = count_fields(record, delimiter as char);
-            *counts.entry(fields).or_insert(0usize) += 1;
-        }
+            .filter(|record| count_fields(record, delimiter as char) == header_fields)
+            .count();
 
-        // decode-audit: no-data — an empty sample scores 0 for this delimiter
-        // candidate; nothing is fabricated.
-        let (modal_fields, consistency) = counts
-            .into_iter()
-            .max_by_key(|&(fields, count)| (count, fields))
-            .unwrap_or((0, 0));
-
-        let score = (modal_fields > 1, consistency, modal_fields);
+        let score = (header_fields > 1, agreeing, header_fields);
         if score > best_score {
             best_score = score;
             best_delimiter = delimiter;
@@ -795,6 +799,23 @@ mod tests {
         // Free text containing commas must not outvote the true delimiter.
         let data = b"id;note\n1;hello, world\n2;foo, bar, baz\n3;plain\n";
         assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_never_splits_rows_the_header_does_not() {
+        // Pipe splits both data rows and not the header; the readers cut rows
+        // to the header's width, so choosing it kept only `123` (gh #1092).
+        let data = b"key\n123|456\n123|789\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_header_split_beats_uniform_rows() {
+        // A trailing delimiter on every data row leaves comma agreeing with
+        // the header on no row; it still splits the header, which no other
+        // candidate does.
+        let data = b"a,b\n1,2,\n3,4,\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
     }
 
     #[test]
