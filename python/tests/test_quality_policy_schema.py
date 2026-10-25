@@ -1,17 +1,25 @@
 """Test that docs/schema/quality-policy.v1.schema.json matches Python check gate contracts."""
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from dataprof._gate import _COUNT_MAX, _SCOPES
+from dataprof._gate import _SCOPES
 from dataprof._report_schema import _QUALITY_DIMENSIONS
-from dataprof.check.__main__ import _POLICY_DEFAULTS, _parser, _policy
+from dataprof.check.__main__ import _POLICY_DEFAULTS
 from jsonschema import Draft202012Validator
 
+_gate_mod = importlib.import_module("dataprof._gate")
+_COUNT_MAX: int = getattr(_gate_mod, "_COUNT_MAX")
 
-def _get_schema_and_validator() -> tuple[dict[str, Any], Draft202012Validator]:
+_check_main = importlib.import_module("dataprof.check.__main__")
+_parser: Any = getattr(_check_main, "_parser")
+_policy: Any = getattr(_check_main, "_policy")
+
+
+def _get_schema_and_validator() -> tuple[dict[str, Any], Any]:
     """Load and validate the quality policy draft 2020-12 JSON Schema."""
     schema_path = (
         Path(__file__).resolve().parents[2] / "docs" / "schema" / "quality-policy.v1.schema.json"
