@@ -190,6 +190,19 @@ mod postgres {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
+    /// The streaming path reads one row per batch here, and the first rows are
+    /// NULLs that read fine. The undecodable value arrives later, so a path
+    /// that settled on a decoder, or returned what it had, on an early batch
+    /// would pass these rows off as a nullable column.
+    #[tokio::test]
+    async fn a_value_without_a_decoder_after_null_batches_still_fails() {
+        let Some(url) = url().await else { return };
+        let query = "SELECT v FROM (VALUES (1, NULL::interval), (2, NULL::interval), \
+                     (3, interval '1 day')) AS t(id, v) ORDER BY id";
+        let wrong = error_wrongs(&both_paths(&url, query).await, "v", "interval");
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     #[tokio::test]
     async fn bytea_still_reads_as_null() {
         let Some(url) = url().await else { return };
