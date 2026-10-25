@@ -167,6 +167,34 @@ uv run pytest python/tests/test_wheel_interpreters.py -q
 uv run python .github/scripts/wheel_interpreters.py --wheels dist
 ```
 
+### Rehearsing the release build
+
+The release builds its Python distributions in
+`.github/workflows/python-dist.yml`: every wheel leg and the sdist, then each
+baseline wheel installed into a bare venv on its own platform, one interpreter
+at a time (the cross-compiled aarch64 Linux wheels on an arm64 runner), and the
+sdist built into a package, each running `.github/scripts/wheel_smoke.py`. A
+release publishes nothing until that workflow passes.
+
+The `Release Rehearsal` workflow runs the same file and publishes nothing: no
+GitHub release, no upload, no crates.io or PyPI. Run it after changing the
+interpreter set, the build images or the maturin version:
+
+```bash
+gh workflow run release-rehearsal.yml --ref <branch>
+gh run watch
+```
+
+A pull request that changes `.github/python-interpreters.json`,
+`wheel_interpreters.py`, `rust-toolchain.toml` or either workflow runs it on its
+own. The release builds with the newest maturin that `[build-system] requires`
+in `pyproject.toml` allows, in manylinux images selected by floating tags, so an
+upstream release changes the build without any change here: run the rehearsal
+on `master` before tagging as well. Each install job's summary shows,
+per interpreter, whether the wheel was built, whether it installs and whether
+the smoke test passed; an interpreter maturin cannot resolve fails the build
+step before compilation.
+
 ### Database regression tests
 
 CI runs both the facade integration target and every test target in the database
