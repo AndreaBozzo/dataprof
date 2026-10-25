@@ -76,6 +76,20 @@ pub fn profile_parquet_bytes(
     Ok(PyProfileReport::new(report))
 }
 
+/// Detect the delimiter of CSV bytes with the detector every file and async
+/// route uses.
+///
+/// Synchronous bytes are decoded in Python. Choosing the delimiter there with
+/// `csv.Sniffer` let the same bytes read differently from a file, and a sample
+/// the sniffer could not resolve silently became comma (#1095).
+#[pyfunction]
+#[pyo3(name = "_detect_csv_delimiter")]
+pub fn detect_csv_delimiter(data: &[u8]) -> PyResult<String> {
+    let delimiter =
+        dataprof_csv::detect_delimiter(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(char::from(delimiter).to_string())
+}
+
 /// List supported pattern detectors and their metadata.
 #[pyfunction]
 #[pyo3(signature = (locale=None))]

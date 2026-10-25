@@ -8,6 +8,8 @@ import json as _json
 import math as _math
 from typing import Any as _Any
 
+from ._dataprof import _detect_csv_delimiter
+
 
 def _is_list_of_dicts(source: object) -> bool:
     return isinstance(source, list) and all(isinstance(row, dict) for row in source)
@@ -257,12 +259,13 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     """
     # Match the Rust CSV readers: a UTF-8 BOM marks the encoding and is not part
     # of the first column's name.
-    text = buffer.getvalue().decode("utf-8-sig")
+    raw = buffer.getvalue()
+    text = raw.decode("utf-8-sig")
     if delimiter is None:
-        try:
-            delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
-        except _csv.Error:
-            delimiter = ","
+        # The detector every file and async route uses, so the same bytes read
+        # the same way. csv.Sniffer silently became comma on a sample it could
+        # not resolve, which hid a column and passed a gate (#1095).
+        delimiter = _detect_csv_delimiter(raw)
     # This reader has no flexible mode to record the problem in, so it refuses,
     # as it refuses a ragged row.
     unclosed = _unclosed_quote_at(text, delimiter)
