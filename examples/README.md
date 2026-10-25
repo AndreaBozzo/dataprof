@@ -144,6 +144,7 @@ jobs:
             candidate.json
 ```
 
+The rules about change need dataprof 0.13 or later.
 `quality/policy.json` holds the absolute rules, with the same keys as
 `check()`; the example's `ABSOLUTE` dictionary written as JSON is a working
 one. The step exits 0 on a pass, 1 on a fail and 2 when inconclusive, so the job

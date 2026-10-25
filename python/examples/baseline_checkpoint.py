@@ -110,7 +110,8 @@ def evaluate(workdir: Path, label: str, contents: str, **profile_options: Any) -
     else:
         kept = "unchanged" if baseline_path.exists() else "still absent"
         print(f"  {'REJECT' if result.verdict == 'fail' else 'HOLD'} -- baseline {kept},")
-        print("    candidate.json kept for inspection; a real pipeline exits non-zero\n")
+        print("    candidate.json kept beside the verdict until the next run; a real")
+        print("    pipeline exits non-zero and stores both with the run\n")
         # What the rules above promise, checked: the accepted baseline is
         # exactly as it was (or still absent), and the evidence is kept.
         accepted_after = baseline_path.read_bytes() if baseline_path.exists() else None
