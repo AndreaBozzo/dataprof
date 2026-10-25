@@ -42,9 +42,9 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 use record::{
-    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
-    malformed_array_error, non_object_record_error, read_json_record, read_jsonl_line,
-    skip_ascii_whitespace,
+    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
+    json_value_text, malformed_array_error, non_object_record_error, read_json_record,
+    read_jsonl_line, skip_ascii_whitespace, wide_integer_record_error,
 };
 use serde_json::Value;
 
@@ -389,6 +389,14 @@ where
                         }
                         malformed_lines += 1;
                     }
+                    JsonRecord::WideInteger => {
+                        if config.error_policy == JsonErrorPolicy::Strict {
+                            return Err(wide_integer_record_error(&format!(
+                                "on line {line_number}"
+                            )));
+                        }
+                        malformed_lines += 1;
+                    }
                 }
             }
         }
@@ -489,6 +497,16 @@ where
                                 malformed_lines += 1;
                                 drain_remainder = true;
                                 break;
+                            }
+                            JsonRecord::WideInteger => {
+                                if config.error_policy == JsonErrorPolicy::Strict {
+                                    return Err(wide_integer_record_error(&format!(
+                                        "at position {}",
+                                        rows_read + malformed_lines + 1
+                                    )));
+                                }
+                                // Read in full: the array grammar is intact.
+                                malformed_lines += 1;
                             }
                         }
                         expect_value = false;
@@ -599,6 +617,12 @@ where
     }
 
     match serde_json::from_str::<Value>(text.trim()) {
+        Ok(Value::Object(_)) if has_wide_integer_literal(text.as_bytes()) => {
+            if config.error_policy == JsonErrorPolicy::Strict {
+                return Err(wide_integer_record_error("at position 1"));
+            }
+            Ok((0, 1, false))
+        }
         Ok(Value::Object(obj)) => {
             on_object(&obj);
             Ok((1, 0, false))
@@ -935,7 +959,7 @@ pub fn analyze_json_file_with_options(
             // is the cause, so none is retained.
             return Err(DataProfilerError::json_parsing_error(&format!(
                 "No valid JSON records found in file \
-                 (every record was malformed or not a JSON object){hint}"
+                 (every record was malformed, not a JSON object, or held an integer outside the 64-bit range){hint}"
             )));
         }
         // A row cap that stopped the scan before the first record still has to

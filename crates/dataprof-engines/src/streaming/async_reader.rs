@@ -13,8 +13,9 @@ use dataprof_runtime::{
 };
 
 use dataprof_json::record::{
-    JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
-    malformed_array_error, non_object_record_error, read_json_record, read_jsonl_line,
+    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
+    json_value_text, malformed_array_error, non_object_record_error, read_json_record,
+    read_jsonl_line, wide_integer_record_error,
 };
 
 use super::async_source::AsyncDataSource;
@@ -837,6 +838,15 @@ impl AsyncStreamingProfiler {
                             // Approximate progress for a record that yields no row.
                             bytes_in_chunk += 10;
                         }
+                        JsonRecord::WideInteger => {
+                            if error_policy == JsonErrorPolicy::Strict {
+                                return Err(wide_integer_record_error(&format!(
+                                    "on line {line_number}"
+                                )));
+                            }
+                            malformed_records += 1;
+                            bytes_in_chunk += 10;
+                        }
                         JsonRecord::Malformed(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
                                 // Each line is parsed on its own, so the
@@ -875,6 +885,14 @@ impl AsyncStreamingProfiler {
 
                     if !text.trim().is_empty() {
                         match serde_json::from_str::<serde_json::Value>(text.trim()) {
+                            Ok(serde_json::Value::Object(_))
+                                if has_wide_integer_literal(text.as_bytes()) =>
+                            {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(wide_integer_record_error("at position 1"));
+                                }
+                                malformed_records += 1;
+                            }
                             Ok(serde_json::Value::Object(obj)) => {
                                 let row = process_object(
                                     &obj,
@@ -997,6 +1015,17 @@ impl AsyncStreamingProfiler {
                                 // Approximate progress for a record that yields no row.
                                 bytes_in_chunk += 10;
                             }
+                            JsonRecord::WideInteger => {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(wide_integer_record_error(&format!(
+                                        "at position {}",
+                                        emitted_records + malformed_records + 1
+                                    )));
+                                }
+                                // Read in full: the array grammar is intact.
+                                malformed_records += 1;
+                                bytes_in_chunk += 10;
+                            }
                             JsonRecord::Malformed(e) => {
                                 // A corrupt element leaves the array parser unable
                                 // to resync, so we stop here either way; strict mode
@@ -1066,7 +1095,7 @@ impl AsyncStreamingProfiler {
             // is the cause, so none is retained.
             return Err(DataProfilerError::json_parsing_error(
                 "No valid JSON records found \
-                 (every record was malformed or not a JSON object)",
+                 (every record was malformed, not a JSON object, or held an integer outside the 64-bit range)",
             ));
         }
 

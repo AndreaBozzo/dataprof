@@ -27,7 +27,7 @@ struct Case {
     duplicate_rows: usize,
 }
 
-const CASES: [Case; 6] = [
+const CASES: [Case; 7] = [
     Case {
         label: "composite keys, LF",
         bytes: b"key\n123|456\n123|789\n",
@@ -62,6 +62,12 @@ const CASES: [Case; 6] = [
         label: "BOM, then a blank line",
         bytes: b"\xEF\xBB\xBF\nid;value\n1;2\n3;\n",
         columns: &[("id", 0), ("value", 1)],
+        duplicate_rows: 0,
+    },
+    Case {
+        label: "semicolon rows with a quoted empty trailing field",
+        bytes: b"id;amount,EUR\n1;10,50;\"\"\n2;20;\"\"\n",
+        columns: &[("id", 0), ("amount,EUR", 0)],
         duplicate_rows: 0,
     },
 ];

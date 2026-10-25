@@ -54,10 +54,18 @@ CASES: dict[str, tuple[bytes, list[tuple[str, int]], int]] = {
         [("id", 0), ("value", 1)],
         0,
     ),
+    "semicolon rows with a quoted empty trailing field": (
+        b'id;amount,EUR\n1;10,50;""\n2;20;""\n',
+        [("id", 0), ("amount,EUR", 0)],
+        0,
+    ),
 }
 
 #: Synchronous bytes refuse a ragged row rather than cut it, on every release.
-STRICT_BYTES = {"semicolon rows with a trailing empty field"}
+STRICT_BYTES = {
+    "semicolon rows with a trailing empty field",
+    "semicolon rows with a quoted empty trailing field",
+}
 
 
 def _shape(report: dp.ProfileReport) -> dict[str, Any]:

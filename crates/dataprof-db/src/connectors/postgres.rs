@@ -263,7 +263,21 @@ impl crate::DecodeStructured for sqlx::postgres::PgRow {
             return None;
         }
         if is_json && let Ok(value) = self.try_get::<sqlx::types::JsonValue, _>(index) {
-            return Some(super::common::json_structured_value(&value));
+            // serde_json holds an integer outside the 64-bit range as the
+            // nearest f64, while PostgreSQL keeps every digit: such a document
+            // takes the raw path below, so distinct values stay distinct
+            // (#1104). Only a value holding a float that large reads the raw
+            // bytes. Both calls fail only on NULL, which was taken first.
+            let wide = dataprof_json::record::may_hold_wide_integer(&value)
+                && dataprof_json::record::has_wide_integer_literal(
+                    self.try_get_raw(index)
+                        .expect("a decoded column index")
+                        .as_bytes()
+                        .expect("a non-null value has bytes"),
+                );
+            if !wide {
+                return Some(super::common::json_structured_value(&value));
+            }
         }
 
         // Both calls fail only on NULL, and the `Option<String>` arm took

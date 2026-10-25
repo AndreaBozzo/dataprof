@@ -1,7 +1,7 @@
 //! The JSON record tokenizer shared by the file reader and the async stream
 //! reader, so a payload profiles identically whichever way it arrives.
 
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 
 use dataprof_core::DataProfilerError;
 use serde::Deserialize;
@@ -18,6 +18,14 @@ pub enum JsonRecord {
     NonObject(&'static str),
     /// The bytes are not valid JSON.
     Malformed(serde_json::Error),
+    /// An object whose source text holds an integer literal outside the
+    /// 64-bit range. serde_json keeps such an integer as the nearest `f64`, so
+    /// distinct values would round to one before they are counted (#1103).
+    /// The text decides, not the parsed value, so a literal a later duplicate
+    /// key overwrites counts too, as it does for the Python bytes reader,
+    /// which sees every integer token. The record was read in full, so the
+    /// caller can skip it and keep reading.
+    WideInteger,
 }
 
 /// Read one JSON value and leave the reader positioned immediately after it.
@@ -40,8 +48,20 @@ pub fn read_json_record<R: BufRead>(
         });
     }
 
-    let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    Ok(match Value::deserialize(&mut deserializer) {
+    // The source bytes are kept so an integer serde rounded to f64 can be
+    // recognised from its literal; the parsed value no longer tells.
+    let mut recorded = RecordingReader {
+        inner: reader,
+        bytes: Vec::new(),
+    };
+    let parsed = {
+        let mut deserializer = serde_json::Deserializer::from_reader(&mut recorded);
+        Value::deserialize(&mut deserializer)
+    };
+    Ok(match parsed {
+        Ok(Value::Object(_)) if has_wide_integer_literal(&recorded.bytes) => {
+            JsonRecord::WideInteger
+        }
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
         Err(err) if err.is_io() => {
@@ -56,6 +76,85 @@ pub fn read_json_record<R: BufRead>(
         }
         Err(err) => JsonRecord::Malformed(err),
     })
+}
+
+/// A reader that keeps a copy of every byte read through it.
+struct RecordingReader<'a, R> {
+    inner: &'a mut R,
+    bytes: Vec<u8>,
+}
+
+impl<R: Read> Read for RecordingReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.bytes.extend_from_slice(&buffer[..read]);
+        Ok(read)
+    }
+}
+
+/// Whether `value` holds a float large enough to have been read from an
+/// integer literal outside the 64-bit range; only the source text can tell.
+///
+/// An integer within `i64` or `u64` parses exactly; one outside becomes an
+/// `f64` of magnitude at least 2^63. A float literal like `1e19` does too, so
+/// this alone refuses nothing.
+pub fn may_hold_wide_integer(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => {
+            number.as_i64().is_none()
+                && number.as_u64().is_none()
+                && number
+                    .as_f64()
+                    .is_some_and(|float| float.abs() >= 2f64.powi(63))
+        }
+        Value::Array(items) => items.iter().any(may_hold_wide_integer),
+        Value::Object(fields) => fields.values().any(may_hold_wide_integer),
+        _ => false,
+    }
+}
+
+/// Whether `raw` JSON text holds an integer literal (no fraction, no exponent)
+/// that fits neither `i64` nor `u64`. String contents are skipped, and a token
+/// shorter than 19 digits, which always fits, is not parsed.
+pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
+    let mut index = 0;
+    while index < raw.len() {
+        match raw[index] {
+            b'"' => {
+                index += 1;
+                while index < raw.len() && raw[index] != b'"' {
+                    index += if raw[index] == b'\\' { 2 } else { 1 };
+                }
+                index += 1;
+            }
+            byte if byte == b'-' || byte.is_ascii_digit() => {
+                let start = index;
+                while index < raw.len() && is_json_number_byte(raw[index]) {
+                    index += 1;
+                }
+                let token = &raw[start..index];
+                let digits = token.len() - usize::from(token[0] == b'-');
+                if digits >= 19 && !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                    // decode-audit: impossible — every number byte is ASCII.
+                    let text = std::str::from_utf8(token).expect("JSON number bytes are ASCII");
+                    if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
+                        return true;
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    false
+}
+
+/// Build the error for a record refused as [`JsonRecord::WideInteger`].
+/// `location` names the record ("at position 3", "on line 7"); the value is
+/// never included, as with every record error.
+pub fn wide_integer_record_error(location: &str) -> DataProfilerError {
+    DataProfilerError::json_parsing_error(&format!(
+        "JSON record {location} holds an integer outside the 64-bit range, which would be rounded to a float and could merge distinct values; write such integers as strings to profile them"
+    ))
 }
 
 /// Read the bytes that can spell a JSON number, stopping at the first byte that
@@ -242,8 +341,14 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
 /// JSON values.
 pub fn read_jsonl_line(line: &str) -> JsonRecord {
     match serde_json::from_str::<Value>(line.trim()) {
+        Ok(Value::Object(_)) if has_wide_integer_literal(line.as_bytes()) => {
+            JsonRecord::WideInteger
+        }
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        // An integer too long even for f64 fails to parse at all; the line is
+        // consumed either way, so name it as what it holds.
+        Err(_) if has_wide_integer_literal(line.as_bytes()) => JsonRecord::WideInteger,
         Err(err) => JsonRecord::Malformed(err),
     }
 }
