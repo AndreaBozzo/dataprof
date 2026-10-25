@@ -47,8 +47,10 @@ def _parse_json_int(token: str) -> int:
     # the nearest float, so they refuse it rather than merge distinct values;
     # bytes refuse it too, so every route reads the same input alike (#1103).
     # The value stays out of the message, as with every record error.
-    value = int(token)
-    if not _INT64_MIN <= value <= _UINT64_MAX:
+    # A token over 20 digits is out of range whatever its value, and is refused
+    # before int(), which raises its own ValueError past Python's digit limit.
+    value = int(token) if len(token.lstrip("-")) <= 20 else None
+    if value is None or not _INT64_MIN <= value <= _UINT64_MAX:
         raise _NonStandardJsonConstant(
             token,
             "an integer outside the 64-bit range; write such integers as strings to profile them",

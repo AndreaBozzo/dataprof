@@ -18,10 +18,13 @@ pub enum JsonRecord {
     NonObject(&'static str),
     /// The bytes are not valid JSON.
     Malformed(serde_json::Error),
-    /// An object that holds an integer literal outside the 64-bit range.
-    /// serde_json keeps such an integer as the nearest `f64`, so distinct
-    /// values would round to one before they are counted (#1103). The record
-    /// was read in full, so the caller can skip it and keep reading.
+    /// An object whose source text holds an integer literal outside the
+    /// 64-bit range. serde_json keeps such an integer as the nearest `f64`, so
+    /// distinct values would round to one before they are counted (#1103).
+    /// The text decides, not the parsed value, so a literal a later duplicate
+    /// key overwrites counts too, as it does for the Python bytes reader,
+    /// which sees every integer token. The record was read in full, so the
+    /// caller can skip it and keep reading.
     WideInteger,
 }
 
@@ -56,7 +59,7 @@ pub fn read_json_record<R: BufRead>(
         Value::deserialize(&mut deserializer)
     };
     Ok(match parsed {
-        Ok(Value::Object(obj)) if holds_wide_integer(&obj, &recorded.bytes) => {
+        Ok(Value::Object(_)) if has_wide_integer_literal(&recorded.bytes) => {
             JsonRecord::WideInteger
         }
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
@@ -89,19 +92,12 @@ impl<R: Read> Read for RecordingReader<'_, R> {
     }
 }
 
-/// Whether a parsed object came from source text holding an integer literal
-/// outside the 64-bit range.
-///
-/// An integer within `i64` or `u64` parses exactly; one outside becomes an
-/// `f64` of magnitude at least 2^63. Only an object holding such a float can
-/// hide one, so `raw` is scanned only then: a float literal like `1e19` is
-/// read as written and stays accepted.
-pub fn holds_wide_integer(obj: &JsonObject, raw: &[u8]) -> bool {
-    obj.values().any(may_hold_wide_integer) && has_wide_integer_literal(raw)
-}
-
 /// Whether `value` holds a float large enough to have been read from an
 /// integer literal outside the 64-bit range; only the source text can tell.
+///
+/// An integer within `i64` or `u64` parses exactly; one outside becomes an
+/// `f64` of magnitude at least 2^63. A float literal like `1e19` does too, so
+/// this alone refuses nothing.
 pub fn may_hold_wide_integer(value: &Value) -> bool {
     match value {
         Value::Number(number) => {
@@ -118,7 +114,8 @@ pub fn may_hold_wide_integer(value: &Value) -> bool {
 }
 
 /// Whether `raw` JSON text holds an integer literal (no fraction, no exponent)
-/// that fits neither `i64` nor `u64`. String contents are skipped.
+/// that fits neither `i64` nor `u64`. String contents are skipped, and a token
+/// shorter than 19 digits, which always fits, is not parsed.
 pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
     let mut index = 0;
     while index < raw.len() {
@@ -136,7 +133,8 @@ pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
                     index += 1;
                 }
                 let token = &raw[start..index];
-                if !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                let digits = token.len() - usize::from(token[0] == b'-');
+                if digits >= 19 && !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
                     // decode-audit: impossible — every number byte is ASCII.
                     let text = std::str::from_utf8(token).expect("JSON number bytes are ASCII");
                     if text.parse::<i64>().is_err() && text.parse::<u64>().is_err() {
@@ -343,11 +341,14 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
 /// JSON values.
 pub fn read_jsonl_line(line: &str) -> JsonRecord {
     match serde_json::from_str::<Value>(line.trim()) {
-        Ok(Value::Object(obj)) if holds_wide_integer(&obj, line.as_bytes()) => {
+        Ok(Value::Object(_)) if has_wide_integer_literal(line.as_bytes()) => {
             JsonRecord::WideInteger
         }
         Ok(Value::Object(obj)) => JsonRecord::Object(obj),
         Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        // An integer too long even for f64 fails to parse at all; the line is
+        // consumed either way, so name it as what it holds.
+        Err(_) if has_wide_integer_literal(line.as_bytes()) => JsonRecord::WideInteger,
         Err(err) => JsonRecord::Malformed(err),
     }
 }

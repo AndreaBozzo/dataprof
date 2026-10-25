@@ -24,7 +24,7 @@ fn profile(contents: &str, suffix: &str, policy: JsonErrorPolicy) -> Result<Prof
 }
 
 /// (label, file suffix, contents, where a strict error names the record)
-const WIDE: [(&str, &str, &str, &str); 5] = [
+const WIDE: [(&str, &str, &str, &str); 6] = [
     (
         "array, above u64",
         ".json",
@@ -47,6 +47,14 @@ const WIDE: [(&str, &str, &str, &str); 5] = [
         "jsonl",
         ".jsonl",
         "{\"id\":1,\"v\":5}\n{\"id\":2,\"v\":18446744073709551616}\n{\"id\":3,\"v\":6}\n",
+        "on line 2",
+    ),
+    (
+        // The text decides: a later duplicate key that overwrites the literal
+        // does not hide it, as the Python bytes reader sees every integer.
+        "jsonl, duplicate key overwrites it",
+        ".jsonl",
+        "{\"id\":1,\"v\":5}\n{\"id\":2,\"v\":18446744073709551616,\"v\":1}\n{\"id\":3,\"v\":6}\n",
         "on line 2",
     ),
     (

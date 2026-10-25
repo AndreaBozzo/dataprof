@@ -42,7 +42,7 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 use record::{
-    JsonRecord, drain_to_end, holds_wide_integer, json_document_error, json_value_kind,
+    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
     json_value_text, malformed_array_error, non_object_record_error, read_json_record,
     read_jsonl_line, skip_ascii_whitespace, wide_integer_record_error,
 };
@@ -617,7 +617,7 @@ where
     }
 
     match serde_json::from_str::<Value>(text.trim()) {
-        Ok(Value::Object(obj)) if holds_wide_integer(&obj, text.as_bytes()) => {
+        Ok(Value::Object(_)) if has_wide_integer_literal(text.as_bytes()) => {
             if config.error_policy == JsonErrorPolicy::Strict {
                 return Err(wide_integer_record_error("at position 1"));
             }

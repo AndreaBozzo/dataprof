@@ -32,10 +32,29 @@ WIDE = "outside the 64-bit range"
 #: label -> (format, bytes); the middle record holds the wide integer, so skip
 #: must keep reading past it.
 CASES: dict[str, tuple[str, bytes]] = {
-    "array, above u64": ("json", b'[{"id":1,"v":5},{"id":2,"v":18446744073709551616},{"id":3,"v":6}]'),
-    "array, below i64": ("json", b'[{"id":1,"v":5},{"id":2,"v":-9223372036854775809},{"id":3,"v":6}]'),
-    "array, nested": ("json", b'[{"id":1,"v":5},{"id":2,"v":{"k":[18446744073709551617]}},{"id":3,"v":6}]'),
+    "array, above u64": (
+        "json",
+        b'[{"id":1,"v":5},{"id":2,"v":18446744073709551616},{"id":3,"v":6}]',
+    ),
+    "array, below i64": (
+        "json",
+        b'[{"id":1,"v":5},{"id":2,"v":-9223372036854775809},{"id":3,"v":6}]',
+    ),
+    "array, nested": (
+        "json",
+        b'[{"id":1,"v":5},{"id":2,"v":{"k":[18446744073709551617]}},{"id":3,"v":6}]',
+    ),
     "jsonl": ("jsonl", b'{"id":1,"v":5}\n{"id":2,"v":18446744073709551616}\n{"id":3,"v":6}\n'),
+    # The text decides: a later duplicate key does not hide the literal.
+    "jsonl, duplicate key overwrites it": (
+        "jsonl",
+        b'{"id":1,"v":5}\n{"id":2,"v":18446744073709551616,"v":1}\n{"id":3,"v":6}\n',
+    ),
+    # Past Python's 4,300-digit int() limit, which raised its own ValueError.
+    "jsonl, 5000 digits": (
+        "jsonl",
+        b'{"id":1,"v":5}\n{"id":2,"v":' + b"9" * 5000 + b'}\n{"id":3,"v":6}\n',
+    ),
 }
 
 

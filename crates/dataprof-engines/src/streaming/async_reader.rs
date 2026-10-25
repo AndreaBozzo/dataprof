@@ -13,7 +13,7 @@ use dataprof_runtime::{
 };
 
 use dataprof_json::record::{
-    JsonRecord, drain_to_end, holds_wide_integer, json_document_error, json_value_kind,
+    JsonRecord, drain_to_end, has_wide_integer_literal, json_document_error, json_value_kind,
     json_value_text, malformed_array_error, non_object_record_error, read_json_record,
     read_jsonl_line, wide_integer_record_error,
 };
@@ -885,8 +885,8 @@ impl AsyncStreamingProfiler {
 
                     if !text.trim().is_empty() {
                         match serde_json::from_str::<serde_json::Value>(text.trim()) {
-                            Ok(serde_json::Value::Object(obj))
-                                if holds_wide_integer(&obj, text.as_bytes()) =>
+                            Ok(serde_json::Value::Object(_))
+                                if has_wide_integer_literal(text.as_bytes()) =>
                             {
                                 if error_policy == JsonErrorPolicy::Strict {
                                     return Err(wide_integer_record_error("at position 1"));
