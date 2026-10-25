@@ -189,13 +189,15 @@ gh run watch
 
 A pull request that changes `.github/python-interpreters.json`,
 `wheel_interpreters.py`, `rust-toolchain.toml`, `python-dist.yml` or
-`release-rehearsal.yml` runs it on its own. The release builds with the newest maturin that `[build-system] requires`
-in `pyproject.toml` allows, in manylinux images selected by floating tags, so an
-upstream release changes the build without any change here: run the rehearsal
-on `master` before tagging as well. Each install job's summary shows,
-per interpreter, whether the wheel was built, whether it installs and whether
-the smoke test passed; an interpreter maturin cannot resolve fails the build
-step before compilation.
+`release-rehearsal.yml` runs it on its own. The release builds with the newest
+maturin that `[build-system] requires` in `pyproject.toml` allows, in manylinux
+images selected by floating tags, so an upstream release changes the build
+without any change here. The rehearsal therefore also runs weekly on `master`;
+run it there before tagging as well.
+
+Each install job's summary shows, per interpreter, whether the wheel was built,
+whether it installs and whether the smoke test passed; an interpreter maturin
+cannot resolve fails the build step before compilation.
 
 ### Database regression tests
 
