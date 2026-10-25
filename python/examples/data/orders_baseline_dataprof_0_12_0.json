@@ -1,0 +1,214 @@
+{
+  "column_profiles": [
+    {
+      "data_type": "Identifier",
+      "locale_number_count": 0,
+      "name": "order_id",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "identifier",
+          "confidence": 0.1,
+          "match_count": 20,
+          "match_percentage": 100.0,
+          "name": "Labeled Identifier",
+          "regex": "^[A-Za-z]+[_-][A-Za-z0-9]+$"
+        }
+      ],
+      "stats": {
+        "Text": {
+          "avg_length": 6.0,
+          "max_length": 6,
+          "min_length": 6
+        }
+      },
+      "total_count": 20,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 20
+      },
+      "unique_count": 20,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "customer_id",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "identifier",
+          "confidence": 0.1,
+          "match_count": 20,
+          "match_percentage": 100.0,
+          "name": "Labeled Identifier",
+          "regex": "^[A-Za-z]+[_-][A-Za-z0-9]+$"
+        }
+      ],
+      "stats": {
+        "Text": {
+          "avg_length": 5.0,
+          "max_length": 5,
+          "min_length": 5
+        }
+      },
+      "total_count": 20,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 20
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "amount_eur",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 49.07,
+          "kurtosis": -1.3652,
+          "max": 99.5,
+          "mean": 56.0,
+          "median": 55.0,
+          "min": 10.5,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 44.5,
+            "q1": 35.25,
+            "q2": 55.0,
+            "q3": 79.75
+          },
+          "skewness": -0.0495,
+          "std_dev": 27.4773,
+          "variance": 755.0
+        }
+      },
+      "total_count": 20,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 20,
+        "text": 0
+      },
+      "unique_count": 20,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "status",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Text": {
+          "avg_length": 5.8,
+          "max_length": 7,
+          "min_length": 4
+        }
+      },
+      "total_count": 20,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 20
+      },
+      "unique_count": 3,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "csv",
+    "path": "day3_clean.csv",
+    "size_bytes": 555,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 555,
+    "columns_detected": 4,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 19.2578125,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 20,
+    "sampling_applied": false,
+    "scan_time_ms": 60,
+    "source_exhausted": true,
+    "throughput_rows_sec": 333.33333333333337,
+    "unterminated_quote": false
+  },
+  "id": "6ab2757a-6777-403e-a73b-f622b3d90205",
+  "metric_semantics": {
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 20,
+        "outlier_ratio": 0.0,
+        "range_violations": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 80
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 80
+      },
+      "precision": {
+        "decimal_places_consistency": 100.0,
+        "inconsistent_precision_values": 0,
+        "numeric_values_checked": 20
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": true,
+        "key_column": "order_id",
+        "key_uniqueness": 100.0,
+        "rows_checked": 20
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 100.0,
+        "precision": 100.0,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 100.0
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "semantic_hint_bindings": [
+    {
+      "checked_values": 20,
+      "column": "order_id",
+      "exact": true,
+      "kind": "identifier",
+      "matched_values": 20
+    }
+  ],
+  "timestamp": "2026-10-25T10:12:42.153873600+00:00"
+}

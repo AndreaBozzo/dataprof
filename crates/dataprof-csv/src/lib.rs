@@ -82,27 +82,58 @@ impl CsvParserConfig {
     }
 }
 
-/// Count fields in a line for a given delimiter, respecting quoted sections.
-pub(crate) fn count_fields(line: &str, delimiter: char) -> usize {
-    let mut count = 1;
+/// Count the fields in a record for a given delimiter, respecting quoted
+/// sections, and how many of them at the end are empty.
+///
+/// Returns `(fields, trailing_empty)`. A field is empty when it decodes to
+/// nothing, as the readers decode it: nothing stands between its delimiters,
+/// or it is a quoted empty string `""`. Judging the raw text instead counted
+/// `""` as content, and a row ending in `;""` disagreed with its header
+/// (#1102).
+fn count_fields(line: &str, delimiter: char) -> (usize, usize) {
+    let decodes_empty = |field: &str| field.is_empty() || field == "\"\"";
+    let mut fields = 1;
+    let mut trailing_empty = 0;
+    let mut field_start = 0;
     let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let mut chars = line.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
         if ch == '"' {
-            if chars.peek() == Some(&'"') {
+            if chars.peek().map(|&(_, next)| next) == Some('"') {
                 chars.next();
             } else {
                 in_quotes = !in_quotes;
             }
         } else if ch == delimiter && !in_quotes {
-            count += 1;
+            trailing_empty = if decodes_empty(&line[field_start..index]) {
+                trailing_empty + 1
+            } else {
+                0
+            };
+            fields += 1;
+            field_start = index + ch.len_utf8();
         }
     }
-    count
+    trailing_empty = if decodes_empty(&line[field_start..]) {
+        trailing_empty + 1
+    } else {
+        0
+    };
+    (fields, trailing_empty)
+}
+
+/// Whether a record reads at the header's width without losing or inventing a
+/// value: it has exactly that many fields, or more whose extras are all empty,
+/// so cutting it to the header drops nothing (#1096).
+fn agrees_with_header(fields: usize, trailing_empty: usize, header_fields: usize) -> bool {
+    fields == header_fields || (fields > header_fields && fields - trailing_empty <= header_fields)
 }
 
 /// Split raw CSV sample text into logical records, honoring quoted sections
 /// so an embedded newline inside quotes does not start a new record.
+///
+/// A record ends at LF, CRLF or a lone CR outside quotes, as in the readers.
+/// Splitting on LF alone read a CR-only file as one header record (#1097).
 ///
 /// The returned flag is true when the final record was not terminated by a
 /// newline outside quotes — i.e. the text ends mid-record (or exactly at a
@@ -132,6 +163,10 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
                 records.push(&text[start..end]);
                 start = i + 1;
             }
+            b'\r' if !in_quotes && bytes.get(i + 1) != Some(&b'\n') => {
+                records.push(&text[start..i]);
+                start = i + 1;
+            }
             _ => {}
         }
         i += 1;
@@ -148,11 +183,19 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 /// The sample is split into logical records with quote handling, so quoted
 /// fields containing embedded newlines or delimiter characters do not skew
 /// detection. Tests comma, semicolon, tab, and pipe over the first 5 non-blank
-/// records: a delimiter whose modal field count is greater than one always
-/// beats one that only ever yields single-field records, then higher record
-/// agreement and higher field counts win.
+/// records, measured against the first one, the header: it sets the column
+/// count, and the readers cut or pad a wider or narrower record to it, or
+/// reject it under strict parsing. A delimiter that splits the header always
+/// beats one that does not; then more records agreeing with the header win,
+/// then more records at exactly the header's width, then a wider header, and
+/// comma wins a tie. A record agrees when it reads at the header's width
+/// without losing a value: the same field count, or extra fields that are all
+/// empty, as an exporter's trailing delimiter leaves.
 ///
-/// Falls back to comma if no candidate splits the sample.
+/// Judging by the data rows alone let a delimiter that never occurs in the
+/// header win, and the readers then cut every row back to its first field: a
+/// one-column file of `123|456` keys was profiled as `123` with fabricated
+/// duplicates (#1092).
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     const SAMPLE_BYTES: u64 = 4096;
     let mut preamble = Vec::new();
@@ -160,7 +203,11 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     take.read_to_end(&mut preamble)?;
     let truncated = preamble.len() as u64 == SAMPLE_BYTES;
 
-    let preamble_str = String::from_utf8_lossy(&preamble);
+    // A UTF-8 BOM marks the encoding, as in the readers, and is no part of
+    // the first record: left in, a BOM followed by a blank line was scored as
+    // a one-field header and outvoted the real one.
+    let sample = preamble.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&preamble);
+    let preamble_str = String::from_utf8_lossy(sample);
     let (mut records, last_unterminated) = split_sample_records(&preamble_str);
     // A full sample buffer that ends mid-record leaves a fragment; never score
     // it. A sample ending on a clean newline keeps all its records.
@@ -168,34 +215,41 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
         records.pop();
     }
 
+    // Blank records carry no delimiter signal: a header followed by trailing
+    // blank lines must not outvote the true delimiter with single-field
+    // "records" (gh #559).
+    let scored: Vec<&str> = records
+        .into_iter()
+        .filter(|record| !record.trim().is_empty())
+        .take(5)
+        .collect();
+    let Some((header, rows)) = scored.split_first() else {
+        return Ok(b',');
+    };
+
     let delimiters = *b",;\t|";
     let mut best_delimiter = b',';
-    // (splits records into >1 field, records agreeing on the modal count,
-    //  modal field count) — compared lexicographically, first wins ties.
-    let mut best_score = (false, 0usize, 0usize);
+    // (splits the header into >1 field, records agreeing with the header,
+    //  records at exactly the header's width, header field count) — compared
+    //  lexicographically, first wins ties. Exact width only breaks a tie: a
+    //  candidate that reads every record as it stands beats one that needs
+    //  trailing empty fields cut to agree.
+    let mut best_score = (false, 0usize, 0usize, 0usize);
 
     for &delimiter in &delimiters {
-        let mut counts = std::collections::HashMap::new();
-        // Blank records carry no delimiter signal: a header followed by
-        // trailing blank lines must not outvote the true delimiter with
-        // single-field "records" (gh #559).
-        let scored = records
-            .iter()
-            .filter(|record| !record.trim().is_empty())
-            .take(5);
-        for record in scored {
-            let fields = count_fields(record, delimiter as char);
-            *counts.entry(fields).or_insert(0usize) += 1;
+        let (header_fields, _) = count_fields(header, delimiter as char);
+        let (mut agreeing, mut exact) = (1, 1);
+        for record in rows {
+            let (fields, trailing_empty) = count_fields(record, delimiter as char);
+            if agrees_with_header(fields, trailing_empty, header_fields) {
+                agreeing += 1;
+            }
+            if fields == header_fields {
+                exact += 1;
+            }
         }
 
-        // decode-audit: no-data — an empty sample scores 0 for this delimiter
-        // candidate; nothing is fabricated.
-        let (modal_fields, consistency) = counts
-            .into_iter()
-            .max_by_key(|&(fields, count)| (count, fields))
-            .unwrap_or((0, 0));
-
-        let score = (modal_fields > 1, consistency, modal_fields);
+        let score = (header_fields > 1, agreeing, exact, header_fields);
         if score > best_score {
             best_score = score;
             best_delimiter = delimiter;
@@ -798,6 +852,85 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_delimiter_never_splits_rows_the_header_does_not() {
+        // Pipe splits both data rows and not the header; the readers cut rows
+        // to the header's width, so choosing it kept only `123` (gh #1092).
+        let data = b"key\n123|456\n123|789\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_header_split_beats_uniform_rows() {
+        // A trailing delimiter on every data row: comma splits the header,
+        // which no other candidate does.
+        let data = b"a,b\n1,2,\n3,4,\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_trailing_empty_fields_still_agree() {
+        // Semicolon rows carry a trailing empty field, comma occurs inside the
+        // header name and a decimal. Counting the empty extras against
+        // semicolon let comma win and invent a null column (gh #1096).
+        let data = b"id;amount,EUR\n1;10,50;\n2;20;\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_quoted_empty_trailing_field_still_agrees() {
+        // `""` decodes to an empty field in every reader; judged on its raw
+        // text it counted as content and comma won again (gh #1102).
+        let data = b"id;amount,EUR\n1;10,50;\"\"\n2;20;\"\"\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_exact_width_beats_cut_trailing_fields() {
+        // Both candidates split the header and keep every value; semicolon
+        // reads each row as it stands, comma only after cutting an empty
+        // trailing field. Comma won the tie and renamed the columns.
+        let data = b"id,part;value\nx;y,z,\nu;v,w,\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_skips_a_utf8_bom() {
+        // A BOM then a blank line: the BOM alone was scored as a one-field
+        // header, and comma won over the real semicolon header.
+        let data = b"\xEF\xBB\xBF\nid;value\n1;2\n3;4\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+        let no_blank = b"\xEF\xBB\xBFid;value\n1;2\n";
+        assert_eq!(
+            detect_delimiter(Cursor::new(no_blank.as_ref())).unwrap(),
+            b';'
+        );
+    }
+
+    #[test]
+    fn test_detect_delimiter_lone_cr_ends_a_record() {
+        // CR-only line endings: read as one header record, pipe split it and
+        // won, and the keys were cut to `123` (gh #1097).
+        let data = b"key\r123|456\r123|789\r";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+        let semicolon = b"id;value\r1;10\r2;20\r";
+        assert_eq!(
+            detect_delimiter(Cursor::new(semicolon.as_ref())).unwrap(),
+            b';'
+        );
+    }
+
+    #[test]
+    fn test_count_fields_reports_trailing_empty_fields() {
+        assert_eq!(count_fields("1;10,50;", ';'), (3, 1));
+        assert_eq!(count_fields("a;;", ';'), (3, 2));
+        assert_eq!(count_fields("a;\"\"", ';'), (2, 1));
+        assert_eq!(count_fields("a;\"\"\"\"", ';'), (2, 0));
+        assert_eq!(count_fields("a; ", ';'), (2, 0));
+        assert_eq!(count_fields("a;b", ';'), (2, 0));
+        assert_eq!(count_fields("\"x;y\";", ';'), (2, 1));
+    }
+
+    #[test]
     fn test_split_sample_records_quote_aware() {
         let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
         assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
@@ -806,6 +939,13 @@ mod tests {
         let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie");
         assert_eq!(records, vec!["a,b", "1,\"cut mid-fie"]);
         assert!(last_unterminated);
+
+        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r");
+        assert_eq!(records, vec!["a,b", "1,\"x\ry\"", "2,z"]);
+        assert!(!last_unterminated);
+
+        let (records, _) = split_sample_records("a\rb\r\nc\n");
+        assert_eq!(records, vec!["a", "b", "c"]);
     }
 
     #[test]

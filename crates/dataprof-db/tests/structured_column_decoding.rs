@@ -314,6 +314,52 @@ mod postgres {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
+    /// serde_json holds an integer outside the 64-bit range as the nearest
+    /// f64, so the two rows below rendered alike and counted as a duplicate
+    /// (#1104). PostgreSQL keeps every digit, and so must the profile; the
+    /// float `1e19` in the scalar column is read through the same path and
+    /// `jsonb` prints it as an integer.
+    #[tokio::test]
+    async fn integers_outside_64_bits_keep_their_digits() {
+        let Some(url) = url().await else {
+            return;
+        };
+        let query = r#"SELECT j, b, s FROM (VALUES
+            (1, '{"v": 18446744073709551616}'::json, '[-9223372036854775809]'::jsonb,
+             '1e19'::jsonb),
+            (2, '{"v": 18446744073709551617}'::json, '[-9223372036854775810]'::jsonb,
+             '5'::jsonb)) AS t(n, j, b, s) ORDER BY n"#;
+        let expected = [
+            [
+                r#"{"v":18446744073709551616}"#,
+                "[-9223372036854775809]",
+                "10000000000000000000",
+            ],
+            [
+                r#"{"v":18446744073709551617}"#,
+                "[-9223372036854775810]",
+                "5",
+            ],
+        ];
+
+        let mut wrong = Vec::new();
+        for (path, columns) in both_paths(&url, query).await {
+            for (row, texts) in expected.iter().enumerate() {
+                let found = [&columns["j"][row], &columns["b"][row], &columns["s"][row]];
+                if found.map(String::as_str) != *texts {
+                    wrong.push(format!("{path} row {row}: {found:?}"));
+                }
+            }
+        }
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(0) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 0"
+            ));
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     /// The same records as a JSONL file report the same container columns.
     #[tokio::test]
     async fn the_query_and_a_jsonl_file_of_its_rows_agree() {

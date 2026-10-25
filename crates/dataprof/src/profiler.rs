@@ -551,11 +551,6 @@ impl Profiler {
         partial::detect_format(file_path)
     }
 
-    /// Whether custom CSV config options are set.
-    fn has_csv_config(&self) -> bool {
-        self.config.csv_delimiter.is_some() || self.config.csv_flexible.is_some()
-    }
-
     /// Build a `CsvParserConfig` from the profiler's CSV settings.
     fn csv_parser_config(&self) -> dataprof_csv::CsvParserConfig {
         let mut csv_config = dataprof_csv::CsvParserConfig::default();
@@ -708,13 +703,16 @@ impl Profiler {
 
     /// Build a `CsvParserConfig` for a CSV file, auto-detecting the delimiter
     /// when none was explicitly configured.
+    ///
+    /// Detection depends on the delimiter alone: setting `csv_flexible` either
+    /// way used to skip it, and the reader then split on commas (#1091).
     fn csv_config_for_file(&self, file_path: &Path) -> dataprof_csv::CsvParserConfig {
-        if self.has_csv_config() {
-            self.csv_parser_config()
-        } else {
-            let detected = dataprof_csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
-            dataprof_csv::CsvParserConfig::default().with_delimiter(detected)
+        let config = self.csv_parser_config();
+        if self.config.csv_delimiter.is_some() {
+            return config;
         }
+        let detected = dataprof_csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
+        config.with_delimiter(detected)
     }
 
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON/Parquet.

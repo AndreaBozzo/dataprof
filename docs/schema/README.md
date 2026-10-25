@@ -803,6 +803,55 @@ written before it; those are assessed and scored as their release did. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `outlier_units` is malformed, as for `text_length_unit`.
 
+## v1 additive change: `metric_semantics.key_column_source`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `key_column_source` | `"declared"` | which column `key_uniqueness` may measure |
+
+`key_uniqueness` now measures only a declared key: the first `identifier_columns`
+entry the source has (#1065). Through 0.12, with none declared, the first column
+whose name had an `id`, `key` or `pk` word was the key. A name cannot tell a
+table's key from a foreign key, so a `customer_id` listed before `order_id` was
+scored as the table key, and the same clean orders table scored 100 or 94.38
+depending on column order. Without a declared key, `key_column` and
+`key_values_checked` are absent, `key_uniqueness` carries no signal, and the
+uniqueness score rests on the duplicate-row component alone, or the dimension
+is unassessed without one. Declare the key to have it scored:
+`profile(..., identifier_columns=["order_id"])`.
+
+A report that records no `key_column_source` reads back with it unknown, and a
+quality gate leaves the uniqueness and overall score rules over it
+`definition_not_comparable`. Documents written before it keep their key and
+score as recorded. The field is additive and not `required`, so stored v1
+reports remain valid; an explicit `null` for `key_column_source` is malformed,
+as for `text_length_unit`.
+
+## v1 additive change: `generator`
+
+Both dialects gain a top-level `generator` object naming the dataprof build
+that produced the report (#907):
+
+| field | values | meaning |
+| --- | --- | --- |
+| `version` | string | the dataprof package version |
+| `commit` | string | the full git hash the build was compiled from |
+| `dirty` | boolean | whether the compiled Rust sources (`Cargo.toml`, `Cargo.lock`, `crates/`) had uncommitted changes when it was built |
+
+A development build carries the version of the release it follows, so
+`version` alone cannot tell them apart; `commit` and `dirty` can. Both are
+absent where the build did not record them: a crate built from a package, an
+sdist, or a build without a usable `git`. The Python extension records them;
+a Rust program built against the crates records `version` alone.
+
+A stored report keeps the generator it was written with. The object is absent
+from documents written before 0.13. An explicit `null`, for the object or for
+`commit` or `dirty`, a missing `version`, and a value of the wrong type are
+malformed. A field a later release adds is ignored by this reader. Stored v1
+reports remain valid.
+
 ---
 
 # Quality policy JSON Schema

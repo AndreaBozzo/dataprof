@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -239,6 +240,28 @@ def acceptance_check_entrypoint(workdir: Path) -> None:
     )
 
 
+def acceptance_wheel_names_its_commit() -> None:
+    """A wheel built from a checkout records the commit, and reports carry it.
+
+    The extension's build.rs reads git, so this holds only for the built
+    artifact: CI builds it from a clean checkout and passes the commit it checked
+    out as DATAPROF_EXPECTED_COMMIT. Locally there is none to compare with.
+    """
+    print("acceptance: the wheel names its commit")
+    caps = dp.capabilities()
+    expected = os.environ.get("DATAPROF_EXPECTED_COMMIT")
+    if expected is None:
+        print(f"  (no expected commit; commit={caps.commit}, dirty={caps.dirty})")
+        return
+    check(caps.commit == expected, f"capabilities() names commit {expected}: {caps.commit}")
+    check(caps.dirty is False, f"a clean checkout builds a clean wheel: {caps.dirty}")
+    generator = dp.profile({"id": [1, 2]}).generator
+    check(
+        generator == {"version": dp.__version__, "commit": expected, "dirty": False},
+        f"a report names the same build: {generator}",
+    )
+
+
 def main() -> int:
     print(f"dataprof {dp.__version__} from {Path(dp.__file__).parent}")
     if Path(dp.__file__).resolve().parents[1].name == "python":
@@ -255,6 +278,7 @@ def main() -> int:
         acceptance_agent_output_is_redacted(workdir)
         acceptance_async_is_in_the_base_wheel(workdir)
         acceptance_check_entrypoint(workdir)
+        acceptance_wheel_names_its_commit()
 
     print("\nwheel smoke passed")
     return 0

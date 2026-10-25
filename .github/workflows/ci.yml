@@ -427,9 +427,12 @@ jobs:
 
       - name: Run acceptance snippets
         # Run from outside the repo so `import dataprof` cannot resolve to python/.
+        # The commit the wheel must name is the one checked out, which on a pull
+        # request is the head, not GITHUB_SHA (the merge commit); read it here.
         run: |
           cp .github/scripts/wheel_smoke.py "${{ runner.temp }}/wheel_smoke.py"
           SMOKE_PYTHON="$PWD/${{ matrix.venv_python }}"
+          export DATAPROF_EXPECTED_COMMIT="$(git rev-parse HEAD)"
           cd "${{ runner.temp }}"
           "$SMOKE_PYTHON" wheel_smoke.py
 
@@ -489,6 +492,7 @@ jobs:
           uv run --no-sync python python/examples/messy_csv_inspection.py
           uv run --no-sync python python/examples/etl_quality_gate.py
           uv run --no-sync python python/examples/before_after_cleaning.py
+          uv run --no-sync python python/examples/baseline_checkpoint.py
 
   python-async-url-tests:
     name: Python Async URL Tests (${{ matrix.variant }})

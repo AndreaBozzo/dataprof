@@ -27,7 +27,7 @@ uv pip install dataprof
 # dataprof = "0.12"
 ```
 
-The published Python wheels cover the base package API for local files, DataFrames, and Arrow objects. If you need async URL profiling or database helpers, build the extension from source with the corresponding Rust features.
+The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. Database helpers are not in the wheels: build the extension from source with the corresponding Rust features.
 
 ## Your First Profile
 
@@ -190,9 +190,12 @@ Measures duplication in the data.
   as a value, so two objects, or two Arrow maps, with the same entries in a
   different order are equal, and a string never equals an object or array,
   even one that spells its JSON
-- `key_uniqueness` -- distinct values of the likely-key column over its
-  non-null values (`key_values_checked`); nulls are completeness's finding,
-  and a key holding no value leaves this component out of the score
+- `key_uniqueness` -- distinct values of the declared key, the first
+  `identifier_columns` entry present, over its non-null values
+  (`key_values_checked`); nulls are completeness's finding, and a key
+  holding no value leaves this component out of the score. With no key
+  declared there is no key component: a column name cannot tell a table's
+  key from a foreign key
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
 ### Accuracy
@@ -273,7 +276,13 @@ report = dp.profile("european_data.csv")  # semicolons auto-detected
 report = dp.profile("pipe_export.csv")    # pipes auto-detected
 ```
 
-For files with inconsistent column counts, enable flexible parsing:
+Detection judges each candidate by the header: one that does not split the
+header is never chosen, since the header sets the column count. When
+detection still gets a file wrong, name the delimiter with
+`csv_delimiter=";"`.
+
+For files with inconsistent column counts, enable flexible parsing. Delimiter
+detection still applies:
 
 ```python
 report = dp.profile("messy.csv", csv_flexible=True)

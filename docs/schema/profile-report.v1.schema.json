@@ -892,6 +892,16 @@
       ],
       "type": "object"
     },
+    "KeyColumnSource": {
+      "description": "Which column `key_uniqueness` may measure, as recorded in a report's\nmetric semantics.\n\nOnly the current definition has a value. Through 0.12, with no column\ndeclared, the first column whose name had an `id`, `key` or `pk` word was\nthe key, so a foreign key listed first was scored as the table key and\ncolumn order moved the score; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "declared",
+          "description": "The first `identifier_columns` entry the source has. With none\ndeclared there is no key component.",
+          "type": "string"
+        }
+      ]
+    },
     "KeyUniquenessUnits": {
       "description": "What `key_uniqueness` divides the key column's distinct values by, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.12 it divided by every\nrow, nulls included, so a nullable key lost uniqueness for each null the\ncompleteness score already counted; those releases recorded no\ndefinition.",
       "oneOf": [
@@ -991,6 +1001,10 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "key_column_source": {
+          "$ref": "#/$defs/KeyColumnSource",
+          "description": "Which column `key_uniqueness` may measure.\n\nAbsent means not recorded: through 0.12 the first column with an\nid-like name was the key when none was declared."
+        },
         "key_uniqueness_units": {
           "$ref": "#/$defs/KeyUniquenessUnits",
           "description": "What `key_uniqueness` divides the key's distinct values by.\n\nAbsent means not recorded: through 0.12 it divided by every row,\nnulls included."
@@ -1371,6 +1385,10 @@
         "execution": {
           "$ref": "#/$defs/ExecutionMetadata",
           "description": "Execution metadata (timing, rows processed, truncation info, etc.)"
+        },
+        "generator": {
+          "$ref": "#/$defs/ReportGenerator",
+          "description": "The dataprof build that produced the report; see [`ReportGenerator`].\n\nEvery report this build produces records [`ReportGenerator::current`].\n`None` is a document written before dataprof recorded it. Loading and\nsaving keep the value the document had rather than the reader's.\nAdditive field."
         },
         "id": {
           "description": "Unique identifier for this report (UUID v4)",
@@ -1859,6 +1877,9 @@
         },
         "execution": {
           "$ref": "#/$defs/PythonExecutionDocument"
+        },
+        "generator": {
+          "$ref": "#/$defs/ReportGenerator"
         },
         "metric_semantics": {
           "$ref": "#/$defs/MetricSemantics"
@@ -2551,6 +2572,27 @@
       ],
       "type": "string"
     },
+    "ReportGenerator": {
+      "description": "The dataprof build that produced a report.\n\n`version` alone cannot tell a development build from the release it\nfollows: both carry the workspace version until the next release bumps it.\nThe commit and the dirty flag tell them apart where the build knows them.\n\nAbsent `commit` and `dirty` mean the build did not record them: a crate\nbuilt from a package rather than a git checkout, or a build without a\nusable `git`. An explicit null is malformed, so neither the reader nor the\nschema accepts one.",
+      "properties": {
+        "commit": {
+          "description": "The full git commit hash the build was compiled from.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the compiled sources (`Cargo.toml`, `Cargo.lock` and `crates/`)\nhad uncommitted changes when the build ran.",
+          "type": "boolean"
+        },
+        "version": {
+          "description": "The dataprof package version, such as `\"0.13.0\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
+    },
     "ScoreBounds": {
       "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
       "properties": {
@@ -2941,7 +2983,7 @@
           "type": "boolean"
         },
         "key_column": {
-          "description": "Column whose uniqueness `key_uniqueness` describes. `None` means no\nkey column was identified; `key_uniqueness` then carries no signal\nand does not contribute to the dimension score.",
+          "description": "Column whose uniqueness `key_uniqueness` describes: the first\n`identifier_columns` entry the source has. `None` means no declared\nkey was found; `key_uniqueness` then carries no signal and does not\ncontribute to the dimension score. Before 0.13 an undeclared column\nwith an id-like name could be the key.",
           "type": [
             "string",
             "null"

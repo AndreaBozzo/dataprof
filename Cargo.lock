@@ -1076,12 +1076,14 @@ dependencies = [
  "csv",
  "dataprof",
  "dataprof-core",
+ "dataprof-csv",
  "dataprof-parquet",
  "dataprof-runtime",
  "pyo3",
  "pyo3-async-runtimes",
  "reqwest",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

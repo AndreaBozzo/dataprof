@@ -45,6 +45,23 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
+    // The commit and dirty flag `build.rs` read from git, recorded once so
+    // every report this module produces names the build. Exposed as the
+    // runtime holds them, so capabilities() and the reports cannot disagree.
+    // Empty means unknown; build.rs always sets both.
+    let commit = env!("DATAPROF_BUILD_COMMIT");
+    dataprof_runtime::record_build_identity(
+        (!commit.is_empty()).then_some(commit),
+        match env!("DATAPROF_BUILD_DIRTY") {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        },
+    );
+    let generator = dataprof_runtime::ReportGenerator::current();
+    m.add("_build_commit", generator.commit)?;
+    m.add("_build_dirty", generator.dirty)?;
+
     // Private build metadata consumed by the public Python capabilities()
     // snapshot. Keep this side-effect free: it reports compile-time flags only.
     let compiled_capabilities = PyDict::new(m.py());
@@ -97,6 +114,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_file, m)?)?;
     m.add_function(wrap_pyfunction!(profile_parquet_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(list_patterns, m)?)?;
+    m.add_function(wrap_pyfunction!(analysis::detect_csv_delimiter, m)?)?;
     m.add_function(wrap_pyfunction!(report_delta_json, m)?)?;
 
     // DataFrame/Arrow profiling
@@ -142,3 +160,8 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
+
+// The rules build.rs uses to decide whether a git answer describes this build.
+#[cfg(test)]
+#[path = "../build_identity.rs"]
+mod build_identity;

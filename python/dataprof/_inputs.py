@@ -8,6 +8,8 @@ import json as _json
 import math as _math
 from typing import Any as _Any
 
+from ._dataprof import _detect_csv_delimiter
+
 
 def _is_list_of_dicts(source: object) -> bool:
     return isinstance(source, list) and all(isinstance(row, dict) for row in source)
@@ -20,20 +22,48 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
 
 
 class _NonStandardJsonConstant(ValueError):
-    """A JavaScript numeric constant that RFC 8259 JSON does not permit."""
+    """A JSON number the readers refuse: a JavaScript numeric constant that RFC
+    8259 does not permit, or an integer outside the 64-bit range.
 
-    def __init__(self, value: str) -> None:
+    ``description`` names the problem for an error message.
+    """
+
+    def __init__(self, value: str, description: str | None = None) -> None:
         super().__init__(value)
         self.value = value
+        self.description = description or f"non-standard numeric constant {value!r}"
 
 
 def _reject_nonstandard_json_constant(value: str) -> None:
     raise _NonStandardJsonConstant(value)
 
 
+_INT64_MIN = -(2**63)
+_UINT64_MAX = 2**64 - 1
+
+
+def _parse_json_int(token: str) -> int:
+    # The file and async readers hold an integer outside the 64-bit range as
+    # the nearest float, so they refuse it rather than merge distinct values;
+    # bytes refuse it too, so every route reads the same input alike (#1103).
+    # The value stays out of the message, as with every record error.
+    # A token over 20 digits is out of range whatever its value, and is refused
+    # before int(), which raises its own ValueError past Python's digit limit.
+    value = int(token) if len(token.lstrip("-")) <= 20 else None
+    if value is None or not _INT64_MIN <= value <= _UINT64_MAX:
+        raise _NonStandardJsonConstant(
+            token,
+            "an integer outside the 64-bit range; write such integers as strings to profile them",
+        )
+    return value
+
+
 def _strict_json_loads(text: str) -> _Any:
-    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions."""
-    return _json.loads(text, parse_constant=_reject_nonstandard_json_constant)
+    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions and
+    integers outside the 64-bit range."""
+    return _json.loads(
+        text, parse_constant=_reject_nonstandard_json_constant, parse_int=_parse_json_int
+    )
 
 
 # --- Dependency-free columnar inputs (see _dataprof.profile_columns) ---
@@ -257,12 +287,13 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     """
     # Match the Rust CSV readers: a UTF-8 BOM marks the encoding and is not part
     # of the first column's name.
-    text = buffer.getvalue().decode("utf-8-sig")
+    raw = buffer.getvalue()
+    text = raw.decode("utf-8-sig")
     if delimiter is None:
-        try:
-            delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
-        except _csv.Error:
-            delimiter = ","
+        # The detector every file and async route uses, so the same bytes read
+        # the same way. csv.Sniffer silently became comma on a sample it could
+        # not resolve, which hid a column and passed a gate (#1095).
+        delimiter = _detect_csv_delimiter(raw)
     # This reader has no flexible mode to record the problem in, so it refuses,
     # as it refuses a ragged row.
     unclosed = _unclosed_quote_at(text, delimiter)
@@ -363,7 +394,7 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
                 column = line.find(exc.value) + 1
                 raise ValueError(
                     f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
-                    f"(non-standard numeric constant {exc.value!r})."
+                    f"({exc.description})."
                 ) from None
             skipped += 1
             continue
@@ -379,7 +410,8 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     if not rows and skipped:
         raise ValueError(
             "jsonl bytes: no valid JSON records found "
-            "(every record was malformed or not a JSON object)."
+            "(every record was malformed, not a JSON object, or held an integer "
+            "outside the 64-bit range)."
         )
     return rows, skipped
 
@@ -405,6 +437,7 @@ def _scan_json_array_records(values: list, on_error: str) -> tuple[list[dict], i
     if not rows and skipped:
         raise ValueError(
             "json bytes: no valid JSON records found "
-            "(every record was malformed or not a JSON object)."
+            "(every record was malformed, not a JSON object, or held an integer "
+            "outside the 64-bit range)."
         )
     return rows, skipped

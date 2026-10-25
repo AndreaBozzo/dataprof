@@ -55,6 +55,13 @@ if features.pandas_interop and features.pandas_installed:
     ...
 ```
 
+`features.commit` is the git hash the installed build was compiled from, and
+`features.dirty` whether its Rust sources had uncommitted changes; both are
+`None` where the build did not record them, as from an sdist. A development
+build reports the version of the release it follows, so key anything that
+depends on the exact build to the commit. Every report records the same in
+`report.generator`, and `python -m dataprof.check --version` prints it.
+
 ## Quick Start
 
 ```python
@@ -108,7 +115,7 @@ dp.profile(
     columns=None,                    # list[str] -- profile only these columns
     locale=None,                     # str -- "CA"|"DE"|"FR"|"GB"|"IT"|"US"
     positive_columns=None,           # list[str] -- columns expected to be non-negative
-    identifier_columns=None,         # list[str] -- semantic IDs, not measures
+    identifier_columns=None,         # list[str] -- semantic IDs, not measures; the first is the key
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
 ) -> ProfileReport
@@ -298,7 +305,8 @@ Returned by `profile()` and all analysis functions.
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
 | `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -656,7 +664,10 @@ if q.completeness is not None:
 `negative_values_in_positive` is driven by explicit `positive_columns`; dataprof
 does not infer positive-only domains from column names. `identifier_columns`
 marks numeric-looking IDs as semantic strings so numeric stats and outlier
-metrics do not treat them as measures.
+metrics do not treat them as measures. Its first entry the source has is also
+the key `key_uniqueness` measures; with none declared there is no key
+component, since a name cannot tell a table's key from a foreign key. List
+the table key first: `identifier_columns=["order_id", "customer_id"]`.
 Timeliness scoring assesses confidently inferred date columns by default.
 `temporal_columns` adds columns that inference cannot identify confidently, such
 as mixed-format date strings. `temporal_pairs=[("valid_from", "valid_until")]`
@@ -954,7 +965,10 @@ if not result.passed:
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
-0--1 ratios. A policy that cannot be evaluated as written -- a threshold
+0--1 ratios. A score, its bounds, a null percentage and the threshold are
+compared at the 2-decimal precision the check shows them at, so a score shown
+as `66.67` meets a floor of `66.67`, and a saved report reaches the verdict the
+live one did (0.13+). A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
 bad extract. A threshold must be a real number: text is refused even when it
@@ -1101,7 +1115,8 @@ unevaluated, with one of these reasons:
   depends on (`null_tokens` for every rule, `pattern_match_count` also for
   validity and the overall score, `range_rule_count` also for accuracy and the
   overall score, `key_uniqueness_units` also for uniqueness and the overall
-  score, `outlier_units` also for accuracy and the overall score), when the
+  score, `outlier_units` also for accuracy and the overall score,
+  `key_column_source` also for uniqueness and the overall score), when the
   two reports do not both record it
   identically. A baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
@@ -1251,7 +1266,11 @@ A score decided on its interval also carries `bounds`:
 so nothing depends on how a float was formatted into a sentence.
 
 See [`python/examples/etl_quality_gate.py`](../../python/examples/etl_quality_gate.py)
-for a runnable gate over four drops.
+for a runnable gate over four drops, and
+[`python/examples/baseline_checkpoint.py`](../../python/examples/baseline_checkpoint.py)
+for one that judges each drop against the last accepted report, promotes only
+on a pass, and shows a schema change, a metric that was not analyzed and a
+baseline written by an older release reaching their verdicts.
 
 ### `python -m dataprof.check` -- CI entrypoint (0.12+)
 
@@ -1369,6 +1388,10 @@ python -m dataprof.check orders.csv --min-quality 90 \
   --forbid-removed-columns --report candidate.json --json > verdict.json \
   && mv candidate.json baseline.json
 ```
+
+The [baseline checkpoint example](../../examples/README.md#4-baseline-checkpoint)
+runs this cycle over seven drops, including the ones that must not become the
+baseline, and shows it as a CI job that keeps the baseline in the repository.
 
 For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
 GitHub Actions job runs the gate and retains its result even when it fails:

@@ -852,7 +852,7 @@ mod tests {
                     &data,
                     &[key(approximate)],
                     Some(&requested),
-                    &SemanticHints::default(),
+                    &SemanticHints::new(Vec::new(), vec!["order_id".to_string()]),
                     None,
                 )
                 .expect("quality metrics");
@@ -887,7 +887,7 @@ mod tests {
                 &HashMap::from([("order_id".to_string(), vec![])]),
                 &[key],
                 Some(&[QualityDimension::Uniqueness]),
-                &SemanticHints::default(),
+                &SemanticHints::new(Vec::new(), vec!["order_id".to_string()]),
                 None,
             )
             .expect("quality metrics");

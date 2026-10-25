@@ -22,6 +22,7 @@ use dataprof::{DataProfilerError, ProfileReport, SemanticHints};
 ///   * malformed data — CSV *and* JSON alike → `ValueError`
 ///   * a missing file → `FileNotFoundError`
 ///   * permission / other I/O trouble → `PermissionError` / `IOError`
+///   * database connection failures → `OSError` (not necessarily retryable)
 ///   * everything else → `RuntimeError`
 ///
 /// The `DataProfilerError` `Display` already carries the actionable suggestion,
@@ -165,6 +166,9 @@ fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
             } else {
                 PyIOError::new_err(message)
             }
+        }
+        DataProfilerError::DatabaseConnectionError { .. } => {
+            PyIOError::new_err(format!("Analysis failed: {message}"))
         }
         _ => PyRuntimeError::new_err(format!("Analysis failed: {message}")),
     }

@@ -167,6 +167,38 @@ uv run pytest python/tests/test_wheel_interpreters.py -q
 uv run python .github/scripts/wheel_interpreters.py --wheels dist
 ```
 
+### Rehearsing the release build
+
+The release builds its Python distributions in
+`.github/workflows/python-dist.yml`: every wheel leg and the sdist, then each
+baseline wheel installed into a bare venv on its own platform, one interpreter
+at a time (the cross-compiled aarch64 Linux wheels on an arm64 runner), and the
+sdist built into a package, each running `.github/scripts/wheel_smoke.py`. Until
+that workflow passes, a release has only its draft GitHub release: no asset is
+uploaded and nothing is published to crates.io or PyPI.
+
+The `Release Rehearsal` workflow runs the same file and publishes nothing: no
+GitHub release, no upload, no crates.io or PyPI. Run it after changing the
+interpreter set, the shipped feature set (`[tool.maturin] features`), the build
+images or the maturin version:
+
+```bash
+gh workflow run release-rehearsal.yml --ref <branch>
+gh run watch
+```
+
+A pull request that changes `.github/python-interpreters.json`,
+`wheel_interpreters.py`, `rust-toolchain.toml`, `python-dist.yml` or
+`release-rehearsal.yml` runs it on its own. The release builds with the newest
+maturin that `[build-system] requires` in `pyproject.toml` allows, in manylinux
+images selected by floating tags, so an upstream release changes the build
+without any change here. The rehearsal therefore also runs weekly on `master`;
+run it there before tagging as well.
+
+Each install job's summary shows, per interpreter, whether the wheel was built,
+whether it installs and whether the smoke test passed; an interpreter maturin
+cannot resolve fails the build step before compilation.
+
 ### Database regression tests
 
 CI runs both the facade integration target and every test target in the database
@@ -353,6 +385,27 @@ and the commands you ran to verify it.
 Run the checks that match what you touched rather than the whole workspace. The
 template collapses the usual ones per area into a `<details>` block, drawn from
 the lint and format commands in [Build & Test](#build--test) above.
+
+When the issue lists acceptance criteria, the template asks for one line per
+criterion: where the PR meets it, or why it leaves it out. Leaving one for a
+follow-up is fine when the PR says so.
+
+### Understanding Your Change
+
+AI coding tools are welcome here. The PR is still yours, and review assumes you
+understand it:
+
+- Read the code the issue names before changing it, and derive the behaviour
+  from that code. The issue describes intent; the code is what your change has
+  to agree with.
+- Be able to explain every line of the diff and answer review questions
+  yourself.
+- Make every sentence of the PR description true of the diff. A claim such as
+  "covers every input path" is something a reviewer will check.
+
+A PR whose description does not match its diff, or that shows the code it
+changes was not read, gets one comment saying so instead of a line-by-line
+review. The full review follows once a revision addresses it.
 
 ### Review Process
 

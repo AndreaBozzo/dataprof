@@ -3,10 +3,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits,
-    Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment,
-    QualityDimension, QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, ScoreInterval,
-    SemanticHintKind, ShapeMomentEstimator, TextLengthUnit, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, KeyColumnSource, KeyUniquenessUnits, NullTokenSet,
+    OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
+    QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
+    RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator, TextLengthUnit,
+    TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1265,6 +1266,14 @@ impl PyProfileReport {
                 },
             )?;
         }
+        if let Some(source) = semantics.key_column_source {
+            dict.set_item(
+                "key_column_source",
+                match source {
+                    KeyColumnSource::Declared => "declared",
+                },
+            )?;
+        }
         Ok(Some(dict))
     }
 
@@ -1301,6 +1310,28 @@ impl PyProfileReport {
             }
         }
         dict.set_item("columns", columns)?;
+        Ok(Some(dict))
+    }
+
+    /// The dataprof build that produced the report, as a dict with
+    /// ``version`` and, where the build recorded them, ``commit`` and
+    /// ``dirty``.
+    ///
+    /// None for a report loaded from a document written before dataprof
+    /// recorded it. A stored report keeps the value it was written with.
+    #[getter]
+    fn generator<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(generator) = &self.inner.generator else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        dict.set_item("version", &generator.version)?;
+        if let Some(commit) = &generator.commit {
+            dict.set_item("commit", commit)?;
+        }
+        if let Some(dirty) = generator.dirty {
+            dict.set_item("dirty", dirty)?;
+        }
         Ok(Some(dict))
     }
 

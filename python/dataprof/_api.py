@@ -527,9 +527,7 @@ def profile(
                     f"json bytes: malformed JSON (line {exc.lineno}, column {exc.colno})."
                 ) from None
             except _NonStandardJsonConstant as exc:
-                raise ValueError(
-                    f"json bytes: malformed JSON (non-standard numeric constant {exc.value!r})."
-                ) from None
+                raise ValueError(f"json bytes: malformed JSON ({exc.description}).") from None
             if isinstance(rows, dict):
                 # `all(...)` is vacuously true for `{}`, which would read an
                 # empty object as a column-oriented document holding no rows.

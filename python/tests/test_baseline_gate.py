@@ -224,6 +224,7 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
         ("range_rule_count", "accuracy", "uniqueness"),
         ("key_uniqueness_units", "uniqueness", "accuracy"),
         ("outlier_units", "accuracy", "uniqueness"),
+        ("key_column_source", "uniqueness", "accuracy"),
     ],
 )
 def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(

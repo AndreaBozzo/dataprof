@@ -53,6 +53,11 @@ const CASES: [Case; 3] = [
     },
 ];
 
+/// Only a declared key is measured (#1065).
+fn key() -> Vec<String> {
+    vec!["customer_id".to_string()]
+}
+
 fn fixture(suffix: &str, body: String) -> NamedTempFile {
     let mut file = NamedTempFile::with_suffix(suffix).unwrap();
     write!(file, "{body}").unwrap();
@@ -122,6 +127,7 @@ fn reports(case: &Case) -> Vec<(String, ProfileReport)> {
         EngineType::Columnar,
     ] {
         let report = Profiler::new()
+            .identifier_columns(key())
             .engine(engine)
             .analyze_file(csv.path())
             .unwrap_or_else(|e| panic!("[{engine:?}] {e}"));
@@ -137,6 +143,7 @@ fn reports(case: &Case) -> Vec<(String, ProfileReport)> {
     files.push(("parquet", parquet_fixture(case)));
     for (label, file) in files {
         let report = Profiler::new()
+            .identifier_columns(key())
             .analyze_file(file.path())
             .unwrap_or_else(|e| panic!("[{label}] {e}"));
         reports.push((label.to_string(), report));

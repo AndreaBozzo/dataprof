@@ -215,12 +215,13 @@ pub fn json_structured_value(value: &::sqlx::types::JsonValue) -> StructuredValu
     }
 }
 
-/// A JSON document serde_json could not decode into a value, kept as the
-/// database's text.
+/// A JSON document serde_json could not decode into a value, or would round,
+/// kept as the database's text.
 ///
 /// The database accepted it, so it is a value, not a missing one: PostgreSQL
-/// takes numbers beyond `f64` (`1e400`) and nesting deeper than serde_json's
-/// recursion limit. The text is still made canonical, with sorted keys and no
+/// takes numbers beyond `f64` (`1e400`), integers beyond 64 bits that serde_json
+/// rounds to `f64` (#1104), and nesting deeper than serde_json's recursion
+/// limit. The text is still made canonical, with sorted keys and no
 /// whitespace between tokens, so key order does not split duplicate rows here
 /// either. Only nesting past the recursion limit keeps the text as stored.
 #[cfg(any(feature = "postgres", feature = "mysql"))]

@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass as _dataclass
 from importlib import util as _importlib_util
 
-from ._dataprof import __version__, _compiled_capabilities
+from ._dataprof import __version__, _build_commit, _build_dirty, _compiled_capabilities
 
 
 @_dataclass(frozen=True, slots=True)
@@ -30,6 +30,13 @@ class Capabilities:
     remote_parquet: bool
     database: bool
     database_connectors: tuple[str, ...]
+    #: The full git hash this build was compiled from. A development build
+    #: carries the version of the release it follows, so this is what tells
+    #: them apart. None where the build did not record it, as from an sdist.
+    commit: str | None
+    #: Whether the compiled Rust sources (`Cargo.toml`, `Cargo.lock`,
+    #: `crates/`) had uncommitted changes at build time; None where unknown.
+    dirty: bool | None
 
 
 def _dependency_installed(module_name: str) -> bool:
@@ -75,6 +82,8 @@ def capabilities() -> Capabilities:
         remote_parquet=bool(_compiled_capabilities.get("parquet_async", False)),
         database=database,
         database_connectors=connectors,
+        commit=_build_commit,
+        dirty=_build_dirty,
     )
 
 

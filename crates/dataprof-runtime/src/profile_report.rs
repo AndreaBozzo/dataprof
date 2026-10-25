@@ -1,7 +1,9 @@
+use std::sync::OnceLock;
+
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyUniquenessUnits, Locale,
-    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
-    SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyColumnSource,
+    KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights,
+    RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -156,6 +158,17 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "OutlierUnits")]
     pub outlier_units: Option<OutlierUnits>,
+    /// Which column `key_uniqueness` may measure.
+    ///
+    /// Absent means not recorded: through 0.12 the first column with an
+    /// id-like name was the key when none was declared.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "KeyColumnSource")]
+    pub key_column_source: Option<KeyColumnSource>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -179,6 +192,7 @@ impl MetricSemantics {
             range_rule_count: Some(RangeRuleCount::ViolatingValues),
             key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
             outlier_units: Some(OutlierUnits::TestedValues),
+            key_column_source: Some(KeyColumnSource::Declared),
         }
     }
 
@@ -195,6 +209,7 @@ impl MetricSemantics {
             range_rule_count,
             key_uniqueness_units,
             outlier_units,
+            key_column_source,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -203,6 +218,7 @@ impl MetricSemantics {
             && range_rule_count.is_some()
             && key_uniqueness_units.is_some()
             && outlier_units.is_some()
+            && key_column_source.is_some()
     }
 }
 
@@ -340,6 +356,69 @@ impl AnalysisSettings {
     }
 }
 
+/// The dataprof build that produced a report.
+///
+/// `version` alone cannot tell a development build from the release it
+/// follows: both carry the workspace version until the next release bumps it.
+/// The commit and the dirty flag tell them apart where the build knows them.
+///
+/// Absent `commit` and `dirty` mean the build did not record them: a crate
+/// built from a package rather than a git checkout, or a build without a
+/// usable `git`. An explicit null is malformed, so neither the reader nor the
+/// schema accepts one.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct ReportGenerator {
+    /// The dataprof package version, such as `"0.13.0"`.
+    pub version: String,
+    /// The full git commit hash the build was compiled from.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "String")]
+    pub commit: Option<String>,
+    /// Whether the compiled sources (`Cargo.toml`, `Cargo.lock` and `crates/`)
+    /// had uncommitted changes when the build ran.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "bool")]
+    pub dirty: Option<bool>,
+}
+
+/// The commit and dirty flag the embedding build recorded, if any.
+static BUILD_IDENTITY: OnceLock<(Option<&'static str>, Option<bool>)> = OnceLock::new();
+
+/// Record the build identity of the binary embedding this crate.
+///
+/// A build script here would rerun on every source change and rebuild every
+/// crate that depends on this one, so the leaf crate that owns the build
+/// (the Python extension) reads git and records the result once, at load.
+/// Only the first call takes effect; reports built before it, and in builds
+/// that never call it, record the version alone.
+#[doc(hidden)]
+pub fn record_build_identity(commit: Option<&'static str>, dirty: Option<bool>) {
+    let _ = BUILD_IDENTITY.set((commit, dirty));
+}
+
+impl ReportGenerator {
+    /// The build running now.
+    pub fn current() -> Self {
+        let (commit, dirty) = BUILD_IDENTITY.get().copied().unwrap_or((None, None));
+        Self {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            commit: commit.map(str::to_string),
+            dirty,
+        }
+    }
+}
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -408,6 +487,15 @@ pub struct ProfileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "AnalysisSettings")]
     pub analysis_settings: Option<AnalysisSettings>,
+    /// The dataprof build that produced the report; see [`ReportGenerator`].
+    ///
+    /// Every report this build produces records [`ReportGenerator::current`].
+    /// `None` is a document written before dataprof recorded it. Loading and
+    /// saving keep the value the document had rather than the reader's.
+    /// Additive field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ReportGenerator")]
+    pub generator: Option<ReportGenerator>,
 }
 
 fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -452,6 +540,9 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "AnalysisSettings")]
     analysis_settings: Option<AnalysisSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ReportGenerator")]
+    generator: Option<ReportGenerator>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -828,6 +919,7 @@ impl PythonProfileReportDocument {
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
             metric_semantics: report.metric_semantics.clone(),
             analysis_settings: report.analysis_settings.clone(),
+            generator: report.generator.clone(),
         })
     }
 }
@@ -1004,6 +1096,7 @@ impl ProfileReport {
             // Only the assembler knows the options a report was profiled
             // with; it records them through `with_analysis_settings`.
             analysis_settings: None,
+            generator: Some(ReportGenerator::current()),
         }
     }
 
@@ -1114,6 +1207,8 @@ struct ProfileReportFields {
     metric_semantics: Option<MetricSemantics>,
     #[serde(default)]
     analysis_settings: Option<AnalysisSettings>,
+    #[serde(default)]
+    generator: Option<ReportGenerator>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -1138,6 +1233,7 @@ impl From<ProfileReportFields> for ProfileReport {
             semantic_hint_bindings: fields.semantic_hint_bindings,
             metric_semantics: fields.metric_semantics,
             analysis_settings: fields.analysis_settings,
+            generator: fields.generator,
         }
     }
 }
@@ -1186,16 +1282,13 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
         }
         // Same rule: absent is "not recorded", which reads back as unknown;
         // a null would be a current writer's malformed output.
-        if value.get("metric_semantics") == Some(&serde_json::Value::Null) {
-            return Err(D::Error::custom(
-                "report metric_semantics must be an object; an explicit null is malformed,                  not a document written before the field existed",
-            ));
-        }
-        if value.get("analysis_settings") == Some(&serde_json::Value::Null) {
-            return Err(D::Error::custom(
-                "report analysis_settings must be an object; an explicit null is malformed, \
-                 not a document written before the field existed",
-            ));
+        for key in ["metric_semantics", "analysis_settings", "generator"] {
+            if value.get(key) == Some(&serde_json::Value::Null) {
+                return Err(D::Error::custom(format!(
+                    "report {key} must be an object; an explicit null is malformed, \
+                     not a document written before the field existed"
+                )));
+            }
         }
         let report = ProfileReportFields::deserialize(value)
             .map(ProfileReport::from)
@@ -1373,6 +1466,7 @@ mod tests {
             "range_rule_count": "violating_values",
             "key_uniqueness_units": "non_null_values",
             "outlier_units": "tested_values",
+            "key_column_source": "declared",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1408,6 +1502,8 @@ mod tests {
             json!({"key_uniqueness_units": null}),
             json!({"outlier_units": "numeric_values"}),
             json!({"outlier_units": null}),
+            json!({"key_column_source": "name_heuristic"}),
+            json!({"key_column_source": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

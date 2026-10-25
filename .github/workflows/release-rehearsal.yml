@@ -1,0 +1,40 @@
+name: Release Rehearsal
+
+# Builds, installs and smoke-tests every release wheel and the sdist through the
+# release's own python-dist.yml, and publishes nothing: no GitHub release, no
+# upload, no crates.io or PyPI. Run it after changing the interpreter set, the
+# shipped feature set, the build images or the maturin version
+# (docs/CONTRIBUTING.md); a pull request that changes the release's Python
+# build runs it on its own.
+
+on:
+  workflow_dispatch:
+  # maturin and the build images float upstream (#1076), so a weekly run
+  # catches a release that breaks the build between two tags.
+  schedule:
+    - cron: '17 5 * * 1'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/python-interpreters.json'
+      - '.github/scripts/wheel_interpreters.py'
+      - '.github/workflows/python-dist.yml'
+      - '.github/workflows/release-rehearsal.yml'
+      - 'rust-toolchain.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-rehearsal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-dist:
+    name: Python Distributions
+    uses: ./.github/workflows/python-dist.yml
+    with:
+      # A cache written from a branch or pull request is readable only there
+      # and still counts toward the repository's cache quota. The weekly run
+      # builds cold too: its cache would evict CI's for one run a week.
+      sccache: ${{ github.ref == 'refs/heads/master' && github.event_name != 'schedule' }}
