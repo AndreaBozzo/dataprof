@@ -5,27 +5,27 @@
 //! published website links depend on them. Fixture generation is never timed.
 //!
 //! Run all scenarios: `cargo bench --bench benchmarks`.
-//! Filter a group: `cargo bench --bench benchmarks -- csv_parsing`.
-//! Filter one case: `cargo bench --bench benchmarks -- csv_parsing/parse/small`.
+//! Filter a group: `cargo bench --bench benchmarks -- csv_profile_columns`.
+//! Filter one case: `cargo bench --bench benchmarks -- csv_profile_columns/profile/small`.
 //! Run each case once: `cargo bench --bench benchmarks -- --test`.
 
 mod scenarios;
 mod support;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use scenarios::csv::{bench_csv_parsing, bench_full_analysis, bench_throughput_metrics};
+use scenarios::csv::{bench_csv_profile_columns, bench_full_analysis, bench_throughput_metrics};
 use scenarios::scaling::{bench_large_scale, bench_scaling_behavior};
 use std::time::Duration;
 
 // Quick suite: CSV scan/column profiling and full report assembly.
-// Runs: csv_parsing, full_analysis
+// Runs: csv_profile_columns, full_analysis
 criterion_group! {
     name = quick_benches;
     config = Criterion::default()
         .sample_size(20)
         .measurement_time(Duration::from_secs(3))
         .warm_up_time(Duration::from_secs(1));
-    targets = bench_csv_parsing, bench_full_analysis
+    targets = bench_csv_profile_columns, bench_full_analysis
 }
 
 // Full suite: comprehensive set for local runs

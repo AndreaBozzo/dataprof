@@ -33,6 +33,7 @@ from pathlib import Path
 
 GROUP_DESCRIPTIONS = {
     "csv_parsing": "CSV scan and column profiling across file sizes",
+    "csv_profile_columns": "CSV scan and column profiling across file sizes",
     "throughput_metrics": "Fast row-count estimation across input sizes",
     "full_analysis": "End-to-end profiling pipeline timings",
     "scaling_behavior": "Scaling behavior as dataset size increases",
@@ -196,6 +197,27 @@ def add_group_aliases(pages: Path) -> None:
             write_redirect(report, f"../{rel}", pretty_group_name(group_dir.name))
 
 
+def add_csv_history_aliases(pages: Path) -> None:
+    """Keep old CSV URLs readable without replacing retained Criterion reports."""
+    current = pages / "csv_profile_columns"
+    old_group_report = pages / "csv_parsing/report/index.html"
+    if (current / "report/index.html").is_file() and not old_group_report.exists():
+        write_redirect(
+            old_group_report,
+            "../../csv_profile_columns/report/index.html",
+            "CSV column profiling (formerly csv_parsing)",
+        )
+    for report in current.glob("profile/*/report/index.html"):
+        size = report.parents[1].name
+        old_report = pages / "csv_parsing/parse" / size / "report/index.html"
+        if not old_report.exists():
+            write_redirect(
+                old_report,
+                f"../../../../csv_profile_columns/profile/{size}/report/index.html",
+                f"CSV column profiling / {size} (formerly csv_parsing/parse)",
+            )
+
+
 def collect_benchmarks(pages: Path) -> list[dict]:
     benchmarks = []
     for benchmark_json in pages.glob("**/new/benchmark.json"):
@@ -302,17 +324,18 @@ def build_groups(pages: Path, benchmarks: list[dict]) -> list[dict]:
 
 def build_observations(grouped: dict[str, list[dict]]) -> list[str]:
     observations = []
-    csv_items = {item["value"]: item for item in grouped.get("csv_parsing", [])}
-    if all(
-        key in csv_items and csv_items[key]["throughput_mib_s"] is not None
-        for key in ["tiny", "small", "medium"]
-    ):
-        tiny = csv_items["tiny"]["throughput_mib_s"]
-        medium = csv_items["medium"]["throughput_mib_s"]
-        observations.append(
-            f"csv_parsing climbs from {tiny:.2f} MiB/s on tiny inputs to {medium:.2f} MiB/s on "
-            "medium inputs. Compare the full distributions before attributing the difference."
-        )
+    for group in ("csv_parsing", "csv_profile_columns"):
+        csv_items = {item["value"]: item for item in grouped.get(group, [])}
+        if all(
+            key in csv_items and csv_items[key]["throughput_mib_s"] is not None
+            for key in ["tiny", "small", "medium"]
+        ):
+            tiny = csv_items["tiny"]["throughput_mib_s"]
+            medium = csv_items["medium"]["throughput_mib_s"]
+            observations.append(
+                f"{group} climbs from {tiny:.2f} MiB/s on tiny inputs to {medium:.2f} MiB/s on "
+                "medium inputs. Compare the full distributions before attributing the difference."
+            )
 
     return observations
 
@@ -745,6 +768,15 @@ def render_index(
         if observations
         else ""
     )
+    csv_history_note = (
+        '<p class="section-note">The <code>csv_parsing/parse/*</code> series is closed. '
+        "Current runs use <code>csv_profile_columns/profile/*</code> for the same CSV scan "
+        "and column profiling workload, excluding quality assessment. Retained reports keep "
+        "their original IDs; old report URLs without retained results redirect to the renamed "
+        "cases when available. This is a naming change, not a performance change.</p>"
+        if any(group["name"] in {"csv_parsing", "csv_profile_columns"} for group in groups)
+        else ""
+    )
 
     full_index_link = ""
     if (pages / "report" / "index.html").exists():
@@ -807,6 +839,7 @@ def render_index(
     <p class="section-note">Only scenarios measured in this artifact appear here.
       Routine CI runs the CSV and full-analysis groups; full runs include row counting,
       scaling and larger inputs. Confidence intervals below describe estimated means.</p>
+    {csv_history_note}
     <div class="groups">{"".join(group_cards)}</div>{observation_section}
   </section>
   <section class="repro-section">
@@ -869,6 +902,7 @@ def main() -> int:
         return 1
 
     add_group_aliases(pages)
+    add_csv_history_aliases(pages)
 
     benchmarks = collect_benchmarks(pages)
     if not benchmarks:

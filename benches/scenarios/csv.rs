@@ -7,12 +7,12 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use std::time::Duration;
 
-/// Core CSV parsing performance across multiple file sizes.
-/// This group isolates the CSV scan and column profiling phase before report assembly.
+/// CSV scan plus per-column statistics, patterns and profile construction.
+/// This is *not* a parsing-only measurement; it excludes quality assessment.
 ///
 /// **Metrics**: Time (ms), Throughput (bytes/sec)
-pub fn bench_csv_parsing(c: &mut Criterion) {
-    let mut group = c.benchmark_group("csv_parsing");
+pub fn bench_csv_profile_columns(c: &mut Criterion) {
+    let mut group = c.benchmark_group("csv_profile_columns");
 
     // Configuration optimized for CI
     group.sample_size(30);
@@ -29,12 +29,16 @@ pub fn bench_csv_parsing(c: &mut Criterion) {
         // Criterion derives byte throughput from the measured fixture size.
         group.throughput(Throughput::Bytes(file_size));
 
-        group.bench_with_input(BenchmarkId::new("parse", size.name()), &path, |b, path| {
-            b.iter(|| {
-                let result = parse_csv_phase(black_box(path)).expect("CSV parsing failed");
-                black_box(result)
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("profile", size.name()),
+            &path,
+            |b, path| {
+                b.iter(|| {
+                    let result = parse_csv_phase(black_box(path)).expect("CSV parsing failed");
+                    black_box(result)
+                })
+            },
+        );
     }
 
     group.finish();

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -40,6 +41,83 @@ def artifact(tmp_path):
     (directory / "report").mkdir()
     (directory / "report/index.html").write_text("original Criterion report")
     return tmp_path
+
+
+def add_renamed_csv_case(artifact):
+    """Model Criterion's new IDs without rewriting retained legacy results."""
+    directory = artifact / "csv_profile_columns/profile/small"
+    shutil.copytree(artifact / "csv_parsing/parse/small", directory)
+    metadata = directory / "new/benchmark.json"
+    document = json.loads(metadata.read_text())
+    document.update(
+        group_id="csv_profile_columns",
+        title="csv_profile_columns/profile/small",
+        function_id="profile",
+        directory_name="csv_profile_columns/profile/small",
+    )
+    metadata.write_text(json.dumps(document))
+    return directory
+
+
+@pytest.mark.parametrize("keep_legacy", [False, True])
+def test_csv_rename_keeps_published_history_readable(artifact, monkeypatch, keep_legacy):
+    renamed = add_renamed_csv_case(artifact)
+    if keep_legacy:
+        group_report = artifact / "csv_parsing/report/index.html"
+        group_report.parent.mkdir()
+        group_report.write_text("original Criterion group report")
+    else:
+        shutil.rmtree(artifact / "csv_parsing")
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    assert pages.main() == 0
+
+    index = (artifact / "index.html").read_text(encoding="utf-8")
+    assert "csv_parsing/parse/*" in index
+    assert "series is closed" in index
+    assert "csv_profile_columns/profile/*" in index
+    assert "quality assessment" in index
+    summary = json.loads((artifact / "benchmark-summary.json").read_text())
+    renamed_group = next(g for g in summary["groups"] if g["name"] == "csv_profile_columns")
+    assert "column profiling" in renamed_group["description"]
+    assert (renamed / "report/index.html").read_text() == "original Criterion report"
+
+    old_case = artifact / "csv_parsing/parse/small/report/index.html"
+    old_group = artifact / "csv_parsing/report/index.html"
+    if keep_legacy:
+        assert old_case.read_text() == "original Criterion report"
+        assert old_group.read_text() == "original Criterion group report"
+        assert summary["group_count"] == 2
+    else:
+        assert "url=../../../../csv_profile_columns/profile/small/report/index.html" in (
+            old_case.read_text()
+        )
+        assert "url=../../csv_profile_columns/report/index.html" in old_group.read_text()
+        assert summary["group_count"] == 1
+    # Rebuilding the same artifact must preserve originals and existing aliases.
+    original_reports = (old_case.read_bytes(), old_group.read_bytes())
+    assert pages.main() == 0
+    assert (old_case.read_bytes(), old_group.read_bytes()) == original_reports
+
+
+def test_csv_rename_does_not_create_redirects_to_missing_reports(artifact, monkeypatch):
+    renamed = add_renamed_csv_case(artifact)
+    shutil.rmtree(artifact / "csv_parsing")
+    (renamed / "report/index.html").unlink()
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    assert pages.main() == 0
+    assert not (artifact / "csv_parsing/report/index.html").exists()
+    assert not (artifact / "csv_parsing/parse/small/report/index.html").exists()
+
+
+@pytest.mark.parametrize("group", ["csv_parsing", "csv_profile_columns"])
+def test_csv_observations_name_the_measured_series(group):
+    items = [
+        {"value": size, "throughput_mib_s": throughput}
+        for size, throughput in [("tiny", 1.0), ("small", 2.0), ("medium", 3.0)]
+    ]
+    observations = pages.build_observations({group: items})
+    assert len(observations) == 1
+    assert f"{group} climbs from 1.00 MiB/s" in observations[0]
 
 
 def comparison_document():

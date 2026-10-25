@@ -22,7 +22,7 @@ add separate fixture builders under `support/` for other formats or data shapes.
 Fixtures are generated before timing into private temporary files, flushed, and
 removed when the owning scenario finishes. They never reuse a shared filename
 from a previous run, and filesystem errors cannot become zero-byte throughput.
-The generator's contents and existing Criterion IDs are unchanged.
+The generator's contents are unchanged.
 
 For a fast correctness smoke check of every registered Rust case:
 
@@ -31,11 +31,20 @@ cargo bench --bench benchmarks -- --test
 cargo test --test benchmark_fixtures
 ```
 
-The existing Rust scenarios stay `csv_parsing`, `full_analysis`,
+The Rust scenarios are `csv_profile_columns`, `full_analysis`,
 `throughput_metrics`, `scaling_behavior`, and `large_scale`. Routine CI retains
-the `csv_parsing|full_analysis` filter and adds a bounded comparison run (1,000
+the `csv_profile_columns|full_analysis` filter and adds a bounded comparison run (1,000
 rows, three samples, one warmup). The workflow's existing `full_benchmark` input
 enables every Rust scenario and the default comparison run.
+
+The historical `csv_parsing/parse/<size>` series is closed and replaced by
+`csv_profile_columns/profile/<size>`. The timed operation is unchanged: it scans
+CSV records and builds column statistics, patterns and profiles, excluding
+quality assessment. This rename is not evidence of a performance change.
+The benchmark page explains the transition, preserves original reports when
+present, and redirects old group and case URLs to their renamed reports when
+those reports are available. Historical metadata keeps its original IDs; it is
+not relabeled or combined with new measurements.
 
 ## Run the comparison
 
