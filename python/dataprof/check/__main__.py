@@ -499,6 +499,20 @@ def main(argv: list[str] | None = None) -> int:
             subject = check.column if check.column is not None else check.dimension
             label = f" [{subject}]" if subject is not None else ""
             print(f"  {check.status}: {check.code}{label}: {check.message}", file=sys.stderr)
+    # Schema changes from the baseline never move the verdict, so a pass can
+    # carry them; without these lines only --json would show them.
+    for diagnostic in (result.baseline or {}).get("diagnostics", []):
+        detail = ""
+        if "data_type" in diagnostic:
+            types = diagnostic["data_type"]
+            detail += f" (baseline {types['a']}, report {types['b']})"
+        if "reason" in diagnostic:
+            detail += f" ({diagnostic['reason']}: {diagnostic['setting']})"
+        print(
+            f"  diagnostic: {diagnostic['code']} [{diagnostic['column']}]: "
+            f"{diagnostic['message']}{detail}",
+            file=sys.stderr,
+        )
     return _EXIT_CODES[result.verdict]
 
 
