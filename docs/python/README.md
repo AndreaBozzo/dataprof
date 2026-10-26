@@ -1426,7 +1426,8 @@ delta = baseline.compare(dp.profile("orders.csv"))
 
 delta["quality_score"]                  # {"a": 91.2, "b": 88.75, "abs": -2.45, "rel_pct": -2.69, "evidence": {...}}
 delta["dimensions"]["completeness"]     # the same shape, for each of the seven dimensions
-delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5}
+delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5, "data_type_a": "string", "data_type_b": "string"}
+delta["configuration"]["columns"]       # {"a": {"selection": "all"}, "b": {"selection": "listed", "names": ["email"]}, "same": False}
 delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
 delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
 delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
@@ -1439,6 +1440,11 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **No invented numbers.** A score either side did not assess, or a column one
   side lacks or that holds no values, leaves the change `None`. `rel_pct` is
   `None` when `a` is 0.
+- **Column types.** `data_type_a` and `data_type_b` use lowercase type names.
+  A side with no such column, no non-null values, or unrecorded type/count
+  metadata carries `None`. Exact counts determine whether a column holds
+  values, so a rounded null percentage of 100% does not hide a populated
+  column's type. This matches the baseline gate's populated-column requirement.
 - **Evidence.** Each score carries the coverage behind it on both sides, with
   the reasons `check()` uses (`truncated`, `sampled`, `records_skipped`,
   `quality_sampled`, `coverage_unrecorded`). A change between an exact
@@ -1451,10 +1457,13 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
-  `temporal_pairs`), and `pattern_locale` (see `analysis_settings`). Each has
+  `temporal_pairs`), `pattern_locale`, and the column selection, `columns`
+  (see `analysis_settings`). Each has
   `a`, `b` and `same`, which is `None` when a side did not record the
   setting: weights on a summary saved before 0.12, hints on one saved before
-  0.10, the locale on one saved before 0.13. A score that moved while `same` is `False` may
+  0.10, the locale on one saved before 0.13, or a column selection absent from
+  `analysis_settings`. The selection is preserved as recorded, including the
+  order of listed names. A score that moved while `same` is `False` may
   reflect the setting rather than the data. Settings not recorded here, such
   as `metrics` and the timeliness reference date, still need the same
   options on both sides.

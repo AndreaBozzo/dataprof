@@ -27,6 +27,137 @@ const CLEAN: &str = "id,amount\n1,10\n2,20\n3,30\n4,40\n";
 const WITH_NULLS: &str = "id,amount\n1,10\n2,\n3,\n4,40\n";
 
 #[test]
+fn column_types_follow_each_side_in_native_and_flat_reports() {
+    let a = profile("value,old\nhello,1\nworld,2\n");
+    let b = profile("value,new\n10,true\n20,false\n");
+    let flat = |report: &ProfileReport| {
+        ReportSide::from_summary_json(&report.summary_json().unwrap()).unwrap()
+    };
+    for delta in [
+        document(&ReportDelta::between(&a, &b)),
+        document(&ReportDelta::between_sides(&flat(&a), &flat(&b))),
+    ] {
+        assert_eq!(delta["columns"]["value"]["data_type_a"], json!("string"));
+        assert_eq!(delta["columns"]["value"]["data_type_b"], json!("integer"));
+        assert_eq!(delta["columns"]["old"]["data_type_a"], json!("integer"));
+        assert_eq!(
+            delta["columns"]["old"].get("data_type_b"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            delta["columns"]["new"].get("data_type_a"),
+            Some(&Value::Null)
+        );
+        assert_eq!(delta["columns"]["new"]["data_type_b"], json!("boolean"));
+    }
+}
+
+#[test]
+fn column_types_require_a_known_populated_side() {
+    let filled = profile("id,value\n1,10\n2,20\n");
+    for contents in ["id,value\n1,\n2,\n", "id,value\n"] {
+        let empty = profile(contents);
+        let flat = ReportSide::from_summary_json(&empty.summary_json().unwrap()).unwrap();
+        let current = ReportSide::from_report(&filled);
+        for delta in [
+            document(&ReportDelta::between(&empty, &filled)),
+            document(&ReportDelta::between_sides(&flat, &current)),
+        ] {
+            assert_eq!(
+                delta["columns"]["value"].get("data_type_a"),
+                Some(&Value::Null)
+            );
+            assert_eq!(delta["columns"]["value"]["data_type_b"], json!("integer"));
+        }
+        let reversed = document(&ReportDelta::between(&filled, &empty));
+        assert_eq!(
+            reversed["columns"]["value"]["data_type_a"],
+            json!("integer")
+        );
+        assert_eq!(
+            reversed["columns"]["value"].get("data_type_b"),
+            Some(&Value::Null)
+        );
+    }
+}
+
+#[test]
+fn flat_column_types_preserve_unknown_metadata_and_use_exact_counts() {
+    let report = profile(CLEAN);
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    let current = ReportSide::from_report(&report);
+    for field in ["data_type", "total_count", "null_count"] {
+        let mut legacy = summary.clone();
+        legacy["columns"][0].as_object_mut().unwrap().remove(field);
+        let side = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+        let delta = document(&ReportDelta::between_sides(&side, &current));
+        assert_eq!(
+            delta["columns"]["id"].get("data_type_a"),
+            Some(&Value::Null),
+            "{field}"
+        );
+        assert_eq!(delta["columns"]["id"]["data_type_b"], json!("integer"));
+    }
+    let mut future = summary.clone();
+    future["columns"][0]["data_type"] = json!("future_type");
+    let side = ReportSide::from_summary_json(&future.to_string()).unwrap();
+    let delta = document(&ReportDelta::between_sides(&side, &current));
+    assert_eq!(
+        delta["columns"]["id"].get("data_type_a"),
+        Some(&Value::Null)
+    );
+
+    let mut rounded = summary;
+    rounded["columns"][0]["total_count"] = json!(100_001);
+    rounded["columns"][0]["null_count"] = json!(100_000);
+    rounded["columns"][0]["null_percentage"] = json!(100.0);
+    let side = ReportSide::from_summary_json(&rounded.to_string()).unwrap();
+    let delta = document(&ReportDelta::between_sides(&side, &current));
+    assert_eq!(delta["columns"]["id"]["null_pct_a"], json!(100.0));
+    assert_eq!(delta["columns"]["id"]["data_type_a"], json!("integer"));
+}
+
+#[test]
+fn configuration_compares_recorded_column_selections() {
+    let file = csv(CLEAN);
+    let all = Profiler::new().analyze_file(file.path()).unwrap();
+    let listed = Profiler::new()
+        .columns(vec!["amount".to_string()])
+        .analyze_file(file.path())
+        .unwrap();
+    let all_selection = json!({"selection": "all"});
+    let listed_selection = json!({"selection": "listed", "names": ["amount"]});
+    let delta = document(&ReportDelta::between(&all, &listed));
+    assert_eq!(
+        delta["configuration"]["columns"],
+        json!({
+            "a": all_selection, "b": listed_selection, "same": false,
+        })
+    );
+    for report in [&all, &listed] {
+        let flat = ReportSide::from_summary_json(&report.summary_json().unwrap()).unwrap();
+        let delta = document(&ReportDelta::between_sides(
+            &ReportSide::from_report(report),
+            &flat,
+        ));
+        assert_eq!(delta["configuration"]["columns"]["same"], json!(true));
+    }
+    let mut legacy: Value = serde_json::from_str(&all.summary_json().unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("analysis_settings");
+    let legacy = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+    let delta = document(&ReportDelta::between_sides(
+        &legacy,
+        &ReportSide::from_report(&listed),
+    ));
+    assert_eq!(
+        delta["configuration"]["columns"],
+        json!({
+            "a": null, "b": listed_selection, "same": null,
+        })
+    );
+}
+
+#[test]
 fn identical_reports_give_explicit_zeros_for_what_was_assessed() {
     let report = profile(CLEAN);
     let delta = document(&ReportDelta::between(&report, &report));

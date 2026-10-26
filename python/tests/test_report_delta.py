@@ -49,9 +49,16 @@ def test_the_shape_is_the_frozen_contract():
         "null_pct_a": 50.0,
         "null_pct_b": 0.0,
         "null_pct_delta": -50.0,
+        "data_type_a": "integer",
+        "data_type_b": "integer",
     }
     assert set(delta["metric_semantics"]) == {"a", "b", "comparable"}
-    assert list(delta["configuration"]) == ["score_weights", "semantic_hints", "pattern_locale"]
+    assert list(delta["configuration"]) == [
+        "score_weights",
+        "semantic_hints",
+        "pattern_locale",
+        "columns",
+    ]
     for setting in delta["configuration"].values():
         assert set(setting) == {"a", "b", "same"}
     assert set(delta["configuration"]["semantic_hints"]["a"]) == {
@@ -72,6 +79,77 @@ def test_every_change_is_b_minus_a():
     assert completeness["abs"] == round(completeness["b"] - completeness["a"], 2)
     assert completeness["abs"] > 0
     assert delta["columns"]["amount"]["null_pct_delta"] < 0
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_column_types_cover_changed_added_and_removed_columns(flat):
+    a = dp.profile({"value": ["hello", "world"], "old": [1, 2]})
+    b = dp.profile({"value": [10, 20], "new": [True, False]})
+    if flat:
+        a, b = _flat(a), _flat(b)
+    columns = a.compare(b)["columns"]
+    assert columns["value"]["data_type_a"] == "string"
+    assert columns["value"]["data_type_b"] == "integer"
+    assert columns["old"]["data_type_a"] == "integer"
+    assert columns["old"]["data_type_b"] is None
+    assert columns["new"]["data_type_a"] is None
+    assert columns["new"]["data_type_b"] == "boolean"
+
+
+@pytest.mark.parametrize("suffix", ["csv", "jsonl"])
+@pytest.mark.parametrize("flat", [False, True])
+def test_all_null_columns_do_not_claim_an_inferred_type(tmp_path, suffix, flat):
+    path = tmp_path / f"empty.{suffix}"
+    path.write_text(
+        "id,value\n1,\n2,\n"
+        if suffix == "csv"
+        else '{"id":1,"value":null}\n{"id":2,"value":null}\n',
+        encoding="utf-8",
+    )
+    empty = dp.profile(path)
+    filled = dp.profile({"id": [1, 2], "value": [10, 20]})
+    if flat:
+        empty, filled = _flat(empty), _flat(filled)
+    change = empty.compare(filled)["columns"]["value"]
+    assert change["null_pct_a"] == 100.0
+    assert change["data_type_a"] is None
+    assert change["data_type_b"] == "integer"
+    reversed_change = filled.compare(empty)["columns"]["value"]
+    assert reversed_change["data_type_a"] == "integer"
+    assert reversed_change["data_type_b"] is None
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_column_selection_compares_all_listed_and_legacy_metadata(flat):
+    all_columns = dp.profile(CLEAN)
+    selected = dp.profile(CLEAN, columns=["amount"])
+    if flat:
+        all_columns, selected = _flat(all_columns), _flat(selected)
+    assert all_columns.compare(selected)["configuration"]["columns"] == {
+        "a": {"selection": "all"},
+        "b": {"selection": "listed", "names": ["amount"]},
+        "same": False,
+    }
+    for report in (all_columns, selected):
+        assert report.compare(report)["configuration"]["columns"]["same"] is True
+    summary = all_columns.to_dict()
+    del summary["analysis_settings"]
+    legacy = dp.ProfileReport.from_dict(summary)
+    assert legacy.compare(selected)["configuration"]["columns"] == {
+        "a": None,
+        "b": {"selection": "listed", "names": ["amount"]},
+        "same": None,
+    }
+
+
+def test_legacy_column_type_metadata_is_not_invented():
+    report = dp.profile(CLEAN)
+    summary = report.to_dict()
+    del summary["columns"][0]["data_type"]
+    legacy = dp.ProfileReport.from_dict(summary)
+    change = legacy.compare(report)["columns"]["id"]
+    assert change["data_type_a"] is None
+    assert change["data_type_b"] == "integer"
 
 
 def test_a_flat_summary_compares_like_the_report_it_came_from():

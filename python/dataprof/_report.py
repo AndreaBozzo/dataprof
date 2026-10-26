@@ -1166,9 +1166,12 @@ class ProfileReport:
         - ``dimensions``: the same shape for each ISO 25012 dimension
           (completeness, consistency, uniqueness, accuracy, timeliness,
           validity, precision), as :meth:`quality_summary` reports them.
-        - ``columns``: per-column ``null_pct_a``, ``null_pct_b`` and
-          ``null_pct_delta`` over the union of column names, this report's
-          order first.
+        - ``columns``: per-column ``null_pct_a``, ``null_pct_b``,
+          ``null_pct_delta``, ``data_type_a`` and ``data_type_b`` over the
+          union of column names, this report's order first. Types use the
+          lowercase names from the column profiles. A missing column, an
+          empty or all-null column, or unrecorded type/count metadata leaves
+          that side's type ``None``.
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
         - ``metric_semantics``: each side's :attr:`metric_semantics` and
           ``comparable``: ``True`` when both record every definition this
@@ -1179,12 +1182,15 @@ class ProfileReport:
         - ``configuration``: the recorded settings that move a score on
           unchanged data, ``score_weights``, ``semantic_hints`` (the
           columns named by ``positive_columns``, ``identifier_columns``,
-          ``temporal_columns`` and ``temporal_pairs``) and ``pattern_locale``
+          ``temporal_columns`` and ``temporal_pairs``), ``pattern_locale`` and
+          the column selection, ``columns``
           (see :attr:`analysis_settings`). Each has ``a``, ``b`` and
           ``same``: ``True`` when both sides recorded it and agree, ``False``
           when they differ, ``None`` when either did not record it (weights
           on a summary saved before 0.12, hints before 0.10, the locale
-          before 0.13).
+          before 0.13, or a column selection absent from ``analysis_settings``).
+          ``columns`` preserves each side's recorded selection, including the
+          order of a listed selection's names.
           A score that moved under a different setting may not reflect a change
           in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``

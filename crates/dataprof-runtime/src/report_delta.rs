@@ -31,7 +31,7 @@
 //!   releases is not a difference in the data.
 //! - **Configuration.** `configuration` lists each recorded setting that moves
 //!   a score on unchanged data (the score weights, the semantic hints, the
-//!   pattern locale) on both
+//!   pattern locale and column selection) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
@@ -166,6 +166,21 @@ pub struct ColumnChange {
     /// `null_pct_b - null_pct_a`, when both are present. Positive means more
     /// nulls.
     pub null_pct_delta: Option<f64>,
+    /// The inferred type in `a`, serialized as its lowercase name. `None`
+    /// when the column is absent, empty or all-null, or when its type or
+    /// counts were not recorded.
+    #[serde(serialize_with = "serialize_data_type")]
+    pub data_type_a: Option<DataType>,
+    /// The inferred type in `b`, under the same rules.
+    #[serde(serialize_with = "serialize_data_type")]
+    pub data_type_b: Option<DataType>,
+}
+
+fn serialize_data_type<S: Serializer>(
+    data_type: &Option<DataType>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&data_type.as_ref().map(DataType::name), serializer)
 }
 
 /// Each side's recorded measurement definitions, and whether they agree.
@@ -263,6 +278,9 @@ pub struct ConfigurationComparison {
     /// The locale detected patterns were ranked with, which the validity
     /// score reads. `None` on a side written before dataprof recorded it.
     pub pattern_locale: SettingComparison<PatternLocale>,
+    /// The column selection, preserving the order of listed names. `None`
+    /// on a side that did not record its analysis settings.
+    pub columns: SettingComparison<ColumnSelection>,
 }
 
 /// Which columns each side has.
@@ -343,15 +361,15 @@ impl ReportDelta {
             .iter()
             .map(|column| column.name.as_str())
             .collect();
-        let a_nulls: BTreeMap<&str, Option<f64>> = a
+        let a_columns: BTreeMap<&str, &ColumnSide> = a
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
-        let b_nulls: BTreeMap<&str, Option<f64>> = b
+        let b_columns: BTreeMap<&str, &ColumnSide> = b
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
         let added: Vec<String> = b
             .columns
@@ -365,13 +383,21 @@ impl ReportDelta {
             .map(|column| &column.name)
             .chain(&added)
             .map(|name| {
-                let null_pct_a = a_nulls.get(name.as_str()).copied().flatten();
-                let null_pct_b = b_nulls.get(name.as_str()).copied().flatten();
+                let a = a_columns.get(name.as_str());
+                let b = b_columns.get(name.as_str());
+                let null_pct_a = a.and_then(|column| column.null_pct);
+                let null_pct_b = b.and_then(|column| column.null_pct);
                 ColumnChange {
                     name: name.clone(),
                     null_pct_a,
                     null_pct_b,
                     null_pct_delta: null_pct_a.zip(null_pct_b).map(|(a, b)| rounded_2(b - a)),
+                    data_type_a: a
+                        .filter(|column| column.populated() == Some(true))
+                        .and_then(|column| column.data_type.clone()),
+                    data_type_b: b
+                        .filter(|column| column.populated() == Some(true))
+                        .and_then(|column| column.data_type.clone()),
                 }
             })
             .collect();
@@ -404,6 +430,10 @@ impl ReportDelta {
                     b.semantic_hints.clone(),
                 ),
                 pattern_locale: SettingComparison::new(a.pattern_locale, b.pattern_locale),
+                columns: SettingComparison::new(
+                    a.column_selection.clone(),
+                    b.column_selection.clone(),
+                ),
             },
             schema: SchemaChange {
                 added,
