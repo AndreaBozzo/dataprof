@@ -1130,6 +1130,14 @@ impl PyProfileReport {
             .and_then(QualityAssessment::sampled_dimensions)
     }
 
+    #[getter]
+    fn quality_exact_dimensions(&self) -> Option<Vec<String>> {
+        self.inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::exact_dimensions)
+    }
+
     /// Components computed with signal that the recorded confidence lists
     /// neither as exact nor as sampled, so their coverage is unrecorded. Empty
     /// for every report a release wrote; read by the Python findings, which
@@ -1530,5 +1538,13 @@ pub fn report_delta_json(a: DeltaInput<'_>, b: DeltaInput<'_>) -> PyResult<Strin
     let delta = dataprof::ReportDelta::between_sides(&a.side("compare()")?, &b.side("compare()")?);
     serde_json::to_string(&delta).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
+    })
+}
+
+/// Shared coverage decoder for the legacy flat-summary Python backing.
+#[pyfunction]
+pub fn summary_quality_unlisted_components(text: &str) -> PyResult<Vec<String>> {
+    dataprof_runtime::report_delta::summary_quality_unlisted_components(text).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("from_dict(): invalid quality: {e}"))
     })
 }

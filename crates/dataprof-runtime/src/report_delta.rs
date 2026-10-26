@@ -65,6 +65,7 @@ use dataprof_core::{
     DataSource, DataType, FileFormat, QualityDimension, QualityScoreWeights, SemanticHintBinding,
     SemanticHintKind,
 };
+use dataprof_metrics::{MetricConfidence, QualityAssessment, QualityMetrics};
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
@@ -673,6 +674,10 @@ impl ReportSide {
             known => known,
         };
         let quality = summary.quality.as_ref();
+        let unlisted = quality
+            .map(SummaryQuality::unlisted_components)
+            .transpose()?
+            .unwrap_or_default();
         // The dimensions the overall score weighs. An overall score always
         // weighs at least one, so an empty list beside a score was not
         // recorded: a missing list reads as empty here, as it does in the
@@ -697,18 +702,17 @@ impl ReportSide {
             let coverage = match (provenance, &assessed) {
                 // Without the weights, a sampled component may or may not
                 // reach the overall score; only "nothing was sampled" settles it.
-                (Provenance::Overall, None) if sampled.is_some_and(|s| s.is_empty()) => {
+                (Provenance::Overall, None)
+                    if sampled.is_some_and(|s| s.is_empty()) && unlisted.is_empty() =>
+                {
                     Evidence::Complete
                 }
                 (Provenance::Overall, None) => Evidence::Incomplete {
                     reason: EvidenceGap::CoverageUnrecorded,
                 },
-                // A flat summary records no exact list, so no component can
-                // be found missing from both: "not sampled" reads as exact
-                // until the summary records one.
                 (_, assessed) => sampled_component_evidence(
                     sampled,
-                    &[],
+                    &unlisted,
                     assessed.as_deref().unwrap_or_default(),
                     provenance,
                 ),
@@ -899,11 +903,40 @@ struct SummaryQuality {
     /// Absent in a summary written before dataprof recorded it, which reads
     /// as unrecorded coverage, never as "nothing was sampled".
     sampled_dimensions: Option<Vec<String>>,
+    exact_dimensions: Option<Vec<String>>,
+    // Keep metric decoding conditional on both coverage lists being recorded:
+    // older summaries retain their existing reading and validation behavior.
+    #[serde(flatten)]
+    metrics: serde_json::Map<String, serde_json::Value>,
     /// Written whatever the weights since 0.13; a 0.12 summary omitted only
     /// the defaults, and earlier ones did not record them. Explicit null is
     /// malformed, as in Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
+}
+
+impl SummaryQuality {
+    fn unlisted_components(&self) -> serde_json::Result<Vec<String>> {
+        let (Some(exact), Some(sampled)) = (&self.exact_dimensions, &self.sampled_dimensions)
+        else {
+            return Ok(Vec::new());
+        };
+        let metrics: QualityMetrics = serde_json::from_value(self.metrics.clone().into())?;
+        let mut assessment = QualityAssessment::exact(metrics);
+        assessment.confidence = MetricConfidence::Mixed {
+            exact_dimensions: exact.clone(),
+            sampled_dimensions: sampled.clone(),
+            sample_size: 0,
+        };
+        Ok(assessment.unlisted_components())
+    }
+}
+
+/// Resolve unlisted components in a flat summary's quality object. The Python
+/// legacy reader uses this same canonical component logic for its findings.
+/// A missing coverage list retains the historical flat-summary interpretation.
+pub fn summary_quality_unlisted_components(text: &str) -> serde_json::Result<Vec<String>> {
+    serde_json::from_str::<SummaryQuality>(text)?.unlisted_components()
 }
 
 #[cfg(test)]

@@ -143,6 +143,41 @@ fn canonical_json_and_summary_are_real_producers_for_the_v1_union() {
 }
 
 #[test]
+fn flat_exact_dimensions_are_optional_and_typed() {
+    let report: ProfileReport =
+        serde_json::from_str(include_str!("fixtures/canonical_report.json")).unwrap();
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    let schema = committed_schema();
+    assert!(summary["quality"]["exact_dimensions"].is_array());
+    for valid in [
+        json!([]),
+        json!(["completeness", "future_component"]),
+        Value::Null,
+    ] {
+        summary["quality"]["exact_dimensions"] = valid;
+        assert_valid(&schema, &summary);
+        dataprof::ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    }
+    for malformed in [
+        json!("completeness"),
+        json!(1),
+        json!({}),
+        json!([1]),
+        json!([null]),
+    ] {
+        summary["quality"]["exact_dimensions"] = malformed;
+        assert!(!validator(&schema).is_valid(&summary));
+        assert!(dataprof::ReportSide::from_summary_json(&summary.to_string()).is_err());
+    }
+    summary["quality"]
+        .as_object_mut()
+        .unwrap()
+        .remove("exact_dimensions");
+    assert_valid(&schema, &summary);
+    dataprof::ReportSide::from_summary_json(&summary.to_string()).unwrap();
+}
+
+#[test]
 fn rust_saves_the_shared_canonical_document() {
     // Python loads and saves this exact artifact too. It includes Unicode,
     // column ordering, historical frequencies, and absent versus empty metrics.

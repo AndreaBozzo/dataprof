@@ -718,6 +718,10 @@ struct PythonQualityDocument {
     /// Uniqueness appears here as `key_uniqueness` and `duplicate_rows`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_dimensions: Option<Vec<String>>,
+    /// Metric components computed from every scanned row. Absent in older
+    /// summaries, which retain their historical "not sampled means exact" reading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact_dimensions: Option<Vec<String>>,
     /// Where the scores over every scanned row lie, when some were computed over a
     /// retained sample. Additive field, absent when every score is exact and
     /// on documents written before it existed.
@@ -884,6 +888,9 @@ impl PythonProfileReportDocument {
                     serde_json::Value::Bool(metrics.low_sample_warning);
                 if let Some(sampled) = assessment.sampled_dimensions() {
                     document["sampled_dimensions"] = serde_json::to_value(sampled)?;
+                }
+                if let Some(exact) = assessment.exact_dimensions() {
+                    document["exact_dimensions"] = serde_json::to_value(exact)?;
                 }
                 if let Some(bounds) = assessment.score_bounds() {
                     document["score_bounds"] = serde_json::to_value(bounds)?;

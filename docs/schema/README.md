@@ -39,6 +39,17 @@ resave does add `schema_version`, because it is written by a v1 build. Rust's `P
 compatibility loader remains a Python API. `check()` refuses a loaded flat summary,
 because the gate runs on Rust's report.
 
+The summary's quality block records `exact_dimensions` alongside
+`sampled_dimensions`. These are component labels: uniqueness can name
+`key_uniqueness` and `duplicate_rows` separately. When both lists are recorded,
+`compare()` and `findings()` treat a measured component in neither list as
+having unrecorded coverage, just as they do for a canonical report. Python
+exposes the exact list as `quality_exact_dimensions` and preserves it through
+load/save. Older summaries without this optional field retain their previous
+reading: when `sampled_dimensions` is recorded, a component not listed there
+reads as exact. Missing lists stay missing on resave; an empty list means no
+components of that kind were recorded.
+
 This preserves the published v1 validation contract instead of silently
 narrowing it. New profiles save only the canonical shape. Consumers of the old
 JSON layout should use `to_dict()` for its summary keys, or migrate to the

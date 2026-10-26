@@ -1079,6 +1079,31 @@ impl QualityAssessment {
         }
     }
 
+    /// Metric components computed from every scanned row. `None` means the
+    /// assessment did not record coverage; an empty list records no exact
+    /// components. Mixed assessments preserve even labels this build does not know.
+    pub fn exact_dimensions(&self) -> Option<Vec<String>> {
+        match &self.confidence {
+            MetricConfidence::Exact => Some(
+                QualityDimension::all()
+                    .into_iter()
+                    // Live metrics can hold unassessed default blocks, which
+                    // serialization omits. List only components with signal
+                    // so saving and loading cannot change their coverage list.
+                    .filter(|dimension| self.metrics.dimension_score(*dimension).is_some())
+                    .flat_map(|dimension| self.component_labels(dimension))
+                    .collect(),
+            ),
+            MetricConfidence::Mixed {
+                exact_dimensions, ..
+            } => Some(exact_dimensions.clone()),
+            MetricConfidence::Approximate { .. } | MetricConfidence::NotAssessed => {
+                Some(Vec::new())
+            }
+            MetricConfidence::Unrecorded => None,
+        }
+    }
+
     /// Components this assessment computed with signal that its recorded
     /// confidence lists neither as exact nor as sampled.
     ///

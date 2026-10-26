@@ -2029,6 +2029,16 @@
           },
           "type": "object"
         },
+        "exact_dimensions": {
+          "description": "Metric components computed from every scanned row. Absent in older\nsummaries, which retain their historical \"not sampled means exact\" reading.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "low_sample_warning": {
           "type": "boolean"
         },

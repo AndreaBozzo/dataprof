@@ -277,6 +277,17 @@ class ProfileReport:
         return None if sampled is None else list(sampled)
 
     @property
+    def quality_exact_dimensions(self) -> list[str] | None:
+        """Metric components computed from every scanned row.
+
+        ``None`` means coverage was not recorded, including flat summaries
+        written before this field existed. An empty list records no exact
+        components. Uniqueness uses ``key_uniqueness`` and ``duplicate_rows``.
+        """
+        exact = self._report.quality_exact_dimensions
+        return None if exact is None else list(exact)
+
+    @property
     def quality_score_bounds(self) -> dict[str, _Any] | None:
         """Where the whole-source quality scores lie, when some were computed
         over a retained sample of the scanned rows.
@@ -455,8 +466,8 @@ class ProfileReport:
         neither as exact nor as sampled, so their coverage is unrecorded.
 
         Private: findings read it to resolve coverage as the Rust gate does.
-        Empty for every report a release wrote, and for a flat summary, which
-        records no exact list.
+        Empty for every report a release wrote, and for a legacy flat summary
+        that does not record both coverage lists.
         """
         return list(self._report.quality_unlisted_components)
 
@@ -538,6 +549,9 @@ class ProfileReport:
             sampled = self.quality_sampled_dimensions
             if sampled is not None:
                 quality_dict["sampled_dimensions"] = sampled
+            exact = self.quality_exact_dimensions
+            if exact is not None:
+                quality_dict["exact_dimensions"] = exact
             bounds = self.quality_score_bounds
             if bounds is not None:
                 quality_dict["score_bounds"] = bounds

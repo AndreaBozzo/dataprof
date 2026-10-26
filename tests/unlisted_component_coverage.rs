@@ -9,7 +9,7 @@ use std::io::Write;
 
 use dataprof::{
     CheckCode, EvidenceGap, FindingCode, NotEvaluatedReason, ProfileReport, Profiler,
-    QualityDimension, QualityPolicy, ReportDelta,
+    QualityDimension, QualityPolicy, ReportDelta, ReportSide,
 };
 use serde_json::{Value, json};
 
@@ -143,4 +143,108 @@ fn a_component_listed_nowhere_reads_unrecorded_in_every_reader() {
         ));
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn flat_summary_records_exact_components_and_keeps_canonical_coverage() {
+    let mut document = serde_json::to_value(profile(DATED)).unwrap();
+    document["quality"]["confidence"] = json!({"Mixed": {
+        "exact_dimensions": ["completeness", "duplicate_rows", "future_component"],
+        "sampled_dimensions": ["consistency", "accuracy", "validity", "precision"],
+        "sample_size": 4,
+    }});
+    let report: ProfileReport = serde_json::from_value(document).unwrap();
+    let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    assert_eq!(
+        summary["quality"]["exact_dimensions"],
+        json!(["completeness", "duplicate_rows", "future_component"])
+    );
+    let side = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    let flat = ReportDelta::between_sides(&side, &side);
+    let canonical = ReportDelta::between(&report, &report);
+    assert_eq!(
+        flat.quality_score.evidence,
+        canonical.quality_score.evidence
+    );
+    for (flat, canonical) in flat.dimensions.iter().zip(&canonical.dimensions) {
+        assert_eq!(flat.score.evidence, canonical.score.evidence);
+    }
+
+    summary["quality"]
+        .as_object_mut()
+        .unwrap()
+        .remove("exact_dimensions");
+    let legacy = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+    let delta = ReportDelta::between_sides(&legacy, &legacy);
+    assert_eq!(
+        delta
+            .dimensions
+            .iter()
+            .find(|d| d.dimension == QualityDimension::Timeliness)
+            .unwrap()
+            .score
+            .evidence
+            .a
+            .gap(),
+        None
+    );
+}
+
+#[test]
+fn flat_summary_distinguishes_exact_sampled_and_unrecorded_components() {
+    let original = serde_json::to_value(profile(DATED)).unwrap();
+    for confidence in [
+        json!("Exact"),
+        json!({"Approximate": {"sample_size": 4, "population_size": 10}}),
+        json!("Unrecorded"),
+    ] {
+        let mut document = original.clone();
+        document["quality"]["confidence"] = confidence.clone();
+        let report: ProfileReport = serde_json::from_value(document).unwrap();
+        let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        let quality = &summary["quality"];
+        if confidence == json!("Exact") {
+            let labels = quality["exact_dimensions"].as_array().unwrap();
+            assert!(labels.contains(&json!("timeliness")));
+            assert!(labels.contains(&json!("duplicate_rows")));
+            assert!(!labels.contains(&json!("key_uniqueness")));
+            assert_eq!(quality["sampled_dimensions"], json!([]));
+        } else if confidence == json!("Unrecorded") {
+            assert!(quality.get("exact_dimensions").is_none());
+            assert!(quality.get("sampled_dimensions").is_none());
+        } else {
+            assert_eq!(quality["exact_dimensions"], json!([]));
+            assert!(
+                quality["sampled_dimensions"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("timeliness"))
+            );
+        }
+    }
+    let mut report = profile(DATED);
+    report.quality = Some(dataprof::QualityAssessment::exact(
+        dataprof::QualityMetrics::default(),
+    ));
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    assert_eq!(summary["quality"]["exact_dimensions"], json!([]));
+}
+
+#[test]
+fn exact_components_do_not_include_unassessed_live_metric_defaults() {
+    let report = profile("id,amount\n1,10\n2,20\n3,30\n");
+    let restored = round_trip(&report);
+    let exact = report.quality.as_ref().unwrap().exact_dimensions().unwrap();
+    assert_eq!(
+        exact,
+        restored
+            .quality
+            .as_ref()
+            .unwrap()
+            .exact_dimensions()
+            .unwrap()
+    );
+    assert!(!exact.contains(&"timeliness".to_string()));
+    assert!(!exact.contains(&"validity".to_string()));
+    assert!(!exact.contains(&"precision".to_string()));
 }

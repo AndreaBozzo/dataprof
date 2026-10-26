@@ -6,9 +6,11 @@ properties and methods live in _accessors, exactly as for native reports.
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
+from . import _dataprof
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
 from ._columns import _LEXICAL_CLASS_ORDER, _homogeneity_counts
 from ._report_schema import _QUALITY_DIMENSIONS
@@ -461,9 +463,29 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if quality is not None else None
     )
-    # A flat summary records no exact list, so no component can be found
-    # missing from both lists: "not sampled" reads as exact, as in Rust.
-    values["quality_unlisted_components"] = []
+    values["quality_exact_dimensions"] = (
+        _read_field(
+            quality,
+            "exact_dimensions",
+            "quality.exact_dimensions",
+            "a list of strings or null",
+            lambda value: (
+                value is None
+                or (isinstance(value, list) and all(isinstance(item, str) for item in value))
+            ),
+            None,
+        )
+        if quality is not None
+        else None
+    )
+    # Legacy summaries retain their earlier validation and coverage reading.
+    # When both lists are recorded, use the canonical component signal rules.
+    values["quality_unlisted_components"] = (
+        _dataprof.summary_quality_unlisted_components(json.dumps(quality))
+        if values["quality_exact_dimensions"] is not None
+        and values["quality_sampled_dimensions"] is not None
+        else []
+    )
     values["quality_score_bounds"] = (
         _read_field(
             quality,
