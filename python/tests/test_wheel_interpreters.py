@@ -248,6 +248,42 @@ def test_release_and_rehearsal_share_one_build():
     assert "contents: write" not in rehearsal
 
 
+def test_release_limits_write_permissions_to_publishers():
+    """Dependency builds get read-only tokens; only publishers can write."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    defaults, job_section = release.split("\njobs:\n", 1)
+    assert "permissions:\n  contents: read\n" in defaults
+    assert "write" not in defaults
+
+    writers = {"create-release", "python-release-assets", "finalize-release"}
+    jobs = re.findall(r"^  ([\w-]+):$", job_section, re.MULTILINE)
+    assert writers | {"pypi-publish"} <= set(jobs)
+    for job in jobs:
+        body = _job_body(release, job)
+        permissions = re.search(
+            r"^    permissions:\n((?:      [^\n]+\n)+)", body + "\n", re.MULTILINE
+        )
+        if permissions:
+            effective = dict(line.strip().split(": ") for line in permissions[1].splitlines())
+        else:
+            assert "permissions:" not in body, job
+            effective = {"contents": "read"}
+        expected = {"contents": "write" if job in writers else "read"}
+        if job == "pypi-publish":
+            expected = {"id-token": "write"}
+        assert effective == expected, job
+
+
+def test_release_checkouts_do_not_persist_credentials():
+    """No release job pushes with git, so later steps need no saved token."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    checkouts = re.findall(r"uses: actions/checkout@\S+\n((?:[ ]{6,}[^\n]*\n|\n)*)", release)
+    assert checkouts
+    for checkout in checkouts:
+        assert "      with:\n" in checkout
+        assert "        persist-credentials: false\n" in checkout
+
+
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):
     """Resolve version requests to python.exe paths and preserve spaces in argv."""
     requested = ["3.10", "3.14"]
