@@ -1017,9 +1017,17 @@ fn convert_polars_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
         let arrow_data = df.call_method0("to_arrow")?;
         import_batches_from_pyarrow(py, &arrow_data)
     } else {
-        Err(PyRuntimeError::new_err(
-            "polars DataFrame doesn't support Arrow export",
-        ))
+        // Name the object actually passed: a LazyFrame reaches this arm too,
+        // and calling it a DataFrame sent users looking for an export bug.
+        let type_name = df.get_type().name()?;
+        let hint = if df.hasattr("collect")? {
+            "; call .collect() and pass the resulting DataFrame"
+        } else {
+            ""
+        };
+        Err(PyTypeError::new_err(format!(
+            "polars {type_name} has no Arrow export (to_arrow){hint}"
+        )))
     }
 }
 
@@ -1077,9 +1085,17 @@ fn import_batches_from_pyarrow(
         // accepting. RecordBatch is named only so the error below can list it.
         Ok(vec![import_via_pycapsule(py, obj)?])
     } else {
+        // A Dataset or Scanner is lazy and exports nothing until read; point
+        // at the call that turns it into a source profile() accepts.
+        let hint = if obj.hasattr("to_reader")? {
+            "; pass .to_reader() to stream it, or .to_table()"
+        } else if obj.hasattr("scanner")? {
+            "; pass .scanner().to_reader() to stream it, or .to_table()"
+        } else {
+            ""
+        };
         Err(PyTypeError::new_err(format!(
-            "Expected a pyarrow Table or RecordBatch, or an object implementing the Arrow PyCapsule interface (__arrow_c_array__), got {}",
-            type_name
+            "Expected a pyarrow Table, RecordBatch or RecordBatchReader, or an object implementing the Arrow PyCapsule interface (__arrow_c_array__ or __arrow_c_stream__), got {type_name}{hint}"
         )))
     }
 }
