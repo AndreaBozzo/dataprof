@@ -28,7 +28,8 @@
 //!
 //! Findings describe the rows the report read. When the scan stopped early or
 //! sampled, a [`FindingCode::PartialScan`] finding says so; the other findings
-//! are not withheld, because what was observed is still true of those rows.
+//! are not withheld, because what was observed is still true of those rows,
+//! except [`FindingCode::KeyDuplicates`], which requires a fully read source.
 //! Use a [`QualityPolicy`](crate::QualityPolicy) for pass/fail decisions about
 //! the whole source.
 
@@ -36,7 +37,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, PatternCategory};
+use dataprof_core::{ColumnProfile, DataType, KeyColumnSource, PatternCategory};
 use dataprof_metrics::QualityAssessment;
 
 use crate::profile_report::ProfileReport;
@@ -99,6 +100,8 @@ pub enum FindingCode {
     DuplicateRows,
     /// Date values lie after the time the report was produced.
     FutureDates,
+    /// The declared key contains repeated non-null values.
+    KeyDuplicates,
     /// At least half of a column's text values are numbers written with a
     /// decimal comma or digit-group separators, which no numeric statistic
     /// includes.
@@ -128,6 +131,7 @@ impl FindingCode {
             Self::AllNull
             | Self::DuplicateRows
             | Self::FutureDates
+            | Self::KeyDuplicates
             | Self::LocaleNumbers
             | Self::MixedTypes
             | Self::NullHeavy
@@ -150,6 +154,7 @@ impl FindingCode {
             Self::ConstantColumn => "every non-null value in this column is the same",
             Self::DuplicateRows => "the source contains exact duplicate rows",
             Self::FutureDates => "some date values lie in the future",
+            Self::KeyDuplicates => "the declared key contains repeated non-null values",
             Self::LocaleNumbers => {
                 "at least half of the text values in this column are numbers written with a \
                  decimal comma or digit grouping, so no numeric statistic includes them"
@@ -181,6 +186,7 @@ impl fmt::Display for FindingCode {
             Self::ConstantColumn => "constant_column",
             Self::DuplicateRows => "duplicate_rows",
             Self::FutureDates => "future_dates",
+            Self::KeyDuplicates => "key_duplicates",
             Self::LocaleNumbers => "locale_numbers",
             Self::MixedTypes => "mixed_types",
             Self::NullHeavy => "null_heavy",
@@ -247,12 +253,16 @@ pub enum NotEvaluatedReason {
     /// The number the rule reads is an estimate, which witnesses nothing: an
     /// estimated duplicate count is not evidence that a duplicate exists.
     Estimated,
-    /// The count the rule reads is zero, but it came from the retained quality
-    /// sample rather than every scanned row, so it rules nothing out for the
-    /// rows the sample left behind. A nonzero count is still reported.
+    /// The source scan was truncated or sampled, so the declared key's
+    /// uniqueness over the whole source was not measured.
+    PartialScan,
+    /// Evidence came from the retained quality sample rather than every
+    /// scanned row. Row duplicates and timeliness still report nonzero counts,
+    /// but zero rules nothing out for rows outside the sample. Declared-key
+    /// duplicates require complete evidence even when repeats were observed.
     Sampled,
-    /// The report does not record what the rule needs to tell a zero from an
-    /// unmeasured value: a document written before dataprof recorded it
+    /// Required evidence is missing or inconsistent, for example a document
+    /// written before dataprof recorded what the rule needs
     /// (ragged rows before 0.10, quality sample coverage before 0.12).
     Unrecorded,
     /// The metric the rule reads was not computed for these columns: the
@@ -269,10 +279,11 @@ impl NotEvaluatedReason {
             Self::QualityUnavailable { .. } => 0,
             Self::NotAssessed => 1,
             Self::Estimated => 2,
-            Self::Sampled => 3,
-            Self::Unrecorded => 4,
-            Self::NotComputed => 5,
-            Self::NoValues => 6,
+            Self::PartialScan => 3,
+            Self::Sampled => 4,
+            Self::Unrecorded => 5,
+            Self::NotComputed => 6,
+            Self::NoValues => 7,
         }
     }
 }
@@ -669,9 +680,10 @@ fn scan_findings(report: &ProfileReport, out: &mut Collector) {
 }
 
 fn quality_findings(report: &ProfileReport, out: &mut Collector) {
-    const QUALITY_RULES: [FindingCode; 3] = [
+    const QUALITY_RULES: [FindingCode; 4] = [
         FindingCode::DuplicateRows,
         FindingCode::FutureDates,
+        FindingCode::KeyDuplicates,
         FindingCode::TemporalOrderViolations,
     ];
     let Some(quality) = report.quality.as_ref() else {
@@ -686,6 +698,8 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
         }
         return;
     };
+
+    key_duplicate_findings(report, quality, out);
 
     match quality
         .metrics
@@ -755,6 +769,110 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
             quality,
             "timeliness",
         ),
+    }
+}
+
+/// Report repeated declared keys only from matching, exact non-null counts.
+/// The rounded uniqueness percentage cannot recover a repeated-value count.
+fn key_duplicate_findings(
+    report: &ProfileReport,
+    quality: &QualityAssessment,
+    out: &mut Collector,
+) {
+    let code = FindingCode::KeyDuplicates;
+    let Some(uniqueness) = quality.metrics.uniqueness.as_ref() else {
+        out.skip_report(code, NotEvaluatedReason::NotAssessed);
+        return;
+    };
+    let Some(key) = uniqueness.key_column.as_deref() else {
+        out.skip_report(code, NotEvaluatedReason::NotAssessed);
+        return;
+    };
+    if report
+        .metric_semantics
+        .as_ref()
+        .and_then(|s| s.key_column_source)
+        != Some(KeyColumnSource::Declared)
+    {
+        out.skip(code, NotEvaluatedReason::Unrecorded, key);
+        return;
+    }
+    if !report.execution.source_exhausted
+        || report.execution.truncation_reason.is_some()
+        || report.execution.sampling_applied
+    {
+        out.skip(code, NotEvaluatedReason::PartialScan, key);
+        return;
+    }
+    let Some((index, column)) = report
+        .column_profiles
+        .iter()
+        .enumerate()
+        .find(|(_, c)| c.name == key)
+    else {
+        out.skip(code, NotEvaluatedReason::NotComputed, key);
+        return;
+    };
+    let Some(checked) = uniqueness.key_values_checked else {
+        out.skip(code, NotEvaluatedReason::Unrecorded, key);
+        return;
+    };
+    let Some(distinct) = column.unique_count else {
+        out.skip(code, NotEvaluatedReason::NotComputed, key);
+        return;
+    };
+    if column.total_count.checked_sub(column.null_count) != Some(checked) || distinct > checked {
+        out.skip(code, NotEvaluatedReason::Unrecorded, key);
+        return;
+    }
+    if checked == 0 {
+        out.skip(code, NotEvaluatedReason::NoValues, key);
+        return;
+    }
+    match column.unique_count_is_approximate {
+        Some(false) => {}
+        Some(true) => {
+            out.skip(code, NotEvaluatedReason::Estimated, key);
+            return;
+        }
+        None => {
+            out.skip(code, NotEvaluatedReason::Unrecorded, key);
+            return;
+        }
+    }
+    match sampled_component_evidence(
+        quality.sampled_dimensions().as_deref(),
+        &quality.unlisted_components(),
+        &quality.metrics.assessed_dimensions(),
+        Provenance::Component("key_uniqueness"),
+    ) {
+        Evidence::Complete => {}
+        Evidence::Incomplete {
+            reason: EvidenceGap::QualitySampled,
+        } => {
+            out.skip(code, NotEvaluatedReason::Sampled, key);
+            return;
+        }
+        Evidence::Incomplete { .. } => {
+            out.skip(code, NotEvaluatedReason::Unrecorded, key);
+            return;
+        }
+    }
+    if distinct < checked {
+        out.column(
+            code,
+            index,
+            key,
+            [
+                ("key_column", EvidenceValue::Text(key.to_string())),
+                ("key_values_checked", EvidenceValue::Count(checked)),
+                ("repeated_values", EvidenceValue::Count(checked - distinct)),
+                (
+                    "key_column_source",
+                    EvidenceValue::Text("declared".to_string()),
+                ),
+            ],
+        );
     }
 }
 
@@ -1025,6 +1143,165 @@ mod tests {
             .iter()
             .map(|finding| (finding.code, finding.column.as_deref()))
             .collect()
+    }
+
+    fn declared_key_report() -> ProfileReport {
+        let mut key = column("order_id", 10_002, 2);
+        key.unique_count = Some(9_995);
+        key.unique_count_is_approximate = Some(false);
+        let metrics = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                // A rounded percentage can hide repeats; only counts are evidence.
+                key_uniqueness: 100.0,
+                key_column: Some("order_id".to_string()),
+                key_values_checked: Some(10_000),
+                rows_checked: 10_002,
+                ..UniquenessMetrics::default()
+            }),
+            ..QualityMetrics::default()
+        };
+        ProfileReport::new(
+            source(),
+            vec![key],
+            ExecutionMetadata::new(10_002, 1, 10),
+            Some(QualityAssessment::exact(metrics)),
+        )
+    }
+
+    #[test]
+    fn declared_key_duplicates_use_exact_non_null_counts() {
+        let report = declared_key_report();
+        let result = serde_json::to_value(report.findings()).unwrap();
+        let finding = result["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["code"] == "key_duplicates")
+            .expect("repeated declared keys deserve a finding even without duplicate rows");
+        assert_eq!(
+            finding,
+            &serde_json::json!({
+                "code": "key_duplicates",
+                "severity": "warning",
+                "column": "order_id",
+                "evidence": {
+                    "key_column": "order_id",
+                    "key_values_checked": 10_000,
+                    "repeated_values": 5,
+                    "key_column_source": "declared"
+                },
+                "summary": "the declared key contains repeated non-null values"
+            })
+        );
+        let restored: ProfileReport = serde_json::from_str(&report.to_json().unwrap()).unwrap();
+        assert_eq!(restored.findings(), report.findings());
+    }
+
+    #[test]
+    fn key_duplicates_require_complete_exact_recorded_evidence() {
+        type Edit = fn(&mut ProfileReport);
+        let cases: &[(&str, Edit, &str)] = &[
+            (
+                "estimated",
+                |r| r.column_profiles[0].unique_count_is_approximate = Some(true),
+                "estimated",
+            ),
+            (
+                "unknown exactness",
+                |r| r.column_profiles[0].unique_count_is_approximate = None,
+                "unrecorded",
+            ),
+            (
+                "missing distinct count",
+                |r| r.column_profiles[0].unique_count = None,
+                "not_computed",
+            ),
+            (
+                "truncated",
+                |r| r.execution.source_exhausted = false,
+                "partial_scan",
+            ),
+            (
+                "sampled scan",
+                |r| r.execution.sampling_applied = true,
+                "partial_scan",
+            ),
+            (
+                "unknown semantics",
+                |r| r.metric_semantics = None,
+                "unrecorded",
+            ),
+            (
+                "unknown coverage",
+                |r| r.quality.as_mut().unwrap().confidence = MetricConfidence::Unrecorded,
+                "unrecorded",
+            ),
+            (
+                "missing denominator",
+                |r| {
+                    r.quality
+                        .as_mut()
+                        .unwrap()
+                        .metrics
+                        .uniqueness
+                        .as_mut()
+                        .unwrap()
+                        .key_values_checked = None
+                },
+                "unrecorded",
+            ),
+            (
+                "different denominator",
+                |r| {
+                    r.quality
+                        .as_mut()
+                        .unwrap()
+                        .metrics
+                        .uniqueness
+                        .as_mut()
+                        .unwrap()
+                        .key_values_checked = Some(9_999)
+                },
+                "unrecorded",
+            ),
+            (
+                "impossible distinct count",
+                |r| r.column_profiles[0].unique_count = Some(10_001),
+                "unrecorded",
+            ),
+            (
+                "quality sample",
+                |r| {
+                    r.quality.as_mut().unwrap().confidence = MetricConfidence::Mixed {
+                        exact_dimensions: vec!["duplicate_rows".to_string()],
+                        sampled_dimensions: vec!["key_uniqueness".to_string()],
+                        sample_size: 100,
+                    }
+                },
+                "sampled",
+            ),
+        ];
+        for (name, edit, reason) in cases {
+            let mut report = declared_key_report();
+            edit(&mut report);
+            let result = serde_json::to_value(report.findings()).unwrap();
+            assert!(
+                result["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|f| f["code"] != "key_duplicates"),
+                "{name}"
+            );
+            assert!(
+                result["not_evaluated"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["code"] == "key_duplicates" && f["reason"] == *reason),
+                "{name}: {result}"
+            );
+        }
     }
 
     #[test]

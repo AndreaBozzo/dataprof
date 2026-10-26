@@ -43,6 +43,7 @@ _SEVERITY = {
     "constant_column": "info",
     "duplicate_rows": "warning",
     "future_dates": "warning",
+    "key_duplicates": "warning",
     "locale_numbers": "warning",
     "mixed_types": "warning",
     "null_heavy": "warning",
@@ -63,6 +64,7 @@ _SUMMARY = {
     "constant_column": "every non-null value in this column is the same",
     "duplicate_rows": "the source contains exact duplicate rows",
     "future_dates": "some date values lie in the future",
+    "key_duplicates": "the declared key contains repeated non-null values",
     "locale_numbers": (
         "at least half of the text values in this column are numbers written with a "
         "decimal comma or digit grouping, so no numeric statistic includes them"
@@ -83,6 +85,7 @@ _REASON_ORDER = (
     "quality_unavailable",
     "not_assessed",
     "estimated",
+    "partial_scan",
     "sampled",
     "unrecorded",
     "not_computed",
@@ -452,11 +455,17 @@ def _quality_findings(report: ProfileReport, out: _Collector) -> None:
     quality = report.quality
     if quality is None:
         unavailable = {"reason": "quality_unavailable", "quality_status": report.quality_status}
-        for code in ("duplicate_rows", "future_dates", "temporal_order_violations"):
+        for code in (
+            "duplicate_rows",
+            "future_dates",
+            "key_duplicates",
+            "temporal_order_violations",
+        ):
             out.skip_report(code, unavailable)
         return
 
     uniqueness = quality.uniqueness
+    _key_duplicate_findings(report, out, uniqueness)
     if not uniqueness or not uniqueness.get("rows_checked"):
         out.skip_report("duplicate_rows", {"reason": "not_assessed"})
     elif uniqueness.get("duplicate_rows_approximate"):
@@ -497,6 +506,68 @@ def _quality_findings(report: ProfileReport, out: _Collector) -> None:
         )
     else:
         _skip_unless_complete(report, out, "temporal_order_violations", "timeliness")
+
+
+def _key_duplicate_findings(
+    report: ProfileReport, out: _Collector, uniqueness: dict[str, _Any] | None
+) -> None:
+    """Use exact non-null counts, never a rounded uniqueness percentage."""
+    code = "key_duplicates"
+    if not uniqueness or (key := uniqueness.get("key_column")) is None:
+        out.skip_report(code, {"reason": "not_assessed"})
+        return
+    if (report.metric_semantics or {}).get("key_column_source") != "declared":
+        out.skip(code, "unrecorded", key)
+        return
+    if (
+        not report.source_exhausted
+        or report.truncation_reason is not None
+        or report.sampling_applied
+    ):
+        out.skip(code, "partial_scan", key)
+        return
+    located = next(((i, c) for i, c in enumerate(report.profiles) if c.name == key), None)
+    if located is None:
+        out.skip(code, "not_computed", key)
+        return
+    index, column = located
+    checked = uniqueness.get("key_values_checked")
+    distinct = column.unique_count
+    if checked is None:
+        out.skip(code, "unrecorded", key)
+        return
+    if distinct is None:
+        out.skip(code, "not_computed", key)
+        return
+    total, nulls = column.total_count, column.null_count
+    if total is None or nulls is None or total - nulls != checked or distinct > checked:
+        out.skip(code, "unrecorded", key)
+        return
+    if checked == 0:
+        out.skip(code, "no_values", key)
+        return
+    if column.unique_count_is_approximate is not False:
+        out.skip(code, "estimated" if column.unique_count_is_approximate else "unrecorded", key)
+        return
+    sampled = report.quality_sampled_dimensions
+    if sampled is None or "key_uniqueness" in report._quality_unlisted_components:
+        out.skip(code, "unrecorded", key)
+        return
+    if "key_uniqueness" in sampled:
+        out.skip(code, "sampled", key)
+        return
+    if distinct < checked:
+        out.add(
+            code,
+            {
+                "key_column": key,
+                "key_values_checked": checked,
+                "repeated_values": checked - distinct,
+                "key_column_source": "declared",
+            },
+            column=key,
+            index=index,
+        )
 
 
 def _skip_unless_complete(

@@ -85,6 +85,7 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
         "constant_column",
         "duplicate_rows",
         "future_dates",
+        "key_duplicates",
         "locale_numbers",
         "mixed_types",
         "null_heavy",
@@ -96,4 +97,10 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
         "unterminated_quote",
     }
     reasons = {entry["reason"] for case in cases for entry in case["expected"]["not_evaluated"]}
-    assert reasons == {"quality_unavailable", "not_assessed", "not_computed", "no_values"}
+    assert reasons == {
+        "quality_unavailable",
+        "not_assessed",
+        "not_computed",
+        "no_values",
+        "partial_scan",
+    }

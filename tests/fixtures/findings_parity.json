@@ -6,7 +6,10 @@
     "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n",
     "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n",
     "unclosed.csv": "id,text\n1,\"never closed\n2,x\n3,y\n",
-    "locale.csv": "id;prezzo;importo;peso;note\n1;10,50;1.234,56;1.5;consegna rapida\n2;20,00;2.345,67;2.5;1,5\n3;7,25;9.876,54;3,5;fragile\n4;3,10;12.000,00;4.5;ok\n5;1,99;500,00;5.5;da verificare\n6;;1.000.000,01;6.5;urgente\n"
+    "locale.csv": "id;prezzo;importo;peso;note\n1;10,50;1.234,56;1.5;consegna rapida\n2;20,00;2.345,67;2.5;1,5\n3;7,25;9.876,54;3,5;fragile\n4;3,10;12.000,00;4.5;ok\n5;1,99;500,00;5.5;da verificare\n6;;1.000.000,01;6.5;urgente\n",
+    "repeated_keys.csv": "order_id,amount\nA,10\nB,20\nA,30\nC,40\n",
+    "distinct_keys.csv": "order_id,amount\nA,10\nB,20\nC,30\nD,40\n",
+    "empty_key_name.csv": ",amount\nA,10\nB,20\nA,30\nC,40\n"
   },
   "cases": [
     {
@@ -118,6 +121,10 @@
             "columns": [
               "notes"
             ]
+          },
+          {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
           },
           {
             "code": "locale_numbers",
@@ -234,6 +241,10 @@
             ]
           },
           {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
             "code": "locale_numbers",
             "reason": "no_values",
             "columns": [
@@ -295,6 +306,18 @@
               "future_dates_count": 2
             },
             "summary": "some date values lie in the future"
+          },
+          {
+            "code": "key_duplicates",
+            "severity": "warning",
+            "column": "sku",
+            "evidence": {
+              "key_column": "sku",
+              "key_values_checked": 5,
+              "repeated_values": 1,
+              "key_column_source": "declared"
+            },
+            "summary": "the declared key contains repeated non-null values"
           },
           {
             "code": "mixed_types",
@@ -469,6 +492,11 @@
             "quality_status": "not_requested"
           },
           {
+            "code": "key_duplicates",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested"
+          },
+          {
             "code": "locale_numbers",
             "reason": "no_values",
             "columns": [
@@ -595,6 +623,10 @@
             ]
           },
           {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
             "code": "locale_numbers",
             "reason": "no_values",
             "columns": [
@@ -653,6 +685,10 @@
             "reason": "not_assessed"
           },
           {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
             "code": "temporal_order_violations",
             "reason": "not_assessed"
           }
@@ -683,6 +719,10 @@
             "reason": "not_assessed"
           },
           {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
             "code": "temporal_order_violations",
             "reason": "not_assessed"
           }
@@ -710,6 +750,10 @@
         "not_evaluated": [
           {
             "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
             "reason": "not_assessed"
           },
           {
@@ -749,6 +793,10 @@
           },
           {
             "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
             "reason": "not_assessed"
           },
           {
@@ -811,6 +859,10 @@
           },
           {
             "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
             "reason": "not_assessed"
           },
           {
@@ -909,6 +961,175 @@
               "threshold": 5.0
             },
             "summary": "this column's values are split across lexical types"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "declared_keys_can_repeat_without_duplicate_rows",
+      "why": "Repeated declared keys are counted independently of complete-row duplicates.",
+      "options": {
+        "input": "repeated_keys.csv",
+        "identifier_columns": [
+          "order_id"
+        ]
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "key_duplicates",
+            "severity": "warning",
+            "column": "order_id",
+            "evidence": {
+              "key_column": "order_id",
+              "key_values_checked": 4,
+              "repeated_values": 1,
+              "key_column_source": "declared"
+            },
+            "summary": "the declared key contains repeated non-null values"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "identifier_names_do_not_declare_keys",
+      "why": "A repeated order_id column alone does not opt in to key validation.",
+      "options": {
+        "input": "repeated_keys.csv"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "distinct_declared_keys_are_evaluated",
+      "why": "Exact distinct declared keys are clean, not unevaluated.",
+      "options": {
+        "input": "distinct_keys.csv",
+        "identifier_columns": [
+          "order_id"
+        ]
+      },
+      "policy": {},
+      "expected": {
+        "findings": [],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "partial_keys_are_not_evaluated",
+      "why": "Even observed repeated keys require a fully read source for this rule.",
+      "options": {
+        "input": "repeated_keys.csv",
+        "identifier_columns": [
+          "order_id"
+        ],
+        "max_rows": 3
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "partial_scan",
+            "severity": "info",
+            "evidence": {
+              "reason": "truncated",
+              "rows_processed": 3
+            },
+            "summary": "only part of the source was read; findings describe the rows that were"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "key_duplicates",
+            "reason": "partial_scan",
+            "columns": [
+              "order_id"
+            ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an_empty_column_name_can_be_declared",
+      "why": "An empty string is a valid declared column name, not an absent key.",
+      "options": {
+        "input": "empty_key_name.csv",
+        "identifier_columns": [
+          ""
+        ]
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "key_duplicates",
+            "severity": "warning",
+            "column": "",
+            "evidence": {
+              "key_column": "",
+              "key_values_checked": 4,
+              "repeated_values": 1,
+              "key_column_source": "declared"
+            },
+            "summary": "the declared key contains repeated non-null values"
           }
         ],
         "not_evaluated": [

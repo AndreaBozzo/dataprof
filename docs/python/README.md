@@ -873,6 +873,7 @@ names; no finding carries a raw cell value.
 | `mixed_types` | warning | Values outside a column's dominant lexical type are at least `mixed_types_percentage` (default 5) of those classified. `dominant_type` in the evidence says which way the mix leans. Identifier columns are exempt |
 | `locale_numbers` | warning | At least half of a column's text values are numbers written with a decimal comma or digit grouping (`locale_number_count`), which no numeric statistic includes. Identifier columns are exempt |
 | `duplicate_rows` | warning | The source holds exact duplicate rows |
+| `key_duplicates` | warning | The declared key contains repeated non-null values. Requires a fully read source and exact counts; evidence includes `key_column`, `key_values_checked`, `repeated_values`, and `key_column_source="declared"`. Identifier-like names alone never declare a key |
 | `future_dates` | warning | Date values lie after the time the report was produced |
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
 | `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
@@ -912,9 +913,10 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 |---|---|
 | `quality_unavailable` | The report carries no quality assessment; `quality_status` says why |
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
-| `estimated` | The duplicate count is an estimate, which witnesses nothing |
-| `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
-| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage and locale-formatted numbers before 0.12 |
+| `estimated` | The duplicate or key distinct count is an estimate, which witnesses nothing |
+| `partial_scan` | Declared-key duplicates cannot be evaluated because the source was truncated or sampled |
+| `sampled` | The evidence came from the retained quality sample. Row duplicates and timeliness still report nonzero counts, but zero rules nothing out for rows outside the sample. Declared-key duplicates require complete evidence even when repeats were observed |
+| `unrecorded` | Required evidence is missing or inconsistent. Older documents lack ragged rows before 0.10, quality sample coverage and locale-formatted numbers before 0.12; key duplicates also require recorded key selection, exactness, and matching non-null counts |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 
@@ -922,7 +924,10 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 and a report loaded with `ProfileReport.load()` or `from_dict()` yields the
 same findings as the one that was saved. Findings describe the rows the report
 read: a truncated or sampled scan adds `partial_scan` rather than withholding
-the rest. For a pass/fail decision about the whole source, use `check()`.
+the rest, except `key_duplicates`, which requires a fully read source. Its
+repeated-value count is exact non-null values checked minus exact distinct
+values, never inferred from the rounded `key_uniqueness` percentage. For a
+pass/fail decision about the whole source, use `check()`.
 
 `result.to_dict()` / `to_json()` serialize the whole result, identical to what
 the Rust `FindingPolicy` writes for the same report and thresholds.

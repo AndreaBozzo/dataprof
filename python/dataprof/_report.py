@@ -863,7 +863,8 @@ class ProfileReport:
         answering.
 
         Findings describe the rows the report read; a truncated or sampled
-        scan adds a ``partial_scan`` finding instead of withholding the rest.
+        scan adds a ``partial_scan`` finding instead of withholding the rest,
+        except ``key_duplicates``, which requires a fully read source.
         For a pass/fail decision about the whole source, use :meth:`check`.
 
         Args:
