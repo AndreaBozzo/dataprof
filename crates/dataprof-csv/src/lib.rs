@@ -178,7 +178,16 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
     (records, last_unterminated)
 }
 
+/// Maximum number of bytes scored during CSV delimiter detection.
+/// Callers buffering a non-seekable source must retain one additional byte so
+/// the detector can distinguish a cut sample from a complete record at EOF.
+pub const DELIMITER_SAMPLE_BYTES: u64 = 4096;
+
 /// Detect the most likely CSV delimiter by sampling up to 4 KB of data.
+///
+/// Reads at most one additional byte to distinguish EOF from a cut sample.
+/// Returns an error if the sample does not contain a complete non-blank header
+/// and more input remains. Specify the delimiter explicitly for longer headers.
 ///
 /// The sample is split into logical records with quote handling, so quoted
 /// fields containing embedded newlines or delimiter characters do not skew
@@ -197,11 +206,13 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 /// one-column file of `123|456` keys was profiled as `123` with fabricated
 /// duplicates (#1092).
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
-    const SAMPLE_BYTES: u64 = 4096;
     let mut preamble = Vec::new();
-    let mut take = reader.take(SAMPLE_BYTES);
+    let mut take = reader.take(DELIMITER_SAMPLE_BYTES + 1);
     take.read_to_end(&mut preamble)?;
-    let truncated = preamble.len() as u64 == SAMPLE_BYTES;
+    let truncated = preamble.len() as u64 > DELIMITER_SAMPLE_BYTES;
+    if truncated {
+        preamble.pop();
+    }
 
     // A UTF-8 BOM marks the encoding, as in the readers, and is no part of
     // the first record: left in, a BOM followed by a blank line was scored as
@@ -209,6 +220,18 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     let sample = preamble.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&preamble);
     let preamble_str = String::from_utf8_lossy(sample);
     let (mut records, last_unterminated) = split_sample_records(&preamble_str);
+    let complete_records = records.len() - usize::from(last_unterminated);
+    if truncated
+        && records[..complete_records]
+            .iter()
+            .all(|record| record.trim().is_empty())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "CSV header is incomplete within the 4096-byte delimiter detection sample; \
+             specify the CSV delimiter explicitly",
+        ));
+    }
     // A full sample buffer that ends mid-record leaves a fragment; never score
     // it. A sample ending on a clean newline keeps all its records.
     if truncated && last_unterminated && records.len() > 1 {
@@ -319,10 +342,10 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
 
     let boxed_reader: Box<dyn std::io::Read + '_> = if config.delimiter.is_none() {
         let mut preamble = Vec::new();
-        let mut take = reader.take(4096);
+        let mut take = reader.take(DELIMITER_SAMPLE_BYTES + 1);
         take.read_to_end(&mut preamble)?;
 
-        let detected = detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+        let detected = detect_delimiter(std::io::Cursor::new(&preamble))?;
         actual_delimiter = Some(detected);
 
         Box::new(std::io::Cursor::new(preamble).chain(take.into_inner()))
@@ -766,6 +789,35 @@ mod tests {
         assert_eq!(age.null_count, 4);
         assert_eq!(age.total_count, 10);
         assert!(report.quality_score().unwrap() >= 0.0);
+    }
+
+    #[test]
+    fn test_detect_delimiter_rejects_incomplete_header_sample() {
+        for header in [
+            format!("\"{}\";value", "x".repeat(4094)),
+            format!("\"before\n{}\";value", "x".repeat(4094)),
+            format!("\u{feff}\n\n{};value", "x".repeat(4094)),
+        ] {
+            let data = format!("{header}\n1;10\n2;20\n");
+            let error = detect_delimiter(data.as_bytes()).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("CSV header"));
+            assert!(error.to_string().contains("delimiter explicitly"));
+        }
+    }
+
+    #[test]
+    fn test_detect_delimiter_full_sample_at_eof_is_a_complete_header() {
+        let data = format!("{};value", "x".repeat(4090));
+        assert_eq!(data.len(), 4096);
+        assert_eq!(detect_delimiter(data.as_bytes()).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_incomplete_header_read_is_bounded() {
+        let mut input = Cursor::new(vec![b'x'; 8192]);
+        assert!(detect_delimiter(&mut input).is_err());
+        assert_eq!(input.position(), 4097);
     }
 
     #[test]

@@ -133,3 +133,37 @@ fn detected_delimiter_keeps_every_value_on_every_route() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+#[test]
+fn incomplete_header_sample_fails_instead_of_inventing_a_schema() {
+    let name = "x".repeat(4094);
+    let data = format!("\"{name}\";value\n1;10\n2;20\n");
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    file.write_all(data.as_bytes()).unwrap();
+
+    let error = analyze_csv_file(file.path(), &CsvParserConfig::default()).unwrap_err();
+    assert!(error.to_string().contains("CSV header"));
+    let explicit = CsvParserConfig::default().with_delimiter(b';');
+    let report = analyze_csv_file(file.path(), &explicit).unwrap();
+    assert_eq!(report.column_profiles.len(), 2);
+    assert_eq!(report.column_profiles[1].name, "value");
+
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let profiler = Profiler::new().engine(engine);
+        let error = profiler.analyze_file(file.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("CSV header"),
+            "{engine:?}: {error}"
+        );
+        let report = profiler
+            .csv_delimiter(b';')
+            .analyze_file(file.path())
+            .unwrap();
+        assert_eq!(report.column_profiles.len(), 2, "{engine:?}");
+        assert_eq!(report.column_profiles[1].name, "value");
+    }
+}

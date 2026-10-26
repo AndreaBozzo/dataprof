@@ -153,12 +153,6 @@ pub struct AsyncStreamingProfiler {
     csv_delimiter: Option<u8>,
 }
 
-/// Bytes sniffed from the head of a stream to detect its CSV delimiter.
-///
-/// Matches the file path's sample size so the same data yields the same
-/// delimiter whether it is read from disk or off a socket.
-const DELIMITER_SAMPLE_BYTES: u64 = 4096;
-
 /// Bytes per chunk when [`ChunkSize::Adaptive`] is in effect. A stream has no
 /// size to adapt to, so this is a fixed working-set target.
 const DEFAULT_CHUNK_BYTES: usize = 512 * 1024;
@@ -563,11 +557,10 @@ impl AsyncStreamingProfiler {
             Some(delimiter) => (Box::new(sync_reader), delimiter),
             None => {
                 let mut preamble = Vec::new();
-                let mut head = sync_reader.take(DELIMITER_SAMPLE_BYTES);
+                let mut head = sync_reader.take(dataprof_csv::DELIMITER_SAMPLE_BYTES + 1);
                 head.read_to_end(&mut preamble)
                     .map_err(DataProfilerError::from)?;
-                let detected =
-                    dataprof_csv::detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+                let detected = dataprof_csv::detect_delimiter(std::io::Cursor::new(&preamble))?;
                 (
                     Box::new(std::io::Cursor::new(preamble).chain(head.into_inner())),
                     detected,

@@ -36,6 +36,10 @@ amount = report["amount"]
 print(amount.data_type, amount.mean, amount.null_percentage)
 ```
 
+CSV delimiter detection requires a complete header within its 4 KB sample (or EOF).
+If the header does not fit, specify the delimiter explicitly, for example
+`dp.profile("orders.csv", csv_delimiter=";")`; detection raises an error instead of guessing.
+
 Ask it what deserves attention. Each finding has a stable code and the evidence behind it, never a raw value:
 
 ```python

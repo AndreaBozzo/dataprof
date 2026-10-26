@@ -100,3 +100,26 @@ def test_detected_delimiter_keeps_every_value(tmp_path: Path) -> None:
 def test_bytes_gate_sees_the_null_a_file_sees() -> None:
     data = ("payload;amount\n" + "x" * 8192 + ";\n").encode()
     assert dp.profile(data, format="csv").check(max_null_percentage=0).verdict == "fail"
+
+
+@pytest.mark.parametrize(
+    "route", ["auto", "incremental", "columnar", "bytes", "async file", "async bytes"]
+)
+def test_incomplete_header_sample_is_an_error(tmp_path: Path, route: str) -> None:
+    name = "x" * 4094
+    data = f'"{name}";value\n1;10\n2;20\n'.encode()
+    path = tmp_path / "long-header.csv"
+    path.write_bytes(data)
+
+    def profile(**kwargs: Any) -> dp.ProfileReport:
+        if route == "bytes":
+            return dp.profile(data, format="csv", **kwargs)
+        if route == "async bytes":
+            return asyncio.run(profile_bytes(data, format="csv", **kwargs))
+        if route == "async file":
+            return asyncio.run(profile_file(path, **kwargs))
+        return dp.profile(path, engine=route, **kwargs)
+
+    with pytest.raises((ValueError, OSError), match="CSV header.*delimiter explicitly"):
+        profile()
+    assert _shape(profile(csv_delimiter=";"))["columns"] == [(name, 0), ("value", 0)]
