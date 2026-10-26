@@ -824,6 +824,36 @@ def test_human_summary_names_the_baseline(source: Path, tmp_path: Path):
     assert f"  baseline: {baseline}" in result.stderr
 
 
+def test_human_summary_lists_baseline_diagnostics_on_a_pass(tmp_path: Path):
+    """A schema change never moves the verdict, so a pass must still show it."""
+    baseline = _clean_baseline(tmp_path, "id,amount\n1,a\n2,b\n3,c\n")
+    widened = tmp_path / "widened.csv"
+    widened.write_text("id,amount,note\n1,10,x\n2,,y\n3,30,z\n", encoding="utf-8")
+    result = run_check(widened, "--baseline", baseline, "--forbid-removed-columns")
+    assert result.returncode == 0, result.stderr
+    lines = result.stderr.splitlines()
+    assert (
+        "  diagnostic: column_type_changed [amount]: this column holds values on both sides, "
+        "and its inferred type differs (baseline string, report integer)"
+    ) in lines
+    assert any(line.startswith("  diagnostic: column_added [note]: ") for line in lines)
+
+
+def test_human_summary_names_the_setting_behind_a_diagnostic(tmp_path: Path):
+    clean = tmp_path / "yesterday.csv"
+    clean.write_text("id,amount\n1,10\n2,20\n3,30\n", encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    dp.profile(clean, columns=["id"]).save(baseline)
+    result = run_check(clean, "--baseline", baseline, "--forbid-removed-columns")
+    assert result.returncode == 0, result.stderr
+    added = [
+        line
+        for line in result.stderr.splitlines()
+        if line.startswith("  diagnostic: column_added [amount]: ")
+    ]
+    assert len(added) == 1 and added[0].endswith(" (setting_changed: columns)"), result.stderr
+
+
 def test_deeply_nested_policy_is_a_policy_error(source: Path, tmp_path: Path):
     path = tmp_path / "policy.json"
     # Deep enough that json.loads raises RecursionError (a RuntimeError), which

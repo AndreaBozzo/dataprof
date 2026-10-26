@@ -1332,8 +1332,10 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 | `2` | The gate is inconclusive: a threshold could not be evaluated |
 | `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written |
 
-Human summaries go to stderr. With `--json`, stdout contains only the existing
-`QualityGateResult.to_json()` document, including inconclusive results. Errors
+Human summaries go to stderr: the verdict, each check that did not pass, and
+with `--baseline` each schema-change diagnostic, which a pass can carry. With
+`--json`, stdout contains only the existing `QualityGateResult.to_json()`
+document, including inconclusive results. Errors
 (exit `3`) write an error object instead of a result document:
 `{"error": {"kind": "argument" | "policy" | "input" | "baseline" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
