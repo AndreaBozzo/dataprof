@@ -260,9 +260,17 @@ With `load_credentials_from_env: true` (the default), dataprof will read these a
 
 ### Enable Debug Logging
 
-```bash
-RUST_LOG=dataprof=debug dataprof database postgres://... --table users
+The connectors log through the `log` crate. In a Rust program, install a logger such as `env_logger` and set `RUST_LOG`:
+
+```rust
+env_logger::init(); // first thing in main
 ```
+
+```bash
+RUST_LOG=dataprof_db=debug cargo run
+```
+
+The Python package does not forward these logs to Python's `logging` module.
 
 ### Test Connection (Rust)
 
