@@ -166,8 +166,13 @@ fn rust_gate_matches_the_shared_fixture() {
             .evaluate(&report)
             .unwrap_or_else(|e| panic!("{name}: policy is unevaluable: {e}"));
 
+        let mut document = serde_json::to_value(&result).expect("the result serializes");
         assert_eq!(
-            serde_json::to_value(&result).expect("the result serializes"),
+            document.as_object_mut().unwrap().remove("generator"),
+            Some(serde_json::to_value(&report.generator).unwrap())
+        );
+        assert_eq!(
+            document,
             case["expected"],
             "{name}: {}",
             case["why"].as_str().unwrap_or_default()

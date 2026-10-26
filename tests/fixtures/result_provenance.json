@@ -1,0 +1,148 @@
+[
+  {
+    "name": "clean identical",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "same_build": true
+  },
+  {
+    "name": "versions differ",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.14.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "same_build": false
+  },
+  {
+    "name": "commits differ",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "dirty": false
+    },
+    "same_build": false
+  },
+  {
+    "name": "dirty differs",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": true
+    },
+    "same_build": false
+  },
+  {
+    "name": "both dirty",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": true
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": true
+    },
+    "same_build": null
+  },
+  {
+    "name": "legacy absent",
+    "a": null,
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "same_build": null
+  },
+  {
+    "name": "both absent",
+    "a": null,
+    "b": null,
+    "same_build": null
+  },
+  {
+    "name": "version only",
+    "a": {
+      "version": "0.13.0"
+    },
+    "b": {
+      "version": "0.13.0"
+    },
+    "same_build": null
+  },
+  {
+    "name": "version only differs",
+    "a": {
+      "version": "0.13.0"
+    },
+    "b": {
+      "version": "0.14.0"
+    },
+    "same_build": false
+  },
+  {
+    "name": "missing commit",
+    "a": {
+      "version": "0.13.0",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "same_build": null
+  },
+  {
+    "name": "missing dirty",
+    "a": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false
+    },
+    "same_build": null
+  },
+  {
+    "name": "empty commit",
+    "a": {
+      "version": "0.13.0",
+      "commit": "",
+      "dirty": false
+    },
+    "b": {
+      "version": "0.13.0",
+      "commit": "",
+      "dirty": false
+    },
+    "same_build": null
+  }
+]

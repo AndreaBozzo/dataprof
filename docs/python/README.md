@@ -1333,7 +1333,10 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 | `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written |
 
 Human summaries go to stderr. With `--json`, stdout contains only the existing
-`QualityGateResult.to_json()` document, including inconclusive results. Errors
+`QualityGateResult.to_json()` document, including inconclusive results. Its
+`generator` names the build recorded by the evaluated report, not the build
+reading it or the baseline's build; it is `None` for an unrecorded build.
+The same field is available on `QualityGateResult` and in `to_dict()`. Errors
 (exit `3`) write an error object instead of a result document:
 `{"error": {"kind": "argument" | "policy" | "input" | "baseline" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
@@ -1429,9 +1432,16 @@ delta["dimensions"]["completeness"]     # the same shape, for each of the seven 
 delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5}
 delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
 delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
-delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
+delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence", "generator"}
+delta["same_build"]                     # True, False, or None
 ```
 
+- **Build provenance.** Each side retains its recorded `generator`, or
+  `None` when absent. `same_build` is `True` only for equal versions and
+  nonempty commits with both builds explicitly clean. A known version,
+  commit or dirty-state difference is `False`; missing metadata and matching
+  dirty builds leave it `None`. This does not change metrics, their
+  comparability or gate verdicts.
 - **Signs.** Every change is `b - a`. A positive score change is an
   improvement; a positive `null_pct_delta` is more nulls.
 - **Precision.** Both sides are compared at their serialized 2-decimal

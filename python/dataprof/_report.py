@@ -1189,7 +1189,12 @@ class ProfileReport:
           in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
           for a flat summary), ``source``, ``rows_processed`` and the scan's
-          ``evidence``.
+          ``evidence`` and ``generator`` (``None`` when unrecorded).
+        - ``same_build``: ``True`` only for matching versions and nonempty
+          commits with both builds explicitly clean; ``False`` for a known
+          version, commit or dirty-state difference; otherwise ``None``.
+          Matching dirty builds do not establish identity. Build provenance
+          does not affect metric comparability or gate verdicts.
 
         Every change is ``b - a``: a positive score change is an improvement,
         a positive ``null_pct_delta`` is more nulls. Numbers are compared at

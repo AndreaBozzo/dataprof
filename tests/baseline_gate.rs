@@ -540,7 +540,17 @@ fn the_document_keeps_the_absolute_shape_and_adds_the_baseline() {
 
     let relative = serde_json::to_value(against(&drift_policy(), &report, &report)).unwrap();
     let keys: Vec<_> = relative.as_object().unwrap().keys().cloned().collect();
-    assert_eq!(keys, ["verdict", "scope", "evidence", "checks", "baseline"]);
+    assert_eq!(
+        keys,
+        [
+            "verdict",
+            "scope",
+            "evidence",
+            "checks",
+            "baseline",
+            "generator"
+        ]
+    );
     assert_eq!(
         relative["baseline"]["schema"],
         json!({"added": [], "removed": [], "common": ["id", "amount"]})

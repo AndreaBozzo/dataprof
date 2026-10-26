@@ -299,7 +299,7 @@ def test_the_document_keeps_the_absolute_shape_and_adds_the_baseline():
     relative = report.check(baseline=report, **DRIFT)
     document = relative.to_dict()
     assert json.loads(relative.to_json()) == document
-    assert list(document) == ["verdict", "scope", "evidence", "checks", "baseline"]
+    assert list(document) == ["verdict", "scope", "evidence", "checks", "baseline", "generator"]
     assert document["baseline"]["schema"] == {
         "added": [],
         "removed": [],

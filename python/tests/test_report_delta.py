@@ -31,6 +31,7 @@ def test_the_shape_is_the_frozen_contract():
         "configuration",
         "schema",
         "reports",
+        "same_build",
     ]
     assert set(delta["quality_score"]) == SCORE_KEYS
     assert list(delta["dimensions"]) == [
@@ -62,7 +63,7 @@ def test_the_shape_is_the_frozen_contract():
     }
     assert set(delta["schema"]) == {"added", "removed", "common"}
     for side in delta["reports"].values():
-        assert set(side) == {"id", "timestamp", "source", "rows_processed", "evidence"}
+        assert set(side) == {"id", "timestamp", "source", "rows_processed", "evidence", "generator"}
 
 
 def test_every_change_is_b_minus_a():

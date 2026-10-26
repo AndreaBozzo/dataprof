@@ -384,7 +384,8 @@ fn serialization_is_deterministic_and_ordered() {
             "metric_semantics",
             "configuration",
             "schema",
-            "reports"
+            "reports",
+            "same_build"
         ]
     );
     let dimensions: Vec<&String> = delta["dimensions"].as_object().unwrap().keys().collect();

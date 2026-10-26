@@ -69,7 +69,9 @@ def test_python_gate_matches_the_shared_fixture(
     for case in cases:
         report = _profile(csv_paths, case["options"])
         result = report.check(**case["policy"])
-        assert result.to_dict() == case["expected"], f"{case['name']}: {case['why']}"
+        document = result.to_dict()
+        assert document.pop("generator") == report.generator
+        assert document == case["expected"], f"{case['name']}: {case['why']}"
 
 
 def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):

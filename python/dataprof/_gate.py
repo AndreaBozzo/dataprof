@@ -137,6 +137,8 @@ class QualityGateResult:
     #: changes from the baseline, which never move the verdict. ``None``
     #: otherwise.
     baseline: dict[str, _Any] | None = None
+    #: The build recorded by the evaluated report; ``None`` when unrecorded.
+    generator: dict[str, _Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -174,6 +176,7 @@ class QualityGateResult:
         }
         if self.baseline is not None:
             document["baseline"] = dict(self.baseline)
+        document["generator"] = None if self.generator is None else dict(self.generator)
         return document
 
     def to_json(self, indent: int = 2) -> str:
@@ -491,4 +494,5 @@ def _result_from_document(document: dict[str, _Any]) -> QualityGateResult:
         evidence=document["evidence"],
         checks=tuple(_check_from_document(check) for check in document["checks"]),
         baseline=document.get("baseline"),
+        generator=document.get("generator"),
     )

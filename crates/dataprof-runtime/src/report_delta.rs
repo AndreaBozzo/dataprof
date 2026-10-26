@@ -69,6 +69,7 @@ use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
+    ReportGenerator,
 };
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
@@ -99,6 +100,8 @@ pub struct ReportReference {
     pub rows_processed: Option<usize>,
     /// Whether the scan covered the whole source.
     pub evidence: Evidence,
+    /// The recorded build, or `None` when the report predates build provenance.
+    pub generator: Option<ReportGenerator>,
 }
 
 /// One score on both sides and how it moved.
@@ -300,6 +303,12 @@ pub struct ReportDelta {
     pub schema: SchemaChange,
     /// Which two reports were compared.
     pub reports: Sides<ReportReference>,
+    /// Whether the recorded build identities agree. `Some(true)` requires
+    /// equal versions and nonempty commits, with both builds explicitly clean.
+    /// A known version, commit, or dirty-state difference is `Some(false)`;
+    /// missing metadata and matching dirty builds leave this unknown.
+    /// This is provenance, not metric comparability or a gate decision.
+    pub same_build: Option<bool>,
 }
 
 impl ReportDelta {
@@ -414,7 +423,35 @@ impl ReportDelta {
                 a: a.reference.clone(),
                 b: b.reference.clone(),
             },
+            same_build: same_build(&a.reference.generator, &b.reference.generator),
         }
+    }
+}
+
+fn same_build(a: &Option<ReportGenerator>, b: &Option<ReportGenerator>) -> Option<bool> {
+    let (a, b) = (a.as_ref()?, b.as_ref()?);
+    let commit_a = a
+        .commit
+        .as_deref()
+        .filter(|commit| !commit.trim().is_empty());
+    let commit_b = b
+        .commit
+        .as_deref()
+        .filter(|commit| !commit.trim().is_empty());
+    if a.version != b.version
+        || matches!((commit_a, commit_b), (Some(a), Some(b)) if a != b)
+        || matches!((a.dirty, b.dirty), (Some(a), Some(b)) if a != b)
+    {
+        Some(false)
+    } else if !a.version.trim().is_empty()
+        && commit_a.is_some()
+        && commit_a == commit_b
+        && a.dirty == Some(false)
+        && b.dirty == Some(false)
+    {
+        Some(true)
+    } else {
+        None
     }
 }
 
@@ -580,6 +617,7 @@ impl ReportSide {
                 source: report.source_identifier(),
                 rows_processed: Some(report.execution.rows_processed),
                 evidence: scan,
+                generator: report.generator.clone(),
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
@@ -735,6 +773,7 @@ impl ReportSide {
                 source: summary.source,
                 rows_processed: execution.rows_processed,
                 evidence: scan,
+                generator: summary.generator,
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
@@ -820,6 +859,14 @@ where
     })
 }
 
+fn summary_generator<'de, D>(deserializer: D) -> Result<Option<ReportGenerator>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("generator: {error}")))
+}
+
 /// The fields of a flat summary a comparison reads. Everything else in the
 /// document is ignored.
 #[derive(serde::Deserialize)]
@@ -842,6 +889,8 @@ struct Summary {
     /// canonical reader and Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_analysis_settings")]
     analysis_settings: Option<AnalysisSettings>,
+    #[serde(default, deserialize_with = "summary_generator")]
+    generator: Option<ReportGenerator>,
 }
 
 /// A flat summary's `source_type`. A kind a later release adds declares

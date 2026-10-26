@@ -756,6 +756,9 @@ pub struct GateResult {
     /// baseline. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<BaselineComparison>,
+    /// The build recorded by the evaluated report, not the evaluator or its
+    /// baseline. `None` when that report did not record build provenance.
+    pub generator: Option<crate::profile_report::ReportGenerator>,
 }
 
 impl GateResult {
@@ -1049,6 +1052,7 @@ impl QualityPolicy {
             evidence: scan_evidence(&report.execution),
             checks,
             baseline: None,
+            generator: report.generator.clone(),
         })
     }
 
@@ -1133,6 +1137,7 @@ impl QualityPolicy {
                 schema: delta.schema,
                 diagnostics,
             }),
+            generator: report.generator.clone(),
         })
     }
 
@@ -3637,9 +3642,10 @@ mod tests {
     /// carry the report's 2dp convention; counts stay whole.
     #[test]
     fn result_serializes_into_the_documented_shape() {
+        let report = complete_report();
         let result = QualityPolicy::new()
             .max_null_percentage("note", 10.0)
-            .evaluate(&complete_report())
+            .evaluate(&report)
             .unwrap();
 
         assert_eq!(
@@ -3658,6 +3664,7 @@ mod tests {
                     "status": "failed",
                     "message": "this column's null percentage is above the allowance",
                 }],
+                "generator": report.generator,
             })
         );
     }
