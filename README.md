@@ -101,7 +101,7 @@ Minimum supported Rust: 1.96.
 
 ## Status
 
-Beta, and moving fast toward a stable 1.0 contract. Some things are still narrow, and we'd rather tell you than have you find out: numbers written with a decimal comma are detected and flagged but not yet parsed, and beyond empty, `null` and `nan`, only a fixed set of markers (`NA`, `N/A`, `n/a`, `#N/A`, `\N`, `None`, matched exactly) counts as null, so a sentinel like `-` or `-999` is still a value. The [release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) list what changed and what's known.
+Beta, and moving fast toward a stable 1.0 contract. Some things are still narrow, and we'd rather tell you than have you find out: numbers written with a decimal comma are detected and flagged but not yet parsed, and beyond empty, `null` and `nan`, only a fixed set of markers (`NA`, `N/A`, `n/a`, `#N/A`, `\N`, `None`, matched exactly, ignoring surrounding whitespace) counts as null, so a sentinel like `-` or `-999` is still a value. The [release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) list what changed and what's known.
 
 Found something wrong? [Open an issue](https://github.com/AndreaBozzo/dataprof/issues). A file that profiles badly is the most useful bug report there is.
 
