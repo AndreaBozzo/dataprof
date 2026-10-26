@@ -174,3 +174,37 @@ fn rust_gate_matches_the_shared_fixture() {
         );
     }
 }
+
+#[test]
+fn score_bounds_round_outward_in_the_report_and_gate() {
+    let fixture = fixture();
+    let directory = tempfile::tempdir().expect("temp dir");
+    let path = directory.path().join("generated.csv");
+    fs::write(&path, generated_csv(12_000)).unwrap();
+    let report = Profiler::new().analyze_file(&path).unwrap();
+    let original = serde_json::to_value(report).unwrap();
+    for case in fixture["outward_rounding"].as_array().unwrap() {
+        let mut document = original.clone();
+        document["quality"]["score_bounds"]["overall_score"] = serde_json::json!({
+            "lower": case["lower"], "upper": case["upper"],
+        });
+        let raw: ProfileReport = serde_json::from_value(document).unwrap();
+        let saved = serde_json::to_value(&raw).unwrap();
+        assert_eq!(
+            saved["quality"]["score_bounds"]["overall_score"], case["saved"],
+            "{}",
+            case["name"]
+        );
+        let loaded: ProfileReport = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), saved);
+        let policy = QualityPolicy::new().min_quality_score(case["minimum"].as_f64().unwrap());
+        let live = serde_json::to_value(policy.evaluate(&raw).unwrap()).unwrap();
+        assert_eq!(live["verdict"], case["verdict"], "{}", case["name"]);
+        assert_eq!(live["checks"][0]["bounds"]["lower"], case["saved"]["lower"]);
+        assert_eq!(live["checks"][0]["bounds"]["upper"], case["saved"]["upper"]);
+        assert_eq!(
+            serde_json::to_value(policy.evaluate(&loaded).unwrap()).unwrap(),
+            live
+        );
+    }
+}

@@ -1041,7 +1041,11 @@ quality sample, a `min_quality_score` or `min_dimension_scores` requirement is
 decided on that interval: it passes when the whole interval meets the minimum,
 fails when none of it does, and stays `evidence_incomplete` only when the
 minimum falls inside it. The check records the interval it used as `bounds`
-next to `evidence`, which still says `quality_sampled`. On a clean column of
+next to `evidence`, which still says `quality_sampled`. Bounds are rounded
+outward to two decimals (lower down, upper up), both when saved and when
+compared with a minimum. Thus `[79.426, 91.674]` becomes `[79.42, 91.68]`;
+a minimum of `79.43` remains inconclusive. Reloading does not change the
+interval or the verdict. On a clean column of
 10,000 sampled values the interval is about 0.15 points wide; at 5% failures,
 about 2 points.
 

@@ -881,5 +881,73 @@
         ]
       }
     }
+  ],
+  "outward_rounding": [
+    {
+      "name": "below_lower_cent",
+      "lower": 79.426,
+      "upper": 91.674,
+      "saved": {
+        "lower": 79.42,
+        "upper": 91.68
+      },
+      "minimum": 79.43,
+      "verdict": "inconclusive"
+    },
+    {
+      "name": "below_upper_cent",
+      "lower": 79.426,
+      "upper": 91.674,
+      "saved": {
+        "lower": 79.42,
+        "upper": 91.68
+      },
+      "minimum": 91.68,
+      "verdict": "inconclusive"
+    },
+    {
+      "name": "above_upper_cent",
+      "lower": 79.434,
+      "upper": 91.676,
+      "saved": {
+        "lower": 79.43,
+        "upper": 91.68
+      },
+      "minimum": 91.68,
+      "verdict": "inconclusive"
+    },
+    {
+      "name": "adjacent_floats",
+      "lower": 0.2899999999999999,
+      "upper": 0.29000000000000004,
+      "saved": {
+        "lower": 0.28,
+        "upper": 0.3
+      },
+      "minimum": 0.29,
+      "verdict": "inconclusive"
+    },
+    {
+      "name": "exact_cent",
+      "lower": 0.29,
+      "upper": 0.29,
+      "saved": {
+        "lower": 0.29,
+        "upper": 0.29
+      },
+      "minimum": 0.29,
+      "verdict": "pass"
+    },
+    {
+      "name": "score_extremes",
+      "lower": 0.0,
+      "upper": 100.0,
+      "saved": {
+        "lower": 0.0,
+        "upper": 100.0
+      },
+      "minimum": 100,
+      "verdict": "inconclusive"
+    }
   ]
 }

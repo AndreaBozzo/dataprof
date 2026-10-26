@@ -781,11 +781,14 @@ impl QualityScores {
 }
 
 /// A range a score lies in, on the 0-100 scale.
+///
+/// Saved bounds round outward to two decimals: lower down, upper up, so the
+/// serialized interval contains the computed one and is stable on resaving.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoreInterval {
-    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_down_2")]
     pub lower: f64,
-    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_up_2")]
     pub upper: f64,
 }
 
@@ -1149,6 +1152,46 @@ mod tests {
                 .map(|dimension| (dimension.to_string(), interval(96.0, 100.0)))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn saved_score_intervals_contain_raw_bounds_and_are_idempotent() {
+        for cents in 0..=10_000 {
+            let boundary = f64::from(cents) / 100.0;
+            for value in [boundary.next_down(), boundary, boundary.next_up()] {
+                if !(0.0..=100.0).contains(&value) {
+                    continue;
+                }
+                let raw = ScoreInterval {
+                    lower: value,
+                    upper: value,
+                };
+                let saved = serde_json::to_string(&raw).unwrap();
+                let loaded: ScoreInterval = serde_json::from_str(&saved).unwrap();
+                assert!(
+                    loaded.lower <= value && value <= loaded.upper,
+                    "saved interval {loaded:?} excludes {value:?}"
+                );
+                assert_eq!(
+                    serde_json::to_string(&loaded).unwrap(),
+                    saved,
+                    "resaving {value:?} widened its interval again"
+                );
+                if value == boundary {
+                    assert_eq!(loaded, raw, "an exact cent must not drift");
+                }
+            }
+        }
+        let raw = ScoreInterval {
+            lower: 79.426,
+            upper: 91.674,
+        };
+        assert_eq!(
+            serde_json::to_value(raw).unwrap(),
+            serde_json::json!({
+                "lower": 79.42, "upper": 91.68,
+            })
+        );
     }
 
     #[test]

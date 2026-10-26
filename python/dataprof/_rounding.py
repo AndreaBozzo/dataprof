@@ -59,6 +59,20 @@ def _r4(v: float | None) -> float | None:
     return _half_up(v, 4)
 
 
+def _outward_2(value: float, *, upper: bool) -> float:
+    """Round a score bound outward, keeping serialized cents fixed on reload."""
+    scaled = value * 100.0
+    if not _math.isfinite(scaled):
+        return value
+    cents = _half_up(scaled, 0)
+    rounded = cents / 100.0
+    if upper and rounded < value:
+        return (cents + 1.0) / 100.0
+    if not upper and rounded > value:
+        return (cents - 1.0) / 100.0
+    return rounded
+
+
 def _round_quartiles(
     q: dict[str, float | None] | None,
 ) -> dict[str, float | None] | None:

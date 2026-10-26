@@ -24,7 +24,10 @@
 //! Quartiles are the deliberate exception: they stay at 2dp because they are
 //! read as distribution landmarks rather than as exact values.
 //!
-//! **Tie-breaking** rounds the stored `f64`, ties away from zero — that is,
+//! Score interval bounds round outward at 2dp: lower down, upper up.
+//!
+//! **Tie-breaking** for nearest rounding uses the stored `f64`, ties away
+//! from zero — that is,
 //! `(v * 10^n).round() / 10^n`, since [`f64::round`] rounds half away from
 //! zero. This reports the value actually held rather than the shortest decimal
 //! string that happens to print for it. The two differ only when a value's
@@ -53,6 +56,46 @@ fn round_finite(value: f64, scale: f64) -> f64 {
 /// wrote it. Comparing the rounded value keeps them on the same side.
 pub fn rounded_2(value: f64) -> f64 {
     round_finite(value, 100.0)
+}
+
+/// Round a lower score bound down to the two-decimal grid.
+///
+/// Compare the candidate with the original float instead of adding an epsilon:
+/// values one float apart must remain on opposite sides of a cent boundary.
+/// Comparing after division also keeps already serialized cents unchanged.
+pub fn rounded_down_2(value: f64) -> f64 {
+    let rounded = rounded_2(value);
+    if rounded > value {
+        ((value * 100.0).round() - 1.0) / 100.0
+    } else {
+        rounded
+    }
+}
+
+/// Round an upper score bound up, preserving already serialized cents.
+pub fn rounded_up_2(value: f64) -> f64 {
+    let rounded = rounded_2(value);
+    if rounded < value {
+        ((value * 100.0).round() + 1.0) / 100.0
+    } else {
+        rounded
+    }
+}
+
+/// Serialize a lower score bound rounded down to two decimals.
+pub fn round_down_2<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    if !value.is_finite() {
+        return serializer.serialize_none();
+    }
+    serializer.serialize_f64(rounded_down_2(*value))
+}
+
+/// Serialize an upper score bound rounded up to two decimals.
+pub fn round_up_2<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    if !value.is_finite() {
+        return serializer.serialize_none();
+    }
+    serializer.serialize_f64(rounded_up_2(*value))
 }
 
 /// Round f64 to 2 decimal places (for `0..100` percentages).
@@ -194,6 +237,20 @@ mod tests {
     struct QuartilesValue {
         #[serde(serialize_with = "quartiles::serialize")]
         value: Option<Quartiles>,
+    }
+
+    #[test]
+    fn directed_rounding_preserves_signed_bounds_and_finite_extremes() {
+        for (value, lower, upper) in [
+            (-79.426, -79.43, -79.42),
+            (-0.004, -0.01, 0.0),
+            (0.004, 0.0, 0.01),
+            (f64::MAX, f64::MAX, f64::MAX),
+            (-f64::MAX, -f64::MAX, -f64::MAX),
+        ] {
+            assert_eq!(rounded_down_2(value), lower);
+            assert_eq!(rounded_up_2(value), upper);
+        }
     }
 
     #[test]

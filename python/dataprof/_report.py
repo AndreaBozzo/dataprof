@@ -38,7 +38,7 @@ from ._render import (
 )
 from ._report_backing import _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
-from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
+from ._rounding import _outward_2, _r2, _r4, _round_dimension, _round_quartiles
 
 
 def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
@@ -292,8 +292,9 @@ class ProfileReport:
         The sample fixes each check: a column's type, dominant form, detected
         pattern, decimal scale and outlier fences. The intervals cover the
         scores those same checks give over every scanned value, and all
-        of them hold at once with probability ``confidence_level``. An exact
-        score's interval is the score itself.
+        of them hold at once with probability ``confidence_level``. Bounds round
+        outward to two decimals, including an exactly computed score that
+        lies between two cents.
 
         ``None`` when every score is exact, when there is no assessment, or
         when the report was loaded from a document that does not record
@@ -301,7 +302,14 @@ class ProfileReport:
         interval.
         """
         bounds = self._report.quality_score_bounds
-        return None if bounds is None else _copy.deepcopy(dict(bounds))
+        if bounds is None:
+            return None
+        result = _copy.deepcopy(dict(bounds))
+        for interval in [result.get("overall_score"), *result.get("dimension_scores", {}).values()]:
+            if interval is not None:
+                interval["lower"] = _outward_2(interval["lower"], upper=False)
+                interval["upper"] = _outward_2(interval["upper"], upper=True)
+        return result
 
     @property
     def metric_semantics(self) -> dict[str, str] | None:

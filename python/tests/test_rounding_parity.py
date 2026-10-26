@@ -20,6 +20,7 @@ layer's test rather than drifting unnoticed.
 from __future__ import annotations
 
 import json
+import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ import pytest
 # they are not part of the declared surface #514 pins. Reaching them here is
 # intentional: the convention has to be exercised on arbitrary values, which no
 # public accessor allows.
-from dataprof._rounding import _r2, _r4
+from dataprof._rounding import _outward_2, _r2, _r4
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 _CONVENTION = "round the stored f64 at n decimal places, ties away from zero"
@@ -230,3 +231,9 @@ def test_percentages_and_statistics_use_their_own_precision(report):
     assert stats["min"] == 1.0001
     assert stats["max"] == 5.9382
     assert stats["median"] == 3.4691
+
+
+@pytest.mark.parametrize("value", [sys.float_info.max, -sys.float_info.max])
+def test_outward_rounding_does_not_overflow_finite_values(value):
+    assert _outward_2(value, upper=False) == value
+    assert _outward_2(value, upper=True) == value

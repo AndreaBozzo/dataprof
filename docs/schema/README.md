@@ -154,6 +154,22 @@ cross-path equality targets. Whole report documents need not be identical.
 | 0–1 ratios and average text length | 4 decimal places |
 | Quartiles | 2 decimal places |
 
+Score intervals are the exception to nearest rounding: `quality.score_bounds`
+serializes each `lower` down and `upper` up to two decimals. For example,
+`[79.426, 91.674]` is saved as `[79.42, 91.68]`. The saved interval contains
+its computed bounds, including values immediately beside a two-decimal
+boundary; an already serialized interval is unchanged by another save.
+Quality gates decide on these same outward values, keeping live and loaded
+reports consistent. The confidence level and the population covered by the
+interval do not change.
+
+Earlier serializers rounded both bounds to the nearest two decimals, which
+could narrow an interval. A bound already lost by that rounding cannot be
+recovered by loading an old report. Consumers comparing saved reports across
+builds should account for this numerical change; `generator` records the
+producing version and, when available, build commit. The v1 document shape is
+unchanged, and older reports still load.
+
 Rounding uses the stored binary float, with ties away from zero. The Rust
 `serde_helpers` and Python `_rounding` modules implement the same convention.
 Native Rust fields and Python `ColumnProfile` attributes retain full precision;
@@ -163,7 +179,7 @@ restored from JSON. Parity tests supplement exact serialized comparisons with
 raw diagnostics using relative tolerance `1e-9` and absolute tolerance `1e-12`;
 those tolerances do not weaken the serialized contract.
 
-This decision changes no rounding rule and no schema version.
+The numeric-equality contract does not require a new schema version.
 Rounding alone cannot mathematically guarantee equality for every possible
 floating-point input, especially near rounding boundaries or at large
 magnitudes. A difference that survives serialization remains a parity defect

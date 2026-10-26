@@ -98,7 +98,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
-use dataprof_core::serde_helpers::rounded_2;
+use dataprof_core::serde_helpers::{rounded_2, rounded_down_2, rounded_up_2};
 use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
 use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 use serde::Serialize;
@@ -705,10 +705,10 @@ fn serialize_data_types<S: serde::Serializer>(
 #[non_exhaustive]
 pub struct CheckBounds {
     /// Lowest value the whole-source score can take.
-    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_down_2")]
     pub lower: f64,
     /// Highest value the whole-source score can take.
-    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_up_2")]
     pub upper: f64,
     /// Probability that every interval in the report holds at once.
     pub confidence_level: f64,
@@ -1379,9 +1379,9 @@ impl QualityPolicy {
         match bounds {
             Some(bounds) if self.scope == PolicyScope::FullSource && sampled => {
                 check.bounds = Some(bounds);
-                check.status = if rounded_2(bounds.lower) >= min {
+                check.status = if bounds.lower >= min {
                     CheckStatus::Passed
-                } else if rounded_2(bounds.upper) < min {
+                } else if bounds.upper < min {
                     CheckStatus::Failed
                 } else {
                     CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
@@ -2513,8 +2513,8 @@ fn bounded_message(status: &CheckStatus, subject: &str) -> String {
 /// The interval a check decides on, from the report's bounds.
 fn check_bounds(bounds: &ScoreBounds, interval: Option<ScoreInterval>) -> Option<CheckBounds> {
     interval.map(|interval| CheckBounds {
-        lower: interval.lower,
-        upper: interval.upper,
+        lower: rounded_down_2(interval.lower),
+        upper: rounded_up_2(interval.upper),
         confidence_level: bounds.confidence_level,
     })
 }

@@ -273,15 +273,12 @@ fn dimension_weight(metrics: &QualityMetrics, dimension: QualityDimension) -> f6
     }
 }
 
-/// Round an interval outward to the report's two decimals, so the saved
-/// interval still contains what the unrounded one did. The small slack keeps
-/// a value that is already on a two-decimal boundary, such as an exact
-/// score, from being pushed one step out by its own representation error.
+/// Round an interval outward without discarding values beside a cent boundary.
 fn outward(lower: f64, upper: f64) -> ScoreInterval {
-    const SLACK: f64 = 1e-9;
+    use dataprof_core::serde_helpers::{rounded_down_2, rounded_up_2};
     ScoreInterval {
-        lower: (((lower + SLACK) * 100.0).floor() / 100.0).clamp(0.0, 100.0),
-        upper: (((upper - SLACK) * 100.0).ceil() / 100.0).clamp(0.0, 100.0),
+        lower: rounded_down_2(lower).clamp(0.0, 100.0),
+        upper: rounded_up_2(upper).clamp(0.0, 100.0),
     }
 }
 
@@ -628,6 +625,25 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
     use rand::seq::SliceRandom;
+
+    #[test]
+    fn outward_rounding_does_not_hide_adjacent_float_bounds() {
+        let boundary = 79.43_f64;
+        assert_eq!(
+            outward(boundary.next_down(), boundary.next_up()),
+            ScoreInterval {
+                lower: 79.42,
+                upper: 79.44
+            }
+        );
+        assert_eq!(
+            outward(boundary, boundary),
+            ScoreInterval {
+                lower: boundary,
+                upper: boundary
+            }
+        );
+    }
 
     fn profile(name: &str, data_type: DataType, total: usize, nulls: usize) -> ColumnProfile {
         let mut profile = string_profile(name, total, nulls);
@@ -1173,12 +1189,13 @@ mod tests {
     fn saved_intervals_are_rounded_outward() {
         let interval = outward(99.061, 99.069);
         assert_eq!((interval.lower, interval.upper), (99.06, 99.07));
-        // A value already on a two-decimal boundary, as an exact score is,
-        // stays put rather than being pushed out by representation error.
+        // Even arithmetic noise just above a cent must stay inside the
+        // saved interval; an epsilon would hide that part of the bound.
         let score = (0.1 + 0.2) * 100.0;
         assert_ne!(score, 30.0);
         let interval = outward(score, score);
-        assert_eq!((interval.lower, interval.upper), (30.0, 30.0));
+        assert_eq!((interval.lower, interval.upper), (30.0, 30.01));
+        assert!(interval.lower <= score && score <= interval.upper);
         let interval = outward(-0.5, 100.5);
         assert_eq!((interval.lower, interval.upper), (0.0, 100.0));
     }

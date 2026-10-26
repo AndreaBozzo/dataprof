@@ -2635,7 +2635,7 @@
       "type": "object"
     },
     "ScoreInterval": {
-      "description": "A range a score lies in, on the 0-100 scale.",
+      "description": "A range a score lies in, on the 0-100 scale.\n\nSaved bounds round outward to two decimals: lower down, upper up, so the\nserialized interval contains the computed one and is stable on resaving.",
       "properties": {
         "lower": {
           "format": "double",

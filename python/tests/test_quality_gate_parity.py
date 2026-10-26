@@ -136,3 +136,39 @@ def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):
         if "bounds" in check and case["expected"]["scope"] == "full_source"
     ]
     assert {check["status"] for check in bounded} >= {"passed", "not_evaluated"}
+
+
+def test_score_bounds_round_outward_in_the_report_and_gate(csv_paths: dict[str, Path]):
+    original = json.loads(_profile(csv_paths, {"input": "generated"}).to_json())
+    for case in _fixture()["outward_rounding"]:
+        document = json.loads(json.dumps(original))
+        document["quality"]["score_bounds"]["overall_score"] = {
+            "lower": case["lower"],
+            "upper": case["upper"],
+        }
+        raw = dp.ProfileReport.from_dict(document)
+        saved = json.loads(raw.to_json())
+        assert saved["quality"]["score_bounds"]["overall_score"] == case["saved"], case["name"]
+        summary = raw.to_dict()
+        assert summary["quality"]["score_bounds"]["overall_score"] == case["saved"]
+        live = raw.check(min_quality_score=case["minimum"]).to_dict()
+        assert live["verdict"] == case["verdict"], case["name"]
+        assert live["checks"][0]["bounds"]["lower"] == case["saved"]["lower"]
+        assert live["checks"][0]["bounds"]["upper"] == case["saved"]["upper"]
+        loaded = dp.ProfileReport.from_dict(saved)
+        assert loaded.check(min_quality_score=case["minimum"]).to_dict() == live
+        assert json.loads(loaded.to_json()) == saved
+        loaded_summary = dp.ProfileReport.from_dict(summary)
+        assert json.loads(loaded_summary.to_json()) == summary
+        with pytest.raises(ValueError, match="flat to_dict"):
+            loaded_summary.check(min_quality_score=case["minimum"])
+
+
+def test_omitted_overall_bound_stays_absent_in_a_loaded_summary(csv_paths: dict[str, Path]):
+    summary = _profile(csv_paths, {"input": "generated"}).to_dict()
+    del summary["quality"]["score_bounds"]["overall_score"]
+    loaded = dp.ProfileReport.from_dict(summary)
+    bounds = loaded.quality_score_bounds
+    assert bounds is not None
+    assert "overall_score" not in bounds
+    assert loaded.to_dict()["quality"]["score_bounds"] == summary["quality"]["score_bounds"]
