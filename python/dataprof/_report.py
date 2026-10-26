@@ -575,6 +575,9 @@ class ProfileReport:
             "quality_status": _quality_status_document(self.quality_status, self.quality_error),
         }
         # Additive provenance is omitted when the document did not record it.
+        source_format = self._report._accessor.get("source_format")
+        if source_format is not None:
+            document["source_format"] = source_format
         events = self.recovery_events
         if events is not None:
             _cast(dict[str, _Any], document["execution"])["recovery_events"] = events

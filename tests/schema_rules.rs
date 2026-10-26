@@ -243,9 +243,8 @@ fn removed_and_added_columns_fail_against_a_baseline_that_shows_the_change() {
 }
 
 #[test]
-fn a_flat_summary_baseline_covers_its_source_only_with_a_complete_scan() {
-    // A summary records the kind of source but not a file's format, so a
-    // truncated CSV baseline can no longer show its header was complete.
+fn a_flat_summary_retains_declared_schema_for_capped_sources() {
+    // A CSV header declares every column even when the scan was capped.
     let orders = file(".csv", ORDERS);
     let no_note = file(".csv", NO_NOTE);
     let policy = QualityPolicy::new().forbid_added_columns();
@@ -273,11 +272,7 @@ fn a_flat_summary_baseline_covers_its_source_only_with_a_complete_scan() {
     let summarized = outcomes(&policy.evaluate_against(&report, &flat(&truncated)).unwrap());
     assert_eq!(
         summarized[2],
-        outcome(
-            CheckCode::ForbidAddedColumn,
-            "note",
-            "evidence_incomplete:truncated"
-        )
+        outcome(CheckCode::ForbidAddedColumn, "note", "failed")
     );
 }
 
@@ -445,4 +440,61 @@ fn a_closed_schema_is_not_passed_by_a_report_that_selected_some_columns() {
             "setting_unrecorded:columns"
         )
     );
+}
+
+#[test]
+fn summary_formats_declare_only_file_and_bytes_csv_or_parquet_schemas() {
+    let orders = file(".csv", ORDERS);
+    let no_note = file(".csv", NO_NOTE);
+    let report = profile(&orders, |p| p);
+    let capped = profile(&no_note, |p| p.stop_when(StopCondition::MaxRows(1)));
+    let original: serde_json::Value =
+        serde_json::from_str(&capped.summary_json().unwrap()).unwrap();
+    let policy = QualityPolicy::new().forbid_added_columns();
+
+    for (source_type, format, declared) in [
+        ("file", Some("csv"), true),
+        ("file", Some("parquet"), true),
+        ("bytes", Some("csv"), true),
+        ("bytes", Some("parquet"), true),
+        ("file", None, false),
+        ("bytes", None, false),
+        ("file", Some("json"), false),
+        ("bytes", Some("jsonl"), false),
+        ("file", Some("future-format"), false),
+        ("stream", Some("csv"), false),
+        ("future-source", Some("parquet"), false),
+        ("dataframe", None, true),
+        ("query", None, true),
+    ] {
+        let mut summary = original.clone();
+        summary["source_type"] = json!(source_type);
+        if let Some(format) = format {
+            summary["source_format"] = json!(format);
+        } else {
+            summary.as_object_mut().unwrap().remove("source_format");
+        }
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let result = outcomes(&policy.evaluate_against(&report, &baseline).unwrap());
+        assert_eq!(
+            result.pick(CheckCode::ForbidAddedColumn, "note"),
+            outcome(
+                CheckCode::ForbidAddedColumn,
+                "note",
+                if declared {
+                    "failed"
+                } else {
+                    "evidence_incomplete:truncated"
+                }
+            ),
+            "{source_type} {format:?}",
+        );
+    }
+
+    for malformed in [json!(null), json!(true), json!(42), json!([]), json!({})] {
+        let mut summary = original.clone();
+        summary["source_format"] = malformed;
+        let error = ReportSide::from_summary_json(&summary.to_string()).unwrap_err();
+        assert!(error.to_string().contains("source_format"));
+    }
 }

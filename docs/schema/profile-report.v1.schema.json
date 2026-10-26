@@ -1911,6 +1911,9 @@
         "source": {
           "type": "string"
         },
+        "source_format": {
+          "$ref": "#/$defs/FileFormat"
+        },
         "source_type": {
           "$ref": "#/$defs/PythonSourceType"
         }

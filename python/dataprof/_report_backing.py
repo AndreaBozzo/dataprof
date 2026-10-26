@@ -412,6 +412,14 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["timestamp"] = None
     values["source"] = document.get("source")
     values["source_type"] = document.get("source_type")
+    values["source_format"] = _read_field(
+        document,
+        "source_format",
+        "source_format",
+        "a string",
+        lambda value: isinstance(value, str),
+        None,
+    )
     # Only these additive fields have legacy defaults. Unknown measurements
     # stay absent; in particular an unknown history is not an empty history.
     values["ragged_row_count"] = _read_field(

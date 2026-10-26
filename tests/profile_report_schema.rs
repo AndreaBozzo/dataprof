@@ -410,3 +410,32 @@ fn schema_rejects_wrong_versions_missing_fields_bad_enums_and_bad_primitives() {
     bad_primitive["execution"]["rows_processed"] = json!("one");
     assert!(!validator.is_valid(&bad_primitive));
 }
+
+#[test]
+fn summaries_record_file_and_bytes_formats_without_requiring_them_in_legacy_documents() {
+    let schema = committed_schema();
+    for source_type in ["file", "bytes"] {
+        for format in ["csv", "parquet", "json", "jsonl", "future-format"] {
+            let mut document = minimal_v1_document();
+            document["data_source"] = if source_type == "file" {
+                json!({"type": "file", "path": "sample", "format": format, "size_bytes": 12})
+            } else {
+                json!({"type": "bytes", "name": "sample", "format": format, "size_bytes": 12})
+            };
+            let report: ProfileReport = serde_json::from_value(document).unwrap();
+            let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+            assert_eq!(summary["source_type"], source_type);
+            assert_eq!(summary["source_format"], format);
+            assert_valid(&schema, &summary);
+
+            let mut legacy = summary.clone();
+            legacy.as_object_mut().unwrap().remove("source_format");
+            assert_valid(&schema, &legacy);
+            for malformed in [json!(null), json!(true), json!(42), json!([]), json!({})] {
+                let mut invalid = summary.clone();
+                invalid["source_format"] = malformed;
+                assert!(!validator(&schema).is_valid(&invalid));
+            }
+        }
+    }
+}

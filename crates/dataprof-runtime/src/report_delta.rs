@@ -771,12 +771,14 @@ impl ReportSide {
                 .as_ref()
                 .map(|settings| settings.pattern_locale),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
-            // A summary records the kind of source but not a file's format,
-            // so only the kinds that always declare their columns count.
-            schema_declared: matches!(
-                summary.source_type,
-                Some(SummarySourceType::Dataframe | SummarySourceType::Query)
-            ),
+            schema_declared: match summary.source_type {
+                Some(SummarySourceType::Dataframe | SummarySourceType::Query) => true,
+                Some(SummarySourceType::File | SummarySourceType::Bytes) => matches!(
+                    summary.source_format,
+                    Some(FileFormat::Csv | FileFormat::Parquet)
+                ),
+                _ => false,
+            },
         })
     }
 }
@@ -828,6 +830,9 @@ struct Summary {
     /// Absent from a summary that did not record it, which declares nothing.
     #[serde(default)]
     source_type: Option<SummarySourceType>,
+    /// Missing in legacy summaries; a present value must be a format string.
+    #[serde(default, deserialize_with = "summary_source_format")]
+    source_format: Option<FileFormat>,
     execution: SummaryExecution,
     columns: Vec<SummaryColumn>,
     quality: Option<SummaryQuality>,
@@ -851,8 +856,18 @@ struct Summary {
 enum SummarySourceType {
     Dataframe,
     Query,
+    File,
+    Bytes,
     #[serde(other)]
     Other,
+}
+
+fn summary_source_format<'de, D>(deserializer: D) -> Result<Option<FileFormat>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("source_format: {error}")))
 }
 
 /// Whether a source declares its columns up front. A JSON, JSONL or stream

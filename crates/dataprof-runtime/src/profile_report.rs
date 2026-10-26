@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyColumnSource,
+    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, FileFormat, KeyColumnSource,
     KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights,
     RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
 };
@@ -528,6 +528,13 @@ struct PythonProfileReportDocument {
     schema_version: u32,
     source: String,
     source_type: PythonSourceType,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "FileFormat")]
+    source_format: Option<FileFormat>,
     execution: PythonExecutionDocument,
     columns: Vec<PythonColumnDocument>,
     quality: Option<PythonQualityDocument>,
@@ -911,6 +918,12 @@ impl PythonProfileReportDocument {
                 DataSource::DataFrame { .. } => PythonSourceType::Dataframe,
                 DataSource::Stream { .. } => PythonSourceType::Stream,
                 DataSource::Bytes { .. } => PythonSourceType::Bytes,
+            },
+            source_format: match &report.data_source {
+                DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
+                    Some(format.clone())
+                }
+                _ => None,
             },
             execution: serde_json::from_value(execution)?,
             columns,

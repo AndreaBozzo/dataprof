@@ -851,3 +851,22 @@ from documents written before 0.13. An explicit `null`, for the object or for
 `commit` or `dirty`, a missing `version`, and a value of the wrong type are
 malformed. A field a later release adds is ignored by this reader. Stored v1
 reports remain valid.
+
+## v1 additive change: flat summary `source_format`
+
+Flat summaries gain an optional top-level `source_format` string for file and
+bytes sources (#1028). Its value is the recorded format (`csv`, `parquet`,
+`json`, `jsonl`, or an unknown format string), matching the canonical
+`data_source.format`. Other source kinds do not gain a format.
+
+A file or bytes summary with `csv` or `parquet` records that its source declares
+all its columns, even when the run read only a capped prefix. Column-set rules
+can therefore establish that a missing column was absent from the source,
+subject to the same column-selection requirements as a canonical report.
+JSON, JSONL, unknown formats and stream sources do not make that declaration.
+
+An absent field remains unknown and stays absent through Python flat-summary
+load/save round trips; no format is inferred from the source name. An explicit
+`null` or another non-string value is malformed. Unknown format strings are
+retained but do not establish schema completeness. The field is additive and
+not required, so stored v1 reports remain valid and the schema version stays 1.
