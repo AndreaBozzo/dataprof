@@ -514,6 +514,15 @@
       "expected": {
         "findings": [
           {
+            "code": "partial_scan",
+            "severity": "info",
+            "evidence": {
+              "reason": "truncated",
+              "rows_processed": 2
+            },
+            "summary": "only part of the source was read; findings describe the rows that were"
+          },
+          {
             "code": "all_null",
             "severity": "warning",
             "column": "notes",
@@ -564,15 +573,6 @@
               "unique_count": 1
             },
             "summary": "every non-null value in this column is the same"
-          },
-          {
-            "code": "partial_scan",
-            "severity": "info",
-            "evidence": {
-              "reason": "truncated",
-              "rows_processed": 2
-            },
-            "summary": "only part of the source was read; findings describe the rows that were"
           },
           {
             "code": "sensitive_pattern",
@@ -628,6 +628,15 @@
       "expected": {
         "findings": [
           {
+            "code": "ragged_rows",
+            "severity": "warning",
+            "evidence": {
+              "ragged_row_count": 2,
+              "rows_processed": 3
+            },
+            "summary": "some rows had a different field count from the header and were recovered"
+          },
+          {
             "code": "null_heavy",
             "severity": "warning",
             "column": "b",
@@ -636,15 +645,6 @@
               "threshold": 20.0
             },
             "summary": "this column's null share is at or above the threshold"
-          },
-          {
-            "code": "ragged_rows",
-            "severity": "warning",
-            "evidence": {
-              "ragged_row_count": 2,
-              "rows_processed": 3
-            },
-            "summary": "some rows had a different field count from the header and were recovered"
           }
         ],
         "not_evaluated": [

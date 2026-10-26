@@ -37,7 +37,7 @@ _SENSITIVE_CATEGORIES = ("contact", "financial")
 #: (UUIDs, product codes, VAT numbers) identifies things.
 _PERSONAL_IDENTIFIER_PATTERNS = ("Codice Fiscale (IT)", "SSN (US)")
 
-#: Severity per code. Warnings sort first.
+#: Severity per code. Read priority is independent of severity.
 _SEVERITY = {
     "all_null": "warning",
     "constant_column": "info",
@@ -54,6 +54,14 @@ _SEVERITY = {
     "unterminated_quote": "warning",
 }
 _SEVERITY_ORDER = ("warning", "info")
+
+#: Findings about the read qualify every observation made from its rows.
+_READ_PRIORITY = {
+    "partial_scan": 0,
+    "ragged_rows": 1,
+    "records_skipped": 2,
+    "unterminated_quote": 3,
+}
 
 #: A fixed sentence per code. Deliberately free of numbers, as the gate's
 #: messages are: the evidence carries those, so the Rust and Python layers
@@ -132,8 +140,10 @@ class FindingsResult:
     two fields.
     """
 
-    #: Most severe first; within a severity by code, then report-level before
-    #: column-level, then by column position, then by pattern name.
+    #: Read findings first: partial_scan, ragged_rows, records_skipped, then
+    #: unterminated_quote, regardless of severity. The remaining findings sort
+    #: by severity, code, report-level before column-level, column position,
+    #: then pattern name.
     findings: tuple[Finding, ...] = _field(default_factory=tuple)
     #: ``{"code", "reason", ...}`` per rule that could not be evaluated, by
     #: code then reason. A column rule lists the ``columns`` it could not look
@@ -183,7 +193,7 @@ def _threshold(setting: str, value: _Any) -> float:
 
 class _Collector:
     def __init__(self) -> None:
-        self.ranked: list[tuple[tuple[int, str, int, str], Finding]] = []
+        self.ranked: list[tuple[tuple[int, int, str, int, str], Finding]] = []
         self.not_evaluated: list[dict[str, _Any]] = []
 
     def add(
@@ -205,7 +215,13 @@ class _Collector:
         )
         # Report-level findings (no index) sort before column findings.
         position = -1 if index is None else index
-        key = (_SEVERITY_ORDER.index(severity), code, position, detail)
+        key = (
+            _READ_PRIORITY.get(code, len(_READ_PRIORITY)),
+            _SEVERITY_ORDER.index(severity),
+            code,
+            position,
+            detail,
+        )
         self.ranked.append((key, finding))
 
     def skip_report(self, code: str, reason: dict[str, _Any]) -> None:

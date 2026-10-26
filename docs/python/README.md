@@ -882,10 +882,12 @@ names; no finding carries a raw cell value.
 | `sensitive_pattern` | info | A column confidently matches a contact or financial pattern, a US SSN, or an Italian codice fiscale |
 | `partial_scan` | info | The scan stopped early or sampled rows (`reason` is `"truncated"` or `"sampled"`) |
 
-Findings sort by severity, then code, then report-level before column-level,
-then column position. The default thresholds are the ones `to_llm_context()`
-flags at. Findings compare at the report's 2dp precision and the flags do not,
-so a share within rounding of a threshold (4.9992% against 5) can be a
+Findings about the read come first, in this order: `partial_scan`, `ragged_rows`,
+`records_skipped`, `unterminated_quote`, regardless of severity. Remaining
+findings sort by severity, then code, then report-level before column-level,
+then column position and pattern name. The default thresholds are the ones
+`to_llm_context()` flags at. Findings compare at the report's 2dp precision and
+the flags do not, so a share within rounding of a threshold (4.9992% against 5) can be a
 finding without being a flag. Both thresholds take a percentage above 0 and at
 most 100, and are applied at 2dp, so the evidence states exactly the threshold
 that was compared. Anything else, including a value that rounds to 0, raises

@@ -62,7 +62,7 @@ const PERSONAL_IDENTIFIER_PATTERNS: [&str; 2] = ["Codice Fiscale (IT)", "SSN (US
 
 /// How much attention a finding asks for.
 ///
-/// Declared order is priority order: warnings sort first.
+/// Warnings sort before informational findings, after findings about the read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -85,8 +85,8 @@ impl fmt::Display for Severity {
 /// Stable identifier for the rule a finding came from.
 ///
 /// Part of the contract: a consumer matches on these, so they do not change
-/// when the prose does. Declared in alphabetical order, which is the order
-/// findings of equal severity sort in.
+/// when the prose does. Declared in alphabetical order, which breaks ties
+/// after read priority and severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -122,6 +122,17 @@ pub enum FindingCode {
 }
 
 impl FindingCode {
+    /// Findings about the read qualify every observation made from its rows.
+    fn read_priority(self) -> u8 {
+        match self {
+            Self::PartialScan => 0,
+            Self::RaggedRows => 1,
+            Self::RecordsSkipped => 2,
+            Self::UnterminatedQuote => 3,
+            _ => 4,
+        }
+    }
+
     /// The severity every finding with this code carries.
     pub fn severity(self) -> Severity {
         match self {
@@ -296,9 +307,10 @@ pub struct UnevaluatedRule {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[non_exhaustive]
 pub struct FindingsResult {
-    /// Every finding, most severe first. Within a severity: by code, then
-    /// report-level before column-level, then by column position in the
-    /// report, then by pattern name.
+    /// Read findings first: partial scan, ragged rows, records skipped, then
+    /// unterminated quote, regardless of severity. The remaining findings
+    /// sort by severity, code, report-level before column-level, column
+    /// position in the report, then pattern name.
     pub findings: Vec<Finding>,
     /// Every rule that could not look, by code then reason. A rule listed
     /// here for some columns was still evaluated for the others.
@@ -945,8 +957,16 @@ impl Collector {
 
     fn finish(mut self) -> FindingsResult {
         self.findings.sort_by(|left, right| {
-            (left.finding.severity, left.finding.code)
-                .cmp(&(right.finding.severity, right.finding.code))
+            (
+                left.finding.code.read_priority(),
+                left.finding.severity,
+                left.finding.code,
+            )
+                .cmp(&(
+                    right.finding.code.read_priority(),
+                    right.finding.severity,
+                    right.finding.code,
+                ))
                 .then_with(|| left.column_index.cmp(&right.column_index))
                 .then_with(|| left.detail.cmp(&right.detail))
         });
@@ -1430,7 +1450,7 @@ mod tests {
     }
 
     #[test]
-    fn warnings_sort_before_info_then_by_code_then_column_position() {
+    fn read_findings_sort_first_then_severity_code_and_column_position() {
         let mut constant = column("z_constant", 5, 0);
         constant.unique_count = Some(1);
         let mut mixed = column("a_mixed", 5, 0);
@@ -1445,19 +1465,28 @@ mod tests {
                 constant,
                 column("sparse", 5, 4),
                 mixed,
-                column("empty", 5, 5),
+                column("z_empty", 5, 5),
+                column("a_empty", 5, 5),
             ],
-            ExecutionMetadata::new(5, 4, 10).with_ragged_row_count(1),
+            ExecutionMetadata::new(5, 5, 10)
+                .with_ragged_row_count(1)
+                .with_error_count(1)
+                .with_unterminated_quote(true)
+                .with_sampling(0.5),
         )
         .findings();
 
         assert_eq!(
             codes(&result),
             vec![
-                (FindingCode::AllNull, Some("empty")),
+                (FindingCode::PartialScan, None),
+                (FindingCode::RaggedRows, None),
+                (FindingCode::RecordsSkipped, None),
+                (FindingCode::UnterminatedQuote, None),
+                (FindingCode::AllNull, Some("z_empty")),
+                (FindingCode::AllNull, Some("a_empty")),
                 (FindingCode::MixedTypes, Some("a_mixed")),
                 (FindingCode::NullHeavy, Some("sparse")),
-                (FindingCode::RaggedRows, None),
                 (FindingCode::ConstantColumn, Some("z_constant")),
             ]
         );

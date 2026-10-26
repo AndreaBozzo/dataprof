@@ -59,6 +59,38 @@ def test_findings_are_typed_and_carry_no_raw_values(report: dp.ProfileReport):
         assert raw not in rendered
 
 
+def test_read_findings_precede_column_observations(report: dp.ProfileReport):
+    def incomplete(document: dict[str, Any]) -> None:
+        document["execution"].update(
+            sampling_applied=True,
+            ragged_row_count=1,
+            error_count=1,
+            unterminated_quote=True,
+        )
+
+    result = _edited(report, incomplete).findings()
+    assert _codes(result) == [
+        ("partial_scan", None),
+        ("ragged_rows", None),
+        ("records_skipped", None),
+        ("unterminated_quote", None),
+        ("null_heavy", "amount"),
+        ("constant_column", "channel"),
+        ("sensitive_pattern", "email"),
+    ]
+    assert [finding.severity for finding in result] == [
+        "info",
+        "warning",
+        "warning",
+        "warning",
+        "warning",
+        "info",
+        "info",
+    ]
+    for document in (result.to_dict(), json.loads(result.to_json())):
+        assert [(f["code"], f.get("column")) for f in document["findings"]] == _codes(result)
+
+
 def test_the_result_has_no_truthiness(report: dp.ProfileReport):
     """An empty findings list is clean only for rules not in ``not_evaluated``.
 
