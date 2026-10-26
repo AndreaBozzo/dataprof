@@ -189,11 +189,28 @@ gh run watch
 
 A pull request that changes `.github/python-interpreters.json`,
 `wheel_interpreters.py`, `rust-toolchain.toml`, `python-dist.yml` or
-`release-rehearsal.yml` runs it on its own. The release builds with the newest
-maturin that `[build-system] requires` in `pyproject.toml` allows, in manylinux
-images selected by floating tags, so an upstream release changes the build
-without any change here. The rehearsal therefore also runs weekly on `master`;
-run it there before tagging as well.
+`release-rehearsal.yml` or `pyproject.toml` runs it on its own. The rehearsal
+also runs weekly on `master`; run it there before tagging as well.
+
+The release wheel and sdist steps share `MATURIN_VERSION` in `python-dist.yml`.
+The PEP 517 requirement in `pyproject.toml` pins the same version, so an sdist
+install uses that build backend too. To bump maturin, update both pins, run
+`uv lock`, and let the pull request's release rehearsal build and install the
+artifacts before merging. The development dependency remains a compatible
+range; `uv.lock` records the version used by contributors.
+
+The Linux wheel steps select immutable image digests from
+`MANYLINUX_X86_64_IMAGE` and `MANYLINUX_AARCH64_IMAGE` in `python-dist.yml`.
+Both x86_64 CPU profiles share the first pin; the aarch64 leg uses the second.
+To update them, resolve the current `quay.io/pypa/manylinux2014_x86_64:latest`
+and `ghcr.io/rust-cross/manylinux_2_28-cross:aarch64` manifests with
+`docker manifest inspect --verbose`, and copy their **linux/amd64** manifest
+digests into the workflow. The cross image runs on an amd64 host and produces
+aarch64 wheels; selecting its arm64-host manifest is not equivalent. Keep the
+existing glibc floors (2.17 and 2.28) and confirm every declared interpreter is
+available, then require the release rehearsal to pass. Image and maturin pin
+updates are manual. These pins do not freeze GitHub-hosted runner images or
+the action versions; sdist packaging runs on the host.
 
 Each install job's summary shows, per interpreter, whether the wheel was built,
 whether it installs and whether the smoke test passed; an interpreter maturin

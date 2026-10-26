@@ -17,6 +17,11 @@ permissions:
   contents: read
 
 env:
+  # Keep the PEP 517 build requirement in pyproject.toml in sync with this pin.
+  MATURIN_VERSION: '1.15.0'
+  MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64@sha256:296069bc05d85275248f168f6e3b34ba8aa06181b67e40cd7447c64d56d3a851
+  # This is the amd64-host image that cross-compiles for aarch64.
+  MANYLINUX_AARCH64_IMAGE: ghcr.io/rust-cross/manylinux_2_28-cross@sha256:933cd66d0bea44fc36a78a1b9e272be198bac777c342a7b76e9bc5c24c6cc118
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 10
   RUST_BACKTRACE: short
@@ -141,6 +146,8 @@ jobs:
     - name: Build wheels (${{ matrix.cpu_profile }})
       uses: PyO3/maturin-action@v1
       with:
+        maturin-version: ${{ env.MATURIN_VERSION }}
+        container: ${{ runner.os == 'Linux' && (matrix.target == 'aarch64' && env.MANYLINUX_AARCH64_IMAGE || env.MANYLINUX_X86_64_IMAGE) || '' }}
         target: ${{ matrix.target }}
         # The shipped feature set is declared once, in `[tool.maturin] features`
         # in pyproject.toml; building without --features keeps the wheel and the
@@ -250,6 +257,7 @@ jobs:
     - name: Build sdist
       uses: PyO3/maturin-action@v1
       with:
+        maturin-version: ${{ env.MATURIN_VERSION }}
         command: sdist
         args: --out dist
         manylinux: auto

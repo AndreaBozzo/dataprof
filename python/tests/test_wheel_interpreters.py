@@ -7,6 +7,7 @@ import json
 import re
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -246,6 +247,31 @@ def test_release_and_rehearsal_share_one_build():
         assert publishing not in code, publishing
     assert "permissions:\n  contents: read\n" in rehearsal
     assert "contents: write" not in rehearsal
+
+
+def test_release_build_inputs_are_pinned_and_rehearsed():
+    """Backend and image updates must remain deliberate release-build changes."""
+    workflows = ROOT / ".github/workflows"
+    build = (workflows / "python-dist.yml").read_text(encoding="utf-8")
+    rehearsal = (workflows / "release-rehearsal.yml").read_text(encoding="utf-8")
+    match = re.search(r"^  MATURIN_VERSION: '([0-9]+\.[0-9]+\.[0-9]+)'$", build, re.M)
+    assert match is not None, "release maturin must have an exact shared pin"
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert metadata["build-system"]["requires"] == [f"maturin=={match[1]}"]
+    for job in ("python-wheels", "python-sdist"):
+        assert "maturin-version: ${{ env.MATURIN_VERSION }}" in _job_body(build, job)
+    for pin, image in (
+        ("MANYLINUX_X86_64_IMAGE", "quay.io/pypa/manylinux2014_x86_64"),
+        ("MANYLINUX_AARCH64_IMAGE", "ghcr.io/rust-cross/manylinux_2_28-cross"),
+    ):
+        assert re.search(rf"^  {pin}: {re.escape(image)}@sha256:[0-9a-f]{{64}}$", build, re.M)
+    wheels = _job_body(build, "python-wheels")
+    assert (
+        "container: ${{ runner.os == 'Linux' && (matrix.target == 'aarch64' && "
+        "env.MANYLINUX_AARCH64_IMAGE || env.MANYLINUX_X86_64_IMAGE) || '' }}"
+    ) in wheels
+    for path in ("pyproject.toml", ".github/workflows/python-dist.yml"):
+        assert f"- '{path}'" in rehearsal
 
 
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):

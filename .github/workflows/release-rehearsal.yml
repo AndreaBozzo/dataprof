@@ -9,8 +9,8 @@ name: Release Rehearsal
 
 on:
   workflow_dispatch:
-  # maturin and the build images float upstream (#1076), so a weekly run
-  # catches a release that breaks the build between two tags.
+  # The build inputs are pinned; exercise the current source and runner images
+  # between tags too.
   schedule:
     - cron: '17 5 * * 1'
   pull_request:
@@ -21,6 +21,7 @@ on:
       - '.github/workflows/python-dist.yml'
       - '.github/workflows/release-rehearsal.yml'
       - 'rust-toolchain.toml'
+      - 'pyproject.toml'
 
 permissions:
   contents: read
