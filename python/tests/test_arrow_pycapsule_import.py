@@ -156,6 +156,33 @@ def test_object_without_arrow_support_is_refused():
         dataprof.profile(object(), name="not_arrow")
 
 
+def test_lazy_pyarrow_sources_are_refused_with_the_call_that_reads_them(tmp_path):
+    """A Dataset or Scanner exports nothing until read.
+
+    The refusal used to name only ``__arrow_c_array__``, which a pyarrow user
+    cannot act on; it now names the type and the reader call that works.
+    """
+    ds = pytest.importorskip("pyarrow.dataset")
+    path = tmp_path / "x.parquet"
+    pytest.importorskip("pyarrow.parquet").write_table(pa.table({"a": [1, 2, 3]}), path)
+    dataset = ds.dataset(path)
+
+    with pytest.raises(TypeError, match=r"got Scanner; pass \.to_reader\(\)"):
+        dataprof.profile(dataset.scanner())
+    with pytest.raises(TypeError, match=r"Dataset; pass \.scanner\(\)\.to_reader\(\)"):
+        dataprof.profile(dataset)
+
+    # The advice holds: the reader it names profiles.
+    assert dataprof.profile(dataset.scanner().to_reader()).rows == 3
+
+
+def test_polars_lazyframe_is_refused_by_its_own_name():
+    """A LazyFrame was reported as a DataFrame that "doesn't support Arrow export"."""
+    pl = pytest.importorskip("polars")
+    with pytest.raises(TypeError, match=r"polars LazyFrame .*call \.collect\(\)"):
+        dataprof.profile(pl.LazyFrame({"a": [1, 2, 3]}))
+
+
 def _dictionary_column(indices, safe=True):
     """An int8-keyed dictionary column over the two-element dictionary [a, b].
 
