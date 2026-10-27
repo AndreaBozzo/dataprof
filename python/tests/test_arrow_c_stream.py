@@ -216,11 +216,14 @@ def test_batches_are_released_during_consumption():
 
 # A PyArrow scanner reads on its own I/O threads, and a filesystem written in
 # Python needs the GIL on them. Run in a subprocess so a deadlock fails the test
-# instead of hanging the suite. Every case reads the scanner to its end or to an
-# error: stopped early (max_rows), PyArrow's readahead is still in that
-# filesystem when the interpreter exits, and the process hangs or aborts on
-# Linux with no dataprof involved.
+# instead of hanging the suite. A scan that stops early, on a row cap or a read
+# error, leaves PyArrow's readahead in that filesystem, and on Linux the
+# interpreter then hangs or aborts at exit with no dataprof involved
+# (apache/arrow#50482). The child therefore leaves without finalizing the
+# interpreter once it has printed its result: what this test asks is decided
+# by then.
 _PYTHON_FILESYSTEM_SCAN = r"""
+import os
 import sys
 
 import pyarrow as pa
@@ -280,6 +283,8 @@ except RuntimeError as error:
     print(f"error: {error}")
 else:
     print(f"rows: {report.rows}")
+sys.stdout.flush()
+os._exit(0)
 """
 
 
