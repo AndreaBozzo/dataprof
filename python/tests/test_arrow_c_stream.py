@@ -1,5 +1,8 @@
 """One-shot Arrow streams are consumed incrementally through their capsule."""
 
+import subprocess
+import sys
+
 import dataprof
 import pytest
 
@@ -209,6 +212,105 @@ def test_batches_are_released_during_consumption():
     # Allow the generator and C exporter to hold the previous/current batch.
     # Retaining all twelve imported batches exceeds this bound by a wide margin.
     assert max(observations) <= 3 * 4096 * 8
+
+
+# A PyArrow scanner reads on its own I/O threads, and a filesystem written in
+# Python needs the GIL on them. Run in a subprocess so a deadlock fails the test
+# instead of hanging the suite. Every case reads the scanner to its end or to an
+# error: stopped early (max_rows), PyArrow's readahead is still in that
+# filesystem when the interpreter exits, and the process hangs or aborts on
+# Linux with no dataprof involved.
+_PYTHON_FILESYSTEM_SCAN = r"""
+import sys
+
+import pyarrow as pa
+import pyarrow.dataset as ds
+import pyarrow.fs as pafs
+
+import dataprof
+
+
+class PythonFiles(pafs.FileSystemHandler):
+    def __init__(self, fail_reads):
+        self.local = pafs.LocalFileSystem()
+        self.fail_reads = fail_reads
+
+    def __eq__(self, other):
+        return isinstance(other, PythonFiles)
+
+    def __ne__(self, other):
+        return not self == other
+
+    def get_type_name(self):
+        return "python-files"
+
+    def equals(self, other):
+        return self == other
+
+    def normalize_path(self, path):
+        return path
+
+    def get_file_info(self, paths):
+        return self.local.get_file_info(paths)
+
+    def get_file_info_selector(self, selector):
+        return self.local.get_file_info(selector)
+
+    def open_input_file(self, path):
+        # Dataset discovery reads part0's schema; fail only the scan's reads.
+        if self.fail_reads and not path.endswith("part0.parquet"):
+            raise OSError("object store unavailable")
+        return pa.PythonFile(open(path, "rb"), mode="r")
+
+    open_input_stream = open_input_file
+
+    def _unsupported(self, *args):
+        raise NotImplementedError
+
+    create_dir = delete_dir = delete_dir_contents = delete_root_dir_contents = _unsupported
+    delete_file = move = copy_file = open_output_stream = open_append_stream = _unsupported
+
+
+root, case = sys.argv[1:]
+filesystem = pafs.PyFileSystem(PythonFiles(fail_reads=case == "error"))
+reader = ds.dataset(root, filesystem=filesystem, format="parquet").scanner().to_reader()
+try:
+    report = dataprof.profile(reader)
+except RuntimeError as error:
+    print(f"error: {error}")
+else:
+    print(f"rows: {report.rows}")
+"""
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ("full", "rows: 8000"),
+        ("error", "error: Arrow stream batch failed"),
+    ],
+)
+def test_producer_threads_that_need_the_gil_do_not_deadlock(tmp_path, case, expected):
+    pq = pytest.importorskip("pyarrow.parquet")
+    pytest.importorskip("pyarrow.dataset")
+    for part in range(8):
+        values = list(range(part * 1000, (part + 1) * 1000))
+        pq.write_table(
+            pa.table({"x": values}), tmp_path / f"part{part}.parquet", row_group_size=100
+        )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _PYTHON_FILESYSTEM_SCAN, tmp_path.as_posix(), case],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"profile() deadlocked on a scanner over a Python filesystem ({case})")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith(expected), result.stdout
+    if case == "error":
+        assert "object store unavailable" in result.stdout
 
 
 def test_export_exception_keeps_original_cause():
