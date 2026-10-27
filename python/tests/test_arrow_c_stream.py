@@ -216,7 +216,10 @@ def test_batches_are_released_during_consumption():
 
 # A PyArrow scanner reads on its own I/O threads, and a filesystem written in
 # Python needs the GIL on them. Run in a subprocess so a deadlock fails the test
-# instead of hanging the suite.
+# instead of hanging the suite. Every case reads the scanner to its end or to an
+# error: stopped early (max_rows), PyArrow's readahead is still in that
+# filesystem when the interpreter exits, and the process hangs or aborts on
+# Linux with no dataprof involved.
 _PYTHON_FILESYSTEM_SCAN = r"""
 import sys
 
@@ -272,7 +275,7 @@ root, case = sys.argv[1:]
 filesystem = pafs.PyFileSystem(PythonFiles(fail_reads=case == "error"))
 reader = ds.dataset(root, filesystem=filesystem, format="parquet").scanner().to_reader()
 try:
-    report = dataprof.profile(reader, max_rows=1 if case == "cap" else None)
+    report = dataprof.profile(reader)
 except RuntimeError as error:
     print(f"error: {error}")
 else:
@@ -284,7 +287,6 @@ else:
     "case, expected",
     [
         ("full", "rows: 8000"),
-        ("cap", "rows: 1"),
         ("error", "error: Arrow stream batch failed"),
     ],
 )
