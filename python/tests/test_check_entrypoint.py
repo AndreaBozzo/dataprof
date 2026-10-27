@@ -284,6 +284,7 @@ def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path)
         "min_quality_score": 0,
         "min_dimension_scores": {"completeness": 0},
         "max_null_percentage": {"*": 100, "amount": 50},
+        "max_null_count": {"*": 0, "amount": 1},
         "max_duplicate_rows": 0,
         "require_metrics": ["quality", "completeness"],
         "scope": "observed",
@@ -311,6 +312,31 @@ def test_min_rows_flag(source: Path, flags: tuple[str, ...], code: int):
     assert result.returncode == code, result.stderr
     (check,) = json.loads(result.stdout)["checks"]
     assert check["code"] == "min_rows"
+
+
+@pytest.mark.parametrize(
+    "flags,limits,code",
+    [
+        (["--max-null-count", "amount=0"], {"amount": 0}, 1),
+        (["--max-null-count", "amount=1"], {"amount": 1}, 0),
+        (["--max-null-count", "*=0", "--max-null-count", "amount=1"], {"*": 0, "amount": 1}, 0),
+    ],
+    ids=["one-null-over-zero", "within", "wildcard-and-name"],
+)
+def test_null_count_flag_matches_the_library(
+    source: Path, flags: list[str], limits: dict[str, int], code: int
+):
+    result = run_check(source, *flags, "--json")
+    assert result.returncode == code, result.stderr
+    expected = dp.profile_file(source).check(max_null_count=limits)
+    assert json.loads(result.stdout) == expected.to_dict()
+
+
+@pytest.mark.parametrize("value", ["amount", "amount=", "amount=0.5", "=0"])
+def test_a_malformed_null_count_flag_is_an_argument_error(source: Path, value: str):
+    result = run_check(source, "--max-null-count", value, "--json")
+    assert result.returncode == 3
+    assert "expected NAME=COUNT" in result.stderr + result.stdout
 
 
 def test_flags_replace_matching_policy_keys(source: Path, tmp_path: Path):

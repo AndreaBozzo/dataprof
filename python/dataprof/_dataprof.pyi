@@ -414,6 +414,8 @@ class ProfileReport:
         min_dimension_scores: list[tuple[str, float]] = ...,
         max_null_percentage: list[tuple[str, float]] = ...,
         max_null_percentage_any: float | None = ...,
+        max_null_count: list[tuple[str, int]] = ...,
+        max_null_count_any: int | None = ...,
         max_duplicate_rows: int | None = ...,
         require_quality: bool = ...,
         require_dimensions: list[str] = ...,

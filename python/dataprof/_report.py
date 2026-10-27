@@ -704,6 +704,7 @@ class ProfileReport:
         min_quality_score: float | None = None,
         min_dimension_scores: _Mapping[str, float] | None = None,
         max_null_percentage: _Mapping[str, float] | float | None = None,
+        max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
@@ -723,7 +724,8 @@ class ProfileReport:
 
             result = report.check(
                 min_quality_score=90,
-                max_null_percentage={"customer_id": 0, "*": 20},
+                max_null_count={"customer_id": 0},
+                max_null_percentage={"*": 20},
                 require_metrics=["quality"],
             )
             if not result.passed:
@@ -748,7 +750,12 @@ class ProfileReport:
             max_null_percentage: Ceiling for a column's null percentage,
                 0-100. A mapping keyed by column name, where ``"*"`` sets the
                 limit for every column without its own entry; a bare number is
-                the same as ``{"*": number}``.
+                the same as ``{"*": number}``. Decided at the two decimals it
+                is shown at, so above 20,000 rows a zero limit lets one null
+                through; use ``max_null_count`` for "no nulls".
+            max_null_count: Ceiling for a column's null count, decided on the
+                exact count. Same mapping shape as ``max_null_percentage``.
+                ``{"customer_id": 0}`` states "no nulls" at any row count.
             max_duplicate_rows: Ceiling for the duplicate-row count.
             require_metrics: Metrics that must have been analyzed at all:
                 ``"quality"`` for the assessment as a whole, or a dimension
@@ -822,6 +829,7 @@ class ProfileReport:
             min_quality_score=min_quality_score,
             min_dimension_scores=min_dimension_scores,
             max_null_percentage=max_null_percentage,
+            max_null_count=max_null_count,
             max_duplicate_rows=max_duplicate_rows,
             require_metrics=require_metrics,
             scope=scope,

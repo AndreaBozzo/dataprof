@@ -118,6 +118,16 @@ fn policy_from(spec: &Value) -> QualityPolicy {
             };
         }
     }
+    if let Some(limits) = spec.get("max_null_count").and_then(Value::as_object) {
+        for (column, max) in limits {
+            let max = max.as_u64().expect("a whole number") as usize;
+            policy = if column == "*" {
+                policy.max_null_count_any(max)
+            } else {
+                policy.max_null_count(column, max)
+            };
+        }
+    }
     if let Some(max) = spec.get("max_duplicate_rows") {
         policy = policy.max_duplicate_rows(max.as_u64().expect("a whole number") as usize);
     }

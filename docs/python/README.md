@@ -937,7 +937,8 @@ into Airflow, Dagster, a GitHub Action, or a shell script -- no CLI involved.
 report = dp.profile("daily_drop.csv")
 result = report.check(
     min_quality_score=90,
-    max_null_percentage={"customer_id": 0, "*": 20},
+    max_null_count={"customer_id": 0},
+    max_null_percentage={"*": 20},
     max_duplicate_rows=0,
     require_metrics=["quality"],
 )
@@ -953,6 +954,7 @@ if not result.passed:
 | `min_quality_score` | `float` | Floor for the overall score, 0--100 |
 | `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
+| `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.14+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
@@ -968,7 +970,13 @@ Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A score, its bounds, a null percentage and the threshold are
 compared at the 2-decimal precision the check shows them at, so a score shown
 as `66.67` meets a floor of `66.67`, and a saved report reaches the verdict the
-live one did (0.13+). A policy that cannot be evaluated as written -- a threshold
+live one did (0.13+). The price is that a zero null-percentage limit is a
+rounded endpoint: one null in 20,001 rows shows as `0.0` and passes it. For a
+no-null rule on a key or required column, use `max_null_count={"column": 0}`,
+which compares the exact count and needs no rounding. Like `max_duplicate_rows`,
+it fails a truncated or sampled scan that already counted more nulls than
+allowed, and otherwise leaves a full-source rule unevaluated on such a scan.
+A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
 bad extract. A threshold must be a real number: text is refused even when it
@@ -1277,7 +1285,7 @@ baseline written by an older release reaching their verdicts.
 Evaluate the same policy from a shell or CI job:
 
 ```bash
-python -m dataprof.check daily_drop.csv --min-quality 90 --max-null 'customer_id=0' --json
+python -m dataprof.check daily_drop.csv --min-quality 90 --max-null-count 'customer_id=0' --json
 python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
 ```
 
@@ -1303,7 +1311,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 {
   "min_rows": 1,
   "min_quality_score": 90,
-  "max_null_percentage": {"customer_id": 0, "*": 20},
+  "max_null_count": {"customer_id": 0},
+  "max_null_percentage": {"*": 20},
   "max_duplicate_rows": 0,
   "require_metrics": ["quality"],
   "scope": "full_source"
@@ -1313,7 +1322,7 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
+`--max-null-count COLUMN=COUNT` (0.14+), `--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
 to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including

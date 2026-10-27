@@ -21,6 +21,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "min_quality_score": None,
     "min_dimension_scores": None,
     "max_null_percentage": None,
+    "max_null_count": None,
     "max_duplicate_rows": None,
     "require_metrics": None,
     "require_columns": None,
@@ -41,6 +42,16 @@ def _named_percentage(text: str) -> tuple[str, float]:
         return name, float(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
+
+
+def _named_count(text: str) -> tuple[str, int]:
+    name, separator, value = text.rpartition("=")
+    if not separator or not name:
+        raise argparse.ArgumentTypeError("expected NAME=COUNT")
+    try:
+        return name, int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected NAME=COUNT") from exc
 
 
 # The names profile_file() accepts for --engine/--format/--metric, mirroring
@@ -215,6 +226,15 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         metavar="COLUMN=PERCENT",
         help="maximum null percentage (0-100); use *=PERCENT for all columns; repeatable",
     )
+    parser.add_argument(
+        "--max-null-count",
+        dest="max_null_count",
+        type=_named_count,
+        action="append",
+        metavar="COLUMN=COUNT",
+        help="maximum null count, decided on the exact count (COLUMN=0 means no nulls); "
+        "use *=COUNT for all columns; repeatable",
+    )
     parser.add_argument("--max-duplicate-rows", type=int, help="maximum duplicate-row count")
     parser.add_argument(
         "--require-metric",
@@ -354,6 +374,7 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
             if key in (
                 "min_dimension_scores",
                 "max_null_percentage",
+                "max_null_count",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
             ):

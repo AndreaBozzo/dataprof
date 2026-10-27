@@ -880,6 +880,130 @@
           }
         ]
       }
+    },
+    {
+      "name": "an_exact_null_count_decides_a_no_null_rule",
+      "why": "A null-count ceiling compares the exact count, so one null fails a zero limit at any row count; customer_id has one null, order_id none.",
+      "options": {},
+      "policy": {
+        "max_null_count": {
+          "customer_id": 0,
+          "order_id": 0
+        }
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "max_null_count",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "failed",
+            "message": "nulls were observed in this column above the allowance"
+          },
+          {
+            "code": "max_null_count",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null count is within the allowance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "witnessed_nulls_fail_despite_incomplete_coverage",
+      "why": "Nulls already counted stay counted when more rows are read, so a capped scan that saw customer_id's null settles its ceiling; the columns with no null seen stay undecided.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "max_null_count": {
+          "*": 0
+        }
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "max_null_count",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "no nulls above the allowance were observed in this column, and the rows that were not read may hold more"
+          },
+          {
+            "code": "max_null_count",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "failed",
+            "message": "nulls were observed in this column above the allowance"
+          },
+          {
+            "code": "max_null_count",
+            "column": "amount",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "no nulls above the allowance were observed in this column, and the rows that were not read may hold more"
+          }
+        ]
+      }
     }
   ]
 }

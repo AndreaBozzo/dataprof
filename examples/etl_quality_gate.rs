@@ -41,12 +41,14 @@ T-2005,,17.99,2026-01-06
 const KEY_COLUMN: &str = "transaction_id";
 const REQUIRED_COLUMNS: &[&str] = &["transaction_id", "account", "amount_eur", "booked_at"];
 
-/// What the warehouse is willing to accept. Every threshold is a 0..=100
-/// percentage, matching what the report reports.
+/// What the warehouse is willing to accept. The scores and percentages are on
+/// the 0..=100 scale the report reports; the key column's "no nulls" is a
+/// count, because a 0% limit is decided at two decimals and lets one null in
+/// 20,001 rows through.
 fn policy() -> QualityPolicy {
     QualityPolicy::new()
         .min_quality_score(90.0)
-        .max_null_percentage(KEY_COLUMN, 0.0)
+        .max_null_count(KEY_COLUMN, 0)
         .max_null_percentage_any(5.0)
         .max_duplicate_rows(0)
         // Without these, a run that never computed quality would leave the

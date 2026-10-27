@@ -81,7 +81,7 @@
 //! fn gate(report: &ProfileReport) -> Result<bool, Box<dyn std::error::Error>> {
 //!     let result = QualityPolicy::new()
 //!         .min_quality_score(90.0)
-//!         .max_null_percentage("customer_id", 0.0)
+//!         .max_null_count("customer_id", 0)
 //!         .max_null_percentage_any(20.0)
 //!         .require_quality()
 //!         .evaluate(report)?;
@@ -310,6 +310,8 @@ pub enum CheckCode {
     MinDimensionScore,
     /// A column's null percentage must be at most the threshold.
     MaxNullPercentage,
+    /// A column's null count must be at most the threshold.
+    MaxNullCount,
     /// The duplicate-row count must be at most the threshold.
     MaxDuplicateRows,
     /// A metric must have been analyzed at all.
@@ -338,6 +340,7 @@ impl fmt::Display for CheckCode {
             Self::MinQualityScore => write!(f, "min_quality_score"),
             Self::MinDimensionScore => write!(f, "min_dimension_score"),
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
+            Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
             Self::RequireMetric => write!(f, "require_metric"),
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
@@ -805,6 +808,8 @@ pub struct QualityPolicy {
     min_dimension_scores: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage: BTreeMap<String, f64>,
     max_null_percentage_any: Option<f64>,
+    max_null_count: BTreeMap<String, usize>,
+    max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
     require_metrics: Vec<RequiredMetric>,
     max_quality_score_drop: Option<f64>,
@@ -857,6 +862,22 @@ impl QualityPolicy {
     /// `max` (0..=100).
     pub fn max_null_percentage_any(mut self, max: f64) -> Self {
         self.max_null_percentage_any = Some(max);
+        self
+    }
+
+    /// Require the named column to hold at most `max` nulls, decided on the
+    /// exact count. `max_null_count(column, 0)` states "no nulls" at any row
+    /// count, where a zero null percentage is decided at the two decimals it
+    /// is shown at. Takes precedence over
+    /// [`max_null_count_any`](Self::max_null_count_any) for that column.
+    pub fn max_null_count(mut self, column: impl Into<String>, max: usize) -> Self {
+        self.max_null_count.insert(column.into(), max);
+        self
+    }
+
+    /// Require every other profiled column to hold at most `max` nulls.
+    pub fn max_null_count_any(mut self, max: usize) -> Self {
+        self.max_null_count_any = Some(max);
         self
     }
 
@@ -1014,6 +1035,8 @@ impl QualityPolicy {
             && self.min_dimension_scores.is_empty()
             && self.max_null_percentage.is_empty()
             && self.max_null_percentage_any.is_none()
+            && self.max_null_count.is_empty()
+            && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
             && self.require_metrics.is_empty()
             && self.require_columns.is_empty()
@@ -1163,6 +1186,7 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_percentage_checks(report, scan));
+        checks.extend(self.null_count_checks(report, scan));
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
         }
@@ -1480,7 +1504,83 @@ impl QualityPolicy {
         check
     }
 
-    /// A duplicate count is the one requirement here that an incomplete scan
+    /// The null-count ceilings, in the same order as the null-percentage
+    /// ones: named columns in name order, then every other profiled column in
+    /// report order.
+    fn null_count_checks(&self, report: &ProfileReport, scan: Evidence) -> Vec<Check> {
+        let mut checks = Vec::new();
+        for (column, max) in &self.max_null_count {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.null_count_check(column, profile, scan, *max));
+        }
+        if let Some(max) = self.max_null_count_any {
+            for profile in &report.column_profiles {
+                if !self.max_null_count.contains_key(&profile.name) {
+                    checks.push(self.null_count_check(&profile.name, Some(profile), scan, max));
+                }
+            }
+        }
+        checks
+    }
+
+    /// A null count, like a duplicate count, only grows as more rows are read:
+    /// nulls the scan witnessed above the allowance fail a full-source rule
+    /// whatever the scan missed, and a count within it passes only when the
+    /// scan covered the source. The count is exact, so nothing is rounded.
+    /// Unlike a percentage, it has an answer when no value was read: zero.
+    fn null_count_check(
+        &self,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+        max: usize,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::MaxNullCount,
+            column: Some(column.to_string()),
+            dimension: None,
+            expected: Expectation::AtMost {
+                value: MetricValue::Count(max),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let exceeded = profile.null_count > max;
+        check.observed = Some(MetricValue::Count(profile.null_count));
+        check.status = match (self.scope, scan.gap()) {
+            (PolicyScope::FullSource, Some(_)) if exceeded => CheckStatus::Failed,
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ if exceeded => CheckStatus::Failed,
+            _ => CheckStatus::Passed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => "this column's null count is within the allowance",
+            CheckStatus::Failed => "nulls were observed in this column above the allowance",
+            CheckStatus::NotEvaluated(_) => {
+                "no nulls above the allowance were observed in this column, and the rows \
+                 that were not read may hold more"
+            }
+        }
+        .to_string();
+        check
+    }
+
+    /// A duplicate count, like a null count, is a requirement that an incomplete scan
     /// can still settle in one direction: rows already witnessed as duplicates
     /// do not stop being duplicates when more rows are read, so an exact count
     /// above the allowance is a conclusive failure. A count at or below it is
@@ -3592,6 +3692,136 @@ mod tests {
             "the duplicate-row count is an estimate, which can neither witness \
              duplicates above the allowance nor rule them out"
         );
+    }
+
+    /// One null in 20,001 rows shows as a 0.00% null percentage, so a zero
+    /// percentage limit passes it; the count ceiling decides on the count
+    /// (#1119).
+    #[test]
+    fn a_null_count_ceiling_is_decided_on_the_exact_count() {
+        let report = ReportAssembler::new(source(), ExecutionMetadata::new(20_001, 2, 10))
+            .columns(vec![column("key", 20_001, 1), column("clean", 20_001, 0)])
+            .build();
+
+        let percentage = QualityPolicy::new()
+            .max_null_percentage("key", 0.0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(percentage.verdict, Verdict::Pass);
+
+        let count = QualityPolicy::new()
+            .max_null_count("key", 0)
+            .max_null_count_any(0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(count.verdict, Verdict::Fail);
+        let key = column_check(&count, "key");
+        assert_eq!(key.code, CheckCode::MaxNullCount);
+        assert_eq!(key.observed, Some(MetricValue::Count(1)));
+        assert_eq!(key.status, CheckStatus::Failed);
+        assert_eq!(column_check(&count, "clean").status, CheckStatus::Passed);
+    }
+
+    /// Nulls already counted stay counted, so a partial scan that saw more
+    /// than allowed fails a full-source rule; one that saw no more than
+    /// allowed decides nothing about the rows it did not read.
+    #[test]
+    fn witnessed_nulls_fail_a_partial_scan_and_a_clean_prefix_does_not_pass() {
+        let result = QualityPolicy::new()
+            .max_null_count_any(0)
+            .evaluate(&truncated_report())
+            .unwrap();
+
+        assert_eq!(result.verdict, Verdict::Fail);
+        assert_eq!(column_check(&result, "note").status, CheckStatus::Failed);
+        assert_eq!(
+            column_check(&result, "id").not_evaluated(),
+            Some(&NotEvaluated::EvidenceIncomplete {
+                gap: EvidenceGap::Truncated
+            })
+        );
+
+        let observed = QualityPolicy::new()
+            .max_null_count("note", 1)
+            .scope(PolicyScope::Observed)
+            .evaluate(&truncated_report())
+            .unwrap();
+        assert_eq!(observed.verdict, Verdict::Pass);
+    }
+
+    /// A column with no values read has no null percentage, but it has a null
+    /// count, zero: a full scan of an empty source decides the count rule.
+    #[test]
+    fn a_column_with_no_values_read_has_a_null_count_of_zero() {
+        let report = ReportAssembler::new(source(), ExecutionMetadata::new(0, 1, 10))
+            .columns(vec![column("key", 0, 0)])
+            .build();
+
+        let count = QualityPolicy::new()
+            .max_null_count("key", 0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(count.verdict, Verdict::Pass);
+        assert_eq!(
+            column_check(&count, "key").observed,
+            Some(MetricValue::Count(0))
+        );
+
+        let percentage = QualityPolicy::new()
+            .max_null_percentage("key", 0.0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(
+            column_check(&percentage, "key").not_evaluated(),
+            Some(&NotEvaluated::NotAssessed)
+        );
+    }
+
+    /// A named column's ceiling replaces the wildcard for that column, and a
+    /// named column the report did not profile is not read as zero nulls.
+    #[test]
+    fn a_named_null_count_overrides_the_wildcard_and_absence_is_unevaluated() {
+        let result = QualityPolicy::new()
+            .max_null_count("note", 1)
+            .max_null_count("absent", 0)
+            .max_null_count_any(0)
+            .evaluate(&complete_report())
+            .unwrap();
+
+        let checks: Vec<_> = result
+            .checks
+            .iter()
+            .map(|check| (check.column.clone().unwrap(), check.expected))
+            .collect();
+        assert_eq!(
+            checks,
+            vec![
+                (
+                    "absent".to_string(),
+                    Expectation::AtMost {
+                        value: MetricValue::Count(0)
+                    }
+                ),
+                (
+                    "note".to_string(),
+                    Expectation::AtMost {
+                        value: MetricValue::Count(1)
+                    }
+                ),
+                (
+                    "id".to_string(),
+                    Expectation::AtMost {
+                        value: MetricValue::Count(0)
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            column_check(&result, "absent").not_evaluated(),
+            Some(&NotEvaluated::ColumnNotProfiled)
+        );
+        assert_eq!(column_check(&result, "note").status, CheckStatus::Passed);
+        assert_eq!(result.verdict, Verdict::Inconclusive);
     }
 
     /// A conclusive violation outranks an unevaluated requirement: the gate

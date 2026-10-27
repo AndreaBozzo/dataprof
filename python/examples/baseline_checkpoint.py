@@ -59,7 +59,8 @@ def orders(
 # Absolute rules: they hold on every run, the first included.
 ABSOLUTE: dict[str, Any] = {
     "min_quality_score": 85,
-    "max_null_percentage": {"order_id": 0, "customer_id": 20},
+    "max_null_count": {"order_id": 0},
+    "max_null_percentage": {"customer_id": 20},
     "max_duplicate_rows": 0,
     "require_columns": ["order_id", "customer_id", "amount_eur", "status"],
 }

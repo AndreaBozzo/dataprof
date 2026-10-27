@@ -146,6 +146,7 @@ class ProfileReport:
         min_quality_score: float | None = ...,
         min_dimension_scores: Mapping[str, float] | None = ...,
         max_null_percentage: Mapping[str, float] | float | None = ...,
+        max_null_count: Mapping[str, int] | int | None = ...,
         max_duplicate_rows: int | None = ...,
         require_metrics: Sequence[str] | None = ...,
         scope: str = ...,
