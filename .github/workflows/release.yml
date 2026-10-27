@@ -5,8 +5,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write  # For creating releases and uploading assets
-  id-token: write  # For PyPI publishing
+  contents: read
 
 env:
   CARGO_INCREMENTAL: 0
@@ -19,11 +18,14 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
     - uses: actions/checkout@v7.0.1
       with:
+        persist-credentials: false
         fetch-depth: 0  # Need full history for changelog
 
     - name: Get tag and version info
@@ -171,6 +173,8 @@ jobs:
     needs: create-release
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup Rust
       uses: ./.github/actions/setup-rust
@@ -206,6 +210,8 @@ jobs:
       RUSTUP_TOOLCHAIN: '1.96'
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust 1.96 (workspace MSRV)
       uses: dtolnay/rust-toolchain@1.96
@@ -228,6 +234,8 @@ jobs:
     needs: [rust-release-checks, msrv]
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup Rust
       uses: ./.github/actions/setup-rust
@@ -270,6 +278,8 @@ jobs:
     needs: [rust-package-checks, python-dist]
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Setup Rust
       uses: ./.github/actions/setup-rust
@@ -396,6 +406,8 @@ jobs:
   python-release-assets:
     name: Upload Python Distributions to Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [create-release, python-dist]
     steps:
     - name: Download wheels
@@ -480,9 +492,13 @@ jobs:
   finalize-release:
     name: Finalize Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs: [create-release, rust-crates, pypi-publish, python-release-assets]
     steps:
     - uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Mark release as published
       run: |

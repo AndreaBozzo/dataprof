@@ -248,6 +248,29 @@ def test_release_and_rehearsal_share_one_build():
     assert "contents: write" not in rehearsal
 
 
+def test_release_jobs_hold_only_the_tokens_they_use():
+    """A release job that never publishes must not carry a write token."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert release.count("uses: actions/checkout@") == release.count(
+        "persist-credentials: false"
+    )
+
+    publishing = ("create-release", "python-release-assets", "finalize-release")
+    for job in publishing:
+        body = _job_body(release, job)
+        assert "permissions:\n      contents: write" in body, job
+        assert "id-token: write" not in body, job
+
+    assert "id-token: write" in _job_body(release, "pypi-publish")
+    for job in ("rust-release-checks", "msrv", "rust-package-checks", "rust-crates", "python-dist"):
+        body = _job_body(release, job)
+        assert "contents: write" not in body, job
+        assert "id-token: write" not in body, job
+
+    # The workflow default is read-only; the publishing jobs opt in above.
+    assert "permissions:\n  contents: read\n\n" in release
+
+
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):
     """Resolve version requests to python.exe paths and preserve spaces in argv."""
     requested = ["3.10", "3.14"]
