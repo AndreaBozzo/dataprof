@@ -90,16 +90,24 @@ impl CsvParserConfig {
 /// or it is a quoted empty string `""`. Judging the raw text instead counted
 /// `""` as content, and a row ending in `;""` disagreed with its header
 /// (#1102).
-fn count_fields(line: &str, delimiter: char) -> (usize, usize) {
-    let decodes_empty = |field: &str| field.is_empty() || field == "\"\"";
+fn count_fields(line: &str, delimiter: char, quote_char: u8) -> (usize, usize) {
+    let decodes_empty = |field: &str| {
+        field.is_empty()
+            || (field.len() == 2
+                && field.as_bytes()[0] == quote_char
+                && field.as_bytes()[1] == quote_char)
+    };
     let mut fields = 1;
     let mut trailing_empty = 0;
     let mut field_start = 0;
     let mut in_quotes = false;
     let mut chars = line.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
-        if ch == '"' {
-            if chars.peek().map(|&(_, next)| next) == Some('"') {
+        if ch as u32 == u32::from(quote_char) {
+            if chars
+                .peek()
+                .is_some_and(|&(_, next)| next as u32 == u32::from(quote_char))
+            {
                 chars.next();
             } else {
                 in_quotes = !in_quotes;
@@ -139,7 +147,7 @@ fn agrees_with_header(fields: usize, trailing_empty: usize, header_fields: usize
 /// newline outside quotes — i.e. the text ends mid-record (or exactly at a
 /// record's end with no trailing newline, which a caller sampling a fixed
 /// byte budget cannot distinguish from a cut).
-fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
+fn split_sample_records(text: &str, quote_char: u8) -> (Vec<&str>, bool) {
     let bytes = text.as_bytes();
     let mut records = Vec::new();
     let mut in_quotes = false;
@@ -147,8 +155,8 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
     let mut i = 0usize;
     while i < bytes.len() {
         match bytes[i] {
-            b'"' => {
-                if in_quotes && bytes.get(i + 1) == Some(&b'"') {
+            byte if byte == quote_char => {
+                if in_quotes && bytes.get(i + 1) == Some(&quote_char) {
                     i += 1; // escaped quote inside a quoted section
                 } else {
                     in_quotes = !in_quotes;
@@ -197,6 +205,11 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 /// one-column file of `123|456` keys was profiled as `123` with fabricated
 /// duplicates (#1092).
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
+    detect_delimiter_with_quote(reader, b'"')
+}
+
+/// Detect the delimiter using the same quote character as the reader.
+pub fn detect_delimiter_with_quote<R: Read>(reader: R, quote_char: u8) -> std::io::Result<u8> {
     const SAMPLE_BYTES: u64 = 4096;
     let mut preamble = Vec::new();
     let mut take = reader.take(SAMPLE_BYTES);
@@ -208,7 +221,7 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     // a one-field header and outvoted the real one.
     let sample = preamble.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&preamble);
     let preamble_str = String::from_utf8_lossy(sample);
-    let (mut records, last_unterminated) = split_sample_records(&preamble_str);
+    let (mut records, last_unterminated) = split_sample_records(&preamble_str, quote_char);
     // A full sample buffer that ends mid-record leaves a fragment; never score
     // it. A sample ending on a clean newline keeps all its records.
     if truncated && last_unterminated && records.len() > 1 {
@@ -237,10 +250,10 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     let mut best_score = (false, 0usize, 0usize, 0usize);
 
     for &delimiter in &delimiters {
-        let (header_fields, _) = count_fields(header, delimiter as char);
+        let (header_fields, _) = count_fields(header, delimiter as char, quote_char);
         let (mut agreeing, mut exact) = (1, 1);
         for record in rows {
-            let (fields, trailing_empty) = count_fields(record, delimiter as char);
+            let (fields, trailing_empty) = count_fields(record, delimiter as char, quote_char);
             if agrees_with_header(fields, trailing_empty, header_fields) {
                 agreeing += 1;
             }
@@ -322,7 +335,9 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
         let mut take = reader.take(4096);
         take.read_to_end(&mut preamble)?;
 
-        let detected = detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+        let detected =
+            detect_delimiter_with_quote(std::io::Cursor::new(&preamble), config.quote_char)
+                .unwrap_or(b',');
         actual_delimiter = Some(detected);
 
         Box::new(std::io::Cursor::new(preamble).chain(take.into_inner()))
@@ -787,6 +802,20 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_delimiter_uses_the_configured_quote_char() {
+        // A custom quote keeps the delimiter in the header from being counted.
+        let data = "'key|part'\na|b\nc|d\n";
+        assert_eq!(
+            detect_delimiter_with_quote(Cursor::new(data.as_bytes()), b'\'').unwrap(),
+            b','
+        );
+        assert_eq!(
+            detect_delimiter(Cursor::new(data.as_bytes())).unwrap(),
+            b'|'
+        );
+    }
+
+    #[test]
     fn test_detect_delimiter_tab() {
         let data = b"name\tage\tcity\nAlice\t25\tNYC\nBob\t30\tLondon\n";
         assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b'\t');
@@ -921,30 +950,30 @@ mod tests {
 
     #[test]
     fn test_count_fields_reports_trailing_empty_fields() {
-        assert_eq!(count_fields("1;10,50;", ';'), (3, 1));
-        assert_eq!(count_fields("a;;", ';'), (3, 2));
-        assert_eq!(count_fields("a;\"\"", ';'), (2, 1));
-        assert_eq!(count_fields("a;\"\"\"\"", ';'), (2, 0));
-        assert_eq!(count_fields("a; ", ';'), (2, 0));
-        assert_eq!(count_fields("a;b", ';'), (2, 0));
-        assert_eq!(count_fields("\"x;y\";", ';'), (2, 1));
+        assert_eq!(count_fields("1;10,50;", ';', b'"'), (3, 1));
+        assert_eq!(count_fields("a;;", ';', b'"'), (3, 2));
+        assert_eq!(count_fields("a;\"\"", ';', b'"'), (2, 1));
+        assert_eq!(count_fields("a;\"\"\"\"", ';', b'"'), (2, 0));
+        assert_eq!(count_fields("a; ", ';', b'"'), (2, 0));
+        assert_eq!(count_fields("a;b", ';', b'"'), (2, 0));
+        assert_eq!(count_fields("\"x;y\";", ';', b'"'), (2, 1));
     }
 
     #[test]
     fn test_split_sample_records_quote_aware() {
-        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
+        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n", b'"');
         assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
         assert!(!last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie");
+        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie", b'"');
         assert_eq!(records, vec!["a,b", "1,\"cut mid-fie"]);
         assert!(last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r");
+        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r", b'"');
         assert_eq!(records, vec!["a,b", "1,\"x\ry\"", "2,z"]);
         assert!(!last_unterminated);
 
-        let (records, _) = split_sample_records("a\rb\r\nc\n");
+        let (records, _) = split_sample_records("a\rb\r\nc\n", b'"');
         assert_eq!(records, vec!["a", "b", "c"]);
     }
 

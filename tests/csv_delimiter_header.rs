@@ -133,3 +133,31 @@ fn detected_delimiter_keeps_every_value_on_every_route() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+#[test]
+fn custom_quote_char_is_used_by_delimiter_detection() {
+    // The header is one quoted field; a pipe inside it must not make pipe win.
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    file.write_all(b"'key|part'\na|b\nc|d\n").unwrap();
+    file.flush().unwrap();
+
+    let config = CsvParserConfig {
+        quote_char: b'\'',
+        ..CsvParserConfig::default()
+    };
+    let report = analyze_csv_file(file.path(), &config).expect("profile custom quote file");
+    let serialized = serde_json::to_value(&report).expect("serialize report");
+    let columns = serialized["column_profiles"]
+        .as_array()
+        .expect("column_profiles");
+    assert_eq!(
+        columns.len(),
+        1,
+        "header must stay one column, got {serialized}"
+    );
+    assert_eq!(columns[0]["name"], "key|part");
+    assert_eq!(
+        serialized["quality"]["metrics"]["uniqueness"]["duplicate_rows"], 0,
+        "data rows must not be cut to the header: {serialized}"
+    );
+}
