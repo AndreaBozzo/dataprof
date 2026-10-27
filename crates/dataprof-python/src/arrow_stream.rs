@@ -53,6 +53,12 @@ struct ArrowArrayStream {
     private_data: *mut c_void,
 }
 
+// SAFETY: `Python::detach` asks for `Send` only as a proxy for "holds nothing
+// tied to the interpreter"; its closure runs on the calling thread. The
+// stream never leaves the thread that imported it, and its callbacks are
+// called one at a time, as the C interface requires.
+unsafe impl Send for ArrowArrayStream {}
+
 impl ArrowArrayStream {
     /// The all-NULL struct a moved-from producer slot is left holding.
     fn empty() -> Self {
@@ -69,16 +75,26 @@ impl ArrowArrayStream {
 impl Drop for ArrowArrayStream {
     fn drop(&mut self) {
         if let Some(release) = self.release {
-            // SAFETY: the callback belongs to this stream and is called once,
-            // on the struct this type owns. It NULLs `release` itself, and the
-            // capsule's copy was already emptied by the move in `new`.
-            unsafe { release(self) };
+            // Detached like every other callback: releasing a reader can wait
+            // for I/O threads that need the interpreter.
+            Python::attach(|py| {
+                py.detach(|| {
+                    // SAFETY: the callback belongs to this stream and is called
+                    // once, on the struct this type owns. It NULLs `release`
+                    // itself, and the capsule's copy was already emptied by the
+                    // move in `new`.
+                    unsafe { release(self) }
+                })
+            });
         }
     }
 }
 
-/// Own the moved C struct, releasing it on every success/error path. Calls stay
-/// attached to Python because producer callbacks may execute Python code.
+/// Own the moved C struct, releasing it on every success/error path. Callbacks
+/// run detached from Python: a producer may wait on its own threads, and those
+/// may need the interpreter (a PyArrow scanner reading through a filesystem
+/// written in Python). A callback that runs Python on this thread takes the
+/// GIL itself, as PyArrow's exported readers and ctypes callbacks do.
 struct ImportedStream {
     stream: ArrowArrayStream,
     schema: SchemaRef,
@@ -115,7 +131,9 @@ impl ImportedStream {
         }
         let mut schema = FFI_ArrowSchema::empty();
         // SAFETY: stream is owned and the output is an initialized empty FFI struct.
-        let status = unsafe { get_schema(&mut stream, &mut schema) };
+        let status = source
+            .py()
+            .detach(|| unsafe { get_schema(&mut stream, &mut schema) });
         if status != 0 {
             return Err(stream_error(source.py(), &mut stream, "schema", status));
         }
@@ -134,7 +152,7 @@ impl ImportedStream {
         let mut array = FFI_ArrowArray::empty();
         let get_next = self.stream.get_next.expect("validated stream callback");
         // SAFETY: the stream owns its callbacks and array is a valid output slot.
-        let status = unsafe { get_next(&mut self.stream, &mut array) };
+        let status = py.detach(|| unsafe { get_next(&mut self.stream, &mut array) });
         if status != 0 {
             return Err(stream_error(py, &mut self.stream, "batch", status));
         }
@@ -189,18 +207,21 @@ impl ImportedStream {
 /// before releasing the stream, retaining it as the explicit Python cause.
 fn stream_error(py: Python<'_>, stream: &mut ArrowArrayStream, stage: &str, status: i32) -> PyErr {
     let message = stream.get_last_error.and_then(|callback| {
-        // SAFETY: callback belongs to the live stream; the returned string is
-        // borrowed only until the next callback, and is copied here immediately.
-        let pointer = unsafe { callback(stream) };
-        if pointer.is_null() {
-            None
-        } else {
-            Some(
-                unsafe { CStr::from_ptr(pointer) }
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        }
+        py.detach(|| {
+            // SAFETY: callback belongs to the live stream; the returned string
+            // is borrowed only until the next callback, and is copied here
+            // immediately.
+            let pointer = unsafe { callback(stream) };
+            if pointer.is_null() {
+                None
+            } else {
+                Some(
+                    unsafe { CStr::from_ptr(pointer) }
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            }
+        })
     });
     let error = PyRuntimeError::new_err(stream_error_message(stage, status, message.as_deref()));
     if let Some(message) = message {
