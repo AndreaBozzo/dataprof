@@ -6,8 +6,8 @@
 //! from 1e-300 to 1e100 must report those of the same values at unit scale, and
 //! a standard deviation scaled with the values. A variance below `f64`'s range
 //! is reported as `null`, as one above it is (#805). From 1e160 the spread
-//! itself overflows, and every statistic derived from it is absent rather than
-//! wrong.
+//! itself overflows, and below about 1e-304 subnormal rounding takes its
+//! digits; every statistic derived from it is then absent rather than wrong.
 //!
 //! `cycled` repeats its pattern every row, so each four-lane SIMD lane is
 //! constant and the spread is all in the merge of the lanes; `blocked` repeats
@@ -34,13 +34,17 @@ enum Fate {
     Underflows,
     /// The standard deviation and everything derived from it absent too.
     Overflows,
+    /// Lost to subnormal rounding: absent as for `Overflows`.
+    Lost,
 }
 
-const SCALES: [(&str, Fate); 7] = [
+const SCALES: [(&str, Fate); 9] = [
     ("1", Fate::Fits),
     ("1e-160", Fate::Fits),
     ("1e-200", Fate::Underflows),
     ("1e-300", Fate::Underflows),
+    ("1e-313", Fate::Lost),
+    ("5e-324", Fate::Lost),
     ("1e100", Fate::Fits),
     ("1e160", Fate::Overflows),
     ("1e300", Fate::Overflows),
@@ -240,7 +244,7 @@ fn every_path_keeps_the_scale_free_statistics_of_a_tiny_spread() {
                     ("std_dev", stats.std_dev, unit.std_dev.map(|s| s * factor)),
                 ];
                 for (key, got, expected) in checks {
-                    let right = if fate == Fate::Overflows {
+                    let right = if matches!(fate, Fate::Overflows | Fate::Lost) {
                         got.is_none()
                     } else {
                         close(got, expected)

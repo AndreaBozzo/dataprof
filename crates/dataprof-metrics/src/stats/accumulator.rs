@@ -92,10 +92,21 @@ const OVERFLOW_SCALE: f64 = 1.0 / 18_446_744_073_709_551_616.0;
 
 /// Factor M2 is held at while it is small: 2^1000, as the square of
 /// [`UNDERFLOW_HALF`] so the squared deviations it is built from are formed at
-/// it without rounding. A squared deviation down to 2^-2074 is still a normal
-/// `f64` at this scale, which covers deviations of values down to the
-/// subnormal range; M2 itself fits up to 2^24 before it is brought down.
+/// it without rounding. A squared deviation stays a normal `f64` at this scale
+/// down to 2^-2022, which deviations of about 2^-1011 (1e-304) reach; below
+/// that it rounds in the subnormal range, and for deviations of subnormal
+/// values it can vanish. [`LOST_SPREAD_PER_VALUE`] decides when that has
+/// reached M2's digits. M2 itself fits up to 2^24 before it is brought down.
+/// 2^1000 is about as far as a factor can go: `f64` holds no power of two
+/// above 2^1023.
 const UNDERFLOW_SCALE: f64 = f64::from_bits((1023 + 1000) << 52);
+
+/// 2^-1034, the smallest held M2 per value whose digits a squared deviation
+/// rounded in the subnormal range cannot reach: each such product is off by at
+/// most 2^-1075, so `count` of them are off by less than 2^-41 of an M2 of at
+/// least `count` times this. Below it, a varying column's spread is reported
+/// as lost rather than as a number missing most of its digits, or as zero.
+const LOST_SPREAD_PER_VALUE: f64 = f64::from_bits(1 << 40);
 
 /// 2^500, the factor each deviation is raised by before it is squared.
 const UNDERFLOW_HALF: f64 = f64::from_bits((1023 + 500) << 52);
@@ -356,27 +367,38 @@ impl NumericAccumulator {
 
     /// The square root of M2 divided by `denominator`, taken at the scale M2
     /// is held at. Infinite or NaN where the variance is: an overflowing
-    /// spread reports no standard deviation either, as before #1088.
+    /// spread reports no standard deviation either, as before #1088. NaN
+    /// where the spread was lost to underflow.
     fn std_dev_over(&self, denominator: f64) -> f64 {
         let variance = self.m2_over(denominator);
         if !variance.is_finite() {
             return variance.sqrt();
         }
+        if self.spread_lost() {
+            return f64::NAN;
+        }
         (self.m2 / denominator).max(0.0).sqrt() / self.m2_scale.root()
     }
 
     /// A variance from [`m2_over`](Self::m2_over), clamped at zero, or NaN
-    /// when a non-zero spread underflowed to zero: the variance is then too
-    /// small for `f64`, as an infinite one is too large, and callers report
-    /// neither.
+    /// when a non-zero spread underflowed to zero or was lost: the variance is
+    /// then too small for `f64`, as an infinite one is too large, and callers
+    /// report neither.
     fn reported_variance(&self, variance: f64) -> f64 {
         if variance.is_nan() {
             variance
-        } else if variance <= 0.0 && self.m2 > 0.0 {
+        } else if (variance <= 0.0 && self.m2 > 0.0) || self.spread_lost() {
             f64::NAN
         } else {
             variance.max(0.0)
         }
+    }
+
+    /// Whether the values vary but M2, as held, is too small to be sure of its
+    /// digits: deviations of subnormal values square to products that round,
+    /// or vanish, even at [`UNDERFLOW_SCALE`]. See [`LOST_SPREAD_PER_VALUE`].
+    fn spread_lost(&self) -> bool {
+        self.min < self.max && self.m2 < self.count as f64 * LOST_SPREAD_PER_VALUE
     }
 
     fn rescale_sum(&mut self) {
@@ -846,6 +868,43 @@ mod tests {
                     }
                 }
             }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Subnormal values square to products that round or vanish even at the
+    /// raised scale: at 2^-1040 a few survive and the spread came out with
+    /// almost none of its digits, at 2^-1074 none do and it came out zero. Both
+    /// are reported as lost, not as a number. A constant subnormal column is
+    /// still exactly constant.
+    #[test]
+    fn a_spread_lost_to_subnormal_rounding_is_not_reported() {
+        let pattern = [1.0, 2.0, 4.0, 9.0];
+        let mut wrong = Vec::new();
+        for exponent in [-1040, -1074] {
+            let unit = f64::from_bits(1 << (1074 + exponent));
+            let cycled: Vec<f64> = (0..104).map(|i| pattern[i % 4] * unit).collect();
+            let mut merged = accumulate(&cycled[..37]);
+            merged.merge(&accumulate(&cycled[37..]));
+            let simd = crate::acceleration::simd::compute_stats_simd(&cycled);
+            for (path, accumulator) in [
+                ("single", accumulate(&cycled)),
+                ("merged", merged),
+                ("simd", simd),
+            ] {
+                let (variance, std_dev) =
+                    (accumulator.sample_variance(), accumulator.sample_std_dev());
+                if variance.is_finite() || std_dev.is_finite() {
+                    wrong.push(format!(
+                        "2^{exponent} {path}: variance {variance:e}, std_dev {std_dev:e}"
+                    ));
+                }
+            }
+            let constant = accumulate(&[unit; 8]);
+            assert_eq!(
+                (constant.sample_variance(), constant.sample_std_dev()),
+                (0.0, 0.0)
+            );
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }

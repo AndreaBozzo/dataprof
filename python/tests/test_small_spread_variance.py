@@ -6,8 +6,9 @@ constant column: 0.0 at 1e-200, and a drifting kurtosis already at 1e-160. They
 do not depend on scale, so every column below must report the coefficient of
 variation, skewness and kurtosis of the same values at unit scale, from 1e-300
 to 1e100. A variance below ``f64``'s range is reported as absent, as one above
-it is (#805). From 1e160 the spread itself overflows, and every statistic
-derived from it is absent rather than wrong.
+it is (#805). From 1e160 the spread itself overflows, and below about 1e-304
+subnormal rounding takes its digits; every statistic derived from it is then
+absent rather than wrong.
 
 ``cycled`` repeats its pattern every row, so each four-lane SIMD lane is
 constant and the spread is all in the merge of the lanes; ``blocked`` repeats
@@ -38,12 +39,15 @@ SHAPES = {
     "blocked": [PATTERN[(row // 4) % 4] for row in range(ROWS)],
 }
 #: Scale -> what the variance, about the scale squared, does in f64: "fits",
-#: "underflows" (reported absent, the rest kept) or "overflows" (all absent).
+#: "underflows" (reported absent, the rest kept), "overflows" or "lost" to
+#: subnormal rounding (all absent).
 SCALES = {
     "1": "fits",
     "1e-160": "fits",
     "1e-200": "underflows",
     "1e-300": "underflows",
+    "1e-313": "lost",
+    "5e-324": "lost",
     "1e100": "fits",
     "1e160": "overflows",
     "1e300": "overflows",
@@ -64,12 +68,13 @@ def _assert_scale_free(report: dp.ProfileReport, label: str) -> None:
         for scale, fate in SCALES.items():
             column = stats[f"{shape}_{scale}"]
             for key in SCALE_FREE:
-                expected = None if fate == "overflows" else unit[key]
-                if column.get(key) != expected or (expected is None and fate != "overflows"):
+                absent = fate in ("overflows", "lost")
+                expected = None if absent else unit[key]
+                if column.get(key) != expected or (expected is None and not absent):
                     wrong[f"{shape}_{scale} {key}"] = (column.get(key), expected)
             if (column["variance"] is None) != (fate != "fits"):
                 wrong[f"{shape}_{scale} variance"] = column["variance"]
-            if (column["std_dev"] is None) != (fate == "overflows"):
+            if (column["std_dev"] is None) != (fate in ("overflows", "lost")):
                 wrong[f"{shape}_{scale} std_dev"] = column["std_dev"]
     assert not wrong, (label, wrong)
 
