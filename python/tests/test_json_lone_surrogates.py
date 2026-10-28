@@ -33,7 +33,7 @@ LONE_RECORDS: dict[str, str] = {
     "upper-case hex": r'{"v":"\uD800"}',
     "in a key": r'{"\ud800":1}',
     "nested in an array": r'{"v":{"k":["\ud800"]}}',
-    "high before a non-surrogate": r'{"v":"\ud800A"}',
+    "high before a non-surrogate": r'{"v":"\ud800\u0041"}',
     "two highs": r'{"v":"\ud800\ud800"}',
     "low before high": r'{"v":"\udc00\ud800"}',
 }
@@ -41,10 +41,10 @@ LONE_RECORDS: dict[str, str] = {
 #: Escapes every route accepts: a pair is one character, and an escaped
 #: backslash makes the rest literal text.
 ACCEPTED_RECORDS: dict[str, str] = {
-    "pair": r'{"v":"😀"}',
-    "upper-case pair": r'{"v":"😀"}',
+    "pair": r'{"v":"\ud83d\ude00"}',
+    "upper-case pair": r'{"v":"\uD83D\uDE00"}',
     "escaped backslash": r'{"v":"\\ud800"}',
-    "BMP escape": r'{"v":"é"}',
+    "BMP escape": r'{"v":"\u00e9"}',
 }
 
 
