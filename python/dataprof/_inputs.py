@@ -412,31 +412,63 @@ def _json_kind(value: object) -> str:
     return "object"
 
 
+#: What the file and async JSONL readers trim from a line: Rust's ``str::trim``,
+#: the Unicode White_Space set. ``str.strip()`` would also remove U+001C to
+#: U+001F, which they keep, and so read a line of them as blank.
+_RECORD_WHITESPACE = "".join(
+    map(
+        chr,
+        (
+            0x09,
+            0x0A,
+            0x0B,
+            0x0C,
+            0x0D,
+            0x20,
+            0x85,
+            0xA0,
+            0x1680,
+            *range(0x2000, 0x200B),
+            0x2028,
+            0x2029,
+            0x202F,
+            0x205F,
+            0x3000,
+        ),
+    )
+)
+
+
 def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """Scan JSONL text into row objects, honoring the malformed-record policy.
 
-    Mirrors the file/async JSONL scanners: blank lines are ignored, and only
-    object records become rows. A record that is either malformed or valid JSON
-    that is not an object is skipped-and-counted ("skip") or raised on
-    ("strict") — a non-object record is never silently discarded, because that
-    would turn the source into a smaller clean-looking dataset. Error messages
-    carry the 1-based line number, never the record contents. Input that yields
-    no valid record but had skipped ones fails.
+    Mirrors the file/async JSONL scanners: a record is a line ended by ``\\n``
+    and nothing else, trimmed of Unicode whitespace as they trim it, blank lines
+    are ignored, and only object records become rows. ``str.splitlines()``
+    would also break at U+2028, U+0085 and other characters a JSON string may
+    hold, cutting one record in two (#1087). A record that is either malformed
+    or valid JSON that is not an object is skipped-and-counted ("skip") or
+    raised on ("strict") — a non-object record is never silently discarded,
+    because that would turn the source into a smaller clean-looking dataset.
+    Error messages carry the 1-based line number, never the record contents.
+    Input that yields no valid record but had skipped ones fails.
     """
     rows: list[dict] = []
     skipped = 0
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if not line.strip():
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        record = line.strip(_RECORD_WHITESPACE)
+        if not record:
             continue
         try:
-            value = _strict_json_loads(line)
+            value = _strict_json_loads(record)
         except _json.JSONDecodeError as exc:
             if on_error == "strict":
                 # ``lineno`` is the record's position in the input; ``exc.colno``
-                # locates the fault within that line. The record text is never
-                # included.
+                # locates the fault within the trimmed record, so the trimmed
+                # prefix is added back. The record text is never included.
+                column = exc.colno + len(line) - len(line.lstrip(_RECORD_WHITESPACE))
                 raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {exc.colno}."
+                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column}."
                 ) from None
             skipped += 1
             continue
