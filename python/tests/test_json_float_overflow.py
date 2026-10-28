@@ -86,11 +86,13 @@ def test_an_overflowing_number_is_refused_on_every_route(tmp_path: Path) -> None
         skip = _routes(path, data, fmt, "skip")
         if fmt == "json":
             # Bytes load the whole document, so they refuse it. The other
-            # routes stop at the element, as at any error inside an array.
+            # routes stop at the element and leave the rest unread, as at any
+            # decoder error inside an array (#1106): one row, one error.
             if not (isinstance(skip["bytes"], str) and OVERFLOW in skip["bytes"]):
                 wrong[f"[{label}] skip bytes"] = skip["bytes"]
-            if len({str(skip[route]) for route in ("file", "async file", "async bytes")}) != 1:
-                wrong[f"[{label}] skip, routes disagree"] = skip
+            for route in ("file", "async file", "async bytes"):
+                if skip[route] != (1, 1):
+                    wrong[f"[{label}] skip {route}"] = skip[route]
         else:
             for route, outcome in skip.items():
                 if outcome != (2, 1):
