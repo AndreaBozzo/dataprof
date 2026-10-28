@@ -23,7 +23,8 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
 
 class _NonStandardJsonConstant(ValueError):
     """A JSON number the readers refuse: a JavaScript numeric constant that RFC
-    8259 does not permit, or an integer outside the 64-bit range.
+    8259 does not permit, an integer outside the 64-bit range, or a number that
+    overflows a float.
 
     ``description`` names the problem for an error message.
     """
@@ -58,11 +59,24 @@ def _parse_json_int(token: str) -> int:
     return value
 
 
+def _parse_json_float(token: str) -> float:
+    # json.loads turns a finite token past the float range, like 1e400, into
+    # infinity, which then profiles as one invalid value with no parse error.
+    # The file and async readers refuse it as out of range (#1086).
+    value = float(token)
+    if _math.isinf(value):
+        raise _NonStandardJsonConstant(token, "a number outside the 64-bit float range")
+    return value
+
+
 def _strict_json_loads(text: str) -> _Any:
-    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions and
-    integers outside the 64-bit range."""
+    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions,
+    integers outside the 64-bit range and numbers that overflow a float."""
     return _json.loads(
-        text, parse_constant=_reject_nonstandard_json_constant, parse_int=_parse_json_int
+        text,
+        parse_constant=_reject_nonstandard_json_constant,
+        parse_int=_parse_json_int,
+        parse_float=_parse_json_float,
     )
 
 
