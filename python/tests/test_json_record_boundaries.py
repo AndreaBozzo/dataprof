@@ -96,6 +96,19 @@ JSONL_CASES = [
     # A record with no fields is still a record (#533).
     ("fieldless record", b'{}\n{"x":1}\n', (2, 0)),
     ("no trailing newline", b'{"x":1}\n{"x":2}', (2, 0)),
+    # Only `\n` ends a record (#1087). The bytes reader split with
+    # str.splitlines(), which also breaks at LS, NEL and other characters a
+    # JSON string may hold, and read the halves as two malformed records.
+    ("LS inside a string", '{"x":"a\N{LINE SEPARATOR}b"}\n{"x":2}\n'.encode(), (2, 0)),
+    ("NEL inside a string", '{"x":"a\x85b"}\n{"x":2}\n'.encode(), (2, 0)),
+    # The converse: two values on one physical line, which it read as two
+    # clean records.
+    ("two records split by LS", '{"x":1}\N{LINE SEPARATOR}{"x":2}\n{"x":3}\n'.encode(), (1, 1)),
+    ("two records split by CR", b'{"x":1}\r{"x":2}\n{"x":3}\n', (1, 1)),
+    # A line is trimmed of Unicode whitespace, as Rust's str::trim does, which
+    # keeps U+001E: a line holding only it is a malformed record, not a blank.
+    ("record separator alone on a line", b'{"x":1}\n\x1e\n{"x":2}\n', (2, 1)),
+    ("no-break space after a record", '{"x":1}\xa0\n{"x":2}\n'.encode(), (2, 0)),
 ]
 
 
@@ -177,6 +190,62 @@ def test_a_malformed_record_is_located_by_its_physical_line(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         dp.profile(path, jsonl_on_error="strict")
     assert "line 4" in str(excinfo.value), str(excinfo.value)
+
+
+def test_a_malformed_record_after_leading_whitespace_names_its_physical_column():
+    # The bytes reader decodes the trimmed line, so it adds the trimmed prefix
+    # back to the decoder's column.
+    line = '   {"x":1 "y":2}'
+    column = line.index('"y"') + 1
+    with pytest.raises(ValueError, match=rf"line 2, column {column}\."):
+        dp.profile(('{"x":0}\n' + line + "\n").encode(), format="jsonl", jsonl_on_error="strict")
+
+
+#: Every line boundary str.splitlines() recognises besides `\n`, and two more
+#: characters str.strip() removes: U+001F, which Rust's trim keeps, and a
+#: no-break space, which it removes.
+LINE_SEPARATORS = {
+    "CR": "\r",
+    "VT": "\x0b",
+    "FF": "\x0c",
+    "FS": "\x1c",
+    "GS": "\x1d",
+    "RS": "\x1e",
+    "US": "\x1f",
+    "NEL": "\x85",
+    "LS": "\N{LINE SEPARATOR}",
+    "PS": "\N{PARAGRAPH SEPARATOR}",
+    "NBSP": "\xa0",
+}
+
+#: Where the character sits; the last line is always a clean record.
+SEPARATOR_PLACES = {
+    "inside a string": lambda s: '{"x":"a' + s + 'b"}\n{"x":3}\n',
+    "between two records": lambda s: '{"x":1}' + s + '{"x":2}\n{"x":3}\n',
+    "alone on a line": lambda s: '{"x":1}\n' + s + '\n{"x":3}\n',
+    "after a record": lambda s: '{"x":1}' + s + '\n{"x":3}\n',
+}
+
+
+@pytest.mark.parametrize("on_error", ["skip", "strict"])
+@pytest.mark.parametrize("place", list(SEPARATOR_PLACES))
+@pytest.mark.parametrize("separator", list(LINE_SEPARATORS))
+def test_every_line_separator_agrees_on_every_transport(separator, place, on_error, tmp_path):
+    payload = SEPARATOR_PLACES[place](LINE_SEPARATORS[separator]).encode()
+    _agree(_all_transports(payload, "jsonl", tmp_path, jsonl_on_error=on_error))
+
+
+def test_the_bytes_reader_trims_what_rust_trims():
+    # Rust's str::trim removes Unicode White_Space: Python's str.isspace() set
+    # without the four ASCII information separators U+001C to U+001F.
+    from dataprof._inputs import _RECORD_WHITESPACE
+
+    expected = {
+        chr(code)
+        for code in range(0x110000)
+        if chr(code).isspace() and chr(code) not in "\x1c\x1d\x1e\x1f"
+    }
+    assert set(_RECORD_WHITESPACE) == expected
 
 
 def test_the_json_grammar_error_points_at_the_jsonl_option(tmp_path):
