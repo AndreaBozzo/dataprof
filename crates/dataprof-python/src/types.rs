@@ -1390,6 +1390,8 @@ impl PyProfileReport {
         min_dimension_scores = Vec::new(),
         max_null_percentage = Vec::new(),
         max_null_percentage_any = None,
+        max_null_count = Vec::new(),
+        max_null_count_any = None,
         max_duplicate_rows = None,
         require_quality = false,
         require_dimensions = Vec::new(),
@@ -1411,6 +1413,8 @@ impl PyProfileReport {
         min_dimension_scores: Vec<(String, f64)>,
         max_null_percentage: Vec<(String, f64)>,
         max_null_percentage_any: Option<f64>,
+        max_null_count: Vec<(String, usize)>,
+        max_null_count_any: Option<usize>,
         max_duplicate_rows: Option<usize>,
         require_quality: bool,
         require_dimensions: Vec<String>,
@@ -1441,6 +1445,12 @@ impl PyProfileReport {
         }
         if let Some(max) = max_null_percentage_any {
             policy = policy.max_null_percentage_any(max);
+        }
+        for (column, max) in max_null_count {
+            policy = policy.max_null_count(column, max);
+        }
+        if let Some(max) = max_null_count_any {
+            policy = policy.max_null_count_any(max);
         }
         if let Some(max) = max_duplicate_rows {
             policy = policy.max_duplicate_rows(max);

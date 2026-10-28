@@ -46,11 +46,14 @@ DUPLICATED_DROP = GOOD_DROP + "T-1001,ACC-1,120.00,2026-01-04\n"
 KEY_COLUMN = "transaction_id"
 REQUIRED_COLUMNS = ("transaction_id", "account", "amount_eur", "booked_at")
 
-# What the warehouse is willing to accept. Every threshold is a 0-100
-# percentage, matching what the report reports.
+# What the warehouse is willing to accept. The scores and percentages are on
+# the 0-100 scale the report reports; the key column's "no nulls" is a count,
+# because a 0% limit is decided at two decimals and lets one null in 20,001
+# rows through.
 POLICY: dict[str, Any] = {
     "min_quality_score": 90,
-    "max_null_percentage": {KEY_COLUMN: 0, "*": 5},
+    "max_null_count": {KEY_COLUMN: 0},
+    "max_null_percentage": {"*": 5},
     "max_duplicate_rows": 0,
     # Without this, a run that never computed quality would leave the score
     # check unevaluated rather than failing. A pipeline wants the

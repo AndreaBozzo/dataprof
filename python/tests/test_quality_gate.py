@@ -131,6 +131,11 @@ def test_result_serializes_to_json(report):
         {"require_metrics": ["not_a_dimension"]},
         {"max_duplicate_rows": -1},
         {"max_duplicate_rows": 1.5},
+        {"max_null_count": -1},
+        {"max_null_count": True},
+        {"max_null_count": {"amount": 0.5}},
+        {"max_null_count": {"amount": "0"}},
+        {"max_null_count": {"*": 1 << 64}},
         {"min_rows": -1},
         {"min_rows": 1.5},
         {"min_rows": True},
@@ -219,6 +224,43 @@ def test_a_saved_report_gates_the_same_way(report):
     assert reloaded.check(**policy).to_dict() == report.check(**policy).to_dict()
 
 
+def test_a_null_count_ceiling_states_no_nulls_at_any_row_count(tmp_path: Path):
+    """One null in 20,001 rows shows as 0.0%, so a zero percentage limit
+    passes it; ``max_null_count`` decides on the count, live and after a save
+    and load (#1119)."""
+    with_null = dp.profile({"k": [None, *range(20_000)]})
+    without_null = dp.profile({"k": list(range(20_001))})
+    saved = tmp_path / "with_null.json"
+    with_null.save(saved)
+    reloaded = dp.ProfileReport.load(saved)
+
+    assert with_null.check(max_null_percentage={"k": 0}).verdict == "pass"
+    for report in (with_null, reloaded):
+        result = report.check(max_null_count={"k": 0})
+        assert result.verdict == "fail"
+        check = _check(result, "max_null_count", column="k")
+        assert (check.observed, check.expected) == (1, {"comparison": "at_most", "value": 0})
+    assert reloaded.check(max_null_count={"k": 0}).to_dict() == (
+        with_null.check(max_null_count={"k": 0}).to_dict()
+    )
+    assert without_null.check(max_null_count={"k": 0}).verdict == "pass"
+
+
+def test_a_bare_null_count_covers_every_column_and_a_name_overrides_it(report):
+    bare = report.check(max_null_count=0)
+    assert bare.to_dict() == report.check(max_null_count={"*": 0}).to_dict()
+    assert [check.column for check in bare.violations] == ["customer_id"]
+
+    named = report.check(max_null_count={"customer_id": 1, "*": 0})
+    assert named.verdict == "pass"
+    assert _check(named, "max_null_count", column="customer_id").expected["value"] == 1
+
+
+def test_a_bad_null_count_names_its_column(report):
+    with pytest.raises(ValueError, match="max_null_count for `amount` must be a whole number"):
+        report.check(max_null_count={"amount": -1})
+
+
 def test_a_flat_summary_is_refused(report):
     """A `to_dict()` summary is not a runtime report, and the gate evaluates
     runtime reports only. Refusing names the fix instead of guessing at the
@@ -253,6 +295,8 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "min_dimension_scores": [],
             "max_null_percentage": [("customer_id", 10.0)],
             "max_null_percentage_any": 20.0,
+            "max_null_count": [],
+            "max_null_count_any": None,
             "max_duplicate_rows": None,
             "require_quality": False,
             "require_dimensions": [],

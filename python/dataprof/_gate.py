@@ -226,14 +226,15 @@ def _percentage(
 _COUNT_MAX = (1 << 64) - 1
 
 
-def _count(code: str, value: _Any) -> int:
+def _count(code: str, value: _Any, subject: str | None = None) -> int:
     """Accept a whole-number limit, refusing one the Rust gate cannot take
     with ``ValueError`` rather than the ``OverflowError`` its conversion raises.
     """
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _COUNT_MAX:
+        named = f" for `{subject}`" if subject else ""
         raise _PolicyFieldError(
             code,
-            f"{code} must be a whole number between 0 and {_COUNT_MAX}, got {value!r}",
+            f"{code}{named} must be a whole number between 0 and {_COUNT_MAX}, got {value!r}",
         )
     return value
 
@@ -261,6 +262,7 @@ class _Policy:
         max_duplicate_rows: int | None,
         require_metrics: _Sequence[str] | None,
         scope: str,
+        max_null_count: _Mapping[str, int] | int | None = None,
         baseline: _RustProfileReport | str | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
@@ -309,6 +311,18 @@ class _Policy:
             self.max_null_percentage_any = _percentage(
                 "max_null_percentage", None, max_null_percentage
             )
+
+        self.max_null_count: dict[str, int] = {}
+        self.max_null_count_any: int | None = None
+        if isinstance(max_null_count, _Mapping):
+            for column, value in max_null_count.items():
+                limit = _count("max_null_count", value, None if column == "*" else str(column))
+                if column == "*":
+                    self.max_null_count_any = limit
+                else:
+                    self.max_null_count[str(column)] = limit
+        elif max_null_count is not None:
+            self.max_null_count_any = _count("max_null_count", max_null_count)
 
         self.max_duplicate_rows = (
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
@@ -392,6 +406,8 @@ class _Policy:
             or self.min_dimension_scores
             or self.max_null_percentage
             or self.max_null_percentage_any is not None
+            or self.max_null_count
+            or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
             or self.require_quality
             or self.require_dimensions
@@ -432,6 +448,8 @@ class _Policy:
                 min_dimension_scores=list(self.min_dimension_scores.items()),
                 max_null_percentage=list(self.max_null_percentage.items()),
                 max_null_percentage_any=self.max_null_percentage_any,
+                max_null_count=list(self.max_null_count.items()),
+                max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
                 require_quality=self.require_quality,
                 require_dimensions=sorted(self.require_dimensions),

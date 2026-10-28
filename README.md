@@ -51,7 +51,9 @@ for finding in report.findings():
 State what "good enough" means and get a verdict: `pass`, `fail`, or `inconclusive` when the data can't prove it either way.
 
 ```python
-result = report.check(min_quality_score=90, max_null_percentage={"customer_id": 0, "*": 20})
+result = report.check(
+    min_quality_score=90, max_null_count={"customer_id": 0}, max_null_percentage={"*": 20}
+)
 if not result.passed:
     for check in result.violations:
         print(check.code, check.column, check.message)
