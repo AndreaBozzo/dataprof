@@ -121,9 +121,11 @@ be represented as a finite `f64`; a true constant column reports `0.0`. A
 variance too small for `f64`, as for values near 1e-200, is `null` too rather
 than `0.0`: the standard deviation is then taken without forming the variance,
 and is reported with the coefficient of variation, skewness and kurtosis that
-follow from it (#1088). Statistics derived from an unrepresentable standard
-deviation, including the coefficient of variation, skewness and kurtosis, are
-absent. The same rule
+follow from it (#1088). Values below about 1e-306, at the bottom of `f64`'s
+range, square to products that lose their digits even so: their `std_dev` is
+`null` as well rather than a number with too few digits. Statistics derived
+from an unrepresentable standard deviation, including the coefficient of
+variation, skewness and kurtosis, are absent. The same rule
 covers `quartiles.iqr`: it stays required and is `null` when `q3 - q1` cannot be
 represented, while `q1`, `q2` and `q3` are still reported. `outlier_count` is
 then `0`, which is exact: fences beyond the `f64` range leave no finite value
