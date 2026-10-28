@@ -6,6 +6,7 @@ import csv as _csv
 import io as _io
 import json as _json
 import math as _math
+import re as _re
 from typing import Any as _Any
 
 from ._dataprof import _detect_csv_delimiter
@@ -22,9 +23,9 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
 
 
 class _NonStandardJsonConstant(ValueError):
-    """A JSON number the readers refuse: a JavaScript numeric constant that RFC
-    8259 does not permit, an integer outside the 64-bit range, or a number that
-    overflows a float.
+    """A JSON token the readers refuse: a JavaScript numeric constant that RFC
+    8259 does not permit, an integer outside the 64-bit range, a number that
+    overflows a float, or a string escape that encodes a lone surrogate.
 
     ``description`` names the problem for an error message.
     """
@@ -69,15 +70,51 @@ def _parse_json_float(token: str) -> float:
     return value
 
 
+#: A ``\uXXXX`` escape in the surrogate range, paired or not.
+_SURROGATE_ESCAPE = _re.compile(r"\\u[dD][89a-fA-F][0-9a-fA-F]{2}")
+_SURROGATE = _re.compile("[\ud800-\udfff]")
+
+
+def _reject_lone_surrogates(text: str, value: _Any) -> None:
+    # json.loads joins an escaped pair into one character but keeps a lone
+    # surrogate escape as a code point no UTF-8 string can hold, so the record
+    # crashed later with UnicodeEncodeError. The file and async readers refuse
+    # it while decoding (#1142). Decoded UTF-8 holds no surrogate of its own,
+    # so one found here came from an escape, in a key or in a string value.
+    if not _SURROGATE_ESCAPE.search(text):
+        return
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            found = _SURROGATE.search(item)
+            if found:
+                # The code point came from an escape, so the text spells it.
+                escape = _re.compile(rf"\\u{ord(found.group()):04x}", _re.IGNORECASE)
+                spelling = escape.search(text)
+                assert spelling is not None
+                raise _NonStandardJsonConstant(
+                    spelling.group(), "a lone surrogate escape, which is not valid Unicode"
+                )
+        elif isinstance(item, dict):
+            stack.extend(item)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
 def _strict_json_loads(text: str) -> _Any:
     """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions,
-    integers outside the 64-bit range and numbers that overflow a float."""
-    return _json.loads(
+    integers outside the 64-bit range, numbers that overflow a float and lone
+    surrogate escapes."""
+    value = _json.loads(
         text,
         parse_constant=_reject_nonstandard_json_constant,
         parse_int=_parse_json_int,
         parse_float=_parse_json_float,
     )
+    _reject_lone_surrogates(text, value)
+    return value
 
 
 # --- Dependency-free columnar inputs (see _dataprof.profile_columns) ---
