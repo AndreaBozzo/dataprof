@@ -6,6 +6,10 @@ use wide::*;
 /// Values processed per SIMD step, one per `f64x4` lane.
 const LANES: usize = 4;
 
+/// 2^-968: the smallest lane M2 whose last bit, 2^-1020, still sits above the
+/// rounding error of a subnormal squared deviation.
+const UNDERFLOW_SAFE_M2: f64 = f64::MIN_POSITIVE * 18_014_398_509_481_984.0;
+
 /// Accumulate stable numeric aggregates over `values`, four lanes at a time.
 ///
 /// Each lane runs the same Welford and compensated-sum recurrences as
@@ -54,12 +58,16 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
 
     let (mean, m2) = (mean.to_array(), m2.to_array());
     let (sum, compensation) = (sum.to_array(), compensation.to_array());
+    let (min, max) = (min.to_array(), max.to_array());
     // M2 overflows the same way, and the scalar accumulator rescales it too
-    // (#805).
-    if !sum.iter().chain(&m2).all(|lane| lane.is_finite()) {
+    // (#805). At the other end, a lane's squared deviations can underflow and
+    // leave a varying lane with an M2 of zero, or one short of digits (#1088).
+    // A product that rounds in the subnormal range is off by less than 2^-1074,
+    // which an M2 of at least `UNDERFLOW_SAFE_M2` cannot see.
+    let underflowed = (0..LANES).any(|lane| min[lane] < max[lane] && m2[lane] < UNDERFLOW_SAFE_M2);
+    if underflowed || !sum.iter().chain(&m2).all(|lane| lane.is_finite()) {
         return compute_stats_fallback(values);
     }
-    let (min, max) = (min.to_array(), max.to_array());
 
     let mut stats = NumericAccumulator::new();
     for lane in 0..LANES {
