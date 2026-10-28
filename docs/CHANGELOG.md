@@ -6,7 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.13.0 release notes](release-notes.md).
+the [0.13.1 release notes](release-notes.md).
+
+## [0.13.1] - 2026-10-28
+
+### Added
+
+- **Check**: An exact null-count ceiling for no-null rules (#1141) by @AndreaBozzo
+
+### Changed
+
+- **Python**: Restore the escaped pairs in the lone-surrogate test (#1148) by @AndreaBozzo
+
+- **Python**: Exit the GIL deadlock child without finalizing (#1140) by @AndreaBozzo
+
+### Dependencies
+
+- Bump zstd, zstd-safe and zstd-sys past RUSTSEC-2026-0391/0398/0403/0410 (#1131) by @AndreaBozzo
+
+- **Deps**: Bump tokio from 1.53.3 to 1.54.1 (#1112) by @dependabot[bot]
+
+- **Deps**: Bump memmap2 from 0.9.11 to 0.9.12 (#1113) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.58.6 to 0.60.0 (#1114) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.88 to 0.0.91 (#1115) by @dependabot[bot]
+
+- **Deps**: Bump ipython from 8.39.0 to 9.17.1 (#1116) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.17.1 to 0.17.2 (#1117) by @dependabot[bot]
+
+### Documentation
+
+- Correct the null-marker note and the database debug-logging recipe (#1133) by @AndreaBozzo
+
+### Fixed
+
+- **Metrics**: Keep the spread of values too small to square in f64 (#1151) by @AndreaBozzo
+
+- **Python**: Split JSONL bytes at newlines only, as the file reader does (#1147) by @AndreaBozzo
+
+- **Python**: Refuse a lone surrogate escape in JSON bytes instead of crashing (#1145) by @AndreaBozzo
+
+- **Python**: Refuse a JSON number that overflows a float on the bytes route (#1144) by @AndreaBozzo
+
+- **Python**: Release the GIL around Arrow stream producer callbacks (#1139) by @AndreaBozzo
+
+- **Python**: Name the lazy source and the call that reads it in refusal errors (#1136) by @AndreaBozzo
+
+- **Check**: List baseline diagnostics in the text summary (#1129) by @AndreaBozzo
 
 ## [0.13.0] - 2026-10-25
 

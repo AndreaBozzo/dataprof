@@ -122,7 +122,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: python -m pip install dataprof==0.13.0
+      - run: python -m pip install dataprof==0.13.1
       - run: ./fetch_drop.sh orders.csv  # your extract step
       - name: Check against the accepted baseline
         run: |
