@@ -39,6 +39,15 @@
 /// overflow, so `null` is reported only for a spread whose variance itself
 /// exceeds `f64`.
 ///
+/// At the other end, the squared deviations of values near 1e-200 underflow
+/// to zero, and a varying column reported a variance of zero, which the
+/// coefficient of variation and the kurtosis then read as a constant column
+/// (#1088). So M2 starts out held at [`UNDERFLOW_SCALE`] and is brought down
+/// to its true scale once it grows past what that leaves room for. M2 never
+/// decreases, so it only ever moves towards the reduced scale. The standard
+/// deviation is taken at the held scale, and survives where the variance
+/// itself is too small for `f64`.
+///
 /// [`merge`](Self::merge) combines accumulators computed over disjoint parts of
 /// a column, so chunked, batched and SIMD-lane accumulation report what a
 /// single pass would.
@@ -55,9 +64,9 @@ pub struct NumericAccumulator {
     /// `m2`. Not overflow-proof, so the reported mean comes from `sum` instead.
     running_mean: f64,
     /// Welford's sum of squared deviations from the running mean, multiplied
-    /// by [`OVERFLOW_SCALE`] once `m2_scaled` is set.
+    /// by the factor of `m2_scale`.
     m2: f64,
-    m2_scaled: bool,
+    m2_scale: M2Scale,
     /// Running sum, with `compensation` carrying the bits it rounded away. Both
     /// are multiplied by [`OVERFLOW_SCALE`] once `scaled` is set.
     sum: f64,
@@ -81,6 +90,76 @@ impl Default for NumericAccumulator {
 /// values at `f64::MAX` still fits.
 const OVERFLOW_SCALE: f64 = 1.0 / 18_446_744_073_709_551_616.0;
 
+/// Factor M2 is held at while it is small: 2^1000, as the square of
+/// [`UNDERFLOW_HALF`] so the squared deviations it is built from are formed at
+/// it without rounding. A squared deviation stays a normal `f64` at this scale
+/// down to 2^-2022, which deviations of about 2^-1011 (1e-304) reach; below
+/// that it rounds in the subnormal range, and for deviations of subnormal
+/// values it can vanish. [`LOST_SPREAD_PER_VALUE`] decides when that has
+/// reached M2's digits. M2 itself fits up to 2^24 before it is brought down.
+/// 2^1000 is about as far as a factor can go: `f64` holds no power of two
+/// above 2^1023.
+const UNDERFLOW_SCALE: f64 = f64::from_bits((1023 + 1000) << 52);
+
+/// 2^-1034, the smallest held M2 per value whose digits a squared deviation
+/// rounded in the subnormal range cannot reach: each such product is off by at
+/// most 2^-1075, so `count` of them are off by less than 2^-41 of an M2 of at
+/// least `count` times this. Below it, a varying column's spread is reported
+/// as lost rather than as a number missing most of its digits, or as zero.
+const LOST_SPREAD_PER_VALUE: f64 = f64::from_bits(1 << 40);
+
+/// 2^500, the factor each deviation is raised by before it is squared.
+const UNDERFLOW_HALF: f64 = f64::from_bits((1023 + 500) << 52);
+
+/// The scale M2 is held at. M2 never decreases, so it only moves down this
+/// list: from [`Raised`](Self::Raised), where a tiny spread keeps its digits,
+/// to [`Unit`](Self::Unit), and to [`Reduced`](Self::Reduced) once it would
+/// overflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum M2Scale {
+    Raised,
+    Unit,
+    Reduced,
+}
+
+impl M2Scale {
+    /// What M2 is multiplied by at this scale.
+    fn factor(self) -> f64 {
+        match self {
+            Self::Raised => UNDERFLOW_SCALE,
+            Self::Unit => 1.0,
+            Self::Reduced => OVERFLOW_SCALE,
+        }
+    }
+
+    /// The square root of [`factor`](Self::factor), exact as a power of two.
+    fn root(self) -> f64 {
+        match self {
+            Self::Raised => UNDERFLOW_HALF,
+            Self::Unit => 1.0,
+            Self::Reduced => 1.0 / 4_294_967_296.0,
+        }
+    }
+
+    fn next(self) -> Option<Self> {
+        match self {
+            Self::Raised => Some(Self::Unit),
+            Self::Unit => Some(Self::Reduced),
+            Self::Reduced => None,
+        }
+    }
+
+    /// `value`, held at this scale, held at `to` instead. Only called with
+    /// `to` at or after `self`, so the factor shrinks and nothing overflows.
+    fn convert(self, value: f64, to: Self) -> f64 {
+        if self == to {
+            value
+        } else {
+            value / self.factor() * to.factor()
+        }
+    }
+}
+
 /// Every integer of at most this magnitude, 2^53, is exact as an `f64`.
 const EXACT_F64_INTEGER: u128 = 1 << 53;
 
@@ -102,7 +181,7 @@ impl NumericAccumulator {
             shift_low: 0.0,
             running_mean: 0.0,
             m2: 0.0,
-            m2_scaled: false,
+            m2_scale: M2Scale::Raised,
             sum: 0.0,
             compensation: 0.0,
             scaled: false,
@@ -170,8 +249,10 @@ impl NumericAccumulator {
         let delta = shifted - self.running_mean;
         self.running_mean += delta / self.count as f64;
         let deviation = shifted - self.running_mean;
-        self.add_to_m2(0.0, false, delta * deviation, || {
-            (delta * OVERFLOW_SCALE) * deviation
+        self.add_to_m2(0.0, M2Scale::Raised, |scale| match scale {
+            M2Scale::Raised => (delta * UNDERFLOW_HALF) * (deviation * UNDERFLOW_HALF),
+            M2Scale::Unit => delta * deviation,
+            M2Scale::Reduced => (delta * OVERFLOW_SCALE) * deviation,
         });
 
         self.add_to_sum(high, low, false);
@@ -185,8 +266,9 @@ impl NumericAccumulator {
     /// Used by the SIMD accumulation in [`crate::acceleration::simd`], which
     /// runs these same recurrences over four lanes at once and then merges the
     /// lanes back together. Nothing else should reach past [`Self::update`].
-    /// Lane sums and M2 are never scaled: the SIMD path falls back to scalar
-    /// accumulation when either overflows in a lane.
+    /// Lane sums and M2 come at their true scale: the SIMD path falls back to
+    /// scalar accumulation when either overflows in a lane, or when a lane's M2
+    /// is small enough to have lost digits to underflow.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_lane_state(
         count: u64,
@@ -198,13 +280,23 @@ impl NumericAccumulator {
         min: f64,
         max: f64,
     ) -> Self {
+        // Held raised where it fits, as a scalar pass would hold it, so the
+        // merge of lanes with tiny means keeps its digits too: values cycling
+        // every four rows leave each lane constant, and the whole spread is in
+        // the merge.
+        let raised = m2 * UNDERFLOW_SCALE;
+        let (m2, m2_scale) = if raised.is_finite() {
+            (raised, M2Scale::Raised)
+        } else {
+            (m2, M2Scale::Unit)
+        };
         Self {
             count,
             shift,
             shift_low: 0.0,
             running_mean,
             m2,
-            m2_scaled: false,
+            m2_scale,
             sum,
             compensation,
             scaled: false,
@@ -240,47 +332,73 @@ impl NumericAccumulator {
         self.compensation += err + compensation * OVERFLOW_SCALE;
     }
 
-    /// Add `m2 + increment`, the `m2` expressed at `OVERFLOW_SCALE` when
-    /// `scaled`, to M2, rescaling M2 first if the addition would overflow it.
-    /// `scaled_increment` is the increment computed at `OVERFLOW_SCALE`: the
-    /// unscaled product can overflow where the scaled one fits.
+    /// Add `m2 + increment`, the `m2` held at `scale`, to M2, moving M2 to the
+    /// next scale for as long as the addition overflows. `increment` forms the
+    /// increment at the scale it is given: the product at the true scale can
+    /// underflow, or overflow, where the one at another scale fits.
     ///
     /// An increment that still overflows at the reduced scale exceeds
     /// `f64::MAX * 2^64`, so the variance it belongs to cannot be finite for
     /// fewer than 2^64 values, and reporting it as overflowed is correct.
     #[inline]
-    fn add_to_m2(
-        &mut self,
-        m2: f64,
-        scaled: bool,
-        increment: f64,
-        scaled_increment: impl FnOnce() -> f64,
-    ) {
-        if !self.m2_scaled && !scaled {
-            // Associated as before the rescaling existed, so a spread that fits
-            // reports the same bits.
-            let total = self.m2 + (m2 + increment);
-            if total.is_finite() {
-                self.m2 = total;
-                return;
+    fn add_to_m2(&mut self, m2: f64, scale: M2Scale, increment: impl Fn(M2Scale) -> f64) {
+        let mut target = self.m2_scale.max(scale);
+        loop {
+            // Associated as before the scales existed. Scaling by a power of
+            // two is exact, so a spread that fits reports the same bits at
+            // every scale.
+            let total = self.m2_scale.convert(self.m2, target)
+                + (scale.convert(m2, target) + increment(target));
+            match target.next() {
+                Some(next) if !total.is_finite() => target = next,
+                _ => {
+                    self.m2 = total;
+                    self.m2_scale = target;
+                    return;
+                }
             }
         }
-        if !self.m2_scaled {
-            self.m2 *= OVERFLOW_SCALE;
-            self.m2_scaled = true;
-        }
-        let m2 = if scaled { m2 } else { m2 * OVERFLOW_SCALE };
-        self.m2 += m2 + scaled_increment();
     }
 
     /// M2 divided by `denominator`, back at its true scale.
     fn m2_over(&self, denominator: f64) -> f64 {
-        let quotient = self.m2 / denominator;
-        if self.m2_scaled {
-            quotient / OVERFLOW_SCALE
-        } else {
-            quotient
+        self.m2 / denominator / self.m2_scale.factor()
+    }
+
+    /// The square root of M2 divided by `denominator`, taken at the scale M2
+    /// is held at. Infinite or NaN where the variance is: an overflowing
+    /// spread reports no standard deviation either, as before #1088. NaN
+    /// where the spread was lost to underflow.
+    fn std_dev_over(&self, denominator: f64) -> f64 {
+        let variance = self.m2_over(denominator);
+        if !variance.is_finite() {
+            return variance.sqrt();
         }
+        if self.spread_lost() {
+            return f64::NAN;
+        }
+        (self.m2 / denominator).max(0.0).sqrt() / self.m2_scale.root()
+    }
+
+    /// A variance from [`m2_over`](Self::m2_over), clamped at zero, or NaN
+    /// when a non-zero spread underflowed to zero or was lost: the variance is
+    /// then too small for `f64`, as an infinite one is too large, and callers
+    /// report neither.
+    fn reported_variance(&self, variance: f64) -> f64 {
+        if variance.is_nan() {
+            variance
+        } else if (variance <= 0.0 && self.m2 > 0.0) || self.spread_lost() {
+            f64::NAN
+        } else {
+            variance.max(0.0)
+        }
+    }
+
+    /// Whether the values vary but M2, as held, is too small to be sure of its
+    /// digits: deviations of subnormal values square to products that round,
+    /// or vanish, even at [`UNDERFLOW_SCALE`]. See [`LOST_SPREAD_PER_VALUE`].
+    fn spread_lost(&self) -> bool {
+        self.min < self.max && self.m2 < self.count as f64 * LOST_SPREAD_PER_VALUE
     }
 
     fn rescale_sum(&mut self) {
@@ -309,8 +427,10 @@ impl NumericAccumulator {
         let delta = shift_gap + (other.running_mean - self.running_mean);
         self.running_mean += delta * (b / combined);
         let weight = a * b / combined;
-        self.add_to_m2(other.m2, other.m2_scaled, delta * delta * weight, || {
-            (delta * OVERFLOW_SCALE) * delta * weight
+        self.add_to_m2(other.m2, other.m2_scale, |scale| match scale {
+            M2Scale::Raised => (delta * UNDERFLOW_HALF) * (delta * UNDERFLOW_HALF) * weight,
+            M2Scale::Unit => delta * delta * weight,
+            M2Scale::Reduced => (delta * OVERFLOW_SCALE) * delta * weight,
         });
         self.count += other.count;
 
@@ -356,40 +476,40 @@ impl NumericAccumulator {
         (self.sum * unit + self.compensation * unit) / count / OVERFLOW_SCALE
     }
 
-    /// Unbiased sample variance (n-1 denominator).
+    /// Unbiased sample variance (n-1 denominator). Infinite when it is too
+    /// large for `f64`, NaN when a non-zero spread is too small for it.
     pub fn sample_variance(&self) -> f64 {
         if self.count < 2 {
             return 0.0;
         }
-        let variance = self.m2_over((self.count - 1) as f64);
-        if variance.is_nan() {
-            variance
-        } else {
-            variance.max(0.0)
-        }
+        self.reported_variance(self.m2_over((self.count - 1) as f64))
     }
 
-    /// Standard deviation derived from [`sample_variance`](Self::sample_variance).
+    /// Sample standard deviation, taken at the scale M2 is held at, so it is
+    /// finite where [`sample_variance`](Self::sample_variance) underflowed.
     pub fn sample_std_dev(&self) -> f64 {
-        self.sample_variance().sqrt()
+        if self.count < 2 {
+            return 0.0;
+        }
+        self.std_dev_over((self.count - 1) as f64)
     }
 
-    /// Population variance (n denominator).
+    /// Population variance (n denominator), reported as
+    /// [`sample_variance`](Self::sample_variance) is.
     pub fn population_variance(&self) -> f64 {
         if self.count < 2 {
             return 0.0;
         }
-        let variance = self.m2_over(self.count as f64);
-        if variance.is_nan() {
-            variance
-        } else {
-            variance.max(0.0)
-        }
+        self.reported_variance(self.m2_over(self.count as f64))
     }
 
-    /// Standard deviation derived from [`population_variance`](Self::population_variance).
+    /// Population standard deviation, taken as
+    /// [`sample_std_dev`](Self::sample_std_dev) is.
     pub fn population_std_dev(&self) -> f64 {
-        self.population_variance().sqrt()
+        if self.count < 2 {
+            return 0.0;
+        }
+        self.std_dev_over(self.count as f64)
     }
 }
 
@@ -687,6 +807,119 @@ mod tests {
         // Ten times the spread is a variance of about 1e310: still overflowed.
         let wider: Vec<f64> = values.iter().map(|value| value * 10.0).collect();
         assert!(!accumulate(&wider).sample_variance().is_finite());
+    }
+
+    /// 2^exponent, built from its bits so it is exact.
+    fn power_of_two(exponent: i32) -> f64 {
+        f64::from_bits(((1023 + exponent) as u64) << 52)
+    }
+
+    /// Values near 1e-200 have squared deviations that underflow: the variance
+    /// read 0.0 and the standard deviation with it, so a varying column looked
+    /// constant (#1088). Scaled by a power of two, every step is scaled
+    /// exactly, so the standard deviation is the unit-scale one times the
+    /// scale, bit for bit, on every path. Cycling every four values leaves each
+    /// SIMD lane constant and puts the whole spread in the merge of the lanes;
+    /// blocks of four put it inside each lane.
+    #[test]
+    fn a_tiny_spread_keeps_its_standard_deviation() {
+        let pattern = [1.0, 2.0, 4.0, 9.0];
+        let cycled: Vec<f64> = (0..104).map(|i| pattern[i % 4]).collect();
+        let blocked: Vec<f64> = (0..104).map(|i| pattern[(i / 4) % 4]).collect();
+        let paths = |values: &[f64]| {
+            let mut merged = accumulate(&values[..37]);
+            merged.merge(&accumulate(&values[37..]));
+            [
+                ("single", accumulate(values)),
+                ("merged", merged),
+                (
+                    "simd",
+                    crate::acceleration::simd::compute_stats_simd(values),
+                ),
+            ]
+        };
+        let mut wrong = Vec::new();
+        for (shape, unit) in [("cycled", &cycled), ("blocked", &blocked)] {
+            let expected: Vec<f64> = paths(unit)
+                .iter()
+                .map(|(_, accumulator)| accumulator.sample_std_dev())
+                .collect();
+            // About 1e-160, 1e-200 and 1e-300.
+            for exponent in [-530, -665, -997] {
+                let scale = power_of_two(exponent);
+                let values: Vec<f64> = unit.iter().map(|value| value * scale).collect();
+                for ((path, accumulator), unit_std_dev) in paths(&values).iter().zip(&expected) {
+                    let std_dev = accumulator.sample_std_dev();
+                    let scaled = unit_std_dev * scale;
+                    // A tiny lane M2 sends SIMD to the scalar pass, which
+                    // rounds in another order than the lanes at unit scale.
+                    let tolerance = if *path == "simd" { 1e-14 * scaled } else { 0.0 };
+                    if (std_dev - scaled).abs() > tolerance {
+                        wrong.push(format!("{shape} 2^{exponent} {path}: std_dev {std_dev:e}"));
+                    }
+                    // The variance itself, about 2^(2 * exponent), is below
+                    // f64's range from 2^-665 on: not finite, not zero.
+                    let variance = accumulator.sample_variance();
+                    let underflowed = exponent <= -665;
+                    if variance.is_finite() == underflowed || variance == 0.0 {
+                        wrong.push(format!(
+                            "{shape} 2^{exponent} {path}: variance {variance:e}"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Subnormal values square to products that round or vanish even at the
+    /// raised scale: at 2^-1040 a few survive and the spread came out with
+    /// almost none of its digits, at 2^-1074 none do and it came out zero. Both
+    /// are reported as lost, not as a number. A constant subnormal column is
+    /// still exactly constant.
+    #[test]
+    fn a_spread_lost_to_subnormal_rounding_is_not_reported() {
+        let pattern = [1.0, 2.0, 4.0, 9.0];
+        let mut wrong = Vec::new();
+        for exponent in [-1040, -1074] {
+            let unit = f64::from_bits(1 << (1074 + exponent));
+            let cycled: Vec<f64> = (0..104).map(|i| pattern[i % 4] * unit).collect();
+            let mut merged = accumulate(&cycled[..37]);
+            merged.merge(&accumulate(&cycled[37..]));
+            let simd = crate::acceleration::simd::compute_stats_simd(&cycled);
+            for (path, accumulator) in [
+                ("single", accumulate(&cycled)),
+                ("merged", merged),
+                ("simd", simd),
+            ] {
+                let (variance, std_dev) =
+                    (accumulator.sample_variance(), accumulator.sample_std_dev());
+                if variance.is_finite() || std_dev.is_finite() {
+                    wrong.push(format!(
+                        "2^{exponent} {path}: variance {variance:e}, std_dev {std_dev:e}"
+                    ));
+                }
+            }
+            let constant = accumulate(&[unit; 8]);
+            assert_eq!(
+                (constant.sample_variance(), constant.sample_std_dev()),
+                (0.0, 0.0)
+            );
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A spread that fits keeps the bits it had before M2 was held raised:
+    /// scaling by a power of two is exact for it.
+    #[test]
+    fn a_spread_that_fits_reports_the_same_bits_at_every_scale() {
+        let values = [0.1, 0.2, 0.30000000000000004, 1e3, 7.5, -2.25];
+        let accumulator = accumulate(&values);
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        let squares: f64 = values.iter().map(|value| (value - mean).powi(2)).sum();
+        let variance = accumulator.sample_variance();
+        assert!((variance - squares / 5.0).abs() <= 1e-12 * variance);
+        assert_eq!(accumulator.sample_std_dev(), variance.sqrt());
     }
 
     /// Exact sample variance of integers, from integer sums: the reference a
