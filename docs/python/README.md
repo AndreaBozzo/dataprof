@@ -247,8 +247,9 @@ error policy, but reject streaming-only controls (`chunk_size`,
 recovery) instead of silently ignoring them. For those controls, use
 `dataprof.asyncio.profile_bytes()`. JSON and JSONL byte buffers follow RFC 8259:
 the non-standard `NaN` and `Infinity` constants are malformed input, and so are
-an integer outside the 64-bit range and a number that overflows a float, such
-as `1e400`, as they are in a file.
+an integer outside the 64-bit range, a number that overflows a float, such as
+`1e400`, and a string escape for a lone surrogate, such as `"\ud800"`, as they
+are in a file.
 
 **JSON record policy.** Only JSON objects are profileable records — they are the
 only JSON value with named fields to become columns. A record that is valid JSON
