@@ -31,6 +31,9 @@ except ImportError:
 
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
+if not hasattr(pa, "decimal32"):
+    # pyarrow 19 added both widths; the declared floor is older.
+    pytest.skip("pyarrow without decimal32 and decimal64", allow_module_level=True)
 
 WIDTHS = (32, 64, 128, 256)
 MAX_PRECISION = {32: 9, 64: 18, 128: 38, 256: 76}
@@ -141,7 +144,8 @@ def test_parquet_file_and_schema(tmp_path: Path):
 @pytest.mark.parametrize("route", ROUTES)
 def test_a_column_past_the_sample_is_read_whole(route: str):
     stats = _columns(ROUTES[route](_table(128, LONG)))["long_cents"]["stats"]
-    assert (stats["min"], stats["max"]) == (-99.99, 250.0)
+    # Every value but the first cancels out: only the whole column has this mean.
+    assert (stats["min"], stats["max"], stats["mean"]) == (-99.99, 250.0, 0.0125)
     wrong = _wrong_against_decimal128(ROUTES[route], LONG)
     assert not wrong, (route, wrong)
 

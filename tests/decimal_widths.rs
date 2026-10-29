@@ -209,9 +209,14 @@ fn a_column_past_the_sample_is_read_whole_in_every_width() {
     let columns = long_columns();
     let reference = self::columns(&parquet_of(128, &columns));
     let stats = &reference[0].1["stats"]["Numeric"];
+    // Every value but the first cancels out: only the whole column has this mean.
     assert_eq!(
-        (stats["min"].as_f64(), stats["max"].as_f64()),
-        (Some(-99.99), Some(250.0))
+        (
+            stats["min"].as_f64(),
+            stats["max"].as_f64(),
+            stats["mean"].as_f64()
+        ),
+        (Some(-99.99), Some(250.0), Some(0.0125))
     );
     let wrong = wrong_against_decimal128(&columns);
     assert!(wrong.is_empty(), "{wrong:#?}");
