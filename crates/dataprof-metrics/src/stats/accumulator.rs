@@ -923,6 +923,9 @@ impl<'a> DecimalLiteral<'a> {
                 b'.' => point = true,
                 b'e' | b'E' => {
                     mantissa = &rest[..at];
+                    // decode-audit: no-data — `f64` parsing accepted the text,
+                    // so only an exponent past `i64` fails here: the literal
+                    // has no exact form and reads as the `f64` already parsed.
                     exponent = rest[at + 1..].parse::<i64>().ok()?;
                     break;
                 }
@@ -966,6 +969,9 @@ impl<'a> DecimalLiteral<'a> {
 
     /// The value as an [`ExactDecimal`], or `None` where it does not fit one.
     fn exact(&self) -> Option<ExactDecimal> {
+        // decode-audit: no-data — a scale past `u32` is past both `i128` and
+        // `MAX_DECIMAL_SCALE`, so the literal has no exact form and reads as
+        // its `f64`, as any literal too wide to hold does.
         let mut unscaled = self.digits?;
         let scale = if self.scale < 0 {
             unscaled = scale_up(unscaled, u32::try_from(-self.scale).ok()?)?;
@@ -1012,7 +1018,11 @@ impl<'a> DecimalLiteral<'a> {
         };
         let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
         significant.trim_end_matches('0') == digits.trim_end_matches('0')
-            && exponent.parse::<i64>().ok() == (whole - leading - 1).checked_add(self.exponent)
+            && Some(
+                exponent
+                    .parse::<i64>()
+                    .expect("`{:e}` writes a decimal exponent"),
+            ) == (whole - leading - 1).checked_add(self.exponent)
     }
 }
 
