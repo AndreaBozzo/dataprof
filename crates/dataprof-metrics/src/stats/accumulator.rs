@@ -21,6 +21,15 @@
 ///   its nearest `f64` and the exact remainder, and the shift is kept in the
 ///   same two parts. Epoch nanoseconds near 1.76e18 sit 256 apart as `f64`,
 ///   and three of them six apart reported a variance of 0.0 (#877).
+///   A decimal with more digits than `f64` keeps is rounded the same way, and
+///   its remainder is not exact as an `f64` either: `1000000000000000.01` and
+///   `.05` are one `f64`, and their variance was 0.0 (#1149). So
+///   [`update_number`](Self::update_number) takes it as an [`ExactDecimal`]
+///   and the first such value becomes the shift's exact value, the anchor.
+///   Each later decimal's deviation is its exact difference from the anchor,
+///   rounded once. A value whose deviation cannot be taken exactly (one too
+///   wide to hold, or a difference beyond `i128`) is taken in `f64`, and a
+///   spread too small to stand above that rounding is reported as lost.
 /// - **A compensated (Knuth two-sum) running sum** gives a mean that survives
 ///   cancellation. Welford's running mean rounds `[1e16, 1.0, -1e16]` to 0.0
 ///   because the unit contribution disappears into the intermediate mean; the
@@ -58,8 +67,15 @@ pub struct NumericAccumulator {
     /// this shift.
     shift: f64,
     /// The exact remainder of a first value given to
-    /// [`update_integer`](Self::update_integer) beyond `shift`; zero otherwise.
+    /// [`update_integer`](Self::update_integer) beyond `shift`, the remainder
+    /// of a decimal anchor (see [`ExactDecimal::low_part`]), zero otherwise.
     shift_low: f64,
+    /// The exact value of the shift, once a decimal beyond `f64`, or an
+    /// integer beyond 2^53, has set it. `None` while every value was an `f64`.
+    anchor: Option<ExactDecimal>,
+    /// The largest magnitude involved in a deviation that should have been
+    /// exact and was taken in `f64` instead: zero while there was none.
+    unheld: f64,
     /// Welford's running mean of the shifted values, the reference point for
     /// `m2`. Not overflow-proof, so the reported mean comes from `sum` instead.
     running_mean: f64,
@@ -160,6 +176,12 @@ impl M2Scale {
     }
 }
 
+/// 2^-32: a spread is reported as lost when its standard deviation is below
+/// this fraction of [`NumericAccumulator::unheld`]. A deviation taken in `f64`
+/// is off by about 2^-53 of the magnitudes it was taken from, so a standard
+/// deviation at this fraction of them is still right to about 2^-21.
+const UNHELD_RESOLUTION: f64 = f64::from_bits((1023 - 32) << 52);
+
 /// Every integer of at most this magnitude, 2^53, is exact as an `f64`.
 const EXACT_F64_INTEGER: u128 = 1 << 53;
 
@@ -179,6 +201,8 @@ impl NumericAccumulator {
             count: 0,
             shift: 0.0,
             shift_low: 0.0,
+            anchor: None,
+            unheld: 0.0,
             running_mean: 0.0,
             m2: 0.0,
             m2_scale: M2Scale::Raised,
@@ -218,6 +242,11 @@ impl NumericAccumulator {
         match number {
             ParsedNumber::Float(value) => self.update(value),
             ParsedNumber::Integer(value) => self.update_wide_integer(value),
+            ParsedNumber::Decimal { exact, nearest } => self.update_decimal(exact, nearest),
+            ParsedNumber::Unheld(value) => {
+                self.update(value);
+                self.note_unheld(value);
+            }
         }
     }
 
@@ -230,8 +259,63 @@ impl NumericAccumulator {
             return;
         }
         let high = value as f64;
+        let exact = ExactDecimal::integer(value);
+        // Against an integer anchor, or none, the split below is already
+        // exact, and integer columns keep the bits they had before #1149.
+        if self.anchor.is_some_and(|anchor| anchor.scale > 0) {
+            self.update_decimal(exact, high);
+            return;
+        }
+        if self.count == 0 {
+            self.anchor = Some(exact);
+        }
         let low = (value - high as i128) as f64;
         self.push(high, low);
+    }
+
+    /// Fold in a decimal, `nearest` being its nearest `f64`.
+    ///
+    /// Only an anchor, or a deviation that cannot be exact, needs the
+    /// remainder beyond `nearest`. The running sum goes without it otherwise:
+    /// the mean is reported as an `f64`, which cannot hold it either.
+    fn update_decimal(&mut self, exact: ExactDecimal, nearest: f64) {
+        let anchor = match self.anchor {
+            Some(anchor) => anchor,
+            None if self.count == 0 => {
+                self.anchor = Some(exact);
+                self.push(nearest, exact.low_part(nearest));
+                return;
+            }
+            None => {
+                self.reanchor(exact, nearest, exact.low_part(nearest));
+                exact
+            }
+        };
+        self.count += 1;
+        let (shifted, low) = match exact.minus(anchor) {
+            Some(shifted) => (shifted, 0.0),
+            None => {
+                self.note_unheld(nearest);
+                let low = exact.low_part(nearest);
+                ((nearest - self.shift) - (self.shift_low - low), low)
+            }
+        };
+        self.fold(shifted, nearest, low);
+    }
+
+    /// Move the shift to `exact`, whose nearest `f64` is `nearest` and whose
+    /// remainder is `low`. M2 does not depend on the shift; the running mean
+    /// is translated by the gap between the two, which is rounded once.
+    fn reanchor(&mut self, exact: ExactDecimal, nearest: f64, low: f64) {
+        self.running_mean += (self.shift - nearest) + (self.shift_low - low);
+        self.shift = nearest;
+        self.shift_low = low;
+        self.anchor = Some(exact);
+    }
+
+    /// Record that a deviation involving `value` was taken in `f64`.
+    fn note_unheld(&mut self, value: f64) {
+        self.unheld = self.unheld.max(value.abs()).max(self.shift.abs());
     }
 
     /// Fold in the value `high + low`, where `high` is its nearest `f64` and
@@ -246,6 +330,13 @@ impl NumericAccumulator {
 
         // With both remainders zero this is `high - shift`, bit for bit.
         let shifted = (high - self.shift) - (self.shift_low - low);
+        self.fold(shifted, high, low);
+    }
+
+    /// Fold in a value already counted, `shifted` being its deviation from
+    /// the shift and `high + low` the value itself.
+    #[inline]
+    fn fold(&mut self, shifted: f64, high: f64, low: f64) {
         let delta = shifted - self.running_mean;
         self.running_mean += delta / self.count as f64;
         let deviation = shifted - self.running_mean;
@@ -294,6 +385,8 @@ impl NumericAccumulator {
             count,
             shift,
             shift_low: 0.0,
+            anchor: None,
+            unheld: 0.0,
             running_mean,
             m2,
             m2_scale,
@@ -398,7 +491,17 @@ impl NumericAccumulator {
     /// digits: deviations of subnormal values square to products that round,
     /// or vanish, even at [`UNDERFLOW_SCALE`]. See [`LOST_SPREAD_PER_VALUE`].
     fn spread_lost(&self) -> bool {
-        self.min < self.max && self.m2 < self.count as f64 * LOST_SPREAD_PER_VALUE
+        (self.min < self.max && self.m2 < self.count as f64 * LOST_SPREAD_PER_VALUE)
+            || self.spread_unresolved()
+    }
+
+    /// Whether the population standard deviation is too small to stand above
+    /// the rounding of a deviation taken in `f64` that should have been exact.
+    /// See [`UNHELD_RESOLUTION`].
+    fn spread_unresolved(&self) -> bool {
+        self.unheld > 0.0
+            && (self.m2 / self.count as f64).max(0.0).sqrt() / self.m2_scale.root()
+                < self.unheld * UNHELD_RESOLUTION
     }
 
     fn rescale_sum(&mut self) {
@@ -421,9 +524,26 @@ impl NumericAccumulator {
         // Chan's parallel form of Welford's update, in this accumulator's
         // shifted frame. The difference of the shifts is taken first: forming
         // either unshifted mean would round it at the scale of the offset.
+        // Between two anchors it is taken exactly where a decimal is involved;
+        // two integer anchors are split exactly already.
+        if self.anchor.is_none()
+            && let Some(anchor) = other.anchor.filter(|anchor| anchor.scale > 0)
+        {
+            self.reanchor(anchor, other.shift, other.shift_low);
+        }
+        let split_gap = (other.shift - self.shift) - (self.shift_low - other.shift_low);
+        let shift_gap = match (self.anchor, other.anchor) {
+            (Some(mine), Some(theirs)) if mine.scale > 0 || theirs.scale > 0 => {
+                theirs.minus(mine).unwrap_or_else(|| {
+                    self.note_unheld(other.shift);
+                    split_gap
+                })
+            }
+            _ => split_gap,
+        };
+        self.unheld = self.unheld.max(other.unheld);
         let (a, b) = (self.count as f64, other.count as f64);
         let combined = a + b;
-        let shift_gap = (other.shift - self.shift) - (self.shift_low - other.shift_low);
         let delta = shift_gap + (other.running_mean - self.running_mean);
         self.running_mean += delta * (b / combined);
         let weight = a * b / combined;
@@ -535,20 +655,63 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 
 /// A finite number read from a text cell.
 ///
-/// An integer literal of 2^53 or more in magnitude, within the 64-bit range, is
-/// kept exact, so a text path accumulates it as an Arrow `Int64` column does
-/// (#877). Everything else, integers beyond 64 bits included, is its `f64`.
+/// An integer of 2^53 or more in magnitude, within the 64-bit range, is kept
+/// exact, so a text path accumulates it as an Arrow `Int64` column does
+/// (#877). A longer literal that is not one of those, or an `f64` integer, is
+/// kept as an [`ExactDecimal`] where it fits one (#1149), and is
+/// [`Unheld`](Self::Unheld) where it does not: from [`TEXT_EXACT_DIGITS`]
+/// significant digits for [`parse`](Self::parse), from
+/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal).
+/// Everything else is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ParsedNumber {
     Float(f64),
     Integer(i128),
+    Decimal {
+        exact: ExactDecimal,
+        nearest: f64,
+    },
+    /// A literal with more significant digits than an [`ExactDecimal`]
+    /// holds, as its nearest `f64`.
+    Unheld(f64),
 }
+
+/// Significant digits, counted as written from the first non-zero digit, from
+/// which a text literal is kept exact. The shortest form of an `f64`, what
+/// Python's `repr` and Rust write, has at most 17, so a literal of 18 cannot
+/// be one, and reading it as a decimal leaves float data as it was; Rust pads
+/// a large float with zeros to its units digit, and that integer still reads
+/// as the float. Below 18 text is ambiguous: a float written out reads as that
+/// float, for parity with the same column typed `Float64` (#783).
+const TEXT_EXACT_DIGITS: usize = 18;
+
+/// Significant digits from which a literal known to be a decimal, an Arrow or
+/// Parquet decimal's rendering, is kept exact. An `f64` is within 2^-53 of a
+/// value, so it is within 2^-19 of the last place of a literal of 10 digits,
+/// as its CSV is, and of 15 digits only within about a tenth:
+/// `9999999999999.01` to `.05` reported a standard deviation of 0.0175 for
+/// 0.0171. From 16 digits two decimals can share one `f64`.
+const DECIMAL_EXACT_DIGITS: usize = 11;
 
 impl ParsedNumber {
     /// The number `text` holds, or `None` when it holds none or a non-finite
     /// one. Accepts exactly what `text.trim().parse::<f64>()` accepts.
     pub fn parse(text: &str) -> Option<Self> {
+        Self::read(text, TEXT_EXACT_DIGITS, true)
+    }
+
+    /// [`parse`](Self::parse) for the rendering of a value typed as a
+    /// decimal, which no float wrote: kept exact from fewer digits.
+    pub fn parse_decimal(text: &str) -> Option<Self> {
+        Self::read(text, DECIMAL_EXACT_DIGITS, false)
+    }
+
+    /// `may_be_float`: the text may be a float written out, which Rust does
+    /// in full: 1.2345678901234567e20 is `123456789012345670000`. Past the
+    /// 64-bit range such an integer reads as the float it writes, as before
+    /// #1149, and only that case pays for the check.
+    fn read(text: &str, exact_from: usize, may_be_float: bool) -> Option<Self> {
         let text = text.trim();
         // decode-audit: no-data — a cell that does not parse is a non-numeric
         // value, excluded from numeric stats by design.
@@ -559,15 +722,307 @@ impl ParsedNumber {
         {
             return Some(Self::Integer(integer));
         }
-        Some(Self::Float(value))
+        // A plain integer below 2^53 is its `f64` exactly: ids and epoch
+        // milliseconds skip the digit scan.
+        if text.len() < exact_from
+            || (value.abs() < EXACT_F64_INTEGER as f64 && !text.contains(['.', 'e', 'E']))
+        {
+            return Some(Self::Float(value));
+        }
+        Some(match DecimalLiteral::read(text) {
+            Some(literal) if literal.written_digits >= exact_from => match literal.exact() {
+                Some(exact)
+                    if may_be_float
+                        && exact.scale == 0
+                        && i64::try_from(exact.unscaled).is_err()
+                        && u64::try_from(exact.unscaled).is_err()
+                        && literal.round_trips(value) =>
+                {
+                    Self::Float(value)
+                }
+                Some(exact) => Self::from_exact(exact, value),
+                None if literal.round_trips(value) => Self::Float(value),
+                None => Self::Unheld(value),
+            },
+            _ => Self::Float(value),
+        })
+    }
+
+    fn from_exact(exact: ExactDecimal, nearest: f64) -> Self {
+        match exact.as_integer() {
+            Some(integer) if integer.unsigned_abs() <= EXACT_F64_INTEGER => Self::Float(nearest),
+            Some(integer) if (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(&integer) => {
+                Self::Integer(integer)
+            }
+            _ => Self::Decimal { exact, nearest },
+        }
     }
 
     /// The nearest `f64`.
     pub fn to_f64(self) -> f64 {
         match self {
-            Self::Float(value) => value,
+            Self::Float(value) | Self::Unheld(value) => value,
             Self::Integer(value) => value as f64,
+            Self::Decimal { nearest, .. } => nearest,
         }
+    }
+
+    /// The value exactly, where it is held exactly.
+    pub(crate) fn exact(self) -> Option<ExactDecimal> {
+        match self {
+            Self::Integer(value) => Some(ExactDecimal::integer(value)),
+            Self::Decimal { exact, .. } => Some(exact),
+            Self::Float(_) | Self::Unheld(_) => None,
+        }
+    }
+}
+
+/// The largest scale an [`ExactDecimal`] takes: `10^scale` is formed in two
+/// finite `f64` halves up to it, and every finite `f64` written out in full
+/// needs less.
+const MAX_DECIMAL_SCALE: u32 = 600;
+
+/// A decimal held exactly, as `unscaled × 10^-scale`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExactDecimal {
+    unscaled: i128,
+    scale: u32,
+}
+
+impl ExactDecimal {
+    fn integer(value: i128) -> Self {
+        Self {
+            unscaled: value,
+            scale: 0,
+        }
+    }
+
+    /// The value, when it is an integer. In `i64` where both fit: `i128`
+    /// division is a library call.
+    fn as_integer(self) -> Option<i128> {
+        if self.scale == 0 {
+            return Some(self.unscaled);
+        }
+        let unit = pow10(self.scale)?;
+        if let (Ok(unscaled), Ok(unit)) = (i64::try_from(self.unscaled), i64::try_from(unit)) {
+            return (unscaled % unit == 0).then_some(i128::from(unscaled / unit));
+        }
+        (self.unscaled % unit == 0).then_some(self.unscaled / unit)
+    }
+
+    /// `self - other`, exact and then rounded, or `None` when bringing both to
+    /// one scale, or their difference, leaves `i128`.
+    pub(crate) fn minus(self, other: Self) -> Option<f64> {
+        let scale = self.scale.max(other.scale);
+        let left = scale_up(self.unscaled, scale - self.scale)?;
+        let right = scale_up(other.unscaled, scale - other.scale)?;
+        Some(scaled_to_f64(left.checked_sub(right)?, scale))
+    }
+
+    /// `self - nearest`, `nearest` being its nearest `f64`: the difference
+    /// from its whole part is exact and rounded once, and the fraction of
+    /// `nearest` then cancels without rounding. Exact for an integer
+    /// `nearest`; otherwise off by at most 2^-53 of the fraction, which is
+    /// within the rounding of any `f64` beside it. Zero where the whole part
+    /// leaves `i128`.
+    pub(crate) fn low_part(self, nearest: f64) -> f64 {
+        let whole = nearest.trunc();
+        if whole.abs() >= i128::MAX as f64 {
+            return 0.0;
+        }
+        self.minus(Self::integer(whole as i128))
+            .map_or(0.0, |above| above - (nearest - whole))
+    }
+}
+
+/// `10^k` for every `k` an `i128` holds.
+const POW10: [i128; 39] = {
+    let mut table = [1_i128; 39];
+    let mut k = 1;
+    while k < 39 {
+        table[k] = table[k - 1] * 10;
+        k += 1;
+    }
+    table
+};
+
+/// `10^k` as an `f64`, exact for each `k` here.
+const POW10_F64: [f64; 23] = {
+    let mut table = [1.0_f64; 23];
+    let mut k = 1;
+    while k < 23 {
+        table[k] = table[k - 1] * 10.0;
+        k += 1;
+    }
+    table
+};
+
+fn pow10(exponent: u32) -> Option<i128> {
+    POW10.get(exponent as usize).copied()
+}
+
+/// `value × 10^exponent`, or `None` past `i128`. Factors below 2^63 multiply
+/// without the overflow check, a library call for `i128`.
+fn scale_up(value: i128, exponent: u32) -> Option<i128> {
+    if exponent == 0 {
+        return Some(value);
+    }
+    let factor = pow10(exponent)?;
+    const HALF: u128 = 1 << 63;
+    if value.unsigned_abs() < HALF && factor.unsigned_abs() < HALF {
+        Some(value * factor)
+    } else {
+        value.checked_mul(factor)
+    }
+}
+
+/// `unscaled × 10^-scale`, the division rounded once more. `10^scale` is
+/// exact up to 10^22, and taken in two halves beyond it so that neither
+/// overflows.
+fn scaled_to_f64(unscaled: i128, scale: u32) -> f64 {
+    // Converting from `i64` is one instruction, from `i128` a library call.
+    let value = i64::try_from(unscaled).map_or(unscaled as f64, |small| small as f64);
+    if let Some(&unit) = POW10_F64.get(scale as usize) {
+        return value / unit;
+    }
+    let half = scale / 2;
+    value / 10_f64.powi(half as i32) / 10_f64.powi((scale - half) as i32)
+}
+
+/// The digits of a literal `str::parse::<f64>` accepted: an optional sign,
+/// digits with an optional point, an optional exponent.
+struct DecimalLiteral<'a> {
+    negative: bool,
+    /// The digits and the point, without the sign or the exponent.
+    mantissa: &'a str,
+    exponent: i64,
+    /// The digits as an integer, `None` when they overflow `i128`.
+    digits: Option<i128>,
+    /// Digits from the first non-zero one to the last written.
+    written_digits: usize,
+    /// Digits after the point, less the exponent.
+    scale: i64,
+}
+
+impl<'a> DecimalLiteral<'a> {
+    /// `None` for a literal that is not of that form (`inf` and `nan` are
+    /// filtered out before), or whose exponent leaves `i64`.
+    fn read(text: &'a str) -> Option<Self> {
+        let (negative, rest) = match text.as_bytes().first()? {
+            b'-' => (true, &text[1..]),
+            b'+' => (false, &text[1..]),
+            _ => (false, text),
+        };
+        // Digits gather in a `u64` while they fit, 19 of them; checked `i128`
+        // arithmetic is a library call per digit.
+        let (mut small, mut wide) = (0_u64, None::<Option<i128>>);
+        let (mut written, mut fraction, mut point) = (0, 0_i64, false);
+        let (mut mantissa, mut exponent) = (rest, 0);
+        for (at, byte) in rest.bytes().enumerate() {
+            match byte {
+                b'.' => point = true,
+                b'e' | b'E' => {
+                    mantissa = &rest[..at];
+                    // decode-audit: no-data — `f64` parsing accepted the text,
+                    // so only an exponent past `i64` fails here: the literal
+                    // has no exact form and reads as the `f64` already parsed.
+                    exponent = rest[at + 1..].parse::<i64>().ok()?;
+                    break;
+                }
+                b'0'..=b'9' => {
+                    let digit = byte - b'0';
+                    match &mut wide {
+                        None if small < 1_000_000_000_000_000_000 => {
+                            small = small * 10 + u64::from(digit);
+                        }
+                        None => {
+                            wide = Some(
+                                i128::from(small)
+                                    .checked_mul(10)
+                                    .and_then(|d| d.checked_add(i128::from(digit))),
+                            );
+                        }
+                        Some(value) => {
+                            *value = value
+                                .and_then(|d| d.checked_mul(10)?.checked_add(i128::from(digit)));
+                        }
+                    }
+                    if written > 0 || digit != 0 {
+                        written += 1;
+                    }
+                    if point {
+                        fraction += 1;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(Self {
+            negative,
+            mantissa,
+            exponent,
+            digits: wide.unwrap_or(Some(i128::from(small))),
+            written_digits: written,
+            scale: fraction.checked_sub(exponent)?,
+        })
+    }
+
+    /// The value as an [`ExactDecimal`], or `None` where it does not fit one.
+    fn exact(&self) -> Option<ExactDecimal> {
+        // decode-audit: no-data — a scale past `u32` is past both `i128` and
+        // `MAX_DECIMAL_SCALE`, so the literal has no exact form and reads as
+        // its `f64`, as any literal too wide to hold does.
+        let mut unscaled = self.digits?;
+        let scale = if self.scale < 0 {
+            unscaled = scale_up(unscaled, u32::try_from(-self.scale).ok()?)?;
+            0
+        } else {
+            u32::try_from(self.scale)
+                .ok()
+                .filter(|&scale| scale <= MAX_DECIMAL_SCALE)?
+        };
+        Some(ExactDecimal {
+            unscaled: if self.negative { -unscaled } else { unscaled },
+            scale,
+        })
+    }
+
+    /// Whether this literal has the value of the shortest decimal that reads
+    /// back as `value`, its nearest `f64`: what `f64` formatting writes,
+    /// padded with zeros to the units digit when it writes no exponent. Such a
+    /// literal reads as that `f64`, as it did before #1149: an Arrow `Float64`
+    /// sample of 1e300 is written out in 301 digits. Only called for a literal
+    /// too wide for an [`ExactDecimal`], or for text of an integer past the
+    /// 64-bit range, so the allocations stay off the common path.
+    fn round_trips(&self, value: f64) -> bool {
+        let mut significant = String::new();
+        let (mut whole, mut leading, mut point) = (0_i64, 0_i64, false);
+        for byte in self.mantissa.bytes() {
+            match byte {
+                b'.' => point = true,
+                _ => {
+                    if !point {
+                        whole += 1;
+                    }
+                    if significant.is_empty() && byte == b'0' {
+                        leading += 1;
+                    } else {
+                        significant.push(char::from(byte));
+                    }
+                }
+            }
+        }
+        let shortest = format!("{:e}", value.abs());
+        let Some((digits, exponent)) = shortest.split_once('e') else {
+            return false;
+        };
+        let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
+        significant.trim_end_matches('0') == digits.trim_end_matches('0')
+            && Some(
+                exponent
+                    .parse::<i64>()
+                    .expect("`{:e}` writes a decimal exponent"),
+            ) == (whole - leading - 1).checked_add(self.exponent)
     }
 }
 
@@ -669,20 +1124,185 @@ mod tests {
             ParsedNumber::parse("-9223372036854775808"),
             Some(ParsedNumber::Integer(i128::from(i64::MIN)))
         );
-        // Exact as `f64` already, or not an integer literal, or beyond 64 bits.
+        // A decimal's integer written with a point or an exponent is the
+        // same integer; in text it may be a float written out, and reads as one.
+        for text in ["9007199254740993.0", "9.007199254740993e15"] {
+            assert_eq!(
+                ParsedNumber::parse_decimal(text),
+                Some(ParsedNumber::Integer(9_007_199_254_740_993)),
+                "{text:?}"
+            );
+            assert_eq!(
+                ParsedNumber::parse(text),
+                Some(ParsedNumber::Float(9_007_199_254_740_992.0)),
+                "{text:?}"
+            );
+        }
+        // Exact as `f64` already, or short enough for its `f64` to stand in.
         assert_eq!(ParsedNumber::parse("42"), Some(ParsedNumber::Float(42.0)));
         assert_eq!(ParsedNumber::parse("1e20"), Some(ParsedNumber::Float(1e20)));
         assert_eq!(
-            ParsedNumber::parse("9007199254740993.0"),
-            Some(ParsedNumber::Float(9_007_199_254_740_992.0))
+            ParsedNumber::parse("1000000000000000.00"),
+            Some(ParsedNumber::Float(1e15))
         );
         assert_eq!(
-            ParsedNumber::parse("18446744073709551616"),
-            Some(ParsedNumber::Float(18_446_744_073_709_551_616.0))
+            ParsedNumber::parse_decimal("0.1234567891"),
+            Some(ParsedNumber::Float(0.1234567891))
         );
+        // The shortest forms of floats, which have up to 17 digits (#783).
+        for value in [
+            0.30000000000000004,
+            1000000000123.4567,
+            1.2345678901234567e-7,
+            1.2345678901234567e20,
+        ] {
+            for text in [
+                format!("{value}"),
+                format!("{value:?}"),
+                format!("{value:e}"),
+            ] {
+                assert_eq!(
+                    ParsedNumber::parse(&text),
+                    Some(ParsedNumber::Float(value)),
+                    "{text:?}"
+                );
+            }
+        }
         for text in ["", "N/A", "inf", "NaN", "1e400"] {
             assert_eq!(ParsedNumber::parse(text), None, "{text:?}");
+            assert_eq!(ParsedNumber::parse_decimal(text), None, "{text:?}");
         }
+    }
+
+    #[test]
+    fn parsed_numbers_keep_long_decimals_exact() {
+        // (text, unscaled, scale, whether text alone is held exactly)
+        for (text, unscaled, scale, in_text) in [
+            ("1000000000000000.01", 100_000_000_000_000_001, 2, true),
+            ("-1000000000000000.01", -100_000_000_000_000_001, 2, true),
+            ("0.123456789012345678", 123_456_789_012_345_678, 18, true),
+            ("0.1234567890123456", 1_234_567_890_123_456, 16, false),
+            ("9999999999999.01", 999_999_999_999_901, 2, false),
+            ("0.12345678912", 12_345_678_912, 11, false),
+            ("1.234567890123456e-3", 1_234_567_890_123_456, 18, false),
+            // Beyond 64 bits an integer is a decimal of scale 0.
+            ("18446744073709551616", 18_446_744_073_709_551_616, 0, true),
+            // How Rust writes the float 1.2345678901234567e20: text reads it
+            // as that float, a decimal column as the integer it shows.
+            (
+                "123456789012345670000",
+                123_456_789_012_345_670_000,
+                0,
+                false,
+            ),
+            (
+                "1.8446744073709551616e19",
+                18_446_744_073_709_551_616,
+                0,
+                true,
+            ),
+        ] {
+            let expected = Some(ExactDecimal { unscaled, scale });
+            let decimal = ParsedNumber::parse_decimal(text).unwrap();
+            assert_eq!(decimal.exact(), expected, "{text:?}");
+            let parsed = ParsedNumber::parse(text).unwrap();
+            assert_eq!(parsed.exact(), expected.filter(|_| in_text), "{text:?}");
+            let nearest: f64 = text.parse().unwrap();
+            assert_eq!((decimal.to_f64(), parsed.to_f64()), (nearest, nearest));
+        }
+
+        // Too wide for `i128`: unheld, unless it is how an `f64` writes out.
+        let wide = format!("1{}1", "0".repeat(74));
+        assert_eq!(ParsedNumber::parse(&wide), Some(ParsedNumber::Unheld(1e75)));
+        for value in [1e300, 1.2345678901234567e300, 3e-300, -1.5e200] {
+            let written = value.to_string();
+            assert!(written.len() > 40, "{written}");
+            assert_eq!(
+                ParsedNumber::parse(&written),
+                Some(ParsedNumber::Float(value)),
+                "{written}"
+            );
+        }
+    }
+
+    fn accumulate_text(cells: &[&str]) -> NumericAccumulator {
+        cells
+            .iter()
+            .map(|cell| ParsedNumber::parse(cell).expect("a number"))
+            .collect()
+    }
+
+    /// One `f64` holds all of these, and their variance was 0.0 (#1149).
+    #[test]
+    fn decimals_beyond_f64_keep_their_spread_in_every_order_and_split() {
+        let cells = [
+            "1000000000000000.01",
+            "1000000000000000.05",
+            "1000000000000000.02",
+            // `f64` values beside them, one integer, one not: they set the
+            // shift when they come first, and are moved off it after.
+            "1000000000000000",
+            "1000000000000000.5",
+        ];
+        let cents = [1.0, 5.0, 2.0, 0.0, 50.0];
+        let mean = cents.iter().sum::<f64>() / 5.0;
+        let expected = cents.iter().map(|c| (c - mean).powi(2)).sum::<f64>() / 4.0 / 1e4;
+        let check = |label: &str, accumulator: NumericAccumulator| {
+            let variance = accumulator.sample_variance();
+            assert!(
+                (variance - expected).abs() <= expected * 1e-12,
+                "{label}: variance {variance}, exact {expected}"
+            );
+        };
+        for rotation in 0..cells.len() {
+            let mut order = cells;
+            order.rotate_left(rotation);
+            check(&format!("order {order:?}"), accumulate_text(&order));
+            for split in 1..order.len() {
+                let (left, right) = order.split_at(split);
+                let mut merged = accumulate_text(left);
+                merged.merge(&accumulate_text(right));
+                check(&format!("{left:?} + {right:?}"), merged);
+            }
+        }
+    }
+
+    #[test]
+    fn decimals_and_wide_integers_share_an_exact_anchor() {
+        // A decimal(20, 2) column: whole values parse as integers.
+        let cells = [
+            "12345678901234567.01",
+            "12345678901234567",
+            "12345678901234567.00",
+            "12345678901234568.03",
+        ];
+        let cents = [1.0, 0.0, 0.0, 103.0];
+        let mean = cents.iter().sum::<f64>() / 4.0;
+        let expected = cents.iter().map(|c| (c - mean).powi(2)).sum::<f64>() / 3.0 / 1e4;
+        for rotation in 0..cells.len() {
+            let mut order = cells;
+            order.rotate_left(rotation);
+            let variance = accumulate_text(&order).sample_variance();
+            assert!(
+                (variance - expected).abs() <= expected * 1e-12,
+                "{order:?}: variance {variance}, exact {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_spread_below_the_rounding_of_unheld_values_is_lost() {
+        // 10^75 and 100 above it: too wide to hold, and one `f64`.
+        let base = format!("1{}", "0".repeat(75));
+        let above = format!("1{}100", "0".repeat(72));
+        let accumulator = accumulate_text(&[&base, &above, &above]);
+        assert!(accumulator.sample_variance().is_nan());
+        assert!(accumulator.sample_std_dev().is_nan());
+
+        // A spread far above that rounding is still reported.
+        let accumulator = accumulate_text(&[&base, &above, "1e74"]);
+        assert!(accumulator.sample_variance().is_finite());
+        assert!(accumulator.sample_std_dev() > 1e74);
     }
 
     #[test]

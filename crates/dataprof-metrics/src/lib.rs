@@ -18,7 +18,7 @@ pub use quality::{
     ScoreBounds, ScoreInterval, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 pub use stats::{
-    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, NumericAccumulator,
-    ParsedNumber, calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
-    spill_largest_exact_sets,
+    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal, HyperLogLog,
+    NumericAccumulator, ParsedNumber, calculate_datetime_stats, calculate_numeric_stats,
+    calculate_text_stats, spill_largest_exact_sets,
 };

@@ -24,9 +24,22 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
 /// cells that parsed as a finite number. Lets callers derive invalid-value
 /// counts without a second parse pass over the data.
 pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
+    compute_parsed_stats(data, ParsedNumber::parse)
+}
+
+/// [`compute_numeric_stats_with_parsed_count`] for the renderings of a column
+/// typed as a decimal, read with [`ParsedNumber::parse_decimal`] (#1149).
+pub fn compute_decimal_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
+    compute_parsed_stats(data, ParsedNumber::parse_decimal)
+}
+
+fn compute_parsed_stats(
+    data: &[String],
+    parse: fn(&str) -> Option<ParsedNumber>,
+) -> (NumericStats, usize) {
     // Cells that do not parse are non-numeric values (nulls, tokens like
     // "N/A"), excluded from numeric stats by design.
-    let parsed: Vec<ParsedNumber> = data.iter().filter_map(|s| ParsedNumber::parse(s)).collect();
+    let parsed: Vec<ParsedNumber> = data.iter().filter_map(|s| parse(s)).collect();
     let numbers: Vec<f64> = parsed.iter().map(|number| number.to_f64()).collect();
     let parsed_count = numbers.len();
 
@@ -34,11 +47,12 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
         return (NumericStats::empty(), 0);
     }
 
-    // An integer beyond 2^53 is rounded in `numbers`, so its spread is taken
-    // from the exact values instead (#877). The SIMD path only reads `f64`.
+    // An integer beyond 2^53, or a decimal beyond `f64`, is rounded in
+    // `numbers`, so its spread is taken from the exact values instead (#877,
+    // #1149). The SIMD path only reads `f64`.
     let wide = parsed
         .iter()
-        .any(|number| matches!(number, ParsedNumber::Integer(_)));
+        .any(|number| !matches!(number, ParsedNumber::Float(_)));
 
     // Single stable pass for the base statistics. `NumericAccumulator` carries
     // Welford's mean and M2 alongside a compensated sum, so the variance of a
@@ -309,23 +323,26 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
     value.is_finite().then_some(value)
 }
 
-/// Each value minus the first integer beyond `f64`'s exact range, with the
-/// integer differences taken exactly. Values near 1.76e18 sit 256 apart as
-/// `f64`, so a spread of a few units only survives as deviations (#877).
+/// Each value minus the first one held exactly, an integer beyond 2^53 or a
+/// decimal beyond `f64`, with the differences between exact values taken
+/// exactly. Values near 1.76e18 sit 256 apart as `f64`, so a spread of a few
+/// units only survives as deviations (#877), and so does a spread of cents on
+/// 10^15 (#1149).
 fn deviations_from_pivot(values: &[ParsedNumber]) -> Vec<f64> {
-    let Some(pivot) = values.iter().find_map(|number| match number {
-        ParsedNumber::Integer(value) => Some(*value),
-        ParsedNumber::Float(_) => None,
-    }) else {
+    let Some((pivot, pivot_high)) = values
+        .iter()
+        .find_map(|number| Some((number.exact()?, number.to_f64())))
+    else {
         return values.iter().map(|number| number.to_f64()).collect();
     };
-    let pivot_high = pivot as f64;
-    let pivot_low = (pivot - pivot_high as i128) as f64;
+    let pivot_low = pivot.low_part(pivot_high);
     values
         .iter()
-        .map(|number| match *number {
-            ParsedNumber::Integer(value) => (value - pivot) as f64,
-            ParsedNumber::Float(value) => (value - pivot_high) - pivot_low,
+        .map(|number| {
+            number
+                .exact()
+                .and_then(|exact| exact.minus(pivot))
+                .unwrap_or_else(|| (number.to_f64() - pivot_high) - pivot_low)
         })
         .collect()
 }

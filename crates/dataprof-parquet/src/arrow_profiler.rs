@@ -858,6 +858,7 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
+            decimal_values: false,
         })
     }
 

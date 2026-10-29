@@ -18,7 +18,10 @@ use dataprof_metrics::{
         is_integer_token, is_null_like_token, parse_strict_boolean_token,
     },
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
-    stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats_with_parsed_count},
+    stats::numeric::{
+        calculate_coefficient_of_variation, compute_decimal_stats_with_parsed_count,
+        compute_numeric_stats_with_parsed_count,
+    },
 };
 
 use crate::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
@@ -61,6 +64,11 @@ pub struct ColumnProfileInput<'a> {
     /// Number of values over the full stream accepted by the temporal parser.
     /// `None` means `sample_values` is the complete in-memory column.
     pub exact_date_matches: Option<usize>,
+    /// The samples render a column typed as a decimal (Arrow `Decimal128`
+    /// or `Decimal256`), which no float wrote, so they are read with
+    /// `ParsedNumber::parse_decimal` and kept exact from fewer digits than
+    /// text is (#1149).
+    pub decimal_values: bool,
 }
 
 /// Exact streaming aggregates for a numeric column: O(1)-memory statistics that an
@@ -103,8 +111,11 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     } else {
         match input.data_type {
             DataType::Integer | DataType::Float => {
-                let (mut numeric, sampled_numeric) =
-                    compute_numeric_stats_with_parsed_count(input.sample_values);
+                let (mut numeric, sampled_numeric) = if input.decimal_values {
+                    compute_decimal_stats_with_parsed_count(input.sample_values)
+                } else {
+                    compute_numeric_stats_with_parsed_count(input.sample_values)
+                };
                 // Values the statistics actually cover. With exact stream
                 // aggregates that is the engine's full parsed count; without
                 // them the sample *is* the full data (in-memory sources).
@@ -410,6 +421,7 @@ pub fn profile_from_stats_with_hints(
         locale,
         exact_numeric: stats.exact_numeric_aggregates(),
         exact_date_matches: Some(stats.date_match_count()),
+        decimal_values: false,
     })
 }
 
@@ -551,6 +563,7 @@ mod tests {
             skip_patterns: true,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -601,6 +614,7 @@ mod tests {
                     locale: None,
                     exact_numeric: None,
                     exact_date_matches: None,
+                    decimal_values: false,
                 });
 
                 assert!(matches!(profile.stats, ColumnStats::None));
@@ -644,6 +658,7 @@ mod tests {
                     count: 2,
                 }),
                 exact_date_matches: None,
+                decimal_values: false,
             });
 
             match profile.stats {
@@ -693,6 +708,7 @@ mod tests {
                 count: 20_000,
             }),
             exact_date_matches: None,
+            decimal_values: false,
         });
 
         let ColumnStats::Numeric(stats) = profile.stats else {
@@ -726,6 +742,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -761,6 +778,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -792,6 +810,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -817,6 +836,7 @@ mod tests {
             skip_patterns: true,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -847,6 +867,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 
@@ -871,6 +892,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            decimal_values: false,
             locale: None,
         });
 

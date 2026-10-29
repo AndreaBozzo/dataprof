@@ -1349,10 +1349,13 @@ impl ColumnAnalyzer {
     /// one a CSV of the same data holds. A scale-0 decimal beyond 2^53, such
     /// as a `decimal(20, 0)` column of 64-bit ids or epoch nanoseconds, keeps
     /// its exact integer for the spread, as an `Int64` column does (#877).
+    /// The text is known to be a decimal's, so `parse_decimal` keeps every
+    /// value of 11 digits or more exact for the spread, and the samples are
+    /// read the same way (#1149).
     fn process_decimal_value(&mut self, rendered: String) -> Result<()> {
         // Every decimal Arrow stores is finite in f64: `decimal256` holds at
         // most 76 digits, far inside the f64 range.
-        let number = ParsedNumber::parse(&rendered).ok_or_else(|| {
+        let number = ParsedNumber::parse_decimal(&rendered).ok_or_else(|| {
             anyhow::anyhow!("decimal value {rendered:?} did not parse as a number")
         })?;
         self.numeric.update_number(number);
@@ -1547,6 +1550,11 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
+            decimal_values: matches!(
+                self.data_type,
+                arrow::datatypes::DataType::Decimal128(_, _)
+                    | arrow::datatypes::DataType::Decimal256(_, _)
+            ),
         })
     }
 
