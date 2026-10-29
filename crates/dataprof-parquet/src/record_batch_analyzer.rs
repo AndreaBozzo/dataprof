@@ -97,7 +97,10 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
         ArrowDataType::Date32 | ArrowDataType::Date64 | ArrowDataType::Timestamp(_, _) => {
             Some(DataType::Date)
         }
-        ArrowDataType::Decimal128(_, _) | ArrowDataType::Decimal256(_, _) => Some(DataType::Float),
+        ArrowDataType::Decimal32(_, _)
+        | ArrowDataType::Decimal64(_, _)
+        | ArrowDataType::Decimal128(_, _)
+        | ArrowDataType::Decimal256(_, _) => Some(DataType::Float),
         ArrowDataType::Duration(_) => Some(DataType::Integer),
         ArrowDataType::Boolean => Some(DataType::Boolean),
         ArrowDataType::Struct(_)
@@ -979,16 +982,30 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeBinaryArray"));
                 }
             }
+            arrow::datatypes::DataType::Decimal32(_, _) => {
+                if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal32Array>() {
+                    self.process_decimal_array(decimal_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Decimal32Array"));
+                }
+            }
+            arrow::datatypes::DataType::Decimal64(_, _) => {
+                if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal64Array>() {
+                    self.process_decimal_array(decimal_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Decimal64Array"));
+                }
+            }
             arrow::datatypes::DataType::Decimal128(_, _) => {
                 if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal128Array>() {
-                    self.process_decimal128_array(decimal_array)?;
+                    self.process_decimal_array(decimal_array)?;
                 } else {
                     return Err(anyhow::anyhow!("Failed to downcast to Decimal128Array"));
                 }
             }
             arrow::datatypes::DataType::Decimal256(_, _) => {
                 if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal256Array>() {
-                    self.process_decimal256_array(decimal_array)?;
+                    self.process_decimal_array(decimal_array)?;
                 } else {
                     return Err(anyhow::anyhow!("Failed to downcast to Decimal256Array"));
                 }
@@ -1364,16 +1381,14 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_decimal128_array(&mut self, array: &Decimal128Array) -> Result<()> {
-        for index in 0..array.len() {
-            if !array.is_null(index) {
-                self.process_decimal_value(array.value_as_string(index))?;
-            }
-        }
-        Ok(())
-    }
-
-    fn process_decimal256_array(&mut self, array: &Decimal256Array) -> Result<()> {
+    /// Every width is read the same way. `decimal32` and `decimal64` used to
+    /// reach the generic text formatter, so a scale-0 column typed as an
+    /// integer and 17 digits read as the float they might be, where the same
+    /// values as a `decimal128` are a float column held exactly (#1157).
+    fn process_decimal_array<T: arrow::datatypes::DecimalType>(
+        &mut self,
+        array: &PrimitiveArray<T>,
+    ) -> Result<()> {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 self.process_decimal_value(array.value_as_string(index))?;
@@ -1552,7 +1567,9 @@ impl ColumnAnalyzer {
             exact_date_matches: Some(self.date_matched_values),
             decimal_values: matches!(
                 self.data_type,
-                arrow::datatypes::DataType::Decimal128(_, _)
+                arrow::datatypes::DataType::Decimal32(_, _)
+                    | arrow::datatypes::DataType::Decimal64(_, _)
+                    | arrow::datatypes::DataType::Decimal128(_, _)
                     | arrow::datatypes::DataType::Decimal256(_, _)
             ),
         })

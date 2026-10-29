@@ -64,8 +64,8 @@ pub struct ColumnProfileInput<'a> {
     /// Number of values over the full stream accepted by the temporal parser.
     /// `None` means `sample_values` is the complete in-memory column.
     pub exact_date_matches: Option<usize>,
-    /// The samples render a column typed as a decimal (Arrow `Decimal128`
-    /// or `Decimal256`), which no float wrote, so they are read with
+    /// The samples render a column typed as a decimal (an Arrow decimal of
+    /// any width, 32 to 256 bits), which no float wrote, so they are read with
     /// `ParsedNumber::parse_decimal` and kept exact from fewer digits than
     /// text is (#1149).
     pub decimal_values: bool,
