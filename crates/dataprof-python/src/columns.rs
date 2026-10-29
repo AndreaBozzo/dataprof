@@ -248,6 +248,7 @@ pub fn profile_columns(
                 // are already exact.
                 exact_numeric: None,
                 exact_date_matches: None,
+                decimal_values: false,
             }));
 
             if include_quality {

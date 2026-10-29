@@ -140,6 +140,21 @@ their spread (#877). `mean` sums the exact integers in a compensated `f64`
 sum. `min`, `max`, `median`, quartiles, `mode` and `outlier_count` are taken
 from the nearest `f64` of each value.
 
+Decimals with more digits than `f64` keeps get the same treatment (#1149):
+`variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
+deviations, so cents on 10^15 keep their spread, and the other statistics are
+taken in `f64` as above. A column typed as a decimal (Arrow `Decimal128` or
+`Decimal256`, read from Arrow, Parquet, pandas or polars) is held exactly from
+11 significant digits. Text is held exactly from 18: the shortest form of an
+`f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
+as the float it may be, as the same column typed `Float64` does. A CSV of a
+decimal column therefore serializes what the typed column does when its values
+have at most 10 significant digits or at least 18, and may differ in between. A
+decimal too wide to hold exactly, past 38 digits, keeps a spread only where it
+stands well above the rounding of its nearest `f64` (2^-32 of the magnitude);
+below that, a constant column of such values included, the spread statistics
+are `null`.
+
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
 `to_json()`, and JSON `save()` output. JSON persistence now uses the same document

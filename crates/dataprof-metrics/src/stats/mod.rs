@@ -4,7 +4,7 @@ pub mod datetime;
 pub mod numeric;
 pub mod text;
 
-pub use accumulator::{NumericAccumulator, ParsedNumber};
+pub use accumulator::{ExactDecimal, NumericAccumulator, ParsedNumber};
 pub use cardinality::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, spill_largest_exact_sets,
 };
