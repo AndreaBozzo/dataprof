@@ -2091,6 +2091,8 @@ mod tests {
         assert_eq!(mapped(&AT::Int32), Some(DataType::Integer));
         assert_eq!(mapped(&AT::UInt64), Some(DataType::Integer));
         assert_eq!(mapped(&AT::Float64), Some(DataType::Float));
+        assert_eq!(mapped(&AT::Decimal32(9, 0)), Some(DataType::Float));
+        assert_eq!(mapped(&AT::Decimal64(18, 2)), Some(DataType::Float));
         assert_eq!(mapped(&AT::Decimal128(10, 2)), Some(DataType::Float));
         assert_eq!(mapped(&AT::Date32), Some(DataType::Date));
         assert_eq!(
