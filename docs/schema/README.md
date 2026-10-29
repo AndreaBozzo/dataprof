@@ -872,3 +872,28 @@ from documents written before 0.13. An explicit `null`, for the object or for
 `commit` or `dirty`, a missing `version`, and a value of the wrong type are
 malformed. A field a later release adds is ignored by this reader. Stored v1
 reports remain valid.
+
+## v1 additive change: `source_identity`
+
+Both dialects gain a top-level `source_identity` object recording which data
+the report describes (#866). `data_source` and `source` name a location; the
+data behind a path or a table name can change between the check and the
+promotion, so a pipeline needs an identity of the data itself to compare with
+what it promotes.
+
+| field | values | meaning |
+| --- | --- | --- |
+| `version` | string | the version of the source the caller supplied (`source_version=`, `--source-version`), recorded verbatim: a table snapshot ID, a commit version, a load or batch ID |
+
+dataprof neither interprets nor verifies `version`. No profiling path records
+an identity on its own, so the object is absent unless the caller supplied
+one, and it is absent from every document written before 0.14. Each member
+names its kind of identity; a later release may add others, such as a digest
+of the bytes read, and this reader ignores members it does not know, so an
+object holding none it knows reads back as `{}`. An explicit `null`, for the
+object or for `version`, and a value of the wrong type are malformed.
+
+The identity is provenance, not a metric: two input paths over the same
+logical data carry different identities, so like `data_source` it stays
+outside the serialized-value parity comparison. Stored v1 reports remain
+valid.

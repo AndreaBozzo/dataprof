@@ -34,7 +34,7 @@ pub use profile_report::profile_report_schema_document;
 pub use profile_report::record_build_identity;
 pub use profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
-    QualityAnalysisStatus, REPORT_SCHEMA_VERSION, ReportGenerator,
+    QualityAnalysisStatus, REPORT_SCHEMA_VERSION, ReportGenerator, SourceIdentity,
 };
 pub use quality_gate::{
     BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Diagnostic,

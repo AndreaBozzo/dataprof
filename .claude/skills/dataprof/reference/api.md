@@ -37,7 +37,9 @@ Keyword arguments: `engine`, `chunk_size`, `memory_limit_mb`, `format`,
 `max_rows`, `name`, `csv_delimiter`, `csv_flexible`, `jsonl_on_error`,
 `sampling`, `stop_condition`, `on_progress`, `progress_interval_ms`,
 `quality_dimensions`, `metrics`, `locale`, `positive_columns`,
-`identifier_columns`, `temporal_columns`, `temporal_pairs`.
+`identifier_columns`, `temporal_columns`, `temporal_pairs`, `source_version`
+(the caller's version of the source, such as a table snapshot ID, recorded
+verbatim in `report.source_identity`).
 
 ## Profiler builder (when keyword arguments are not enough)
 
@@ -57,7 +59,7 @@ Every builder method returns the profiler, so calls chain. Other methods:
 `chunk_size`, `memory_limit_mb`, `format`, `name`, `csv_delimiter`,
 `csv_flexible`, `sampling`, `stop_condition`, `stop_when`, `on_progress`,
 `progress_interval_ms`, `locale`, `positive_columns`, `temporal_columns`,
-`temporal_pairs`.
+`temporal_pairs`, `source_version`.
 
 ## ProfileReport: execution metadata
 
@@ -79,6 +81,7 @@ Read these before reporting any number. See the trust-signal step in SKILL.md.
 | `report.semantic_hint_bindings` | which columns the semantic policies bound to |
 | `report.metric_semantics` | how measurements were defined; `None` = written before 0.12, unknown |
 | `report.generator` | the build that wrote it: `version`, and `commit`/`dirty` where recorded; `None` = written before 0.13 |
+| `report.source_identity` | which data it describes: `{"version": ...}` from `source_version=`; `None` = nothing recorded |
 
 ## ProfileReport: output formats
 

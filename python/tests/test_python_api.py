@@ -703,6 +703,7 @@ class TestNamespace:
             "identifier_columns",
             "temporal_columns",
             "temporal_pairs",
+            "source_version",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (

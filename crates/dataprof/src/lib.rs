@@ -64,7 +64,7 @@ pub use dataprof_runtime::{
     FindingCode, FindingPolicy, FindingPolicyError, FindingsResult, GateResult, MetricSemantics,
     MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError, PolicyScope,
     ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, ReportGenerator,
-    RequiredMetric, SettingDifference, Severity, UnevaluatedRule, Verdict,
+    RequiredMetric, SettingDifference, Severity, SourceIdentity, UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
     ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,

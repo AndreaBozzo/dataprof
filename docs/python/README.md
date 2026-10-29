@@ -118,8 +118,34 @@ dp.profile(
     identifier_columns=None,         # list[str] -- semantic IDs, not measures; the first is the key
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
+    source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
+
+`source_version` binds the report to the data it describes. A path or a stream
+name is only a location, and the data behind it can change between the check
+and the promotion. Pass the version you are about to promote: a Delta table
+version, an Iceberg snapshot ID, a commit or load ID. The report records it
+verbatim as `report.source_identity["version"]`, and it survives `save()` and
+`load()`. dataprof neither interprets nor verifies it; the pipeline compares
+it with what it promotes. An empty string raises `ValueError` before any data
+is read.
+
+```python
+from deltalake import DeltaTable
+
+table = DeltaTable("lake/orders")
+version = table.version()
+report = dp.profile(
+    table.to_pyarrow_dataset().scanner().to_reader(),
+    source_version=str(version),
+)
+assert report.source_identity == {"version": str(version)}
+```
+
+`dp.profile_file()`, `dp.Profiler().source_version(...)`, the async
+`profile_bytes()`, `profile_file()` and `profile_url()`, and
+`python -m dataprof.check --source-version` take it too.
 
 For file profiling, `engine` accepts the case-insensitive names `auto`,
 `incremental` (compatibility alias: `streaming`), and `columnar` (compatibility
@@ -310,6 +336,7 @@ Returned by `profile()` and all analysis functions.
 | `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
 | `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
+| `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -1304,6 +1331,8 @@ report the verdict was computed from, written on `pass`, `fail` and
 write failure exits `3` and names the path. `--json` stdout is unchanged.
 The report path must not refer to the source, policy or baseline file, including
 through symbolic links, hard links or case-insensitive path aliases.
+`--source-version VERSION` (0.14+) records the version of the source being
+checked in that report, as `source_version=` does for `profile()`.
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.

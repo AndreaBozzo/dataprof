@@ -377,6 +377,29 @@ def _read_generator(document: dict[str, Any]) -> dict[str, Any] | None:
     return read
 
 
+def _read_source_identity(document: dict[str, Any]) -> dict[str, Any] | None:
+    """Read `source_identity` as the Rust reader reads `SourceIdentity`.
+
+    A missing key records nothing: None. `version` is absent where none was
+    supplied; an explicit null or a value of the wrong type is an error, as
+    it is in Rust. Members from a later writer are ignored.
+    """
+    if "source_identity" not in document:
+        return None
+    identity = document["source_identity"]
+    if not isinstance(identity, dict):
+        raise ValueError(f"from_dict(): 'source_identity' must be a mapping, got {identity!r}.")
+    read: dict[str, Any] = {}
+    if "version" in identity:
+        version = identity["version"]
+        if not isinstance(version, str):
+            raise ValueError(
+                f"from_dict(): 'source_identity.version' must be a string, got {version!r}."
+            )
+        read["version"] = version
+    return read
+
+
 def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
     """Read `metric_semantics` as the Rust reader reads `MetricSemantics`.
 
@@ -446,6 +469,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["metric_semantics"] = _read_metric_semantics(document)
     values["analysis_settings"] = _read_analysis_settings(document)
     values["generator"] = _read_generator(document)
+    values["source_identity"] = _read_source_identity(document)
     quality = _read_field(
         document,
         "quality",

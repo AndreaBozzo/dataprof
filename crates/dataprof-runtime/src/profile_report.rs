@@ -419,6 +419,44 @@ impl ReportGenerator {
     }
 }
 
+/// Which data a report describes, as far as the caller or the read can say.
+///
+/// [`DataSource`] says where the data was read from; a path or a stream name
+/// is a location, and the data behind it can change. This records an identity
+/// of the data itself, so a pipeline can check that what it promotes is what
+/// was profiled. Each member names its kind; a later release may add others,
+/// such as a digest of the bytes read, and a reader ignores members it does
+/// not know.
+///
+/// It is provenance, not a metric: two input paths over the same logical data
+/// carry different identities, so it stays outside the serialized-value
+/// parity comparison.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct SourceIdentity {
+    /// A version of the source supplied by the caller and recorded verbatim:
+    /// a table snapshot ID, a commit version, a load or batch ID. dataprof
+    /// neither interprets nor verifies it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "String")]
+    pub version: Option<String>,
+}
+
+impl SourceIdentity {
+    /// An identity holding a caller-supplied version.
+    pub fn with_version(version: impl Into<String>) -> Self {
+        Self {
+            version: Some(version.into()),
+        }
+    }
+}
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -496,6 +534,14 @@ pub struct ProfileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReportGenerator")]
     pub generator: Option<ReportGenerator>,
+    /// Which data the report describes; see [`SourceIdentity`].
+    ///
+    /// `None` when nothing was recorded: no profiling path sets it on its
+    /// own, so a caller that knows the version it profiled sets it. Loading
+    /// and saving keep it. Additive field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "SourceIdentity")]
+    pub source_identity: Option<SourceIdentity>,
 }
 
 fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -543,6 +589,9 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReportGenerator")]
     generator: Option<ReportGenerator>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "SourceIdentity")]
+    source_identity: Option<SourceIdentity>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -920,6 +969,7 @@ impl PythonProfileReportDocument {
             metric_semantics: report.metric_semantics.clone(),
             analysis_settings: report.analysis_settings.clone(),
             generator: report.generator.clone(),
+            source_identity: report.source_identity.clone(),
         })
     }
 }
@@ -1097,6 +1147,7 @@ impl ProfileReport {
             // with; it records them through `with_analysis_settings`.
             analysis_settings: None,
             generator: Some(ReportGenerator::current()),
+            source_identity: None,
         }
     }
 
@@ -1209,6 +1260,8 @@ struct ProfileReportFields {
     analysis_settings: Option<AnalysisSettings>,
     #[serde(default)]
     generator: Option<ReportGenerator>,
+    #[serde(default)]
+    source_identity: Option<SourceIdentity>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -1234,6 +1287,7 @@ impl From<ProfileReportFields> for ProfileReport {
             metric_semantics: fields.metric_semantics,
             analysis_settings: fields.analysis_settings,
             generator: fields.generator,
+            source_identity: fields.source_identity,
         }
     }
 }
@@ -1282,7 +1336,12 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
         }
         // Same rule: absent is "not recorded", which reads back as unknown;
         // a null would be a current writer's malformed output.
-        for key in ["metric_semantics", "analysis_settings", "generator"] {
+        for key in [
+            "metric_semantics",
+            "analysis_settings",
+            "generator",
+            "source_identity",
+        ] {
             if value.get(key) == Some(&serde_json::Value::Null) {
                 return Err(D::Error::custom(format!(
                     "report {key} must be an object; an explicit null is malformed, \

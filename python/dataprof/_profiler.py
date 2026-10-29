@@ -74,6 +74,11 @@ class Profiler:
         self._kwargs["name"] = name
         return self
 
+    def source_version(self, version: str) -> Profiler:
+        """Record the caller's version of the source; see :func:`dataprof.profile`."""
+        self._kwargs["source_version"] = version
+        return self
+
     def csv_delimiter(self, d: str) -> Profiler:
         """Set single-character CSV delimiter."""
         self._kwargs["csv_delimiter"] = d
