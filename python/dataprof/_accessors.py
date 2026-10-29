@@ -241,6 +241,7 @@ class _ReportView(_View):
     metric_semantics = _Field[dict[str, str] | None]()
     analysis_settings = _Field[dict[str, Any] | None]()
     generator = _Field[dict[str, Any] | None]()
+    source_identity = _Field[dict[str, Any] | None]()
     quality_score = _Field[float | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
     quality_unlisted_components = _Field[list[str]]()

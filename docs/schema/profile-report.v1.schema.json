@@ -1426,6 +1426,10 @@
           },
           "type": "array"
         },
+        "source_identity": {
+          "$ref": "#/$defs/SourceIdentity",
+          "description": "Which data the report describes; see [`SourceIdentity`].\n\n`None` when nothing was recorded: no profiling path sets it on its\nown, so a caller that knows the version it profiled sets it. Loading\nand saving keep it. Additive field."
+        },
         "timestamp": {
           "description": "Timestamp when the report was generated (ISO 8601 / RFC 3339)",
           "type": "string"
@@ -1910,6 +1914,9 @@
         },
         "source": {
           "type": "string"
+        },
+        "source_identity": {
+          "$ref": "#/$defs/SourceIdentity"
         },
         "source_type": {
           "$ref": "#/$defs/PythonSourceType"
@@ -2748,6 +2755,16 @@
           "type": "string"
         }
       ]
+    },
+    "SourceIdentity": {
+      "description": "Which data a report describes, as far as the caller or the read can say.\n\n[`DataSource`] says where the data was read from; a path or a stream name\nis a location, and the data behind it can change. This records an identity\nof the data itself, so a pipeline can check that what it promotes is what\nwas profiled. Each member names its kind; a later release may add others,\nsuch as a digest of the bytes read, and a reader ignores members it does\nnot know.\n\nIt is provenance, not a metric: two input paths over the same logical data\ncarry different identities, so it stays outside the serialized-value\nparity comparison.",
+      "properties": {
+        "version": {
+          "description": "A version of the source supplied by the caller and recorded verbatim:\na table snapshot ID, a commit version, a load or batch ID. dataprof\nneither interprets nor verifies it.",
+          "type": "string"
+        }
+      },
+      "type": "object"
     },
     "StreamSourceSystem": {
       "anyOf": [

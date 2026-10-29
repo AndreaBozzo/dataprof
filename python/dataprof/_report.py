@@ -104,6 +104,21 @@ def _atomic_write_text(
     _atomic_write(path, write)
 
 
+def _check_source_version(source_version: object) -> None:
+    """Refuse a ``source_version=`` that cannot identify anything, before any scan."""
+    if source_version is None:
+        return
+    if not isinstance(source_version, str):
+        raise TypeError(
+            f"source_version must be a string or None, got {type(source_version).__name__}."
+        )
+    if not source_version.strip():
+        raise ValueError(
+            "source_version must not be empty: an empty version identifies no data. "
+            "Pass None to record no version."
+        )
+
+
 class ProfileReport:
     """Report access and export methods shared by native and restored backings.
 
@@ -365,6 +380,30 @@ class ProfileReport:
         return None if generator is None else dict(generator)
 
     @property
+    def source_identity(self) -> dict[str, _Any] | None:
+        """Which data this report describes, beyond where it was read from.
+
+        ``version`` is the version of the source the caller passed as
+        ``source_version=`` to :func:`dataprof.profile` (or
+        ``--source-version`` to ``python -m dataprof.check``), recorded
+        verbatim. A later release may add other kinds of identity under their
+        own keys.
+
+        ``None`` when nothing was recorded. A stored report keeps the value it
+        was written with.
+        """
+        identity = self._report.source_identity
+        return None if identity is None else dict(identity)
+
+    def _record_source_version(self, source_version: str | None) -> ProfileReport:
+        """Record ``source_version`` on a report this process just profiled."""
+        if source_version is not None:
+            # Every caller wraps a native report it has just built; a loaded
+            # report keeps the identity it was written with and never gets here.
+            _cast(_RustProfileReport, self._native_report)._record_source_version(source_version)
+        return self
+
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
         """Per-column evidence of how each semantic hint bound to the data.
 
@@ -596,6 +635,9 @@ class ProfileReport:
         generator = self.generator
         if generator is not None:
             document["generator"] = generator
+        identity = self.source_identity
+        if identity is not None:
+            document["source_identity"] = identity
         return document
 
     def to_json(self, indent: int = 2) -> str:

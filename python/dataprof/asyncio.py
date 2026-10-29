@@ -45,7 +45,7 @@ from ._dataprof import (
     RowCountEstimate as _RowCountEstimate,
     SchemaResult as _SchemaResult,
 )
-from ._report import ProfileReport as _ProfileReport
+from ._report import ProfileReport as _ProfileReport, _check_source_version
 
 __all__ = [
     "profile_bytes",
@@ -78,11 +78,15 @@ async def profile_bytes(
         **kwargs: Additional config options (passed to ProfilerConfig).
             The async stream always uses the incremental engine, so
             ``engine="columnar"`` is rejected.
+            ``source_version`` is taken out first and recorded verbatim as
+            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
 
     Returns:
         ProfileReport with analysis results.
     """
     _check_async()
+    source_version = kwargs.pop("source_version", None)
+    _check_source_version(source_version)
     config = _ProfilerConfig(**kwargs) if kwargs else None
     if config is not None and config.engine == "columnar":
         raise ValueError(
@@ -90,7 +94,7 @@ async def profile_bytes(
             "use engine='auto' or 'incremental'."
         )
     rust_report = await _profile_bytes_async(data, format, config)
-    return _ProfileReport(rust_report)
+    return _ProfileReport(rust_report)._record_source_version(source_version)
 
 
 async def profile_file(
@@ -108,14 +112,18 @@ async def profile_file(
     Args:
         path: File path to profile.
         **kwargs: Additional config options (passed to ProfilerConfig).
+            ``source_version`` is taken out first and recorded verbatim as
+            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
 
     Returns:
         ProfileReport with analysis results.
     """
     _check_async()
+    source_version = kwargs.pop("source_version", None)
+    _check_source_version(source_version)
     config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_file_async(str(path), config)
-    return _ProfileReport(rust_report)
+    return _ProfileReport(rust_report)._record_source_version(source_version)
 
 
 async def profile_url(
@@ -138,6 +146,8 @@ async def profile_url(
         url: URL to profile.
         format: Override format detection (optional).
         **kwargs: Additional config options (passed to ProfilerConfig).
+            ``source_version`` is taken out first and recorded verbatim as
+            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
 
     Returns:
         ProfileReport with analysis results.
@@ -148,9 +158,11 @@ async def profile_url(
             "--features 'python-async,async-streaming'. Remote Parquet "
             "also requires 'parquet-async'."
         )
+    source_version = kwargs.pop("source_version", None)
+    _check_source_version(source_version)
     config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_url_async(url, format, config)
-    return _ProfileReport(rust_report)
+    return _ProfileReport(rust_report)._record_source_version(source_version)
 
 
 async def infer_schema_stream(

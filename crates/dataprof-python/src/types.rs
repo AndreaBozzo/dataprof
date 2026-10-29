@@ -6,8 +6,8 @@ use dataprof::{
     ColumnProfile, ColumnStats, DataSource, KeyColumnSource, KeyUniquenessUnits, NullTokenSet,
     OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
     QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
-    RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator, TextLengthUnit,
-    TruncationReason,
+    RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator, SourceIdentity,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1333,6 +1333,34 @@ impl PyProfileReport {
             dict.set_item("dirty", dirty)?;
         }
         Ok(Some(dict))
+    }
+
+    /// Which data the report describes, as a dict with ``version`` where the
+    /// caller supplied one.
+    ///
+    /// None when nothing was recorded. A stored report keeps the value it was
+    /// written with.
+    #[getter]
+    fn source_identity<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(identity) = &self.inner.source_identity else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        if let Some(version) = &identity.version {
+            dict.set_item("version", version)?;
+        }
+        Ok(Some(dict))
+    }
+
+    /// Record the caller's version of the source on a report just profiled.
+    ///
+    /// Internal: the Python entry points that take ``source_version=`` call
+    /// it before the report is handed out.
+    fn _record_source_version(&mut self, version: String) {
+        self.inner
+            .source_identity
+            .get_or_insert_with(SourceIdentity::default)
+            .version = Some(version);
     }
 
     /// Per-column semantic-hint binding evidence.

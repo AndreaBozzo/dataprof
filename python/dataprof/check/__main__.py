@@ -195,6 +195,14 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="save the full profile to a .json file, including on fail or inconclusive",
     )
     parser.add_argument(
+        "--source-version",
+        metavar="VERSION",
+        help=(
+            "the version of the source being checked (a table snapshot, commit or load ID), "
+            "recorded verbatim in the --report document"
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=_version(),
@@ -475,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             format=args.format,
             max_rows=args.max_rows,
             metrics=args.metrics,
+            source_version=args.source_version,
         )
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
         return _report_error("input", str(exc), path=args.source, json_output=args.json)

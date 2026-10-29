@@ -41,7 +41,7 @@ from ._inputs import (
     _strict_json_loads,
 )
 from ._paths import _normalize_existing_file
-from ._report import ProfileReport
+from ._report import ProfileReport, _check_source_version
 
 
 def infer_schema(path: str | _os.PathLike[str]) -> SchemaResult:
@@ -105,6 +105,7 @@ def profile_file(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
 
@@ -186,12 +187,18 @@ def profile_file(
             compares row by row, such as ``("valid_from", "valid_until")``.
             Declared pairs are compared as given; the remaining temporal
             columns are still paired by name.
+        source_version: The version of the source being profiled, recorded
+            verbatim as ``report.source_identity["version"]``: a table
+            snapshot ID, a commit version, a load or batch ID. dataprof neither
+            interprets nor verifies it; a pipeline compares it with the version
+            it promotes. A non-empty string, or None to record nothing.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
     if jsonl_on_error not in ("skip", "strict"):
         raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
+    _check_source_version(source_version)
     normalized_path = _normalize_existing_file(path, arg_name="path")
     config = ProfilerConfig(
         engine=engine,
@@ -216,7 +223,7 @@ def profile_file(
         temporal_pairs=temporal_pairs,
     )
     rust_report = _analyze_file(normalized_path, config)
-    return ProfileReport(rust_report)
+    return ProfileReport(rust_report)._record_source_version(source_version)
 
 
 def profile(
@@ -243,6 +250,7 @@ def profile(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -334,12 +342,18 @@ def profile(
             compares row by row, such as ``("valid_from", "valid_until")``.
             Declared pairs are compared as given; the remaining temporal
             columns are still paired by name.
+        source_version: The version of the source being profiled, recorded
+            verbatim as ``report.source_identity["version"]``: a table
+            snapshot ID, a commit version, a load or batch ID. dataprof neither
+            interprets nor verifies it; a pipeline compares it with the version
+            it promotes. A non-empty string, or None to record nothing.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
     if jsonl_on_error not in ("skip", "strict"):
         raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
+    _check_source_version(source_version)
 
     # File path — build config and delegate to Rust
     if isinstance(source, (str, _pathlib.PurePath)):
@@ -365,6 +379,7 @@ def profile(
             identifier_columns=identifier_columns,
             temporal_columns=temporal_columns,
             temporal_pairs=temporal_pairs,
+            source_version=source_version,
         )
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
@@ -432,7 +447,7 @@ def profile(
 
     def _profile_python_dataframe(df: object, default_name: str) -> ProfileReport:
         rust_report = _profile_dataframe(df, name or default_name, max_rows, _df_config())
-        return ProfileReport(rust_report)
+        return ProfileReport(rust_report)._record_source_version(source_version)
 
     def _profile_python_columns(
         columns: list[_Column],
@@ -454,7 +469,7 @@ def profile(
             source_format,
             source_bytes,
         )
-        return ProfileReport(rust_report)
+        return ProfileReport(rust_report)._record_source_version(source_version)
 
     if isinstance(source, dict):
         # A dict is a mapping of column name to cells, so an empty one is a
@@ -560,7 +575,7 @@ def profile(
                     max_rows,
                     _df_config(),
                 )
-            )
+            )._record_source_version(source_version)
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 
@@ -603,13 +618,15 @@ def profile(
                 f"Arrow streams cannot apply: {', '.join(unsupported)}. Use max_rows for a row cap."
             )
         _resolve_memory_controls()
-        return ProfileReport(_profile_arrow(source, name or "arrow_stream", max_rows, _df_config()))
+        return ProfileReport(
+            _profile_arrow(source, name or "arrow_stream", max_rows, _df_config())
+        )._record_source_version(source_version)
 
     # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object
     if source_module.startswith("pyarrow") or hasattr(source, "__arrow_c_array__"):
         _warn_if_config_ignored()
         rust_report = _profile_arrow(source, name or "arrow_data", max_rows, _df_config())
-        return ProfileReport(rust_report)
+        return ProfileReport(rust_report)._record_source_version(source_version)
 
     raise TypeError(
         f"Unsupported source type: {type(source).__module__}.{type(source).__name__}. "

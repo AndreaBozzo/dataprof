@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from typing import Any as _Any
 
-from ._report import ProfileReport
+from ._report import ProfileReport, _check_source_version
 
 # Database helpers are compiled in only when the extension is built with the
 # `database` feature and a connector. The published wheels omit them, so bind
@@ -43,6 +43,8 @@ try:
         batch_size: int = 10000,
         calculate_quality: bool | None = None,
         config: _Any | None = None,
+        *,
+        source_version: str | None = None,
     ) -> ProfileReport:
         """Profile the rows returned by ``query``.
 
@@ -50,15 +52,17 @@ try:
         ``quality_dimensions``, and ``locale``; they apply here exactly as they
         do on every file path. Quality is assessed by default, as it is on
         every file path; ``calculate_quality=False`` remains the coarse way to
-        drop the quality pack.
+        drop the quality pack. ``source_version`` is recorded verbatim as
+        ``report.source_identity["version"]``; see :func:`dataprof.profile`.
 
         The native call yields a raw core report; wrap it so the result carries
         the same surface as every other ``ProfileReport`` in this package.
         """
+        _check_source_version(source_version)
         rust_report = await _analyze_database_async(
             connection_string, query, batch_size, calculate_quality, config
         )
-        return ProfileReport(rust_report)
+        return ProfileReport(rust_report)._record_source_version(source_version)
 
 except ImportError:
     _HAS_DATABASE = False
