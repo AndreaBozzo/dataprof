@@ -628,11 +628,18 @@ def profile(
         rust_report = _profile_arrow(source, name or "arrow_data", max_rows, _df_config())
         return ProfileReport(rust_report)._record_source_version(source_version)
 
+    # A dataset that only exports through a scanner (lance.dataset(), for
+    # one) is lazy like a pyarrow Dataset: name the call that reads it.
+    hint = (
+        " It is a lazy dataset: pass .scanner().to_reader() to stream it, or .to_table()."
+        if hasattr(source, "scanner")
+        else ""
+    )
     raise TypeError(
         f"Unsupported source type: {type(source).__module__}.{type(source).__name__}. "
         "Expected a file path (str/Path), pandas DataFrame, polars DataFrame, "
         "an object implementing the Arrow PyCapsule protocol, dict/list-of-dicts, "
-        "or bytes/BytesIO with format=."
+        f"or bytes/BytesIO with format=.{hint}"
     )
 
 
