@@ -25,6 +25,15 @@ const BOTH_ENDS_MAGIC: [(&[u8], BinarySignature); 3] = [
 /// The longest prefix any signature needs.
 const HEAD_LEN: u64 = 6;
 
+// Every both-ends marker must fit in the prefix that is read.
+const _: () = {
+    let mut i = 0;
+    while i < BOTH_ENDS_MAGIC.len() {
+        assert!(BOTH_ENDS_MAGIC[i].0.len() <= HEAD_LEN as usize);
+        i += 1;
+    }
+};
+
 /// A binary format recognized by its signature bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -87,14 +96,18 @@ impl BinarySignature {
                  (.xlsx, .ods) is a zip archive too: export the sheet as CSV first."
             ),
             Self::Parquet => parquet_suggestion(),
+            // `{path:?}` writes a double-quoted literal with `\` and `"` escaped,
+            // which Python reads back as the same path; a single-quoted
+            // `'{path}'` breaks on a Windows path or an apostrophe.
             Self::ArrowIpc => format!(
                 "dataprof does not read Arrow IPC files directly. Read it with pyarrow and pass \
-                 the table (`pyarrow.feather.read_table('{path}')`), or stream it with \
-                 `pyarrow.dataset.dataset('{path}', format=\"ipc\").scanner().to_reader()`."
+                 the table (`import pyarrow.feather; pyarrow.feather.read_table({path:?})`), or \
+                 stream it with `import pyarrow.dataset; \
+                 pyarrow.dataset.dataset({path:?}, format=\"ipc\").scanner().to_reader()`."
             ),
             Self::FeatherV1 => format!(
                 "dataprof does not read Feather files directly. Read it with pyarrow and pass \
-                 the table (`pyarrow.feather.read_table('{path}')`)."
+                 the table (`import pyarrow.feather; pyarrow.feather.read_table({path:?})`)."
             ),
         }
     }

@@ -13,6 +13,10 @@ from __future__ import annotations
 import asyncio
 import gzip
 import io
+import os
+import re
+import subprocess
+import sys
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -119,6 +123,37 @@ def test_a_misnamed_parquet_file_profiles_once_the_format_is_selected(tmp_path: 
 
     report = dp.profile(path, format="parquet")
     assert report.rows == 3
+
+
+def test_arrow_ipc_suggestions_run_as_pasted(tmp_path: Path) -> None:
+    """Each pyarrow call in the Arrow IPC refusal runs in a fresh interpreter.
+
+    The path has a backslash and an apostrophe, which a single-quoted Python
+    literal could not carry, and a fresh interpreter has only imported what the
+    snippet imports.
+    """
+    pytest.importorskip("pyarrow.feather")
+    pytest.importorskip("pyarrow.dataset")
+    # On Windows the directory part already carries the backslashes.
+    path = tmp_path / ("O'Brien.csv" if os.name == "nt" else "O'Brien\\data.csv")
+    assert "\\" in str(path)
+    table = pa.table({"id": [1, 2, 3]})
+    with pa.ipc.new_file(path, table.schema) as writer:
+        writer.write_table(table)
+
+    with pytest.raises(ValueError, match="an Arrow IPC file") as excinfo:
+        dp.profile(path)
+    snippets = re.findall(r"`(import pyarrow[^`]*)`", str(excinfo.value))
+    assert len(snippets) == 2, excinfo.value
+
+    for snippet in snippets:
+        result = subprocess.run(
+            [sys.executable, "-c", snippet],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{snippet}\n{result.stderr}"
 
 
 def test_text_that_starts_like_a_signature_is_not_refused(tmp_path: Path) -> None:

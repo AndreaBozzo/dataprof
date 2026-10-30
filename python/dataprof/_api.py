@@ -629,12 +629,13 @@ def profile(
         return ProfileReport(rust_report)._record_source_version(source_version)
 
     # A dataset that only exports through a scanner (lance.dataset(), for
-    # one) is lazy like a pyarrow Dataset: name the call that reads it.
-    hint = (
-        " It is a lazy dataset: pass .scanner().to_reader() to stream it, or .to_table()."
-        if hasattr(source, "scanner")
-        else ""
-    )
+    # one) is lazy like a pyarrow Dataset: name the call that reads it, and
+    # .to_table() only when the source has it.
+    hint = ""
+    if hasattr(source, "scanner"):
+        hint = " It is a lazy dataset: pass .scanner().to_reader() to stream it"
+        hint += ", or .to_table()." if hasattr(source, "to_table") else "."
+
     raise TypeError(
         f"Unsupported source type: {type(source).__module__}.{type(source).__name__}. "
         "Expected a file path (str/Path), pandas DataFrame, polars DataFrame, "

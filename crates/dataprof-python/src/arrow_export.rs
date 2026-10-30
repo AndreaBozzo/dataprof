@@ -1094,7 +1094,7 @@ fn import_batches_from_pyarrow(
         } else if obj.hasattr("scanner")? {
             "; pass .scanner().to_reader() to stream it, or .to_table()"
         } else if obj.hasattr("get_batch")? && obj.hasattr("read_all")? {
-            "; pass .read_all(), or stream the file with pyarrow.dataset.dataset(path, format=\"ipc\").scanner().to_reader()"
+            "; pass .read_all(), or stream the file with import pyarrow.dataset as ds; ds.dataset(path, format=\"ipc\").scanner().to_reader()"
         } else {
             ""
         };

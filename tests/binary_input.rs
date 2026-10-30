@@ -219,6 +219,42 @@ fn a_misnamed_parquet_file_profiles_once_the_format_is_selected() {
     assert_eq!(report.execution.rows_processed, 3);
 }
 
+/// The pyarrow calls in the Arrow IPC and Feather suggestions are pasted into
+/// Python, so the path goes in as a literal Python reads back unchanged: a
+/// backslash (every Windows path) or an apostrophe must not break it.
+#[test]
+fn arrow_suggestions_quote_the_path_as_a_python_literal() {
+    let dir = TempDir::new().unwrap();
+    // On Windows the directory part already carries the backslashes.
+    let name = if cfg!(windows) {
+        "O'Brien.csv"
+    } else {
+        r"O'Brien\data.csv"
+    };
+    let path = dir.path().join(name);
+    std::fs::write(&path, arrow_ipc_bytes()).unwrap();
+    let shown = path.display().to_string();
+    let literal = format!("{shown:?}");
+    assert!(
+        literal.contains(r"\\") && literal.contains('\''),
+        "{literal}"
+    );
+
+    let err = Profiler::new().analyze_file(&path).unwrap_err();
+    let suggestion = err.suggestion().unwrap_or_default();
+    for call in [
+        format!("import pyarrow.feather; pyarrow.feather.read_table({literal})"),
+        format!("import pyarrow.dataset; pyarrow.dataset.dataset({literal}, format=\"ipc\")"),
+    ] {
+        assert!(suggestion.contains(&call), "missing {call}\n{suggestion}");
+    }
+    let feather = dataprof_core::binary_input::BinarySignature::FeatherV1.suggestion(&shown);
+    assert!(
+        feather.contains(&format!("pyarrow.feather.read_table({literal})")),
+        "{feather}"
+    );
+}
+
 /// Over-correction guard: text that merely starts like a signature, a real
 /// Parquet file, and an empty file still go where they went before.
 #[test]
