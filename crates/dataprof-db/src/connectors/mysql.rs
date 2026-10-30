@@ -6,7 +6,7 @@ use super::common::feature_not_enabled_error;
 use super::common::{end_read_only_transaction, not_connected_error, read_only_transaction};
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "mysql")]
-use crate::security::validate_sql_identifier;
+use crate::security::{validate_base_query, validate_sql_identifier};
 use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector, QueryColumns};
 #[cfg(feature = "mysql")]
 use crate::{process_rows_to_columns, streaming_profile_loop};
@@ -100,11 +100,15 @@ impl DatabaseConnector for MySqlConnector {
     async fn profile_query(&mut self, query: &str) -> Result<QueryColumns, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
+            // The batch path runs the same check as the streaming one, so a
+            // statement the database would not refuse, such as MySQL's
+            // INTO OUTFILE, is refused here too.
+            let query = validate_base_query(query)?;
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
             let mut transaction =
                 read_only_transaction(pool, "START TRANSACTION READ ONLY").await?;
 
-            let rows = sqlx::query(query)
+            let rows = sqlx::query(&query)
                 .fetch_all(&mut *transaction)
                 .await
                 .map_err(|e| {

@@ -6,7 +6,7 @@ use super::common::feature_not_enabled_error;
 use super::common::not_connected_error;
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "sqlite")]
-use crate::security::validate_sql_identifier;
+use crate::security::{validate_base_query, validate_sql_identifier};
 use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector, QueryColumns};
 #[cfg(feature = "sqlite")]
 use crate::{process_rows_to_columns, streaming_profile_loop};
@@ -166,9 +166,13 @@ impl DatabaseConnector for SqliteConnector {
     async fn profile_query(&mut self, query: &str) -> Result<QueryColumns, DataProfilerError> {
         #[cfg(feature = "sqlite")]
         {
+            // The batch path runs the same check as the streaming one, so a
+            // statement the database would not refuse, such as MySQL's
+            // INTO OUTFILE, is refused here too.
+            let query = validate_base_query(query)?;
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
+            let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
                 DataProfilerError::database_query(&format!("Query execution failed: {}", e))
             })?;
 
@@ -393,5 +397,40 @@ mod tests {
                 "supported form must construct a connector: {form}"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod read_only_tests {
+    use super::*;
+
+    /// The connector's own connections refuse a write that reaches SQLite
+    /// without the word check, so `query_only` holds on its own (#1169).
+    #[tokio::test]
+    async fn connections_refuse_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("query_only.db");
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let setup = SqlitePoolOptions::new().connect(&url).await.unwrap();
+        sqlx::query("CREATE TABLE t (id INTEGER)")
+            .execute(&setup)
+            .await
+            .unwrap();
+        setup.close().await;
+
+        let mut connector = SqliteConnector::new(DatabaseConfig {
+            connection_string: url,
+            load_credentials_from_env: false,
+            ..Default::default()
+        })
+        .unwrap();
+        connector.connect().await.unwrap();
+        let pool = connector.pool.as_ref().unwrap();
+        let error = sqlx::query("INSERT INTO t VALUES (1)")
+            .execute(pool)
+            .await
+            .expect_err("a query_only connection refuses an insert");
+        assert!(error.to_string().contains("readonly"), "{error}");
+        connector.disconnect().await.unwrap();
     }
 }

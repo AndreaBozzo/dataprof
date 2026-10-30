@@ -16,9 +16,9 @@ use std::collections::HashSet;
 /// Words that name a statement which changes data or runs code, or a clause
 /// that writes a file (MySQL's `INTO OUTFILE`). A query or identifier holding
 /// one is refused.
-const STATEMENT_KEYWORDS: [&str; 15] = [
+const STATEMENT_KEYWORDS: [&str; 16] = [
     "DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE", "EXEC",
-    "EXECUTE", "WAITFOR", "ATTACH", "OUTFILE", "DUMPFILE",
+    "EXECUTE", "WAITFOR", "ATTACH", "OUTFILE", "DUMPFILE", "PRAGMA",
 ];
 
 /// Words that reach a system catalog or a shell. `PG_` is a prefix: every
@@ -144,6 +144,9 @@ enum Reading<'a> {
     Unterminated,
     /// A comment outside a string, which could hide the rest of the query.
     Comment,
+    /// A `;` followed by more SQL. SQLite runs every statement of a query, so
+    /// a second one could switch off the connection's `query_only`.
+    SecondStatement,
 }
 
 /// The words of `query` as `dialect` reads it, outside string literals, with
@@ -166,6 +169,9 @@ fn read_query<'a>(query: &'a str, dialect: &Dialect) -> Reading<'a> {
             || (dialect.hash_comments && rest.starts_with('#'))
         {
             return Reading::Comment;
+        }
+        if rest.starts_with(';') && !rest[1..].trim().is_empty() {
+            return Reading::SecondStatement;
         }
         let c = rest.chars().next().expect("index is inside the query");
         let (len, checked) = match c {
@@ -361,6 +367,11 @@ pub fn validate_base_query(query: &str) -> Result<String, DataProfilerError> {
                     "Query contains a comment, which is not allowed",
                 ));
             }
+            Reading::SecondStatement => {
+                return Err(DataProfilerError::sql_validation(
+                    "Query holds more than one statement, which is not allowed",
+                ));
+            }
         };
         read = true;
         if !words.first().is_some_and(|word| {
@@ -435,6 +446,11 @@ mod tests {
             // the database's read-only transaction covers (#1169).
             "WITH recent AS (SELECT 1 AS id) SELECT * FROM recent",
             "SELECT program, master, copy, sleep, benchmark FROM courses",
+            // One statement: a trailing `;`, a `;` in a string, and a
+            // table-valued pragma function, which only reads.
+            "SELECT 1;  ",
+            "SELECT ';' AS separator",
+            "SELECT * FROM pragma_table_info('t')",
         ] {
             assert!(validate_base_query(query).is_ok(), "{query}");
         }
@@ -483,6 +499,11 @@ mod tests {
             // A data-modifying CTE, and MySQL writing a file.
             "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone",
             "SELECT * FROM t INTO OUTFILE '/tmp/t.csv'",
+            // SQLite runs every statement: a second one could switch the
+            // connection's query_only off before writing.
+            "SELECT 1; PRAGMA query_only = OFF; REPLACE INTO t SELECT 4",
+            "SELECT 1; SELECT 2",
+            "PRAGMA query_only = OFF",
             "SELECT benchmark(100000000, md5('a'))",
             "SELECT `sleep` (5)",
         ] {

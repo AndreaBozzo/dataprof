@@ -1,12 +1,14 @@
 //! A profiled query cannot write, whatever the word check lets through (#1169).
 //!
-//! The query runs in a read-only transaction on PostgreSQL and MySQL, and on
-//! a `query_only` connection on SQLite, so the database refuses a write the
-//! word list does not name: `nextval` and a stored function that inserts, and
-//! a DELETE handed straight to `profile_query`, which runs no word check. A
-//! read-only `WITH` query is profiled. The PostgreSQL and MySQL tests need the
-//! CI database services (`POSTGRES_TEST_URL`, `MYSQL_TEST_URL`) and pass
-//! without running when those are unset.
+//! The query runs in a read-only transaction on PostgreSQL and MySQL, so the
+//! database refuses a write the word list does not name: `nextval`, and a
+//! stored function that inserts. Both query paths are checked: the batch
+//! `profile_query` and the streaming one behind `analyze_database`. On SQLite
+//! the connection is `query_only`, and a query cannot switch that off: a
+//! second statement is refused before it runs. A read-only `WITH` query is
+//! profiled on every backend. The PostgreSQL and MySQL tests need the CI
+//! database services (`POSTGRES_TEST_URL`, `MYSQL_TEST_URL`) and pass without
+//! running when those are unset.
 
 #![cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 
@@ -20,22 +22,31 @@ fn config(url: &str) -> DatabaseConfig {
     }
 }
 
-/// Run `statement` through the connector's batch path, which runs no word
-/// check, and describe what happened.
-async fn batch(url: &str, statement: &str) -> Result<(), String> {
+/// Run `query` through the connector's batch path and describe what happened.
+async fn batch(url: &str, query: &str) -> Result<(), String> {
     let mut connector = dataprof_db::create_connector(config(url)).expect("connector");
     connector.connect().await.expect("connect");
-    let result = connector.profile_query(statement).await;
+    let result = connector.profile_query(query).await;
     connector.disconnect().await.expect("disconnect");
     result.map(|_| ()).map_err(|error| error.to_string())
 }
 
-/// The rows `query` profiles to, or the error.
+/// The rows `query` profiles to through the streaming path, or the error.
 async fn profiled_rows(url: &str, query: &str) -> Result<usize, String> {
     dataprof_db::analyze_database(config(url), query, false, None)
         .await
         .map(|report| report.execution.rows_processed)
         .map_err(|error| error.to_string())
+}
+
+/// Run `query` on both paths, recording each that succeeded.
+async fn both_paths_refuse(url: &str, query: &str, wrong: &mut Vec<String>) {
+    if batch(url, query).await.is_ok() {
+        wrong.push(format!("batch ran {query}"));
+    }
+    if let Ok(rows) = profiled_rows(url, query).await {
+        wrong.push(format!("streaming profiled {rows} rows from {query}"));
+    }
 }
 
 #[cfg(feature = "postgres")]
@@ -61,24 +72,13 @@ async fn postgres_profiles_cannot_write() {
     }
 
     let mut wrong = Vec::new();
-    if let Ok(()) = batch(&url, "DELETE FROM read_only_pg").await {
-        wrong.push("batch DELETE ran".to_string());
-    }
-    if let Ok(rows) = profiled_rows(&url, "SELECT nextval('read_only_pg_seq') AS n").await {
-        wrong.push(format!("nextval profiled {rows} rows"));
-    }
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM read_only_pg")
-        .fetch_one(&pool)
-        .await
-        .expect("count");
+    both_paths_refuse(&url, "SELECT nextval('read_only_pg_seq') AS n", &mut wrong).await;
     let advanced: bool = sqlx::query_scalar("SELECT is_called FROM read_only_pg_seq")
         .fetch_one(&pool)
         .await
         .expect("sequence");
-    if rows != 3 || advanced {
-        wrong.push(format!(
-            "table holds {rows} rows, sequence advanced: {advanced}"
-        ));
+    if advanced {
+        wrong.push("the sequence advanced".to_string());
     }
     match profiled_rows(
         &url,
@@ -115,10 +115,10 @@ async fn mysql_profiles_cannot_write() {
             .await
             .expect(statement);
     }
-    // MySQL has no built-in function that writes, so the profiled path is
+    // MySQL has no built-in function that writes, so the transaction is
     // checked through a stored one. With binary logging on, creating it needs
     // SUPER or `log_bin_trust_function_creators`, which a CI service user may
-    // not have; the batch DELETE below covers the transaction there.
+    // not have.
     let function = sqlx::raw_sql(
         "CREATE FUNCTION read_only_my_bump() RETURNS INTEGER MODIFIES SQL DATA
          BEGIN INSERT INTO read_only_my VALUES (99); RETURN 1; END",
@@ -127,15 +127,8 @@ async fn mysql_profiles_cannot_write() {
     .await;
 
     let mut wrong = Vec::new();
-    if let Ok(()) = batch(&url, "DELETE FROM read_only_my").await {
-        wrong.push("batch DELETE ran".to_string());
-    }
     match function {
-        Ok(_) => {
-            if let Ok(rows) = profiled_rows(&url, "SELECT read_only_my_bump() AS b").await {
-                wrong.push(format!("a writing function profiled {rows} rows"));
-            }
-        }
+        Ok(_) => both_paths_refuse(&url, "SELECT read_only_my_bump() AS b", &mut wrong).await,
         Err(error) => eprintln!("writing function not checked: {error}"),
     }
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM read_only_my")
@@ -182,9 +175,14 @@ async fn sqlite_profiles_cannot_write() {
     }
 
     let mut wrong = Vec::new();
-    if let Ok(()) = batch(&db_path, "DELETE FROM read_only_lite").await {
-        wrong.push("batch DELETE ran".to_string());
-    }
+    // SQLite runs every statement of a query: a second one could switch the
+    // connection's `query_only` off and then write.
+    both_paths_refuse(
+        &db_path,
+        "SELECT 1; PRAGMA query_only = OFF; REPLACE INTO read_only_lite SELECT 4",
+        &mut wrong,
+    )
+    .await;
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM read_only_lite")
         .fetch_one(&pool)
         .await
