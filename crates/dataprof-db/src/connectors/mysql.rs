@@ -3,7 +3,7 @@
 #[cfg(not(feature = "mysql"))]
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "mysql")]
-use super::common::not_connected_error;
+use super::common::{end_read_only_transaction, not_connected_error, read_only_transaction};
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "mysql")]
 use crate::security::validate_sql_identifier;
@@ -101,10 +101,16 @@ impl DatabaseConnector for MySqlConnector {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction =
+                read_only_transaction(pool, "START TRANSACTION READ ONLY").await?;
 
-            let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Query execution failed: {}", e))
-            })?;
+            let rows = sqlx::query(query)
+                .fetch_all(&mut *transaction)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Query execution failed: {}", e))
+                })?;
+            end_read_only_transaction(transaction).await?;
 
             // `u64` first: MySQL is the only backend with an unsigned 64-bit
             // integer, and without an arm a BIGINT UNSIGNED falls past every
@@ -134,9 +140,11 @@ impl DatabaseConnector for MySqlConnector {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction =
+                read_only_transaction(pool, "START TRANSACTION READ ONLY").await?;
 
-            streaming_profile_loop!(
-                pool,
+            let columns: Result<QueryColumns, DataProfilerError> = streaming_profile_loop!(
+                &mut *transaction,
                 query,
                 batch_size,
                 "MySQL",
@@ -145,7 +153,10 @@ impl DatabaseConnector for MySqlConnector {
                     ::sqlx::types::BigDecimal,
                     ::sqlx::mysql::types::MySqlTime
                 ]
-            )
+            );
+            let columns = columns?;
+            end_read_only_transaction(transaction).await?;
+            Ok(columns)
         }
 
         #[cfg(not(feature = "mysql"))]

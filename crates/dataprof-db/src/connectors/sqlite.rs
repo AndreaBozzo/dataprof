@@ -13,7 +13,10 @@ use crate::{process_rows_to_columns, streaming_profile_loop};
 use async_trait::async_trait;
 
 #[cfg(feature = "sqlite")]
-use {sqlx::sqlite::SqlitePool, sqlx::sqlite::SqlitePoolOptions};
+use {
+    sqlx::sqlite::SqliteConnectOptions, sqlx::sqlite::SqlitePool, sqlx::sqlite::SqlitePoolOptions,
+    std::str::FromStr,
+};
 
 /// SQLite embedded database connector
 pub struct SqliteConnector {
@@ -109,6 +112,17 @@ impl DatabaseConnector for SqliteConnector {
                 }
             };
 
+            // The database itself keeps a profile from writing (#1169). SQLite
+            // has no read-only transaction, so every connection the connector
+            // opens is `query_only`, which a SELECT cannot turn off.
+            let options = SqliteConnectOptions::from_str(&connection_string)
+                .map_err(|e| {
+                    DataProfilerError::database_connection(&format!(
+                        "Failed to connect to SQLite: {}",
+                        e
+                    ))
+                })?
+                .pragma("query_only", "ON");
             let pool = SqlitePoolOptions::new()
                 .max_connections(1)
                 .acquire_timeout(
@@ -116,7 +130,7 @@ impl DatabaseConnector for SqliteConnector {
                         .connection_timeout
                         .unwrap_or(std::time::Duration::from_secs(30)),
                 )
-                .connect(&connection_string)
+                .connect_with(options)
                 .await
                 .map_err(|e| {
                     DataProfilerError::database_connection(&format!(

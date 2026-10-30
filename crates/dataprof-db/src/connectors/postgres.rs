@@ -3,7 +3,7 @@
 #[cfg(not(feature = "postgres"))]
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "postgres")]
-use super::common::not_connected_error;
+use super::common::{end_read_only_transaction, not_connected_error, read_only_transaction};
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "postgres")]
 use crate::security::validate_sql_identifier;
@@ -102,10 +102,15 @@ impl DatabaseConnector for PostgresConnector {
         #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction = read_only_transaction(pool, "BEGIN READ ONLY").await?;
 
-            let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Query execution failed: {}", e))
-            })?;
+            let rows = sqlx::query(query)
+                .fetch_all(&mut *transaction)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Query execution failed: {}", e))
+                })?;
+            end_read_only_transaction(transaction).await?;
 
             // NUMERIC has no `Type<Sqlite>` impl, so it cannot sit in the
             // shared chain. Without this arm it falls past every arm and
@@ -126,14 +131,18 @@ impl DatabaseConnector for PostgresConnector {
         #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction = read_only_transaction(pool, "BEGIN READ ONLY").await?;
 
-            streaming_profile_loop!(
-                pool,
+            let columns: Result<QueryColumns, DataProfilerError> = streaming_profile_loop!(
+                &mut *transaction,
                 query,
                 batch_size,
                 "PostgreSQL",
                 [::sqlx::types::BigDecimal]
-            )
+            );
+            let columns = columns?;
+            end_read_only_transaction(transaction).await?;
+            Ok(columns)
         }
 
         #[cfg(not(feature = "postgres"))]

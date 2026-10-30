@@ -6,6 +6,30 @@
 use crate::DataProfilerError;
 use crate::security::{validate_base_query, validate_sql_identifier};
 
+/// Begin the transaction a profiled query runs in, which the database itself
+/// keeps from writing (#1169). `begin` is the backend's statement for it.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub async fn read_only_transaction<DB: sqlx::Database>(
+    pool: &sqlx::Pool<DB>,
+    begin: &'static str,
+) -> Result<sqlx::Transaction<'static, DB>, DataProfilerError> {
+    pool.begin_with(begin).await.map_err(|e| {
+        DataProfilerError::database_query(&format!("Could not start a read-only transaction: {e}"))
+    })
+}
+
+/// End a read-only transaction. Rolling back also undoes a session setting
+/// the query changed, such as PostgreSQL's `set_config`. A transaction dropped
+/// on an early return is rolled back by sqlx too.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub async fn end_read_only_transaction<DB: sqlx::Database>(
+    transaction: sqlx::Transaction<'static, DB>,
+) -> Result<(), DataProfilerError> {
+    transaction.rollback().await.map_err(|e| {
+        DataProfilerError::database_query(&format!("Could not end the read-only transaction: {e}"))
+    })
+}
+
 /// Generate "not connected to database" error
 #[allow(dead_code)]
 pub fn not_connected_error() -> DataProfilerError {
@@ -417,7 +441,7 @@ macro_rules! process_rows_to_columns {
 /// Build the statement a query or table name is profiled with.
 #[allow(dead_code)]
 pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
-    if query.trim().to_uppercase().starts_with("SELECT") {
+    if crate::security::is_query(query) {
         validate_base_query(query)
     } else {
         validate_sql_identifier(query)?;
