@@ -363,7 +363,8 @@ mod postgres {
     /// serde_json holds a float literal with more digits than an f64 as the
     /// nearest f64, so the two rows below rendered alike and counted as a
     /// duplicate (#1165). PostgreSQL keeps every digit, and so must the
-    /// profile. `1.50` is held exactly and keeps the serde_json rendering.
+    /// profile. `1.50` is held exactly and keeps the serde_json rendering, and
+    /// a float inside a container stays the f64, as in a JSON file.
     #[tokio::test]
     async fn floats_past_f64_digits_keep_their_digits() {
         let Some(url) = url().await else {
@@ -374,19 +375,17 @@ mod postgres {
              '{"v": 1e-400}'::jsonb, '1.50'::json),
             (2, '1000000000000000.05'::json, '1000000000000000.05'::jsonb,
              '{"v": 2e-400}'::jsonb, '1.50'::json)) AS t(n, j, b, o, h) ORDER BY n"#;
-        // jsonb stores a number as numeric, which prints `1e-400` in full.
-        let tiny = |digit: char| format!(r#"{{"v":0.{}{digit}}}"#, "0".repeat(399));
         let expected = [
             [
                 "1000000000000000.01".to_string(),
                 "1000000000000000.01".to_string(),
-                tiny('1'),
+                r#"{"v":0.0}"#.to_string(),
                 "1.5".to_string(),
             ],
             [
                 "1000000000000000.05".to_string(),
                 "1000000000000000.05".to_string(),
-                tiny('2'),
+                r#"{"v":0.0}"#.to_string(),
                 "1.5".to_string(),
             ],
         ];
@@ -405,6 +404,57 @@ mod postgres {
             wrong.push(format!(
                 "profile: {duplicates:?} duplicate rows, expected 0"
             ));
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A query and a JSONL file of its rows count the same distinct values and
+    /// duplicate rows when the cells hold floats past f64 digits: a scalar
+    /// keeps its digits on both, and a container keeps each float as its f64
+    /// on both, beside exact numbers spelled differently (#1165).
+    #[tokio::test]
+    async fn float_digits_count_alike_in_a_query_and_a_jsonl_file() {
+        let Some(url) = url().await else {
+            return;
+        };
+        let query = r#"SELECT s, o FROM (VALUES
+            (1, '1000000000000000.01'::json, '{"v": 1e-400, "h": 1.50}'::json),
+            (2, '1000000000000000.05'::json, '{"v": 2e-400, "h": 1.5}'::json),
+            (3, '1000000000000000.01'::json, '{"v": 1e-400, "h": 1.5}'::json))
+            AS t(n, s, o) ORDER BY n"#;
+        let jsonl = concat!(
+            r#"{"s":1000000000000000.01,"o":{"v":1e-400,"h":1.50}}"#,
+            "\n",
+            r#"{"s":1000000000000000.05,"o":{"v":2e-400,"h":1.5}}"#,
+            "\n",
+            r#"{"s":1000000000000000.01,"o":{"v":1e-400,"h":1.5}}"#,
+            "\n",
+        );
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("rows.jsonl");
+        std::fs::write(&path, jsonl).expect("write jsonl");
+        let file_report =
+            dataprof_json::analyze_json_file(&path, &dataprof_json::JsonParserConfig::jsonl())
+                .expect("jsonl profile");
+        let query_report = profile(&url, query).await;
+
+        let mut wrong = Vec::new();
+        for name in ["s", "o"] {
+            let [query, file] = [&query_report, &file_report].map(|report| {
+                report
+                    .column_profiles
+                    .iter()
+                    .find(|column| column.name == name)
+                    .expect("profiled column")
+                    .unique_count
+            });
+            if query != file {
+                wrong.push(format!("{name}: query {query:?}, jsonl {file:?}"));
+            }
+        }
+        let duplicates = [&query_report, &file_report].map(duplicate_rows);
+        if duplicates != [Some(1), Some(1)] {
+            wrong.push(format!("duplicate rows (query, jsonl): {duplicates:?}"));
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
@@ -515,10 +565,11 @@ mod mysql {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
-    /// A DECIMAL placed in a JSON value keeps every digit, which serde_json
+    /// A DECIMAL cast to a JSON value keeps every digit, which serde_json
     /// rounded to the nearest f64, so the two rows below rendered alike and
     /// counted as a duplicate (#1165). A JSON literal is stored as a DOUBLE,
-    /// so `1.50` keeps the serde_json rendering.
+    /// so `1.50` keeps the serde_json rendering, and a DECIMAL inside a
+    /// container stays the f64, as in a JSON file.
     #[tokio::test]
     async fn decimals_past_f64_digits_keep_their_digits() {
         let Some(url) = url().await else {
@@ -531,8 +582,8 @@ mod mysql {
             FROM (VALUES ROW(1, '1000000000000000.01'), ROW(2, '1000000000000000.05'))
                 AS t(n, d) ORDER BY n"#;
         let expected = [
-            ["1000000000000000.01", r#"{"v":1000000000000000.01}"#, "1.5"],
-            ["1000000000000000.05", r#"{"v":1000000000000000.05}"#, "1.5"],
+            ["1000000000000000.01", r#"{"v":1000000000000000.0}"#, "1.5"],
+            ["1000000000000000.05", r#"{"v":1000000000000000.0}"#, "1.5"],
         ];
 
         let mut wrong = Vec::new();

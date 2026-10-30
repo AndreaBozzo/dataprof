@@ -252,10 +252,10 @@ impl crate::DecodeStructured for sqlx::mysql::MySqlRow {
         // 100, all inside what serde_json reads. Should a value still fail,
         // keep its text.
         //
-        // A DECIMAL placed in a JSON value, by CAST or JSON_OBJECT, keeps
-        // every digit, which serde_json rounds to the nearest f64: such a
-        // value is read from its text too, so distinct values stay distinct
-        // (#1165).
+        // A DECIMAL cast to a JSON value keeps every digit, which serde_json
+        // rounds to the nearest f64: such a value is read from its text too,
+        // so distinct values stay distinct (#1165). A DECIMAL inside a
+        // container, as JSON_OBJECT puts it, stays the f64, as in a JSON file.
         // Both calls fail only on NULL, which the `Option<String>` arm took
         // first.
         let text = || {
@@ -264,8 +264,8 @@ impl crate::DecodeStructured for sqlx::mysql::MySqlRow {
         };
         Some(match self.try_get::<sqlx::types::JsonValue, _>(index) {
             Ok(value)
-                if !(dataprof_json::record::may_hold_float(&value)
-                    && dataprof_json::record::has_lossy_float_literal(text().as_bytes())) =>
+                if !(value.as_number().is_some_and(serde_json::Number::is_f64)
+                    && dataprof_json::record::is_lossy_float_scalar(text().as_bytes())) =>
             {
                 super::common::json_structured_value(&value)
             }

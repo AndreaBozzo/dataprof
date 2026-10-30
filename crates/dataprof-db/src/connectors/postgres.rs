@@ -263,12 +263,13 @@ impl crate::DecodeStructured for sqlx::postgres::PgRow {
             return None;
         }
         if is_json && let Ok(value) = self.try_get::<sqlx::types::JsonValue, _>(index) {
-            // serde_json holds an integer outside the 64-bit range, and a float
-            // literal with more digits than an f64, as the nearest f64, while
-            // PostgreSQL keeps every digit: such a document takes the raw path
-            // below, so distinct values stay distinct (#1104, #1165). Only a
-            // value holding a float reads the raw bytes. Both calls fail only
-            // on NULL, which was taken first.
+            // serde_json holds an integer outside the 64-bit range as the
+            // nearest f64, while PostgreSQL keeps every digit: such a document
+            // takes the raw path below, so distinct values stay distinct
+            // (#1104). So does a cell that is a float literal with more digits
+            // than an f64 (#1165); a float inside a container stays the f64, as
+            // in a JSON file. Only a value holding a float reads the raw bytes.
+            // Both calls fail only on NULL, which was taken first.
             let raw = || {
                 self.try_get_raw(index)
                     .expect("a decoded column index")
@@ -277,8 +278,8 @@ impl crate::DecodeStructured for sqlx::postgres::PgRow {
             };
             let rounded = (dataprof_json::record::may_hold_wide_integer(&value)
                 && dataprof_json::record::has_wide_integer_literal(raw()))
-                || (dataprof_json::record::may_hold_float(&value)
-                    && dataprof_json::record::has_lossy_float_literal(raw()));
+                || (value.as_number().is_some_and(serde_json::Number::is_f64)
+                    && dataprof_json::record::is_lossy_float_scalar(raw()));
             if !rounded {
                 return Some(super::common::json_structured_value(&value));
             }
