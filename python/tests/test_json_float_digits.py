@@ -33,6 +33,8 @@ CASES: dict[str, list[str]] = {
         "1000000000000000.02",
     ],
     "below the float range": ["1e-400", "2e-400", "3e-400"],
+    # Past the exponents decimal.Decimal accepts, which raised InvalidOperation.
+    "exponent past Decimal": ["1e-99999999999999999999", "2e-400", "5"],
     "beside held literals": ["0.1", "1000000000000000.01", "1.50", "1e2", "-0.0"],
     "large integer-valued float": ["12345678901234567890.0", "12345678901234567891.0", "7"],
 }

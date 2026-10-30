@@ -38,7 +38,7 @@ fn column(report: &ProfileReport) -> Value {
 }
 
 /// (label, the `v` literals in row order)
-const CASES: [(&str, &[&str]); 5] = [
+const CASES: [(&str, &[&str]); 6] = [
     (
         "more digits than f64",
         &[
@@ -48,6 +48,10 @@ const CASES: [(&str, &[&str]); 5] = [
         ],
     ),
     ("below the f64 range", &["1e-400", "2e-400", "3e-400"]),
+    (
+        "exponent past i64",
+        &["1e-99999999999999999999", "2e-400", "5"],
+    ),
     (
         "beside held literals",
         &["0.1", "1000000000000000.01", "1.50", "1e2", "-0.0"],

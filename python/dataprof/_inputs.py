@@ -3,7 +3,6 @@
 from __future__ import annotations as _annotations
 
 import csv as _csv
-import decimal as _decimal
 import io as _io
 import json as _json
 import math as _math
@@ -73,6 +72,29 @@ class _FloatLiteral(float):
     literal: str
 
 
+def _decimal_value(text: str) -> tuple[bool, str, int]:
+    """A decimal number as (negative, significant digits, power of ten of the
+    last digit), so that equal values compare equal however they are spelled.
+
+    ``decimal.Decimal`` refuses an exponent like ``1e-99999999999999999999``,
+    which JSON allows and a float reads as zero. Such an exponent lies far
+    outside the float range either way, so it is clamped, as the file readers
+    do (#1156).
+    """
+    negative = text.startswith("-")
+    mantissa, _, exponent_text = text.lstrip("-").lower().partition("e")
+    if len(exponent_text) > 18:
+        exponent = -(10**30) if exponent_text.startswith("-") else 10**30
+    else:
+        exponent = int(exponent_text or "0")
+    whole, _, fraction = mantissa.partition(".")
+    significant = (whole + fraction).lstrip("0")
+    trimmed = significant.rstrip("0")
+    if not trimmed:
+        return (False, "", 0)
+    return (negative, trimmed, exponent - len(fraction) + len(significant) - len(trimmed))
+
+
 def _parse_json_float(token: str) -> float:
     # json.loads turns a finite token past the float range, like 1e400, into
     # infinity, which then profiles as one invalid value with no parse error.
@@ -81,7 +103,7 @@ def _parse_json_float(token: str) -> float:
     if _math.isinf(value):
         raise _NonStandardJsonConstant(token, "a number outside the 64-bit float range")
     # repr writes the shortest digits that read back as the same float.
-    if token != repr(value) and _decimal.Decimal(token) != _decimal.Decimal(repr(value)):
+    if token != repr(value) and _decimal_value(token) != _decimal_value(repr(value)):
         lossy = _FloatLiteral(value)
         lossy.literal = token
         return lossy
