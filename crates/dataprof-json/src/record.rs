@@ -355,16 +355,21 @@ pub fn object_record(obj: JsonObject, raw: &[u8]) -> JsonRecord {
     }
     // Blanking the sign leaves `0` where `-0` stood; whitespace is legal
     // between any two JSON tokens, so the text stays the same document.
-    let mut rewritten = raw.to_vec();
+    let mut unsigned = raw.to_vec();
     for start in negative_zeros {
-        rewritten[start] = b' ';
+        unsigned[start] = b' ';
     }
-    // Quoting a literal makes it a string of the same digits. Last first, so
-    // the earlier offsets still hold.
-    for (start, len) in lossy_fields.into_iter().rev() {
-        rewritten.insert(start + len, b'"');
-        rewritten.insert(start, b'"');
+    // Quoting a literal makes it a string of the same digits.
+    let mut rewritten = Vec::with_capacity(unsigned.len() + 2 * lossy_fields.len());
+    let mut copied = 0;
+    for (start, len) in lossy_fields {
+        rewritten.extend_from_slice(&unsigned[copied..start]);
+        rewritten.push(b'"');
+        rewritten.extend_from_slice(&unsigned[start..start + len]);
+        rewritten.push(b'"');
+        copied = start + len;
     }
+    rewritten.extend_from_slice(&unsigned[copied..]);
     // decode-audit: impossible — `raw` parsed as this object, and only signs
     // were replaced by whitespace and number literals quoted.
     JsonRecord::Object(
@@ -688,7 +693,8 @@ mod tests {
 
     #[test]
     fn only_a_lossy_field_of_the_root_object_becomes_text() {
-        let raw = br#"{"a":1000000000000000.01,"b":[1000000000000000.01],"c":-0,"d":1.5}"#;
+        let raw =
+            br#"{"a":1000000000000000.01,"b":[1000000000000000.01],"c":-0,"d":1.5,"e":1e-400}"#;
         let obj = serde_json::from_slice(raw).unwrap();
         let JsonRecord::Object(obj) = object_record(obj, raw) else {
             panic!("not an object record");
@@ -697,5 +703,6 @@ mod tests {
         assert_eq!(json_value_text(&obj["b"]), "[1000000000000000.0]");
         assert_eq!(json_value_text(&obj["c"]), "0");
         assert_eq!(json_value_text(&obj["d"]), "1.5");
+        assert_eq!(obj["e"], Value::String("1e-400".into()));
     }
 }
