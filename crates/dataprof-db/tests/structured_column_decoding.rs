@@ -360,6 +360,55 @@ mod postgres {
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
+    /// serde_json holds a float literal with more digits than an f64 as the
+    /// nearest f64, so the two rows below rendered alike and counted as a
+    /// duplicate (#1165). PostgreSQL keeps every digit, and so must the
+    /// profile. `1.50` is held exactly and keeps the serde_json rendering.
+    #[tokio::test]
+    async fn floats_past_f64_digits_keep_their_digits() {
+        let Some(url) = url().await else {
+            return;
+        };
+        let query = r#"SELECT j, b, o, h FROM (VALUES
+            (1, '1000000000000000.01'::json, '1000000000000000.01'::jsonb,
+             '{"v": 1e-400}'::jsonb, '1.50'::json),
+            (2, '1000000000000000.05'::json, '1000000000000000.05'::jsonb,
+             '{"v": 2e-400}'::jsonb, '1.50'::json)) AS t(n, j, b, o, h) ORDER BY n"#;
+        // jsonb stores a number as numeric, which prints `1e-400` in full.
+        let tiny = |digit: char| format!(r#"{{"v":0.{}{digit}}}"#, "0".repeat(399));
+        let expected = [
+            [
+                "1000000000000000.01".to_string(),
+                "1000000000000000.01".to_string(),
+                tiny('1'),
+                "1.5".to_string(),
+            ],
+            [
+                "1000000000000000.05".to_string(),
+                "1000000000000000.05".to_string(),
+                tiny('2'),
+                "1.5".to_string(),
+            ],
+        ];
+
+        let mut wrong = Vec::new();
+        for (path, columns) in both_paths(&url, query).await {
+            for (row, texts) in expected.iter().enumerate() {
+                let found = ["j", "b", "o", "h"].map(|name| columns[name][row].clone());
+                if found != *texts {
+                    wrong.push(format!("{path} row {row}: {found:?}"));
+                }
+            }
+        }
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(0) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 0"
+            ));
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     /// The same records as a JSONL file report the same container columns.
     #[tokio::test]
     async fn the_query_and_a_jsonl_file_of_its_rows_agree() {
@@ -462,6 +511,44 @@ mod mysql {
             if columns["scalars"] != ["5", "7", ""] {
                 wrong.push(format!("{path} scalars: {:?}", columns["scalars"]));
             }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A DECIMAL placed in a JSON value keeps every digit, which serde_json
+    /// rounded to the nearest f64, so the two rows below rendered alike and
+    /// counted as a duplicate (#1165). A JSON literal is stored as a DOUBLE,
+    /// so `1.50` keeps the serde_json rendering.
+    #[tokio::test]
+    async fn decimals_past_f64_digits_keep_their_digits() {
+        let Some(url) = url().await else {
+            return;
+        };
+        let query = r#"SELECT
+                CAST(CAST(d AS DECIMAL(30,2)) AS JSON) AS j,
+                JSON_OBJECT('v', CAST(d AS DECIMAL(30,2))) AS o,
+                CAST('1.50' AS JSON) AS h
+            FROM (VALUES ROW(1, '1000000000000000.01'), ROW(2, '1000000000000000.05'))
+                AS t(n, d) ORDER BY n"#;
+        let expected = [
+            ["1000000000000000.01", r#"{"v":1000000000000000.01}"#, "1.5"],
+            ["1000000000000000.05", r#"{"v":1000000000000000.05}"#, "1.5"],
+        ];
+
+        let mut wrong = Vec::new();
+        for (path, columns) in both_paths(&url, query).await {
+            for (row, texts) in expected.iter().enumerate() {
+                let found = [&columns["j"][row], &columns["o"][row], &columns["h"][row]];
+                if found.map(String::as_str) != *texts {
+                    wrong.push(format!("{path} row {row}: {found:?}"));
+                }
+            }
+        }
+        let duplicates = duplicate_rows(&profile(&url, query).await);
+        if duplicates != Some(0) {
+            wrong.push(format!(
+                "profile: {duplicates:?} duplicate rows, expected 0"
+            ));
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }

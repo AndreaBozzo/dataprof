@@ -117,6 +117,26 @@ pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
     integer_literals(raw).any(|(_, token)| is_wide_integer(token))
 }
 
+/// Whether `value` holds a number that is neither an `i64` nor a `u64`, so
+/// that it may have been read from a float literal its `f64` does not hold;
+/// only the source text can tell.
+pub fn may_hold_float(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => number.as_i64().is_none() && number.as_u64().is_none(),
+        Value::Array(items) => items.iter().any(may_hold_float),
+        Value::Object(fields) => fields.values().any(may_hold_float),
+        _ => false,
+    }
+}
+
+/// Whether `raw` JSON text holds a float literal, at any depth, that names a
+/// value its `f64` does not hold, like `1000000000000000.01` (#1156). String
+/// contents are skipped.
+pub fn has_lossy_float_literal(raw: &[u8]) -> bool {
+    number_literals(raw)
+        .any(|literal| is_float_literal(literal.token) && is_lossy_float_literal(literal.token))
+}
+
 /// The integer literals (no fraction, no exponent) of `raw` JSON text, each
 /// with the offset it starts at. String contents are skipped.
 fn integer_literals(raw: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
@@ -645,6 +665,29 @@ mod tests {
             .expect("the original I/O error must survive serde's wrapper");
         assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
         assert!(source.get_ref().unwrap().is::<LocalReadFailure>());
+    }
+
+    #[test]
+    fn a_lossy_float_literal_is_found_at_any_depth_outside_strings() {
+        for raw in [
+            "1000000000000000.01",
+            r#"{"v":[1,{"w":1e-400}]}"#,
+            r#"["x",12345678901234567890.0]"#,
+        ] {
+            let value: Value = serde_json::from_str(raw).unwrap();
+            assert!(may_hold_float(&value), "{raw}");
+            assert!(has_lossy_float_literal(raw.as_bytes()), "{raw}");
+        }
+        for raw in [
+            r#"{"v":"1000000000000000.01"}"#,
+            r#"{"v":[1.5,1e2,-0.0]}"#,
+            "18446744073709551615",
+        ] {
+            assert!(!has_lossy_float_literal(raw.as_bytes()), "{raw}");
+        }
+        assert!(!may_hold_float(
+            &serde_json::from_str(r#"{"v":[1,-2]}"#).unwrap()
+        ));
     }
 
     #[test]

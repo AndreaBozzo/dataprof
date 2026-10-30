@@ -251,15 +251,25 @@ impl crate::DecodeStructured for sqlx::mysql::MySqlRow {
         // `f64` range (a DECIMAL has at most 65 digits) and caps nesting at
         // 100, all inside what serde_json reads. Should a value still fail,
         // keep its text.
+        //
+        // A DECIMAL placed in a JSON value, by CAST or JSON_OBJECT, keeps
+        // every digit, which serde_json rounds to the nearest f64: such a
+        // value is read from its text too, so distinct values stay distinct
+        // (#1165).
+        // Both calls fail only on NULL, which the `Option<String>` arm took
+        // first.
+        let text = || {
+            let raw = self.try_get_raw(index).expect("a decoded column index");
+            <&str as sqlx::Decode<sqlx::MySql>>::decode(raw).expect("a non-null JSON value is text")
+        };
         Some(match self.try_get::<sqlx::types::JsonValue, _>(index) {
-            Ok(value) => super::common::json_structured_value(&value),
-            Err(_) => {
-                // Fails only on NULL, which the `Option<String>` arm took first.
-                let raw = self.try_get_raw(index).expect("a decoded column index");
-                let text = <&str as sqlx::Decode<sqlx::MySql>>::decode(raw)
-                    .expect("a non-null JSON value is text");
-                super::common::raw_json_structured_value(text)
+            Ok(value)
+                if !(dataprof_json::record::may_hold_float(&value)
+                    && dataprof_json::record::has_lossy_float_literal(text().as_bytes())) =>
+            {
+                super::common::json_structured_value(&value)
             }
+            _ => super::common::raw_json_structured_value(text()),
         })
     }
 }
