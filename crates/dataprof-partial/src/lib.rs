@@ -774,10 +774,14 @@ fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataPr
 
 fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfilerError> {
     let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
-    let delimiter = dataprof_csv::detect_delimiter_from_path(path)
-        .map_err(|error| map_io_error(path, error))?;
-    let count = dataprof_csv::row_count::csv_record_count(BufReader::new(file), delimiter, b'"')?
-        .saturating_sub(1);
+    let mut reader = BufReader::new(file);
+    let (delimiter, head) = dataprof_csv::detect_delimiter_with_head(&mut reader)?;
+    let count = dataprof_csv::row_count::csv_record_count(
+        std::io::Cursor::new(head).chain(reader),
+        delimiter,
+        b'"',
+    )?
+    .saturating_sub(1);
     Ok(RowCountEstimate {
         count,
         exact: true,
