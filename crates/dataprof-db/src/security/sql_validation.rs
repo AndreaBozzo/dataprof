@@ -3,53 +3,74 @@
 //! Keywords are matched as whole words outside string literals (#1167). A
 //! substring match refused `created_at` for CREATE, `updated_at` for UPDATE and
 //! `is_deleted` for DELETE, which are in most application tables.
+//!
+//! This is the second line of defence. A profiled query runs in a transaction
+//! the database itself keeps from writing (#1169), so the words left here are
+//! the ones that matter inside a read: statements, in case a driver runs more
+//! than one, the system catalogs, writes to files, and calls that stall or read
+//! the server.
 
 use crate::DataProfilerError;
 use std::collections::HashSet;
 
-/// Words that name a statement which changes data or runs code, or a sleep
-/// used to probe a server. A query or identifier holding one is refused.
-const STATEMENT_KEYWORDS: [&str; 17] = [
-    "DROP",
-    "DELETE",
-    "INSERT",
-    "UPDATE",
-    "TRUNCATE",
-    "ALTER",
-    "CREATE",
-    "GRANT",
-    "REVOKE",
-    "EXEC",
-    "EXECUTE",
-    "WAITFOR",
-    "SLEEP",
-    "EXTRACTVALUE",
-    "LOAD_FILE",
-    "COPY",
-    "ATTACH",
+/// Words that name a statement which changes data or runs code, or a clause
+/// that writes a file (MySQL's `INTO OUTFILE`). A query or identifier holding
+/// one is refused.
+const STATEMENT_KEYWORDS: [&str; 16] = [
+    "DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE", "EXEC",
+    "EXECUTE", "WAITFOR", "ATTACH", "OUTFILE", "DUMPFILE", "PRAGMA",
 ];
 
 /// Words that reach a system catalog or a shell. `PG_` is a prefix: every
 /// PostgreSQL catalog and admin function starts with it.
-const SYSTEM_WORDS: [&str; 6] = [
-    "INFORMATION_SCHEMA",
-    "SYS",
-    "MASTER",
-    "MYSQL",
-    "PROGRAM",
-    "XP_CMDSHELL",
+const SYSTEM_WORDS: [&str; 4] = ["INFORMATION_SCHEMA", "SYS", "MYSQL", "XP_CMDSHELL"];
+
+/// Functions that stall the server or read its files. They are refused when
+/// called, so a column named `sleep` is not.
+const CALLED_FUNCTIONS: [&str; 5] = [
+    "SLEEP",
+    "BENCHMARK",
+    "LOAD_FILE",
+    "EXTRACTVALUE",
+    "LOAD_EXTENSION",
 ];
 
-/// The first refused word in `words`, uppercased, if any.
-fn refused_word<'a>(words: impl IntoIterator<Item = &'a str>, allow_union: bool) -> Option<String> {
+/// The first refused word in `words`, uppercased, if any. Each word is a slice
+/// of `text`, which is read past it to tell a function call.
+fn refused_word<'a>(
+    text: &str,
+    words: impl IntoIterator<Item = &'a str>,
+    allow_union: bool,
+) -> Option<String> {
     words.into_iter().find_map(|word| {
         let upper = word.to_uppercase();
         let refused = STATEMENT_KEYWORDS.contains(&upper.as_str())
             || SYSTEM_WORDS.contains(&upper.as_str())
             || upper.starts_with("PG_")
-            || (!allow_union && upper == "UNION");
+            || (!allow_union && upper == "UNION")
+            || (CALLED_FUNCTIONS.contains(&upper.as_str()) && is_called(text, word));
         refused.then_some(upper)
     })
+}
+
+/// Whether `word`, a slice of `text`, is followed by an opening parenthesis,
+/// past whitespace and any closing quote of a quoted name.
+fn is_called(text: &str, word: &str) -> bool {
+    let end = word.as_ptr() as usize - text.as_ptr() as usize + word.len();
+    text[end..]
+        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '"' | '`' | ']'))
+        .starts_with('(')
+}
+
+/// Whether `text` is a query rather than a table name: its first word is
+/// `SELECT` or `WITH`. A table named `selected_items` is a name.
+pub fn is_query(text: &str) -> bool {
+    text.trim_start()
+        .split(|c: char| !is_word_char(c))
+        .next()
+        .is_some_and(|first| {
+            first.eq_ignore_ascii_case("SELECT") || first.eq_ignore_ascii_case("WITH")
+        })
 }
 
 fn is_word_char(c: char) -> bool {
@@ -123,6 +144,9 @@ enum Reading<'a> {
     Unterminated,
     /// A comment outside a string, which could hide the rest of the query.
     Comment,
+    /// A `;` followed by more SQL. SQLite runs every statement of a query, so
+    /// a second one could switch off the connection's `query_only`.
+    SecondStatement,
 }
 
 /// The words of `query` as `dialect` reads it, outside string literals, with
@@ -145,6 +169,9 @@ fn read_query<'a>(query: &'a str, dialect: &Dialect) -> Reading<'a> {
             || (dialect.hash_comments && rest.starts_with('#'))
         {
             return Reading::Comment;
+        }
+        if rest.starts_with(';') && !rest[1..].trim().is_empty() {
+            return Reading::SecondStatement;
         }
         let c = rest.chars().next().expect("index is inside the query");
         let (len, checked) = match c {
@@ -301,7 +328,7 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<(), DataProfilerError
     let words = identifier
         .split(|c: char| !is_word_char(c))
         .filter(|word| !word.is_empty());
-    if let Some(word) = refused_word(words, false) {
+    if let Some(word) = refused_word(identifier, words, false) {
         return Err(DataProfilerError::sql_validation(&format!(
             "SQL identifier contains dangerous keyword or pattern: {}",
             word
@@ -340,17 +367,21 @@ pub fn validate_base_query(query: &str) -> Result<String, DataProfilerError> {
                     "Query contains a comment, which is not allowed",
                 ));
             }
+            Reading::SecondStatement => {
+                return Err(DataProfilerError::sql_validation(
+                    "Query holds more than one statement, which is not allowed",
+                ));
+            }
         };
         read = true;
-        if !words
-            .first()
-            .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
-        {
+        if !words.first().is_some_and(|word| {
+            word.eq_ignore_ascii_case("SELECT") || word.eq_ignore_ascii_case("WITH")
+        }) {
             return Err(DataProfilerError::sql_validation(
-                "Only SELECT queries are allowed for sampling",
+                "Only SELECT queries, which may start with a WITH clause, are allowed for sampling",
             ));
         }
-        if let Some(word) = refused_word(words, true) {
+        if let Some(word) = refused_word(trimmed, words, true) {
             return Err(DataProfilerError::sql_validation(&format!(
                 "Query contains dangerous SQL pattern: {} (as {} reads it)",
                 word, dialect.name
@@ -411,11 +442,34 @@ mod tests {
             // PostgreSQL escape and dollar-quoted strings.
             r"SELECT E'it\'s DROP'",
             "SELECT $$it's$$",
+            // A read-only CTE, and columns named like a function or a word
+            // the database's read-only transaction covers (#1169).
+            "WITH recent AS (SELECT 1 AS id) SELECT * FROM recent",
+            "SELECT program, master, copy, sleep, benchmark FROM courses",
+            // One statement: a trailing `;`, a `;` in a string, and a
+            // table-valued pragma function, which only reads.
+            "SELECT 1;  ",
+            "SELECT ';' AS separator",
+            "SELECT * FROM pragma_table_info('t')",
         ] {
             assert!(validate_base_query(query).is_ok(), "{query}");
         }
-        for identifier in ["user_updates", "public.created_items", "is_deleted"] {
+        for identifier in ["user_updates", "public.created_items", "is_deleted", "copy"] {
             assert!(validate_sql_identifier(identifier).is_ok(), "{identifier}");
+        }
+    }
+
+    #[test]
+    fn a_query_starts_with_select_or_with_as_a_word() {
+        for text in [
+            "SELECT 1",
+            "  select * from t",
+            "WITH x AS (SELECT 1) SELECT 1",
+        ] {
+            assert!(is_query(text), "{text}");
+        }
+        for text in ["selected_items", "withdrawals", "public.orders"] {
+            assert!(!is_query(text), "{text}");
         }
     }
 
@@ -439,20 +493,23 @@ mod tests {
             // PostgreSQL reads `$$'$$` as a string, so pg_sleep runs there.
             "SELECT $$'$$, pg_sleep(10), $$'$$",
             // MySQL and SQLite read `$$` as an identifier and DELETE as a
-            // word; the check does not know which database it is (#1169).
+            // word; the check does not know which database runs the query.
             "SELECT $$ DELETE $$",
-            // Refused until profiles run in a read-only transaction (#1169).
-            "WITH x AS (SELECT 1) SELECT * FROM x",
             "selectx FROM t",
+            // A data-modifying CTE, and MySQL writing a file.
+            "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone",
+            "SELECT * FROM t INTO OUTFILE '/tmp/t.csv'",
+            // SQLite runs every statement: a second one could switch the
+            // connection's query_only off before writing.
+            "SELECT 1; PRAGMA query_only = OFF; REPLACE INTO t SELECT 4",
+            "SELECT 1; SELECT 2",
+            "PRAGMA query_only = OFF",
+            "SELECT benchmark(100000000, md5('a'))",
+            "SELECT `sleep` (5)",
         ] {
             assert!(validate_base_query(query).is_err(), "{query}");
         }
-        for identifier in [
-            "pg_catalog.pg_authid",
-            "information_schema.tables",
-            "union",
-            "copy",
-        ] {
+        for identifier in ["pg_catalog.pg_authid", "information_schema.tables", "union"] {
             assert!(validate_sql_identifier(identifier).is_err(), "{identifier}");
         }
     }

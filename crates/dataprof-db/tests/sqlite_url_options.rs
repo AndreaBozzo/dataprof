@@ -72,13 +72,19 @@ async fn mode_ro_refuses_writes_to_existing_database() {
     let mut connector = create_connector(config(sqlite_url(&path, "ro"))).unwrap();
     connector.connect().await.unwrap();
     assert!(connector.test_connection().await.unwrap());
+    // The query check refuses an INSERT before SQLite sees it since #1169, and
+    // the connector's connections are `query_only` besides, so this shows the
+    // write refused, not which layer refused it. `mode_rwc_creates_a_missing_
+    // database` shows the URL options reaching sqlx.
     let error = connector
         .profile_query("INSERT INTO rows (id) VALUES (1)")
         .await
         .expect_err("mode=ro must reject writes to the database");
+    let message = error.to_string().to_ascii_lowercase();
     assert!(
-        error.to_string().to_ascii_lowercase().contains("readonly")
-            || error.to_string().to_ascii_lowercase().contains("read-only"),
+        message.contains("readonly")
+            || message.contains("read-only")
+            || message.contains("sql validation failed"),
         "unexpected SQLite error: {error}"
     );
     connector.disconnect().await.unwrap();
