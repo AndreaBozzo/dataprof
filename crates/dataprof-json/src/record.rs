@@ -120,7 +120,25 @@ pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
 /// The integer literals (no fraction, no exponent) of `raw` JSON text, each
 /// with the offset it starts at. String contents are skipped.
 fn integer_literals(raw: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
+    number_literals(raw)
+        .filter(|literal| !is_float_literal(literal.token))
+        .map(|literal| (literal.start, literal.token))
+}
+
+/// A number literal in JSON text.
+struct NumberLiteral<'a> {
+    /// The offset the literal starts at.
+    start: usize,
+    /// How many arrays and objects enclose it: a field of a root object is at
+    /// depth 1.
+    depth: usize,
+    token: &'a [u8],
+}
+
+/// The number literals of `raw` JSON text. String contents are skipped.
+fn number_literals(raw: &[u8]) -> impl Iterator<Item = NumberLiteral<'_>> {
     let mut index = 0;
+    let mut depth = 0usize;
     std::iter::from_fn(move || {
         while index < raw.len() {
             match raw[index] {
@@ -131,21 +149,165 @@ fn integer_literals(raw: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
                     }
                     index += 1;
                 }
+                b'{' | b'[' => {
+                    depth += 1;
+                    index += 1;
+                }
+                b'}' | b']' => {
+                    depth = depth.saturating_sub(1);
+                    index += 1;
+                }
                 byte if byte == b'-' || byte.is_ascii_digit() => {
                     let start = index;
                     while index < raw.len() && is_json_number_byte(raw[index]) {
                         index += 1;
                     }
-                    let token = &raw[start..index];
-                    if !token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
-                        return Some((start, token));
-                    }
+                    return Some(NumberLiteral {
+                        start,
+                        depth,
+                        token: &raw[start..index],
+                    });
                 }
                 _ => index += 1,
             }
         }
         None
     })
+}
+
+fn is_float_literal(token: &[u8]) -> bool {
+    token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+}
+
+/// Whether a float literal names a value its `f64` does not hold, so that two
+/// such literals can read as one number (#1156).
+///
+/// The test is on the decimal value, not the spelling: `1.50` and `1e2` are
+/// held exactly and stay numbers, while `1000000000000000.01` reads as
+/// `1000000000000000` and `1e-400` as `0`.
+fn is_lossy_float_literal(token: &[u8]) -> bool {
+    // A zero literal is held exactly.
+    let Some(literal) = Decimal::parse(token) else {
+        return false;
+    };
+    // Up to 15 significant digits inside the normal range always survive the
+    // round trip, which spares most literals the parse and the format below.
+    if literal.digits <= 15 && (-290..=290).contains(&(literal.exponent + literal.digits as i64)) {
+        return false;
+    }
+    // decode-audit: impossible — every number byte is ASCII.
+    let text = std::str::from_utf8(token).expect("JSON number bytes are ASCII");
+    // A literal serde_json accepted always parses; an infinite one was
+    // refused as out of range before the record got here.
+    let Ok(value) = text.parse::<f64>() else {
+        return false;
+    };
+    // `{:e}` writes the shortest digits that read back as the same `f64`.
+    let mut shortest = ShortBuffer::default();
+    // decode-audit: impossible — `{:e}` of an f64 fits in the buffer.
+    std::fmt::Write::write_fmt(&mut shortest, format_args!("{value:e}"))
+        .expect("an f64 in exponent form fits in 32 bytes");
+    Decimal::parse(shortest.as_bytes()).is_none_or(|held| !literal.same_value(&held))
+}
+
+/// A nonzero decimal number in JSON number syntax, located in its text
+/// without copying, so that equal values compare equal however they are
+/// spelled.
+struct Decimal<'a> {
+    negative: bool,
+    /// The mantissa from its first to its last nonzero digit, which may hold
+    /// the decimal point.
+    significant: &'a [u8],
+    /// How many digits `significant` holds.
+    digits: usize,
+    /// The power of ten of the last significant digit.
+    exponent: i64,
+}
+
+impl<'a> Decimal<'a> {
+    /// `None` for a zero.
+    fn parse(text: &'a [u8]) -> Option<Self> {
+        let (negative, unsigned) = match text.split_first() {
+            Some((b'-', rest)) => (true, rest),
+            _ => (false, text),
+        };
+        let (mantissa, exponent) = match unsigned.iter().position(|b| matches!(b, b'e' | b'E')) {
+            Some(at) => {
+                let exponent = &unsigned[at + 1..];
+                // decode-audit: impossible — every number byte is ASCII.
+                let parsed = std::str::from_utf8(exponent)
+                    .expect("JSON number bytes are ASCII")
+                    .parse::<i64>()
+                    // An exponent too long for i64 lies far outside the f64
+                    // range either way, so saturating keeps the comparison right.
+                    .unwrap_or(if exponent.first() == Some(&b'-') {
+                        i64::MIN / 2
+                    } else {
+                        i64::MAX / 2
+                    });
+                (&unsigned[..at], parsed)
+            }
+            None => (unsigned, 0),
+        };
+        let point = mantissa
+            .iter()
+            .position(|&b| b == b'.')
+            .unwrap_or(mantissa.len());
+        let first = mantissa.iter().position(|b| matches!(b, b'1'..=b'9'))?;
+        // decode-audit: impossible — `first` found a nonzero digit.
+        let last = mantissa
+            .iter()
+            .rposition(|b| matches!(b, b'1'..=b'9'))
+            .expect("a nonzero digit was found");
+        let last_power = if last < point {
+            (point - last - 1) as i64
+        } else {
+            -((last - point) as i64)
+        };
+        let digits = last - first + 1 - usize::from(first < point && point < last);
+        Some(Self {
+            negative,
+            significant: &mantissa[first..=last],
+            digits,
+            exponent: exponent.saturating_add(last_power),
+        })
+    }
+
+    fn same_value(&self, other: &Decimal<'_>) -> bool {
+        self.negative == other.negative
+            && self.exponent == other.exponent
+            && self.digits == other.digits
+            && self
+                .significant
+                .iter()
+                .filter(|&&b| b != b'.')
+                .eq(other.significant.iter().filter(|&&b| b != b'.'))
+    }
+}
+
+/// A stack buffer for the exponent form of one `f64`.
+#[derive(Default)]
+struct ShortBuffer {
+    bytes: [u8; 32],
+    len: usize,
+}
+
+impl ShortBuffer {
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl std::fmt::Write for ShortBuffer {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let end = self.len + text.len();
+        self.bytes
+            .get_mut(self.len..end)
+            .ok_or(std::fmt::Error)?
+            .copy_from_slice(text.as_bytes());
+        self.len = end;
+        Ok(())
+    }
 }
 
 fn is_wide_integer(token: &[u8]) -> bool {
@@ -168,17 +330,27 @@ fn is_wide_integer(token: &[u8]) -> bool {
 /// floats over the file and async readers. Such an object is read again with
 /// each `-0` as `0`, which keeps its type and its duplicates the same on every
 /// route. A float literal like `-0.0` keeps its sign on every route already.
+///
+/// A field whose float literal names a value its `f64` does not hold, like
+/// `1000000000000000.01`, is given as the literal's text instead of the
+/// rounded number, so distinct values stay distinct and the field profiles
+/// as the same digits in a CSV do (#1156). Values inside an array or object
+/// keep the `f64`: they are profiled as the container's text.
 pub fn object_record(obj: JsonObject, raw: &[u8]) -> JsonRecord {
     let mut negative_zeros = Vec::new();
-    for (start, token) in integer_literals(raw) {
-        if is_wide_integer(token) {
+    let mut lossy_fields = Vec::new();
+    for literal in number_literals(raw) {
+        if is_float_literal(literal.token) {
+            if literal.depth == 1 && is_lossy_float_literal(literal.token) {
+                lossy_fields.push((literal.start, literal.token.len()));
+            }
+        } else if is_wide_integer(literal.token) {
             return JsonRecord::WideInteger;
-        }
-        if token == b"-0" {
-            negative_zeros.push(start);
+        } else if literal.token == b"-0" {
+            negative_zeros.push(literal.start);
         }
     }
-    if negative_zeros.is_empty() {
+    if negative_zeros.is_empty() && lossy_fields.is_empty() {
         return JsonRecord::Object(obj);
     }
     // Blanking the sign leaves `0` where `-0` stood; whitespace is legal
@@ -187,11 +359,22 @@ pub fn object_record(obj: JsonObject, raw: &[u8]) -> JsonRecord {
     for start in negative_zeros {
         unsigned[start] = b' ';
     }
-    // decode-audit: impossible — `raw` parsed as this object, and only a sign
-    // was replaced by whitespace.
+    // Quoting a literal makes it a string of the same digits.
+    let mut rewritten = Vec::with_capacity(unsigned.len() + 2 * lossy_fields.len());
+    let mut copied = 0;
+    for (start, len) in lossy_fields {
+        rewritten.extend_from_slice(&unsigned[copied..start]);
+        rewritten.push(b'"');
+        rewritten.extend_from_slice(&unsigned[start..start + len]);
+        rewritten.push(b'"');
+        copied = start + len;
+    }
+    rewritten.extend_from_slice(&unsigned[copied..]);
+    // decode-audit: impossible — `raw` parsed as this object, and only signs
+    // were replaced by whitespace and number literals quoted.
     JsonRecord::Object(
-        serde_json::from_slice::<JsonObject>(&unsigned)
-            .expect("an object with its `-0` signs blanked is still an object"),
+        serde_json::from_slice::<JsonObject>(&rewritten)
+            .expect("an object with its `-0` signs blanked and literals quoted is still an object"),
     )
 }
 
@@ -462,5 +645,64 @@ mod tests {
             .expect("the original I/O error must survive serde's wrapper");
         assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
         assert!(source.get_ref().unwrap().is::<LocalReadFailure>());
+    }
+
+    #[test]
+    fn a_float_literal_is_lossy_only_when_its_value_changes() {
+        let held = [
+            "0.1", "1.50", "1e2", "1E+2", "-0.0", "0e999", "2.5e-3", "1e308",
+        ];
+        let lossy = [
+            "1000000000000000.01",
+            "1e-400",
+            "0.30000000000000000001",
+            "12345678901234567890.0",
+            "1e-99999999999999999999",
+            "9007199254740993.0",
+            "-1.00000000000000001",
+        ];
+        for token in held {
+            assert!(!is_lossy_float_literal(token.as_bytes()), "{token}");
+        }
+        for token in lossy {
+            assert!(is_lossy_float_literal(token.as_bytes()), "{token}");
+        }
+    }
+
+    /// The shortcut for 15 significant digits in the normal range must agree
+    /// with the full comparison it skips, at both ends of that range.
+    #[test]
+    fn fifteen_digit_literals_in_the_normal_range_are_held() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for exponent in (-305..=275).step_by(5) {
+            for _ in 0..200 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let mantissa = 100_000_000_000_000 + state % 900_000_000_000_000;
+                let token = format!("{mantissa}e{exponent}");
+                let literal = Decimal::parse(token.as_bytes()).unwrap();
+                let value: f64 = token.parse().unwrap();
+                let mut shortest = ShortBuffer::default();
+                std::fmt::Write::write_fmt(&mut shortest, format_args!("{value:e}")).unwrap();
+                let held = Decimal::parse(shortest.as_bytes()).unwrap();
+                assert!(literal.same_value(&held), "{token}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_lossy_field_of_the_root_object_becomes_text() {
+        let raw =
+            br#"{"a":1000000000000000.01,"b":[1000000000000000.01],"c":-0,"d":1.5,"e":1e-400}"#;
+        let obj = serde_json::from_slice(raw).unwrap();
+        let JsonRecord::Object(obj) = object_record(obj, raw) else {
+            panic!("not an object record");
+        };
+        assert_eq!(obj["a"], Value::String("1000000000000000.01".into()));
+        assert_eq!(json_value_text(&obj["b"]), "[1000000000000000.0]");
+        assert_eq!(json_value_text(&obj["c"]), "0");
+        assert_eq!(json_value_text(&obj["d"]), "1.5");
+        assert_eq!(obj["e"], Value::String("1e-400".into()));
     }
 }

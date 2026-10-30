@@ -60,6 +60,41 @@ def _parse_json_int(token: str) -> int:
     return value
 
 
+class _FloatLiteral(float):
+    """A JSON float whose literal names a value the float does not hold.
+
+    ``1000000000000000.01`` reads as ``1000000000000000.0``, so distinct
+    literals became one value. A cell profiles as the literal instead, as the
+    file and async readers do for a field (#1156). Inside a container it stays
+    the float: ``json.dumps`` writes a float subclass as the float.
+    """
+
+    literal: str
+
+
+def _decimal_value(text: str) -> tuple[bool, str, int]:
+    """A decimal number as (negative, significant digits, power of ten of the
+    last digit), so that equal values compare equal however they are spelled.
+
+    ``decimal.Decimal`` refuses an exponent like ``1e-99999999999999999999``,
+    which JSON allows and a float reads as zero. Such an exponent lies far
+    outside the float range either way, so it is clamped, as the file readers
+    do (#1156).
+    """
+    negative = text.startswith("-")
+    mantissa, _, exponent_text = text.lstrip("-").lower().partition("e")
+    # Leading zeros do not make an exponent larger: `1e000` is `1`.
+    magnitude = exponent_text.lstrip("+-").lstrip("0")
+    sign = -1 if exponent_text.startswith("-") else 1
+    exponent = sign * (10**30 if len(magnitude) > 18 else int(magnitude or "0"))
+    whole, _, fraction = mantissa.partition(".")
+    significant = (whole + fraction).lstrip("0")
+    trimmed = significant.rstrip("0")
+    if not trimmed:
+        return (False, "", 0)
+    return (negative, trimmed, exponent - len(fraction) + len(significant) - len(trimmed))
+
+
 def _parse_json_float(token: str) -> float:
     # json.loads turns a finite token past the float range, like 1e400, into
     # infinity, which then profiles as one invalid value with no parse error.
@@ -67,6 +102,11 @@ def _parse_json_float(token: str) -> float:
     value = float(token)
     if _math.isinf(value):
         raise _NonStandardJsonConstant(token, "a number outside the 64-bit float range")
+    # repr writes the shortest digits that read back as the same float.
+    if token != repr(value) and _decimal_value(token) != _decimal_value(repr(value)):
+        lossy = _FloatLiteral(value)
+        lossy.literal = token
+        return lossy
     return value
 
 
@@ -158,6 +198,8 @@ def _cell_to_str(value: object) -> str | None:
         return None
     if isinstance(value, str):
         return value
+    if isinstance(value, _FloatLiteral):
+        return value.literal
     if _is_container(value):
         try:
             return _json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
