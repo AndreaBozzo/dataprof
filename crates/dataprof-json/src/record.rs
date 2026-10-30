@@ -117,6 +117,20 @@ pub fn has_wide_integer_literal(raw: &[u8]) -> bool {
     integer_literals(raw).any(|(_, token)| is_wide_integer(token))
 }
 
+/// Whether `raw` JSON text is a single float literal that names a value its
+/// `f64` does not hold, like `1000000000000000.01` (#1156).
+///
+/// Numbers inside an array or object are not looked at: a container is
+/// profiled as its JSON text, with each float as its `f64`, as
+/// [`object_record`] keeps it, so equal containers stay equal.
+pub fn is_lossy_float_scalar(raw: &[u8]) -> bool {
+    number_literals(raw).next().is_some_and(|literal| {
+        literal.depth == 0
+            && is_float_literal(literal.token)
+            && is_lossy_float_literal(literal.token)
+    })
+}
+
 /// The integer literals (no fraction, no exponent) of `raw` JSON text, each
 /// with the offset it starts at. String contents are skipped.
 fn integer_literals(raw: &[u8]) -> impl Iterator<Item = (usize, &[u8])> {
@@ -645,6 +659,22 @@ mod tests {
             .expect("the original I/O error must survive serde's wrapper");
         assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
         assert!(source.get_ref().unwrap().is::<LocalReadFailure>());
+    }
+
+    #[test]
+    fn only_a_lossy_float_scalar_is_reported() {
+        for raw in [" 1000000000000000.01 ", "1e-400", "-12345678901234567890.0"] {
+            assert!(is_lossy_float_scalar(raw.as_bytes()), "{raw}");
+        }
+        for raw in [
+            r#"{"v":1000000000000000.01}"#,
+            r#"[1e-400]"#,
+            r#""1000000000000000.01""#,
+            "1.50",
+            "18446744073709551615",
+        ] {
+            assert!(!is_lossy_float_scalar(raw.as_bytes()), "{raw}");
+        }
     }
 
     #[test]
