@@ -56,65 +56,163 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '$'
 }
 
-/// The words of `query` outside string literals, with the contents of quoted
-/// identifiers split into words too, so a quoted catalog name is still seen.
+/// How one database reads quotes and comments, as far as this check needs.
+struct Dialect {
+    name: &'static str,
+    /// A backslash escapes the next character inside `'...'`.
+    backslash_escapes: bool,
+    /// `E'...'` is a string in which a backslash escapes, while plain `'...'`
+    /// follows `backslash_escapes`.
+    escape_strings: bool,
+    /// `$tag$...$tag$` is a string.
+    dollar_quotes: bool,
+    /// `"..."` is a string rather than a quoted identifier.
+    double_quoted_strings: bool,
+    /// `` `...` `` and `[...]` are quoted identifiers.
+    backtick_and_bracket_identifiers: bool,
+    /// `#` starts a comment.
+    hash_comments: bool,
+}
+
+/// Every reading the check guards against. PostgreSQL is read twice: with
+/// `standard_conforming_strings` off, a backslash escapes in `'...'` too.
+const DIALECTS: [Dialect; 4] = [
+    Dialect {
+        name: "PostgreSQL",
+        backslash_escapes: false,
+        escape_strings: true,
+        dollar_quotes: true,
+        double_quoted_strings: false,
+        backtick_and_bracket_identifiers: false,
+        hash_comments: false,
+    },
+    Dialect {
+        name: "PostgreSQL without standard_conforming_strings",
+        backslash_escapes: true,
+        escape_strings: true,
+        dollar_quotes: true,
+        double_quoted_strings: false,
+        backtick_and_bracket_identifiers: false,
+        hash_comments: false,
+    },
+    Dialect {
+        name: "MySQL",
+        backslash_escapes: true,
+        escape_strings: false,
+        dollar_quotes: false,
+        double_quoted_strings: true,
+        backtick_and_bracket_identifiers: true,
+        hash_comments: true,
+    },
+    Dialect {
+        name: "SQLite",
+        backslash_escapes: false,
+        escape_strings: false,
+        dollar_quotes: false,
+        double_quoted_strings: false,
+        backtick_and_bracket_identifiers: true,
+        hash_comments: false,
+    },
+];
+
+/// How a query reads in one dialect.
+enum Reading<'a> {
+    /// The words outside strings, with the words of quoted identifiers.
+    Words(Vec<&'a str>),
+    /// A quote that never closes: this database refuses the query itself.
+    Unterminated,
+    /// A comment outside a string, which could hide the rest of the query.
+    Comment,
+}
+
+/// The words of `query` as `dialect` reads it, outside string literals, with
+/// the contents of quoted identifiers split into words too, so a quoted
+/// catalog name is still seen.
 ///
-/// A string literal is `'...'` with `''` as an escaped quote, the one form
-/// PostgreSQL, MySQL and SQLite all read alike. A quoted region holding a
-/// backslash is scanned as words instead: MySQL reads `\'` as an escaped
-/// quote and PostgreSQL does not, so where it ends depends on the database.
-/// A comment outside a string literal is an error: it could hide the rest of
-/// the statement from this check.
-fn query_words(query: &str) -> Result<Vec<&str>, DataProfilerError> {
-    let mut words = Vec::new();
+/// The databases disagree on where a string ends: MySQL reads `\'` as an
+/// escaped quote and PostgreSQL does not, and PostgreSQL reads `$$'$$` as a
+/// string where the others see a quote. A query is therefore read once per
+/// dialect, and each reading is right for its own database.
+fn read_query<'a>(query: &'a str, dialect: &Dialect) -> Reading<'a> {
+    let mut words: Vec<&'a str> = Vec::new();
     let mut index = 0;
     while index < query.len() {
         let rest = &query[index..];
-        if rest.starts_with("--") || rest.starts_with("/*") || rest.starts_with('#') {
-            return Err(DataProfilerError::sql_validation(
-                "Query contains a comment, which is not allowed",
-            ));
+        let previous = query[..index].chars().next_back();
+        let after_word = previous.is_some_and(is_word_char);
+        if rest.starts_with("--")
+            || rest.starts_with("/*")
+            || (dialect.hash_comments && rest.starts_with('#'))
+        {
+            return Reading::Comment;
         }
         let c = rest.chars().next().expect("index is inside the query");
-        match c {
-            '\'' | '"' | '`' => {
-                let Some(len) = quoted_len(&rest[1..], c) else {
-                    return Err(DataProfilerError::sql_validation(
-                        "Query has an unterminated quoted string or identifier",
-                    ));
-                };
-                let inner = &rest[1..1 + len];
-                if inner.contains('\\') {
-                    // Scan past the opening quote as if it were not there.
-                    index += 1;
-                    continue;
+        let (len, checked) = match c {
+            '\'' => {
+                // `E'...'`: the `E` was just read as a word ending at this quote.
+                let escape_string = dialect.escape_strings
+                    && after_word
+                    && words
+                        .last()
+                        .is_some_and(|word| word.eq_ignore_ascii_case("e"));
+                match quoted_len(&rest[1..], '\'', dialect.backslash_escapes || escape_string) {
+                    Some(len) => (len + 2, None),
+                    None => return Reading::Unterminated,
                 }
-                if c != '\'' {
-                    words.extend(
-                        inner
-                            .split(|c: char| !is_word_char(c))
-                            .filter(|w| !w.is_empty()),
-                    );
+            }
+            '"' => match quoted_len(
+                &rest[1..],
+                '"',
+                dialect.double_quoted_strings && dialect.backslash_escapes,
+            ) {
+                Some(len) if dialect.double_quoted_strings => (len + 2, None),
+                Some(len) => (len + 2, Some(&rest[1..1 + len])),
+                None => return Reading::Unterminated,
+            },
+            '`' | '[' if dialect.backtick_and_bracket_identifiers => {
+                let close = if c == '[' { ']' } else { '`' };
+                match quoted_len(&rest[1..], close, false) {
+                    Some(len) => (len + 2, Some(&rest[1..1 + len])),
+                    None => return Reading::Unterminated,
                 }
-                index += len + 2;
+            }
+            '$' if dialect.dollar_quotes && !after_word && dollar_tag(rest).is_some() => {
+                // decode-audit: impossible — the guard found the tag.
+                let tag = dollar_tag(rest).expect("a dollar-quote tag");
+                match rest[tag.len()..].find(tag) {
+                    Some(end) => (tag.len() + end + tag.len(), None),
+                    None => return Reading::Unterminated,
+                }
             }
             c if is_word_char(c) => {
                 let len = rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len());
                 words.push(&rest[..len]);
                 index += len;
+                continue;
             }
-            c => index += c.len_utf8(),
+            c => (c.len_utf8(), None),
+        };
+        if let Some(inner) = checked {
+            words.extend(
+                inner
+                    .split(|c: char| !is_word_char(c))
+                    .filter(|w| !w.is_empty()),
+            );
         }
+        index += len;
     }
-    Ok(words)
+    Reading::Words(words)
 }
 
 /// The length of the quoted body at the start of `text`, up to the closing
-/// `quote`; a doubled quote is part of the body.
-fn quoted_len(text: &str, quote: char) -> Option<usize> {
+/// `quote`. A doubled quote is part of the body, and so is any character after
+/// a backslash when `backslash_escapes`.
+fn quoted_len(text: &str, quote: char, backslash_escapes: bool) -> Option<usize> {
     let mut chars = text.char_indices().peekable();
     while let Some((at, c)) = chars.next() {
-        if c == quote {
+        if backslash_escapes && c == '\\' {
+            chars.next();
+        } else if c == quote {
             if chars.peek().is_some_and(|&(_, next)| next == quote) {
                 chars.next();
             } else {
@@ -123,6 +221,20 @@ fn quoted_len(text: &str, quote: char) -> Option<usize> {
         }
     }
     None
+}
+
+/// The opening `$tag$` of a PostgreSQL dollar-quoted string at the start of
+/// `text`: an empty tag, or one that starts with a letter or underscore.
+fn dollar_tag(text: &str) -> Option<&str> {
+    let body = text.strip_prefix('$')?;
+    let len = body.find('$')?;
+    let tag = &body[..len];
+    let valid = tag
+        .chars()
+        .next()
+        .is_none_or(|first| first.is_alphabetic() || first == '_')
+        && tag.chars().all(|c| c.is_alphanumeric() || c == '_');
+    valid.then(|| &text[..len + 2])
 }
 
 /// Validate SQL identifiers (table names, column names) to prevent injection
@@ -216,21 +328,39 @@ pub fn validate_base_query(query: &str) -> Result<String, DataProfilerError> {
         ));
     }
 
-    let words = query_words(trimmed)?;
-    if !words
-        .first()
-        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
-    {
-        return Err(DataProfilerError::sql_validation(
-            "Only SELECT queries are allowed for sampling",
-        ));
+    // A dialect in which a quote never closes refuses the query itself, so it
+    // runs nothing there; every other reading has to pass.
+    let mut read = false;
+    for dialect in &DIALECTS {
+        let words = match read_query(trimmed, dialect) {
+            Reading::Words(words) => words,
+            Reading::Unterminated => continue,
+            Reading::Comment => {
+                return Err(DataProfilerError::sql_validation(
+                    "Query contains a comment, which is not allowed",
+                ));
+            }
+        };
+        read = true;
+        if !words
+            .first()
+            .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
+        {
+            return Err(DataProfilerError::sql_validation(
+                "Only SELECT queries are allowed for sampling",
+            ));
+        }
+        if let Some(word) = refused_word(words, true) {
+            return Err(DataProfilerError::sql_validation(&format!(
+                "Query contains dangerous SQL pattern: {} (as {} reads it)",
+                word, dialect.name
+            )));
+        }
     }
-
-    if let Some(word) = refused_word(words, true) {
-        return Err(DataProfilerError::sql_validation(&format!(
-            "Query contains dangerous SQL pattern: {}",
-            word
-        )));
+    if !read {
+        return Err(DataProfilerError::sql_validation(
+            "Query has an unterminated quoted string or identifier",
+        ));
     }
 
     Ok(trimmed.to_string())
@@ -275,6 +405,12 @@ mod tests {
             "SELECT 'it''s', 'pg_sleep(1) # -- /*' FROM t",
             "SELECT a FROM t UNION ALL SELECT a FROM u",
             "select copy_count from \"Sales\"",
+            // A backslash in a string: a Windows path and a LIKE escape.
+            r"SELECT 'C:\data' AS path",
+            r"SELECT name FROM t WHERE name LIKE 'a\_b'",
+            // PostgreSQL escape and dollar-quoted strings.
+            r"SELECT E'it\'s DROP'",
+            "SELECT $$it's$$",
         ] {
             assert!(validate_base_query(query).is_ok(), "{query}");
         }
@@ -297,9 +433,13 @@ mod tests {
             "SELECT 1 # hidden",
             "SELECT 'unterminated",
             // MySQL ends the first string at its second quote, so sleep(10)
-            // is code there; a literal holding a backslash is scanned as words.
+            // is code there, although PostgreSQL reads one longer string.
             r#"SELECT 'a\'', sleep(10), ''''"#,
             r#"SELECT "a\" 'b", sleep(10), ''"#,
+            // PostgreSQL reads `$$'$$` as a string, so pg_sleep runs there.
+            "SELECT $$'$$, pg_sleep(10), $$'$$",
+            // MySQL and SQLite read `$$` as an identifier and DELETE as a
+            // word; the check does not know which database it is (#1169).
             "SELECT $$ DELETE $$",
             // Refused until profiles run in a read-only transaction (#1169).
             "WITH x AS (SELECT 1) SELECT * FROM x",
