@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import csv as _csv
+import decimal as _decimal
 import io as _io
 import json as _json
 import math as _math
@@ -60,6 +61,18 @@ def _parse_json_int(token: str) -> int:
     return value
 
 
+class _FloatLiteral(float):
+    """A JSON float whose literal names a value the float does not hold.
+
+    ``1000000000000000.01`` reads as ``1000000000000000.0``, so distinct
+    literals became one value. A cell profiles as the literal instead, as the
+    file and async readers do for a field (#1156). Inside a container it stays
+    the float: ``json.dumps`` writes a float subclass as the float.
+    """
+
+    literal: str
+
+
 def _parse_json_float(token: str) -> float:
     # json.loads turns a finite token past the float range, like 1e400, into
     # infinity, which then profiles as one invalid value with no parse error.
@@ -67,6 +80,11 @@ def _parse_json_float(token: str) -> float:
     value = float(token)
     if _math.isinf(value):
         raise _NonStandardJsonConstant(token, "a number outside the 64-bit float range")
+    # repr writes the shortest digits that read back as the same float.
+    if token != repr(value) and _decimal.Decimal(token) != _decimal.Decimal(repr(value)):
+        lossy = _FloatLiteral(value)
+        lossy.literal = token
+        return lossy
     return value
 
 
@@ -158,6 +176,8 @@ def _cell_to_str(value: object) -> str | None:
         return None
     if isinstance(value, str):
         return value
+    if isinstance(value, _FloatLiteral):
+        return value.literal
     if _is_container(value):
         try:
             return _json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
