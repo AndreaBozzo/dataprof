@@ -108,6 +108,17 @@ fn a_single_object_keeps_the_digits() {
     assert_eq!(column(&report), column(&expected));
 }
 
+/// `1e00000000000000000000` is 1, which the `f64` holds, so it stays the
+/// number 1.0, as `1e0` does.
+#[test]
+fn a_zero_padded_exponent_is_held() {
+    let report = profile(
+        r#"[{"v":1e0},{"v":1e00000000000000000000},{"v":1e-000000000000000000001}]"#,
+        ".json",
+    );
+    assert_eq!(column(&report)["unique_count"], 2);
+}
+
 /// A float inside an array or object is profiled as the container's text,
 /// which keeps the `f64`; the records still read.
 #[test]

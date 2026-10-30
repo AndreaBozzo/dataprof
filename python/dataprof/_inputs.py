@@ -83,10 +83,10 @@ def _decimal_value(text: str) -> tuple[bool, str, int]:
     """
     negative = text.startswith("-")
     mantissa, _, exponent_text = text.lstrip("-").lower().partition("e")
-    if len(exponent_text) > 18:
-        exponent = -(10**30) if exponent_text.startswith("-") else 10**30
-    else:
-        exponent = int(exponent_text or "0")
+    # Leading zeros do not make an exponent larger: `1e000` is `1`.
+    magnitude = exponent_text.lstrip("+-").lstrip("0")
+    sign = -1 if exponent_text.startswith("-") else 1
+    exponent = sign * (10**30 if len(magnitude) > 18 else int(magnitude or "0"))
     whole, _, fraction = mantissa.partition(".")
     significant = (whole + fraction).lstrip("0")
     trimmed = significant.rstrip("0")

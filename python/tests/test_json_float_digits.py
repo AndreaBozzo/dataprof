@@ -81,6 +81,16 @@ def test_every_route_profiles_float_digits_as_csv_does(tmp_path: Path) -> None:
     assert not wrong, wrong
 
 
+def test_a_zero_padded_exponent_is_held_on_every_route(tmp_path: Path) -> None:
+    # 1e00000000000000000000 is 1 and the f64 holds it, so it reads as the
+    # number 1.0, as 1e0 does. The routes agree on two distinct values; a CSV
+    # keeps the three spellings apart, so it is not the reference here.
+    data = b'[{"v":1e0},{"v":1e00000000000000000000},{"v":1e-000000000000000000001}]'
+    columns = _routes(tmp_path, "json", data)
+    assert columns["file"]["unique_count"] == 2, columns["file"]
+    assert all(column == columns["file"] for column in columns.values()), columns
+
+
 def test_nested_floats_profile_alike_on_every_route(tmp_path: Path) -> None:
     # Inside a container the float is kept, as the container's JSON text.
     data = b'[{"v":[1000000000000000.01]},{"v":[1000000000000000.05]}]'
