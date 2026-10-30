@@ -142,16 +142,17 @@ fn agrees_with_header(fields: usize, trailing_empty: usize, header_fields: usize
 /// Splitting on LF alone read a CR-only file as one header record (#1097).
 ///
 /// As in the readers, a quote opens a quoted section only at the start of a
-/// field; anywhere else it is a literal character. The delimiter is not known
-/// yet, so a field starts at a record start or after any candidate. Opening
-/// one at any quote read a header such as `id;height"in;note` as never ending,
-/// and detection refused a file the readers read (#1098 review).
+/// field, here a record start or right after `delimiter`; anywhere else it is
+/// a literal character. Opening one at any quote read a header such as
+/// `id;height"in;note` as never ending. Taking any candidate as a field
+/// boundary did the same to `id,height;"in` read with comma (#1172 review),
+/// so each candidate splits the text by its own rule.
 ///
 /// The returned flag is true when the final record was not terminated by a
 /// newline outside quotes — i.e. the text ends mid-record (or exactly at a
 /// record's end with no trailing newline, which a caller sampling a fixed
 /// byte budget cannot distinguish from a cut).
-fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
+fn split_sample_records(text: &str, delimiter: u8) -> (Vec<&str>, bool) {
     let bytes = text.as_bytes();
     let mut records = Vec::new();
     let mut in_quotes = false;
@@ -166,7 +167,7 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
                     in_quotes = false;
                 }
             }
-            b'"' if i == start || b",;\t|".contains(&bytes[i - 1]) => in_quotes = true,
+            b'"' if i == start || bytes[i - 1] == delimiter => in_quotes = true,
             b'\n' if !in_quotes => {
                 let end = if i > start && bytes[i - 1] == b'\r' {
                     i - 1
@@ -191,24 +192,34 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
     (records, last_unterminated)
 }
 
+/// Delimiters detection chooses between, in the order that breaks a tie.
+const CANDIDATES: [u8; 4] = *b",;\t|";
+
 /// Bytes delimiter detection reads when the header record ends within them.
 const DETECTION_SAMPLE_BYTES: usize = 4096;
 
 /// Most bytes delimiter detection reads to see the whole header record.
 const MAX_HEADER_SAMPLE_BYTES: usize = 1 << 20;
 
-/// Index of the first non-blank record, the one the readers take as the header.
-fn header_index(records: &[&str]) -> Option<usize> {
-    records.iter().position(|record| !record.trim().is_empty())
+/// The text of a detection head. A UTF-8 BOM marks the encoding, as in the
+/// readers, and is no part of the first record: left in, a BOM followed by a
+/// blank line was scored as a one-field header and outvoted the real one.
+fn head_text(head: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head))
 }
 
 /// Whether `head`, the start of a source, holds its header record up to the
-/// newline that ends it.
+/// newline that ends it, as every candidate splits it. The readers take the
+/// first non-blank record as the header.
 fn header_is_complete(head: &[u8]) -> bool {
-    let sample = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
-    let text = String::from_utf8_lossy(sample);
-    let (records, last_unterminated) = split_sample_records(&text);
-    header_index(&records).is_some_and(|index| index + 1 < records.len() || !last_unterminated)
+    let text = head_text(head);
+    CANDIDATES.iter().all(|&delimiter| {
+        let (records, last_unterminated) = split_sample_records(&text, delimiter);
+        records
+            .iter()
+            .position(|record| !record.trim().is_empty())
+            .is_some_and(|index| index + 1 < records.len() || !last_unterminated)
+    })
 }
 
 /// Read the head of a source that delimiter detection scores: 4 KB, or more
@@ -233,17 +244,16 @@ fn read_detection_head<R: Read>(reader: &mut R) -> std::io::Result<(Vec<u8>, boo
     }
 }
 
-const HEADER_TOO_LONG: &str =
-    "The CSV header record is longer than 1 MiB, so its delimiter could not be detected.";
-const HEADER_TOO_LONG_HINT: &str =
-    "Set the delimiter explicitly (csv_delimiter) to read this file.";
+const HEADER_TOO_LONG: &str = "The first 1 MiB of the CSV source holds no complete header record, so its delimiter could not be detected.";
+const HEADER_TOO_LONG_HINT: &str = "Set the delimiter explicitly (csv_delimiter on Profiler or dataprof.profile) to read this file.";
 
 /// Detect the delimiter of a source and return it with the bytes read to
 /// detect it, so a caller that cannot rewind the source can chain them back
 /// in front of the rest.
 ///
 /// Detection reads 4 KB, or up to 1 MiB when the header record is longer. A
-/// header still incomplete at 1 MiB is an error, never a guess.
+/// source with no complete header in its first 1 MiB is an error, never a
+/// guess.
 pub fn detect_delimiter_with_head<R: Read>(
     reader: &mut R,
 ) -> Result<(u8, Vec<u8>), DataProfilerError> {
@@ -277,7 +287,8 @@ pub fn detect_delimiter_with_head<R: Read>(
 /// one-column file of `123|456` keys was profiled as `123` with fabricated
 /// duplicates (#1092).
 ///
-/// A header record still incomplete after 1 MiB is an `InvalidData` error.
+/// A source with no complete header record in its first 1 MiB is an
+/// `InvalidData` error.
 pub fn detect_delimiter<R: Read>(mut reader: R) -> std::io::Result<u8> {
     let (head, cut) = read_detection_head(&mut reader)?;
     score_head(&head, cut).ok_or_else(|| {
@@ -289,46 +300,41 @@ pub fn detect_delimiter<R: Read>(mut reader: R) -> std::io::Result<u8> {
 }
 
 /// Score the candidate delimiters over a detection head, or `None` when the
-/// head was cut inside its header record.
+/// head was cut before any candidate saw a whole header record.
 fn score_head(head: &[u8], cut: bool) -> Option<u8> {
-    // A UTF-8 BOM marks the encoding, as in the readers, and is no part of
-    // the first record: left in, a BOM followed by a blank line was scored as
-    // a one-field header and outvoted the real one.
-    let sample = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
-    let preamble_str = String::from_utf8_lossy(sample);
-    let (mut records, last_unterminated) = split_sample_records(&preamble_str);
-    // A head cut mid-record ends in a fragment; never score it. A head ending
-    // on a clean newline keeps all its records. A fragment that is the header
-    // itself has no delimiter to find.
-    if cut && last_unterminated {
-        if header_index(&records) == Some(records.len() - 1) {
-            return None;
-        }
-        records.pop();
-    }
-
-    // Blank records carry no delimiter signal: a header followed by trailing
-    // blank lines must not outvote the true delimiter with single-field
-    // "records" (gh #559).
-    let scored: Vec<&str> = records
-        .into_iter()
-        .filter(|record| !record.trim().is_empty())
-        .take(5)
-        .collect();
-    let Some((header, rows)) = scored.split_first() else {
-        return Some(b',');
-    };
-
-    let delimiters = *b",;\t|";
-    let mut best_delimiter = b',';
+    let text = head_text(head);
     // (splits the header into >1 field, records agreeing with the header,
     //  records at exactly the header's width, header field count) — compared
     //  lexicographically, first wins ties. Exact width only breaks a tie: a
     //  candidate that reads every record as it stands beats one that needs
     //  trailing empty fields cut to agree.
-    let mut best_score = (false, 0usize, 0usize, 0usize);
+    let mut best: Option<((bool, usize, usize, usize), u8)> = None;
 
-    for &delimiter in &delimiters {
+    for delimiter in CANDIDATES {
+        let (mut records, last_unterminated) = split_sample_records(&text, delimiter);
+        // A head cut mid-record ends in a fragment; never score it. A head
+        // ending on a clean newline keeps all its records.
+        if cut && last_unterminated {
+            records.pop();
+        }
+        // Blank records carry no delimiter signal: a header followed by
+        // trailing blank lines must not outvote the true delimiter with
+        // single-field "records" (gh #559).
+        let scored: Vec<&str> = records
+            .into_iter()
+            .filter(|record| !record.trim().is_empty())
+            .take(5)
+            .collect();
+        let Some((header, rows)) = scored.split_first() else {
+            // A cut head with no whole header has nothing to score for this
+            // candidate: its header is the fragment, or lies past the head.
+            // A whole source with no header is blank to every candidate.
+            if cut {
+                continue;
+            }
+            return Some(b',');
+        };
+
         let (header_fields, _) = count_fields(header, delimiter as char);
         let (mut agreeing, mut exact) = (1, 1);
         for record in rows {
@@ -342,13 +348,12 @@ fn score_head(head: &[u8], cut: bool) -> Option<u8> {
         }
 
         let score = (header_fields > 1, agreeing, exact, header_fields);
-        if score > best_score {
-            best_score = score;
-            best_delimiter = delimiter;
+        if best.is_none_or(|(best_score, _)| score > best_score) {
+            best = Some((score, delimiter));
         }
     }
 
-    Some(best_delimiter)
+    best.map(|(_, delimiter)| delimiter)
 }
 
 /// Detect the most likely CSV delimiter from a file path.
@@ -1021,19 +1026,19 @@ mod tests {
 
     #[test]
     fn test_split_sample_records_quote_aware() {
-        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
+        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n", b',');
         assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
         assert!(!last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie");
+        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie", b',');
         assert_eq!(records, vec!["a,b", "1,\"cut mid-fie"]);
         assert!(last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r");
+        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r", b',');
         assert_eq!(records, vec!["a,b", "1,\"x\ry\"", "2,z"]);
         assert!(!last_unterminated);
 
-        let (records, _) = split_sample_records("a\rb\r\nc\n");
+        let (records, _) = split_sample_records("a\rb\r\nc\n", b',');
         assert_eq!(records, vec!["a", "b", "c"]);
     }
 
@@ -1105,6 +1110,44 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_delimiter_quote_rule_is_per_candidate() {
+        // #1172 review: with any candidate taken as a field boundary, the quote
+        // after `;` in a comma header (and after `,` in a semicolon one) opened
+        // a quoted section, and a short header past a 1 MiB source was refused.
+        for (header, row, expected) in [
+            (&b"id,height;\"in\n"[..], &b"1,5\n"[..], b','),
+            (&b"id;a;b,\"c\n"[..], &b"1;2;3\n"[..], b';'),
+        ] {
+            let mut data = header.to_vec();
+            while data.len() <= MAX_HEADER_SAMPLE_BYTES {
+                data.extend_from_slice(row);
+            }
+            assert_eq!(
+                detect_delimiter(Cursor::new(data.as_slice())).unwrap(),
+                expected,
+                "{}",
+                String::from_utf8_lossy(header)
+            );
+        }
+    }
+
+    #[test]
+    fn test_detect_delimiter_refuses_a_head_of_blank_records() {
+        // #1172 review: a 1 MiB head of blank lines has not reached the header
+        // yet, and guessing comma read `id;value` as one column.
+        let mut data = vec![b'\n'; MAX_HEADER_SAMPLE_BYTES + 1];
+        data.extend_from_slice(b"id;value\n1;2\n");
+        assert!(detect_delimiter(Cursor::new(data.as_slice())).is_err());
+
+        // A whole source that is blank still reads as comma.
+        let blank = vec![b'\n'; 10];
+        assert_eq!(
+            detect_delimiter(Cursor::new(blank.as_slice())).unwrap(),
+            b','
+        );
+    }
+
+    #[test]
     fn test_detect_delimiter_mid_field_quote_is_literal() {
         // The readers take a quote inside a field as a literal, so the header
         // ends at its newline. Taken as opening a quote, it never ended, and a
@@ -1118,7 +1161,7 @@ mod tests {
             b';'
         );
 
-        let (records, last_unterminated) = split_sample_records("a;b\"c;d\n1;\"x\ny\";2\n");
+        let (records, last_unterminated) = split_sample_records("a;b\"c;d\n1;\"x\ny\";2\n", b';');
         assert_eq!(records, vec!["a;b\"c;d", "1;\"x\ny\";2"]);
         assert!(!last_unterminated);
 

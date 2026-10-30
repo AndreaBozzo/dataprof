@@ -672,10 +672,17 @@ fn count_from_reader<R: Read>(
         FileFormat::Csv => {
             // Use the csv crate to count records properly — handles RFC 4180
             // quoted fields with embedded newlines, unlike raw line counting.
+            // A quote opens a field only after the delimiter, so the count
+            // needs the delimiter the file path detects too: read as comma, a
+            // semicolon row `1;"a<newline>b"` counted as two records (#1172
+            // review).
+            let mut buf_reader = buf_reader;
+            let (delimiter, head) = dataprof_csv::detect_delimiter_with_head(&mut buf_reader)?;
             let mut csv_reader = csv::ReaderBuilder::new()
                 .has_headers(true)
                 .flexible(true)
-                .from_reader(buf_reader);
+                .delimiter(delimiter)
+                .from_reader(std::io::Cursor::new(head).chain(buf_reader));
             let mut count: u64 = 0;
             for result in csv_reader.records() {
                 let _record = result?;
@@ -2343,6 +2350,25 @@ mod async_tests {
         assert_eq!(result.count, 3);
         assert!(result.exact);
         assert_eq!(result.method, CountMethod::StreamFullScan);
+    }
+
+    #[tokio::test]
+    async fn test_quick_row_count_stream_detects_the_delimiter() {
+        // The stream counter read every CSV as comma, so a quoted newline
+        // after `;` split a record, and a header past 4 KB made no difference
+        // to it. It now agrees with the file counter.
+        let mut data = format!("{};v\n", "h".repeat(4094)).into_bytes();
+        data.extend_from_slice(b"1;\"a\nb\"\n2;z\n");
+        let source = BytesSource::new(
+            bytes::Bytes::from(data.clone()),
+            AsyncSourceInfo::new("test-csv", FileFormat::Csv),
+        );
+        let streamed = quick_row_count_stream(source).await.unwrap();
+        let mut file = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+        std::io::Write::write_all(&mut file, &data).unwrap();
+        std::io::Write::flush(&mut file).unwrap();
+        let counted = quick_row_count(file.path()).unwrap();
+        assert_eq!((streamed.count, counted.count), (2, 2));
     }
 
     #[tokio::test]
