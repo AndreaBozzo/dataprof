@@ -153,12 +153,6 @@ pub struct AsyncStreamingProfiler {
     csv_delimiter: Option<u8>,
 }
 
-/// Bytes sniffed from the head of a stream to detect its CSV delimiter.
-///
-/// Matches the file path's sample size so the same data yields the same
-/// delimiter whether it is read from disk or off a socket.
-const DELIMITER_SAMPLE_BYTES: u64 = 4096;
-
 /// Bytes per chunk when [`ChunkSize::Adaptive`] is in effect. A stream has no
 /// size to adapt to, so this is a fixed working-set target.
 const DEFAULT_CHUNK_BYTES: usize = 512 * 1024;
@@ -309,8 +303,7 @@ impl AsyncStreamingProfiler {
                 let (data, count) = tokio::task::spawn_blocking(move || {
                     let delimiter = match delimiter {
                         Some(delimiter) => delimiter,
-                        None => dataprof_csv::detect_delimiter(std::io::Cursor::new(&data))
-                            .map_err(DataProfilerError::io_error)?,
+                        None => dataprof_csv::detect_delimiter_with_head(&mut &data[..])?.0,
                     };
                     let count = Some(
                         dataprof_csv::row_count::csv_record_count(&data[..], delimiter, b'"')?
@@ -562,14 +555,10 @@ impl AsyncStreamingProfiler {
         let (source, delimiter): (Box<dyn Read>, u8) = match delimiter {
             Some(delimiter) => (Box::new(sync_reader), delimiter),
             None => {
-                let mut preamble = Vec::new();
-                let mut head = sync_reader.take(DELIMITER_SAMPLE_BYTES);
-                head.read_to_end(&mut preamble)
-                    .map_err(DataProfilerError::from)?;
-                let detected =
-                    dataprof_csv::detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+                let mut sync_reader = sync_reader;
+                let (detected, head) = dataprof_csv::detect_delimiter_with_head(&mut sync_reader)?;
                 (
-                    Box::new(std::io::Cursor::new(preamble).chain(head.into_inner())),
+                    Box::new(std::io::Cursor::new(head).chain(sync_reader)),
                     detected,
                 )
             }

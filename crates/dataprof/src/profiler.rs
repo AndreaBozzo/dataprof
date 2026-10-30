@@ -706,13 +706,24 @@ impl Profiler {
     ///
     /// Detection depends on the delimiter alone: setting `csv_flexible` either
     /// way used to skip it, and the reader then split on commas (#1091).
-    fn csv_config_for_file(&self, file_path: &Path) -> dataprof_csv::CsvParserConfig {
+    ///
+    /// A file that cannot be opened keeps the config as it is: the engine that
+    /// opens it reports why. A header too long to detect is an error here, as
+    /// on every other CSV route (#1098).
+    fn csv_config_for_file(
+        &self,
+        file_path: &Path,
+    ) -> Result<dataprof_csv::CsvParserConfig, DataProfilerError> {
         let config = self.csv_parser_config();
         if self.config.csv_delimiter.is_some() {
-            return config;
+            return Ok(config);
         }
-        let detected = dataprof_csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
-        config.with_delimiter(detected)
+        let Ok(file) = std::fs::File::open(file_path) else {
+            return Ok(config);
+        };
+        let (detected, _) =
+            dataprof_csv::detect_delimiter_with_head(&mut std::io::BufReader::new(file))?;
+        Ok(config.with_delimiter(detected))
     }
 
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON/Parquet.
@@ -789,7 +800,7 @@ impl Profiler {
                         profiler = profiler.columns(columns.clone());
                     }
                     profiler = profiler.semantic_hints(options.semantic_hints().clone());
-                    let csv_config = self.csv_config_for_file(file_path);
+                    let csv_config = self.csv_config_for_file(file_path)?;
                     profiler = profiler.csv_config(csv_config);
                     // Format already resolved here; skip the engine's extension-based
                     // Parquet redetection so explicit `.format()` overrides win.
@@ -859,7 +870,7 @@ impl Profiler {
             profiler = profiler.columns(columns.clone());
         }
         profiler = profiler.semantic_hints(options.semantic_hints().clone());
-        let csv_config = self.csv_config_for_file(file_path);
+        let csv_config = self.csv_config_for_file(file_path)?;
         profiler = profiler.csv_config(csv_config);
 
         profiler.analyze_file(file_path)
@@ -923,7 +934,7 @@ impl Profiler {
             // ArrowProfiler reads the row cap off the CSV config; the incremental
             // engine evaluates the stop condition itself, so only set it here.
             let csv_config = self
-                .csv_config_for_file(file_path)
+                .csv_config_for_file(file_path)?
                 .max_rows(self.stop_max_rows());
             profiler = profiler.csv_config(csv_config);
             profiler.analyze_csv_file(file_path)

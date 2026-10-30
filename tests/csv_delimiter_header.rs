@@ -9,12 +9,20 @@
 //! A candidate that needs trailing fields cut must not tie one that reads every
 //! record as it stands, and a UTF-8 BOM is not a header record (#1099 review).
 //!
+//! A header longer than the 4 KB detection sample was scored as its first
+//! 4 KB: no candidate split the fragment, comma won, and the file was read as
+//! one column with no error (#1098). Detection now reads on until the header
+//! record ends, up to 1 MiB, and refuses a longer one.
+//!
 //! `python/tests/test_csv_delimiter_header.py` is the Python twin, and adds the
 //! bytes and async routes.
 
 use std::io::Write;
 
-use dataprof::{CsvParserConfig, EngineType, ProfileReport, Profiler, analyze_csv_file};
+use dataprof::{
+    CsvParserConfig, DataProfilerError, EngineType, ProfileReport, Profiler, analyze_csv_file,
+    analyze_structure, quick_row_count,
+};
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 
@@ -27,7 +35,13 @@ struct Case {
     duplicate_rows: usize,
 }
 
-const CASES: [Case; 7] = [
+const CASES: [Case; 8] = [
+    Case {
+        label: "header with a quote inside a field",
+        bytes: b"id\"x;value\n1;2\n3;4\n",
+        columns: &[("id\"x", 0), ("value", 0)],
+        duplicate_rows: 0,
+    },
     Case {
         label: "composite keys, LF",
         bytes: b"key\n123|456\n123|789\n",
@@ -132,4 +146,99 @@ fn detected_delimiter_keeps_every_value_on_every_route() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+fn temp_csv(bytes: &[u8]) -> NamedTempFile {
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    file.write_all(bytes).unwrap();
+    file.flush().unwrap();
+    file
+}
+
+fn file_routes(path: &std::path::Path) -> [(&'static str, Result<ProfileReport, String>); 4] {
+    [
+        (
+            "standard",
+            analyze_csv_file(path, &CsvParserConfig::default()).map_err(|e| e.to_string()),
+        ),
+        ("auto", engine(path, EngineType::Auto)),
+        ("incremental", engine(path, EngineType::Incremental)),
+        ("columnar", engine(path, EngineType::Columnar)),
+    ]
+}
+
+/// Collects every wrong (case, route) before failing.
+#[test]
+fn header_longer_than_the_sample_keeps_its_columns() {
+    let long_name = "x".repeat(4094);
+    let longer_name = "a".repeat(10_000);
+    let cases = [
+        (
+            // The issue's file: the first `;` is at byte 4096.
+            "quoted header ending past 4 KB",
+            format!("\"{long_name}\";value\n1;10\n2;20\n").into_bytes(),
+            json!({"columns": [[long_name, 0], ["value", 0]], "duplicate_rows": 0}),
+        ),
+        (
+            "BOM, blank line, header past 8 KB",
+            format!("\u{feff}\n{longer_name};value\n1;2\n3;\n").into_bytes(),
+            json!({"columns": [[longer_name, 0], ["value", 1]], "duplicate_rows": 0}),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (label, bytes, expected) in cases {
+        let file = temp_csv(&bytes);
+        for (route, outcome) in file_routes(file.path()) {
+            match outcome {
+                Ok(report) if shape(&report) == expected => {}
+                Ok(report) => {
+                    let columns = shape(&report)["columns"].as_array().map(Vec::len);
+                    wrong.push(format!("[{label}] {route}: {columns:?} columns"));
+                }
+                Err(error) => wrong.push(format!("[{label}] {route} failed: {error}")),
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A header past the 1 MiB bound is refused on every route as a CSV structure
+/// error naming the setting that reads it, instead of being guessed as comma.
+#[test]
+fn header_past_the_bound_is_refused_not_guessed() {
+    let bytes = format!("{};value\n1;2\n", "h".repeat((1 << 20) + 10)).into_bytes();
+    let file = temp_csv(&bytes);
+    let path = file.path();
+    let refused = |engine: EngineType| Profiler::new().engine(engine).analyze_file(path).err();
+
+    let outcomes = [
+        (
+            "standard",
+            analyze_csv_file(path, &CsvParserConfig::default()).err(),
+        ),
+        ("auto", refused(EngineType::Auto)),
+        ("incremental", refused(EngineType::Incremental)),
+        ("columnar", refused(EngineType::Columnar)),
+        ("quick_row_count", quick_row_count(path).err()),
+        ("analyze_structure", analyze_structure(path, Some(10)).err()),
+    ];
+    let wrong: Vec<String> = outcomes
+        .into_iter()
+        .filter_map(|(route, error)| match error {
+            Some(error @ DataProfilerError::CsvParsingError { .. })
+                if error.to_string().contains("csv_delimiter") =>
+            {
+                None
+            }
+            Some(error) => Some(format!("{route}: unexpected error {error:?}")),
+            None => Some(format!("{route}: read without an error")),
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+
+    let explicit = Profiler::new()
+        .csv_delimiter(b';')
+        .analyze_file(path)
+        .expect("an explicit delimiter reads it");
+    assert_eq!(explicit.column_profiles.len(), 2);
 }
