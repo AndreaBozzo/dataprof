@@ -62,7 +62,7 @@ impl BinarySignature {
     /// command for the shell of the platform this build runs on.
     pub fn suggestion(self, path: &str) -> String {
         let shell = Shell::HOST;
-        match self {
+        let suggestion = match self {
             Self::Gzip => format!(
                 "Decompress it first (e.g. `{}`) and profile the result.",
                 shell.gunzip(path)
@@ -76,8 +76,9 @@ impl BinarySignature {
                  (.xlsx, .ods) is a zip archive too: export the sheet as CSV first.",
                 shell.unzip(path)
             ),
-            Self::Parquet => parquet_suggestion(),
-        }
+            Self::Parquet => return parquet_suggestion(),
+        };
+        suggestion + shell.placeholder_note(path)
     }
 }
 

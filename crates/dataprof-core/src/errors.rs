@@ -5,8 +5,9 @@ use thiserror::Error;
 /// The re-encode remedy for a non-UTF-8 file at `path` that looks like
 /// `guess`, with a command for the shell of the platform this build runs on.
 fn reencode_advice(path: &str, guess: &str) -> String {
+    let note = Shell::HOST.placeholder_note(path);
     format!(
-        "Re-encode the file as UTF-8 (e.g. `{}`) and profile the result",
+        "Re-encode the file as UTF-8 (e.g. `{}`) and profile the result.{note}",
         Shell::HOST.reencode(path, guess)
     )
 }
@@ -633,7 +634,7 @@ impl DataProfilerError {
                 supported_formats_hint()
             )),
             DataProfilerError::EncodingError { path, guess, .. } => {
-                Some(format!("{}.", reencode_advice(path, guess)))
+                Some(reencode_advice(path, guess))
             }
             DataProfilerError::StreamingError { suggestion, .. } => {
                 if suggestion.is_empty() {

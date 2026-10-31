@@ -4,8 +4,9 @@ The hints for compressed, zip and non-UTF-8 files used to put the path in POSIX
 single quotes, so a path with an apostrophe ended the quote early, cmd.exe split
 a path with a space, and the tools named are not on Windows. Each case writes a
 real file under ``hint dir/o'brien.*``, takes the command from the error, runs
-it through every shell the host has (sh; cmd.exe and PowerShell), and profiles
-what it produced.
+it through every shell the host has (sh; cmd.exe and PowerShell), and checks
+what it produced. Following a hint must not replace a file the user already
+had either.
 
 ``tests/error_hint_commands.rs`` is the Rust twin.
 """
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import zipfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -33,6 +35,8 @@ except ImportError:
     )
 
 CSV = b"id,city\n1,Rome\n2,Milan\n"
+LATIN_TEXT = "id,city\n1,Zürich\n2,Málaga\n"
+WINDOWS = sys.platform == "win32"
 
 
 def _zstd(payload: bytes) -> bytes | None:
@@ -50,19 +54,58 @@ def _zip(payload: bytes) -> bytes:
     return buffer.getvalue()
 
 
-# (name, file under "hint dir", bytes, what the command writes relative to the
-# working directory, the program the command needs when the host may lack it)
-CASES: list[tuple[str, str, bytes | None, str, str | None]] = [
-    ("gzip", "o'brien.csv.gz", gzip.compress(CSV), "hint dir/o'brien.csv", None),
+@dataclass(frozen=True)
+class Case:
+    name: str
+    file: str
+    """File name under ``hint dir``."""
+    payload: bytes | None
+    output: str
+    """What the command writes, relative to the working directory."""
+    expected: bytes
+    """The bytes it must write there."""
+    keeps: str
+    """A file the user may already have where the command writes, which it must
+    leave alone."""
+    needs: str | None = None
+    """The program the command needs, when the host may not have it."""
+
+
+CASES = [
+    Case(
+        "gzip",
+        "o'brien.csv.gz",
+        gzip.compress(CSV),
+        "hint dir/o'brien.csv",
+        CSV,
+        "hint dir/o'brien.csv",
+    ),
     # Windows ships no zstd decoder, and the hint says so.
-    ("zstd", "o'brien.csv.zst", _zstd(CSV), "hint dir/o'brien.csv", "zstd"),
-    ("zip", "o'brien.zip", _zip(CSV), "data.csv", None),
-    (
+    Case(
+        "zstd",
+        "o'brien.csv.zst",
+        _zstd(CSV),
+        "hint dir/o'brien.csv",
+        CSV,
+        "hint dir/o'brien.csv",
+        "zstd",
+    ),
+    # Windows extracts into a directory of its own.
+    Case(
+        "zip",
+        "o'brien.zip",
+        _zip(CSV),
+        "hint dir/o'brien.zip.contents/data.csv" if WINDOWS else "data.csv",
+        CSV,
+        "data.csv",
+    ),
+    Case(
         "latin-1",
         "o'brien.csv",
-        "id,city\n1,Zürich\n2,Málaga\n".encode("latin-1"),
+        LATIN_TEXT.encode("latin-1"),
         "hint dir/o'brien.csv.utf8.csv",
-        None,
+        LATIN_TEXT.encode(),
+        "hint dir/o'brien.csv.utf8.csv",
     ),
 ]
 
@@ -92,31 +135,42 @@ def _powershell(command: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 Runner = Callable[[str, Path], subprocess.CompletedProcess[bytes]]
 
 SHELLS: list[tuple[str, Runner]] = (
-    [("cmd", _cmd), ("powershell", _powershell)] if sys.platform == "win32" else [("sh", _sh)]
+    [("cmd", _cmd), ("powershell", _powershell)] if WINDOWS else [("sh", _sh)]
 )
 
 
-def _misrun(
-    tmp: Path, file: str, payload: bytes, output: str, shell: str, run: Runner
-) -> str | None:
+def _available(case: Case) -> bool:
+    return case.payload is not None and (case.needs is None or shutil.which(case.needs) is not None)
+
+
+def _suggested_command(case: Case, tmp: Path, file: str | None = None) -> str:
+    """Write ``case``'s payload to ``tmp/hint dir/file`` (its own file name by
+    default) and return the command its error suggests."""
+    assert case.payload is not None
     directory = tmp / "hint dir"
-    directory.mkdir()
-    path = directory / file
-    path.write_bytes(payload)
+    directory.mkdir(parents=True)
+    path = directory / (file or case.file)
+    path.write_bytes(case.payload)
 
     with pytest.raises(ValueError) as excinfo:
         dp.profile(path)
     message = str(excinfo.value)
     found = re.search(r"`([^`]+)`", message)
-    if found is None:
-        return f"no command in the message: {message}"
-    command = found.group(1)
+    assert found is not None, f"no command in the message: {message}"
+    return found.group(1)
 
+
+def _misrun(case: Case, tmp: Path, shell: str, run: Runner) -> str | None:
+    command = _suggested_command(case, tmp)
     result = run(command, tmp)
     if result.returncode != 0:
         return f"{shell} `{command}` failed: {result.stdout!r} {result.stderr!r}"
+    produced = tmp / case.output
+    written = produced.read_bytes() if produced.exists() else None
+    if written != case.expected:
+        return f"{shell} `{command}` wrote {written!r}"
     try:
-        report = dp.profile(tmp / output)
+        report = dp.profile(produced)
     except Exception as err:  # noqa: BLE001 - any failure is the finding
         return f"{shell} `{command}`: the result fails: {err}"
     if report.rows != 2:
@@ -128,17 +182,42 @@ def test_every_suggested_command_runs_on_a_path_with_a_space_and_an_apostrophe(
     tmp_path: Path,
 ) -> None:
     wrong = []
-    skipped = []
-    for name, file, payload, output, needs in CASES:
-        if payload is None or (needs is not None and shutil.which(needs) is None):
-            skipped.append(name)
-            continue
+    for case in filter(_available, CASES):
         for shell, run in SHELLS:
-            tmp = tmp_path / f"{name}-{shell}"
-            tmp.mkdir()
-            problem = _misrun(tmp, file, payload, output, shell, run)
+            problem = _misrun(case, tmp_path / f"{case.name}-{shell}", shell, run)
             if problem is not None:
-                wrong.append(f"{name} / {shell}: {problem}")
+                wrong.append(f"{case.name} / {shell}: {problem}")
     assert not wrong, "\n".join(wrong)
-    if skipped:
-        print(f"skipped, not available here: {skipped}")
+
+
+def test_no_suggested_command_replaces_a_file_already_there(tmp_path: Path) -> None:
+    """A ``data.csv`` beside ``data.csv.gz``, or one where the archive extracts,
+    survives following the hint: refusing is fine, replacing is not."""
+    kept_bytes = b"kept,by,the,user\n"
+    wrong = []
+    for case in filter(_available, CASES):
+        for shell, run in SHELLS:
+            tmp = tmp_path / f"{case.name}-{shell}"
+            command = _suggested_command(case, tmp)
+            kept = tmp / case.keeps
+            kept.write_bytes(kept_bytes)
+            run(command, tmp)
+            if kept.read_bytes() != kept_bytes:
+                wrong.append(f"{case.name} / {shell}: `{command}` replaced {case.keeps}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_a_file_name_holding_a_command_runs_nothing(tmp_path: Path) -> None:
+    """A file name is data, never code. Inside double quotes PowerShell runs a
+    ``$(...)`` subexpression, so a name holding one must not reach a Windows
+    command, and POSIX single quotes must keep ``$(...)`` literal."""
+    prefix = "$(New-Item pwned) " if WINDOWS else "$(touch pwned) "
+    wrong = []
+    for case in filter(_available, CASES):
+        for shell, run in SHELLS:
+            tmp = tmp_path / f"{case.name}-{shell}"
+            command = _suggested_command(case, tmp, prefix + case.file)
+            run(command, tmp)
+            if (tmp / "pwned").exists() or (tmp / "hint dir" / "pwned").exists():
+                wrong.append(f"{case.name} / {shell}: `{command}` ran the name")
+    assert not wrong, "\n".join(wrong)
