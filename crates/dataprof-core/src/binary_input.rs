@@ -14,8 +14,26 @@ use std::path::Path;
 use crate::errors::DataProfilerError;
 use crate::shell_hint::Shell;
 
-/// Parquet files start and end with this marker.
-const PARQUET_MAGIC: &[u8; 4] = b"PAR1";
+/// The formats recognized by a marker at both ends of the file. Each marker is
+/// plain ASCII, so a text file may start with it; only one that also ends with
+/// it is taken for the binary format.
+const BOTH_ENDS_MAGIC: [(&[u8], BinarySignature); 3] = [
+    (b"PAR1", BinarySignature::Parquet),
+    (b"ARROW1", BinarySignature::ArrowIpc),
+    (b"FEA1", BinarySignature::FeatherV1),
+];
+
+/// The longest prefix any signature needs.
+const HEAD_LEN: u64 = 6;
+
+// Every both-ends marker must fit in the prefix that is read.
+const _: () = {
+    let mut i = 0;
+    while i < BOTH_ENDS_MAGIC.len() {
+        assert!(BOTH_ENDS_MAGIC[i].0.len() <= HEAD_LEN as usize);
+        i += 1;
+    }
+};
 
 /// A binary format recognized by its signature bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +48,11 @@ pub enum BinarySignature {
     Zip,
     /// Parquet, which carries `PAR1` at both ends of the file.
     Parquet,
+    /// An Arrow IPC file (Feather V2), which carries `ARROW1` at both ends.
+    /// The IPC stream format has no magic and is not recognized.
+    ArrowIpc,
+    /// Feather V1, which carries `FEA1` at both ends.
+    FeatherV1,
 }
 
 impl BinarySignature {
@@ -55,6 +78,8 @@ impl BinarySignature {
             Self::Zstd => "zstd-compressed",
             Self::Zip => "a zip archive",
             Self::Parquet => "a Parquet file",
+            Self::ArrowIpc => "an Arrow IPC file (Feather V2)",
+            Self::FeatherV1 => "a Feather V1 file",
         }
     }
 
@@ -77,9 +102,49 @@ impl BinarySignature {
                 shell.unzip(path)
             ),
             Self::Parquet => return parquet_suggestion(),
+            // Python calls, not shell commands: a Python string expands nothing,
+            // so these need no placeholder note.
+            Self::ArrowIpc => {
+                let path = python_str(path);
+                return format!(
+                    "dataprof does not read Arrow IPC files directly. Read it with pyarrow and pass \
+                     the table (`import pyarrow.feather; pyarrow.feather.read_table({path})`), or \
+                     stream it with `import pyarrow.dataset; \
+                     pyarrow.dataset.dataset({path}, format=\"ipc\").scanner().to_reader()`."
+                );
+            }
+            Self::FeatherV1 => {
+                let path = python_str(path);
+                return format!(
+                    "dataprof does not read Feather files directly. Read it with pyarrow and pass \
+                     the table (`import pyarrow.feather; pyarrow.feather.read_table({path})`)."
+                );
+            }
         };
         suggestion + shell.placeholder_note(path)
     }
+}
+
+/// `path` as a double-quoted Python string literal that reads back as `path`.
+///
+/// Only `\`, `"` and control characters are escaped; everything else is
+/// written as is, since Python source is UTF-8. Rust's `{:?}` would not do:
+/// it writes a combining mark such as the accent of a decomposed `café` as
+/// `\u{301}`, which Python rejects.
+fn python_str(path: &str) -> String {
+    let mut literal = String::with_capacity(path.len() + 2);
+    literal.push('"');
+    for c in path.chars() {
+        match c {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            // Control characters (Cc) all lie below U+00A0, so `\xNN` holds each.
+            c if c.is_control() => literal.push_str(&format!("\\x{:02x}", c as u32)),
+            c => literal.push(c),
+        }
+    }
+    literal.push('"');
+    literal
 }
 
 #[cfg(feature = "parquet")]
@@ -97,31 +162,32 @@ fn parquet_suggestion() -> String {
 
 /// The binary format the bytes of `path` carry, if any.
 ///
-/// Reads the first four bytes, and for a `PAR1` start also the last four: a
-/// text file can begin with `PAR1`, so Parquet is only recognized when the
-/// marker sits at both ends, as `dataprof_parquet::is_parquet_file` requires.
+/// Reads the first six bytes, and for a `PAR1`, `ARROW1` or `FEA1` start also
+/// the same number of bytes at the end: a text file can begin with any of
+/// those, so the format is only recognized when the marker sits at both ends,
+/// as `dataprof_parquet::is_parquet_file` requires for Parquet.
 ///
 /// A file that cannot be opened or read answers `None`. Whether the file is
 /// readable is for the reader that comes next to report, with its own path
 /// context; this only decides whether a text reader should see it at all.
 pub fn sniff_binary_file(path: &Path) -> Option<BinarySignature> {
     let mut file = File::open(path).ok()?;
-    let mut head = Vec::with_capacity(4);
-    (&mut file).take(4).read_to_end(&mut head).ok()?;
+    let mut head = Vec::with_capacity(HEAD_LEN as usize);
+    (&mut file).take(HEAD_LEN).read_to_end(&mut head).ok()?;
     if let Some(signature) = BinarySignature::from_prefix(&head) {
         return Some(signature);
     }
-    if head != PARQUET_MAGIC {
-        return None;
-    }
+    let (magic, signature) = BOTH_ENDS_MAGIC
+        .into_iter()
+        .find(|(magic, _)| head.starts_with(magic))?;
     // Both markers, without overlap.
-    if file.metadata().ok()?.len() < 8 {
+    if file.metadata().ok()?.len() < 2 * magic.len() as u64 {
         return None;
     }
-    let mut tail = [0u8; 4];
-    file.seek(SeekFrom::End(-4)).ok()?;
+    let mut tail = vec![0u8; magic.len()];
+    file.seek(SeekFrom::End(-(magic.len() as i64))).ok()?;
     file.read_exact(&mut tail).ok()?;
-    (&tail == PARQUET_MAGIC).then_some(BinarySignature::Parquet)
+    (tail == magic).then_some(signature)
 }
 
 /// Fail with [`DataProfilerError::BinaryInput`] when `path` carries a binary

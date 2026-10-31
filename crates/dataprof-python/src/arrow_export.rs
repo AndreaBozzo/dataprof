@@ -1085,12 +1085,16 @@ fn import_batches_from_pyarrow(
         // accepting. RecordBatch is named only so the error below can list it.
         Ok(vec![import_via_pycapsule(py, obj)?])
     } else {
-        // A Dataset or Scanner is lazy and exports nothing until read; point
-        // at the call that turns it into a source profile() accepts.
+        // A Dataset or Scanner is lazy and exports nothing until read, and an
+        // IPC file reader (pyarrow.ipc.open_file) is neither a stream nor a
+        // table; point at the call that turns each into a source profile()
+        // accepts.
         let hint = if obj.hasattr("to_reader")? {
             "; pass .to_reader() to stream it, or .to_table()"
         } else if obj.hasattr("scanner")? {
             "; pass .scanner().to_reader() to stream it, or .to_table()"
+        } else if obj.hasattr("get_batch")? && obj.hasattr("read_all")? {
+            "; pass .read_all(), or stream the file with import pyarrow.dataset as ds; ds.dataset(path, format=\"ipc\").scanner().to_reader()"
         } else {
             ""
         };

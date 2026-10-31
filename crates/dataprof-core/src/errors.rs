@@ -145,8 +145,8 @@ pub enum DataProfilerError {
     },
 
     /// A file whose signature bytes name a binary format (gzip, zstd, zip,
-    /// Parquet) was about to reach a text reader (#893). Built with
-    /// [`DataProfilerError::binary_input`].
+    /// Parquet, Arrow IPC, Feather V1) was about to reach a text reader
+    /// (#893). Built with [`DataProfilerError::binary_input`].
     #[error("Binary input in {path}: the file is {detected}, not text\n{suggestion}")]
     #[non_exhaustive]
     BinaryInput {

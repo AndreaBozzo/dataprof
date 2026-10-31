@@ -176,6 +176,51 @@ def test_lazy_pyarrow_sources_are_refused_with_the_call_that_reads_them(tmp_path
     assert dataprof.profile(dataset.scanner().to_reader()).rows == 3
 
 
+def test_ipc_file_reader_is_refused_with_the_call_that_reads_it(tmp_path):
+    """A RecordBatchFileReader is neither a stream nor a table (#1155)."""
+    ipc = pytest.importorskip("pyarrow.ipc")
+    path = tmp_path / "x.arrow"
+    table = pa.table({"a": [1, 2, 3]})
+    with ipc.new_file(path, table.schema) as writer:
+        writer.write_table(table)
+
+    reader = ipc.open_file(path)
+    with pytest.raises(TypeError, match=r"got RecordBatchFileReader; pass \.read_all\(\)"):
+        dataprof.profile(reader)
+
+    # Both calls the error names profile the file.
+    assert dataprof.profile(reader.read_all()).rows == 3
+    ds = pytest.importorskip("pyarrow.dataset")
+    stream = ds.dataset(path, format="ipc").scanner().to_reader()
+    assert dataprof.profile(stream).rows == 3
+
+
+def test_scanner_only_dataset_is_refused_with_the_call_that_reads_it():
+    """A lance.dataset() exports only through its scanner (#1155).
+
+    lance is not a test dependency, so a stand-in carries its module, name and
+    scanner().to_reader().
+    """
+
+    class _Scanner:
+        def to_reader(self):
+            return pa.table({"a": [1, 2, 3]}).to_reader()
+
+    LanceDataset = type("LanceDataset", (), {"scanner": lambda self: _Scanner()})
+    LanceDataset.__module__ = "lance.dataset"
+
+    with pytest.raises(
+        TypeError,
+        match=r"lance\.dataset\.LanceDataset\. .*pass \.scanner\(\)\.to_reader\(\) to stream it\.$",
+    ):
+        dataprof.profile(LanceDataset())
+    # .to_table() is named only for a source that has it.
+    setattr(LanceDataset, "to_table", lambda self: pa.table({"a": [1, 2, 3]}))
+    with pytest.raises(TypeError, match=r"to stream it, or \.to_table\(\)\.$"):
+        dataprof.profile(LanceDataset())
+    assert dataprof.profile(LanceDataset().scanner().to_reader()).rows == 3
+
+
 def test_polars_lazyframe_is_refused_by_its_own_name():
     """A LazyFrame was reported as a DataFrame that "doesn't support Arrow export"."""
     pl = pytest.importorskip("polars")

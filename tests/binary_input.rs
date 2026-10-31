@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use arrow::array::{Int64Array, StringArray};
 use arrow::datatypes::{DataType as ArrowType, Field, Schema};
+use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 use dataprof::{
     CsvParserConfig, DataProfilerError, EngineType, FileFormat, JsonParserConfig, Profiler,
@@ -28,24 +29,46 @@ fn signed(signature: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn parquet_bytes() -> Vec<u8> {
+fn sample_batch() -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", ArrowType::Int64, false),
         Field::new("city", ArrowType::Utf8, true),
     ]));
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    RecordBatch::try_new(
+        schema,
         vec![
             Arc::new(Int64Array::from(vec![1, 2, 3])),
             Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
         ],
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn parquet_bytes() -> Vec<u8> {
+    let batch = sample_batch();
     let mut buffer = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut buffer, schema, None).unwrap();
+    let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), None).unwrap();
     writer.write(&batch).unwrap();
     writer.close().unwrap();
     buffer
+}
+
+/// An Arrow IPC file, which is what pyarrow writes for `.arrow` and Feather V2.
+fn arrow_ipc_bytes() -> Vec<u8> {
+    let batch = sample_batch();
+    let mut buffer = Vec::new();
+    let mut writer = FileWriter::try_new(&mut buffer, &batch.schema()).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+    drop(writer);
+    buffer
+}
+
+/// Feather V1 framing: `FEA1` at both ends around binary content.
+fn feather_v1_bytes() -> Vec<u8> {
+    let mut bytes = signed(b"FEA1");
+    bytes.extend_from_slice(b"FEA1");
+    bytes
 }
 
 /// (file name, bytes, the description the error must carry)
@@ -54,7 +77,9 @@ fn binary_files(dir: &TempDir) -> Vec<(PathBuf, &'static str)> {
     let zstd = signed(&[0x28, 0xb5, 0x2f, 0xfd]);
     let zip = signed(b"PK\x03\x04");
     let parquet = parquet_bytes();
-    let files: [(&str, &[u8], &str); 11] = [
+    let arrow_ipc = arrow_ipc_bytes();
+    let feather_v1 = feather_v1_bytes();
+    let files: [(&str, &[u8], &str); 15] = [
         ("data.csv.gz", &gzip, "gzip-compressed"),
         ("gzip.csv", &gzip, "gzip-compressed"),
         ("gzip.json", &gzip, "gzip-compressed"),
@@ -66,6 +91,10 @@ fn binary_files(dir: &TempDir) -> Vec<(PathBuf, &'static str)> {
         ("parquet.csv", &parquet, "a Parquet file"),
         ("parquet_no_extension", &parquet, "a Parquet file"),
         ("parquet.dat", &parquet, "a Parquet file"),
+        ("data.arrow", &arrow_ipc, "an Arrow IPC file"),
+        ("data.feather", &arrow_ipc, "an Arrow IPC file"),
+        ("arrow_ipc.csv", &arrow_ipc, "an Arrow IPC file"),
+        ("feather_v1.feather", &feather_v1, "a Feather V1 file"),
     ];
     files
         .into_iter()
@@ -190,6 +219,46 @@ fn a_misnamed_parquet_file_profiles_once_the_format_is_selected() {
     assert_eq!(report.execution.rows_processed, 3);
 }
 
+/// The pyarrow calls in the Arrow IPC and Feather suggestions are pasted into
+/// Python, so the path goes in as a literal Python reads back unchanged: a
+/// backslash (every Windows path) or an apostrophe must not break it.
+#[test]
+fn arrow_suggestions_quote_the_path_as_a_python_literal() {
+    let dir = TempDir::new().unwrap();
+    // On Windows the directory part already carries the backslashes. The
+    // decomposed `café` is what Rust's `{:?}` escaped as `\u{301}`, which
+    // Python rejects.
+    let combining_acute = char::from_u32(0x301).unwrap();
+    let name = if cfg!(windows) {
+        format!("O'Brien cafe{combining_acute}.csv")
+    } else {
+        format!(r"O'Brien\cafe{combining_acute}.csv")
+    };
+    let path = dir.path().join(name);
+    std::fs::write(&path, arrow_ipc_bytes()).unwrap();
+    let shown = path.display().to_string();
+    // A Python literal: `\` and `"` escaped, every other character as is.
+    let literal = format!("\"{}\"", shown.replace('\\', r"\\").replace('"', "\\\""));
+    assert!(
+        literal.contains(r"\\") && literal.contains('\'') && literal.contains(combining_acute),
+        "{literal}"
+    );
+
+    let err = Profiler::new().analyze_file(&path).unwrap_err();
+    let suggestion = err.suggestion().unwrap_or_default();
+    for call in [
+        format!("import pyarrow.feather; pyarrow.feather.read_table({literal})"),
+        format!("import pyarrow.dataset; pyarrow.dataset.dataset({literal}, format=\"ipc\")"),
+    ] {
+        assert!(suggestion.contains(&call), "missing {call}\n{suggestion}");
+    }
+    let feather = dataprof_core::binary_input::BinarySignature::FeatherV1.suggestion(&shown);
+    assert!(
+        feather.contains(&format!("pyarrow.feather.read_table({literal})")),
+        "{feather}"
+    );
+}
+
 /// Over-correction guard: text that merely starts like a signature, a real
 /// Parquet file, and an empty file still go where they went before.
 #[test]
@@ -207,6 +276,10 @@ fn text_and_correctly_named_parquet_are_not_refused() {
         write("short.csv", b"PAR1\n"),
         // One marker that is both the first and the last four bytes.
         write("marker_only.csv", b"PAR1"),
+        // The same for the Arrow IPC and Feather V1 markers.
+        write("arrow1.csv", b"ARROW1,ARROW2\n1,2\n"),
+        write("arrow1_only.csv", b"ARROW1"),
+        write("fea1.csv", b"FEA1,FEA2\n1,2\n"),
         write("empty.csv", b""),
         write("pk.csv", b"PK,name\n1,a\n"),
         write("events.jsonl", b"{\"a\":1}\n{\"a\":2}\n"),

@@ -140,9 +140,10 @@ pub fn detect_format(file_path: &Path) -> FileFormat {
 // Format-aware internals (also used by Profiler methods)
 // ---------------------------------------------------------------------------
 
-/// Refuse a binary file (gzip, zstd, zip, Parquet) on every route that would
-/// read it as text, including an unknown extension, so it fails with what the
-/// file is rather than a parse error or an unsupported extension (#893).
+/// Refuse a binary file (gzip, zstd, zip, Parquet, Arrow IPC, Feather V1) on
+/// every route that would read it as text, including an unknown extension, so
+/// it fails with what the file is rather than a parse error or an unsupported
+/// extension (#893).
 fn reject_binary_text_input(path: &Path, format: &FileFormat) -> Result<(), DataProfilerError> {
     if matches!(format, FileFormat::Parquet) {
         return Ok(());
