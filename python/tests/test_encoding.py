@@ -11,8 +11,13 @@ Run after building the extension:
 
 from __future__ import annotations
 
+import sys
+
 import dataprof
 import pytest
+
+# The re-encode command is written for the shell of the platform (#1164).
+REENCODE_TOOL = "python -c" if sys.platform == "win32" else "iconv"
 
 
 @pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
@@ -27,7 +32,7 @@ def test_latin1_csv_raises_clean_value_error(tmp_path, engine):
         message = str(exc)
         assert "utf-8" in message.lower()
         # Actionable re-encode guidance, not the old stacked-engine noise.
-        assert "iconv" in message
+        assert REENCODE_TOOL in message
         assert "All engines failed" not in message
         assert "check file permissions" not in message.lower()
     else:
@@ -44,7 +49,7 @@ def test_utf8_split_across_fields_is_refused_by_every_engine(tmp_path, engine, d
     with pytest.raises(ValueError) as excinfo:
         dataprof.profile(str(path), engine=engine)
     assert "utf-8" in str(excinfo.value).lower()
-    assert "iconv" in str(excinfo.value)
+    assert REENCODE_TOOL in str(excinfo.value)
 
 
 def test_windows1252_csv_is_flagged(tmp_path):

@@ -47,8 +47,9 @@ fn check_error(error: &DataProfilerError) {
 /// Profile the bytes as CSV across header, strict/flexible, and
 /// detected/explicit delimiter combinations.
 ///
-/// Delimiter detection reads from memory, so it cannot fail and must choose a
-/// known candidate. Every successful parse names its columns exactly as the
+/// Delimiter detection reads from memory, and an input this small is far
+/// below the 1 MiB header bound, so it cannot fail and must choose a known
+/// candidate. Every successful parse names its columns exactly as the
 /// header did, and every refusal carries a typed error rather than a default.
 pub fn csv(data: &[u8]) {
     if data.len() > MAX_INPUT_BYTES {

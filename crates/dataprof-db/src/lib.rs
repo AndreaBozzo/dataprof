@@ -211,7 +211,7 @@ pub async fn analyze_database_with_options(
 
     let start = std::time::Instant::now();
 
-    let final_query = if query.trim().to_uppercase().starts_with("SELECT") {
+    let final_query = if security::is_query(query) {
         security::validate_base_query(query)?
     } else {
         security::validate_sql_identifier(query)?;

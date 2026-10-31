@@ -107,8 +107,9 @@ fn non_utf8_csv_reports_one_clean_encoding_diagnostic() {
         // Names the real file, the encoding guess, the offset, and a re-encode fix...
         assert!(!rendered.contains("unknown"), "{rendered}");
         assert!(rendered.to_lowercase().contains("utf-8"), "{rendered}");
+        let tool = if cfg!(windows) { "python -c" } else { "iconv" };
         assert!(
-            rendered.contains("iconv"),
+            rendered.contains(tool),
             "gives a re-encode command: {rendered}"
         );
         // ...and drops the old misleading, stacked messaging.

@@ -12,6 +12,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::errors::DataProfilerError;
+use crate::shell_hint::Shell;
 
 /// The formats recognized by a marker at both ends of the file. Each marker is
 /// plain ASCII, so a text file may start with it; only one that also ends with
@@ -82,35 +83,68 @@ impl BinarySignature {
         }
     }
 
-    /// The way forward for a file at `path` carrying this signature.
+    /// The way forward for a file at `path` carrying this signature, with a
+    /// command for the shell of the platform this build runs on.
     pub fn suggestion(self, path: &str) -> String {
-        match self {
-            Self::Gzip => {
-                format!("Decompress it first (e.g. `gunzip -k '{path}'`) and profile the result.")
-            }
-            Self::Zstd => {
-                format!("Decompress it first (e.g. `zstd -d '{path}'`) and profile the result.")
-            }
+        let shell = Shell::HOST;
+        let suggestion = match self {
+            Self::Gzip => format!(
+                "Decompress it first (e.g. `{}`) and profile the result.",
+                shell.gunzip(path)
+            ),
+            Self::Zstd => format!(
+                "Decompress it first (e.g. `{}`) and profile the result.",
+                shell.unzstd(path)
+            ),
             Self::Zip => format!(
-                "Extract the file to profile (e.g. `unzip '{path}'`) and profile it. A spreadsheet \
-                 (.xlsx, .ods) is a zip archive too: export the sheet as CSV first."
+                "Extract the file to profile (e.g. `{}`) and profile it. A spreadsheet \
+                 (.xlsx, .ods) is a zip archive too: export the sheet as CSV first.",
+                shell.unzip(path)
             ),
-            Self::Parquet => parquet_suggestion(),
-            // `{path:?}` writes a double-quoted literal with `\` and `"` escaped,
-            // which Python reads back as the same path; a single-quoted
-            // `'{path}'` breaks on a Windows path or an apostrophe.
-            Self::ArrowIpc => format!(
-                "dataprof does not read Arrow IPC files directly. Read it with pyarrow and pass \
-                 the table (`import pyarrow.feather; pyarrow.feather.read_table({path:?})`), or \
-                 stream it with `import pyarrow.dataset; \
-                 pyarrow.dataset.dataset({path:?}, format=\"ipc\").scanner().to_reader()`."
-            ),
-            Self::FeatherV1 => format!(
-                "dataprof does not read Feather files directly. Read it with pyarrow and pass \
-                 the table (`import pyarrow.feather; pyarrow.feather.read_table({path:?})`)."
-            ),
+            Self::Parquet => return parquet_suggestion(),
+            // Python calls, not shell commands: a Python string expands nothing,
+            // so these need no placeholder note.
+            Self::ArrowIpc => {
+                let path = python_str(path);
+                return format!(
+                    "dataprof does not read Arrow IPC files directly. Read it with pyarrow and pass \
+                     the table (`import pyarrow.feather; pyarrow.feather.read_table({path})`), or \
+                     stream it with `import pyarrow.dataset; \
+                     pyarrow.dataset.dataset({path}, format=\"ipc\").scanner().to_reader()`."
+                );
+            }
+            Self::FeatherV1 => {
+                let path = python_str(path);
+                return format!(
+                    "dataprof does not read Feather files directly. Read it with pyarrow and pass \
+                     the table (`import pyarrow.feather; pyarrow.feather.read_table({path})`)."
+                );
+            }
+        };
+        suggestion + shell.placeholder_note(path)
+    }
+}
+
+/// `path` as a double-quoted Python string literal that reads back as `path`.
+///
+/// Only `\`, `"` and control characters are escaped; everything else is
+/// written as is, since Python source is UTF-8. Rust's `{:?}` would not do:
+/// it writes a combining mark such as the accent of a decomposed `café` as
+/// `\u{301}`, which Python rejects.
+fn python_str(path: &str) -> String {
+    let mut literal = String::with_capacity(path.len() + 2);
+    literal.push('"');
+    for c in path.chars() {
+        match c {
+            '\\' => literal.push_str("\\\\"),
+            '"' => literal.push_str("\\\""),
+            // Control characters (Cc) all lie below U+00A0, so `\xNN` holds each.
+            c if c.is_control() => literal.push_str(&format!("\\x{:02x}", c as u32)),
+            c => literal.push(c),
         }
     }
+    literal.push('"');
+    literal
 }
 
 #[cfg(feature = "parquet")]

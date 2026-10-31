@@ -3,10 +3,10 @@
 #[cfg(not(feature = "postgres"))]
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "postgres")]
-use super::common::not_connected_error;
+use super::common::{end_read_only_transaction, not_connected_error, read_only_transaction};
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "postgres")]
-use crate::security::validate_sql_identifier;
+use crate::security::{validate_base_query, validate_sql_identifier};
 use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector, QueryColumns};
 #[cfg(feature = "postgres")]
 use crate::{process_rows_to_columns, streaming_profile_loop};
@@ -101,11 +101,20 @@ impl DatabaseConnector for PostgresConnector {
     async fn profile_query(&mut self, query: &str) -> Result<QueryColumns, DataProfilerError> {
         #[cfg(feature = "postgres")]
         {
+            // The batch path runs the same check as the streaming one, so a
+            // statement the database would not refuse, such as MySQL's
+            // INTO OUTFILE, is refused here too.
+            let query = validate_base_query(query)?;
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction = read_only_transaction(pool, "BEGIN READ ONLY").await?;
 
-            let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Query execution failed: {}", e))
-            })?;
+            let rows = sqlx::query(&query)
+                .fetch_all(&mut *transaction)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Query execution failed: {}", e))
+                })?;
+            end_read_only_transaction(transaction).await?;
 
             // NUMERIC has no `Type<Sqlite>` impl, so it cannot sit in the
             // shared chain. Without this arm it falls past every arm and
@@ -126,14 +135,18 @@ impl DatabaseConnector for PostgresConnector {
         #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
+            let mut transaction = read_only_transaction(pool, "BEGIN READ ONLY").await?;
 
-            streaming_profile_loop!(
-                pool,
+            let columns: Result<QueryColumns, DataProfilerError> = streaming_profile_loop!(
+                &mut *transaction,
                 query,
                 batch_size,
                 "PostgreSQL",
                 [::sqlx::types::BigDecimal]
-            )
+            );
+            let columns = columns?;
+            end_read_only_transaction(transaction).await?;
+            Ok(columns)
         }
 
         #[cfg(not(feature = "postgres"))]
@@ -266,16 +279,21 @@ impl crate::DecodeStructured for sqlx::postgres::PgRow {
             // serde_json holds an integer outside the 64-bit range as the
             // nearest f64, while PostgreSQL keeps every digit: such a document
             // takes the raw path below, so distinct values stay distinct
-            // (#1104). Only a value holding a float that large reads the raw
-            // bytes. Both calls fail only on NULL, which was taken first.
-            let wide = dataprof_json::record::may_hold_wide_integer(&value)
-                && dataprof_json::record::has_wide_integer_literal(
-                    self.try_get_raw(index)
-                        .expect("a decoded column index")
-                        .as_bytes()
-                        .expect("a non-null value has bytes"),
-                );
-            if !wide {
+            // (#1104). So does a cell that is a float literal with more digits
+            // than an f64 (#1165); a float inside a container stays the f64, as
+            // in a JSON file. Only a value holding a float reads the raw bytes.
+            // Both calls fail only on NULL, which was taken first.
+            let raw = || {
+                self.try_get_raw(index)
+                    .expect("a decoded column index")
+                    .as_bytes()
+                    .expect("a non-null value has bytes")
+            };
+            let rounded = (dataprof_json::record::may_hold_wide_integer(&value)
+                && dataprof_json::record::has_wide_integer_literal(raw()))
+                || (value.as_number().is_some_and(serde_json::Number::is_f64)
+                    && dataprof_json::record::is_lossy_float_scalar(raw()));
+            if !rounded {
                 return Some(super::common::json_structured_value(&value));
             }
         }
