@@ -1,5 +1,16 @@
 use crate::binary_input::BinarySignature;
+use crate::shell_hint::Shell;
 use thiserror::Error;
+
+/// The re-encode remedy for a non-UTF-8 file at `path` that looks like
+/// `guess`, with a command for the shell of the platform this build runs on.
+fn reencode_advice(path: &str, guess: &str) -> String {
+    let note = Shell::HOST.placeholder_note(path);
+    format!(
+        "Re-encode the file as UTF-8 (e.g. `{}`) and profile the result.{note}",
+        Shell::HOST.reencode(path, guess)
+    )
+}
 
 /// The file formats this build can actually read, reflecting compiled features.
 ///
@@ -126,9 +137,7 @@ pub enum DataProfilerError {
         source: Option<ErrorSource>,
     },
 
-    #[error(
-        "Non-UTF-8 input in {path}: {detail}\nRe-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8 '{path}'`) and profile the result"
-    )]
+    #[error("Non-UTF-8 input in {path}: {detail}\n{}", reencode_advice(.path, .guess))]
     EncodingError {
         path: String,
         detail: String,
@@ -624,9 +633,9 @@ impl DataProfilerError {
                 "This build reads {}. Convert the input to one of these formats, or rebuild with the feature for the format you need.",
                 supported_formats_hint()
             )),
-            DataProfilerError::EncodingError { guess, .. } => Some(format!(
-                "Re-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8`) and profile the result."
-            )),
+            DataProfilerError::EncodingError { path, guess, .. } => {
+                Some(reencode_advice(path, guess))
+            }
             DataProfilerError::StreamingError { suggestion, .. } => {
                 if suggestion.is_empty() {
                     None
@@ -848,7 +857,8 @@ mod tests {
             msg.to_lowercase().contains("utf-8"),
             "mentions UTF-8: {msg}"
         );
-        assert!(msg.contains("iconv"), "gives a re-encode command: {msg}");
+        let command = Shell::HOST.reencode("sales.csv", "windows-1252");
+        assert!(msg.contains(&command), "gives a re-encode command: {msg}");
         // The old, misleading advice must not appear.
         assert!(
             !msg.to_lowercase().contains("check file permissions"),

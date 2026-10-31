@@ -18,6 +18,7 @@ pub mod quality;
 pub mod sampling;
 pub mod semantic;
 pub mod serde_helpers;
+mod shell_hint;
 pub mod source;
 pub mod stop_condition;
 pub mod text_units;
