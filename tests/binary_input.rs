@@ -225,18 +225,22 @@ fn a_misnamed_parquet_file_profiles_once_the_format_is_selected() {
 #[test]
 fn arrow_suggestions_quote_the_path_as_a_python_literal() {
     let dir = TempDir::new().unwrap();
-    // On Windows the directory part already carries the backslashes.
+    // On Windows the directory part already carries the backslashes. The
+    // decomposed `café` is what Rust's `{:?}` escaped as `\u{301}`, which
+    // Python rejects.
+    let combining_acute = char::from_u32(0x301).unwrap();
     let name = if cfg!(windows) {
-        "O'Brien.csv"
+        format!("O'Brien cafe{combining_acute}.csv")
     } else {
-        r"O'Brien\data.csv"
+        format!(r"O'Brien\cafe{combining_acute}.csv")
     };
     let path = dir.path().join(name);
     std::fs::write(&path, arrow_ipc_bytes()).unwrap();
     let shown = path.display().to_string();
-    let literal = format!("{shown:?}");
+    // A Python literal: `\` and `"` escaped, every other character as is.
+    let literal = format!("\"{}\"", shown.replace('\\', r"\\").replace('"', "\\\""));
     assert!(
-        literal.contains(r"\\") && literal.contains('\''),
+        literal.contains(r"\\") && literal.contains('\'') && literal.contains(combining_acute),
         "{literal}"
     );
 

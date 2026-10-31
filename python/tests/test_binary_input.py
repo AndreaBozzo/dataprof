@@ -129,13 +129,15 @@ def test_arrow_ipc_suggestions_run_as_pasted(tmp_path: Path) -> None:
     """Each pyarrow call in the Arrow IPC refusal runs in a fresh interpreter.
 
     The path has a backslash and an apostrophe, which a single-quoted Python
-    literal could not carry, and a fresh interpreter has only imported what the
-    snippet imports.
+    literal could not carry, and a decomposed ``café``, whose combining accent
+    Rust's ``{:?}`` escaped as ``\\u{301}``, which Python rejects. A fresh
+    interpreter has only imported what the snippet imports.
     """
     pytest.importorskip("pyarrow.feather")
     pytest.importorskip("pyarrow.dataset")
     # On Windows the directory part already carries the backslashes.
-    path = tmp_path / ("O'Brien.csv" if os.name == "nt" else "O'Brien\\data.csv")
+    name = "O'Brien cafe" + chr(0x301) + ".csv"
+    path = tmp_path / (name if os.name == "nt" else "O'Brien\\" + name)
     assert "\\" in str(path)
     table = pa.table({"id": [1, 2, 3]})
     with pa.ipc.new_file(path, table.schema) as writer:

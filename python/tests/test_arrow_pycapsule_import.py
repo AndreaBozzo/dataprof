@@ -215,7 +215,7 @@ def test_scanner_only_dataset_is_refused_with_the_call_that_reads_it():
     ):
         dataprof.profile(LanceDataset())
     # .to_table() is named only for a source that has it.
-    LanceDataset.to_table = lambda self: pa.table({"a": [1, 2, 3]})
+    setattr(LanceDataset, "to_table", lambda self: pa.table({"a": [1, 2, 3]}))
     with pytest.raises(TypeError, match=r"to stream it, or \.to_table\(\)\.$"):
         dataprof.profile(LanceDataset())
     assert dataprof.profile(LanceDataset().scanner().to_reader()).rows == 3
