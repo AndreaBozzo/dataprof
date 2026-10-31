@@ -12,6 +12,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::errors::DataProfilerError;
+use crate::shell_hint::Shell;
 
 /// Parquet files start and end with this marker.
 const PARQUET_MAGIC: &[u8; 4] = b"PAR1";
@@ -57,18 +58,23 @@ impl BinarySignature {
         }
     }
 
-    /// The way forward for a file at `path` carrying this signature.
+    /// The way forward for a file at `path` carrying this signature, with a
+    /// command for the shell of the platform this build runs on.
     pub fn suggestion(self, path: &str) -> String {
+        let shell = Shell::HOST;
         match self {
-            Self::Gzip => {
-                format!("Decompress it first (e.g. `gunzip -k '{path}'`) and profile the result.")
-            }
-            Self::Zstd => {
-                format!("Decompress it first (e.g. `zstd -d '{path}'`) and profile the result.")
-            }
+            Self::Gzip => format!(
+                "Decompress it first (e.g. `{}`) and profile the result.",
+                shell.gunzip(path)
+            ),
+            Self::Zstd => format!(
+                "Decompress it first (e.g. `{}`) and profile the result.",
+                shell.unzstd(path)
+            ),
             Self::Zip => format!(
-                "Extract the file to profile (e.g. `unzip '{path}'`) and profile it. A spreadsheet \
-                 (.xlsx, .ods) is a zip archive too: export the sheet as CSV first."
+                "Extract the file to profile (e.g. `{}`) and profile it. A spreadsheet \
+                 (.xlsx, .ods) is a zip archive too: export the sheet as CSV first.",
+                shell.unzip(path)
             ),
             Self::Parquet => parquet_suggestion(),
         }
