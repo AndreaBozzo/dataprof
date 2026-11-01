@@ -10,7 +10,12 @@ pa = pytest.importorskip("pyarrow")
 
 
 def _quality_values(report):
-    return {key: value for key, value in report.quality_summary().items() if key != "source"}
+    """``quality_summary`` without the provenance keys that differ between two runs."""
+    return {
+        key: value
+        for key, value in report.quality_summary().items()
+        if key not in ("source", "execution_time_ms")
+    }
 
 
 class StreamProducer:
