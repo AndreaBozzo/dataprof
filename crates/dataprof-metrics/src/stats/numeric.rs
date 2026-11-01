@@ -200,8 +200,9 @@ fn compute_parsed_stats(
 /// quartiles, as the `f64` ones, interpolated in quarters, and the median as
 /// the second quartile, which is the midpoint of the middle two for an even
 /// count. `extremes` cover every value, as `min` and `max` do, where the
-/// sample may not. `None` when a value has no exact form or the arithmetic
-/// leaves `i128`.
+/// sample may not. `None` when a value has no exact form; a median or
+/// quartile whose two values cannot share one scale in `i128` is left out on
+/// its own.
 fn exact_order_stats(
     sorted: &[ParsedNumber],
     extremes: (Option<ParsedNumber>, Option<ParsedNumber>),
@@ -216,27 +217,23 @@ fn exact_order_stats(
     }
     // The `quarter`-th quartile: position `(n - 1) × quarter / 4`, counted in
     // quarters so that it stays an integer.
-    let quartile = |quarter: usize| -> Option<ExactDecimal> {
+    let quartile = |quarter: usize| -> Option<String> {
         let position = (values.len() - 1) * quarter;
         let (lower, weight) = (position / 4, (position % 4) as i128);
         let base = values[lower];
         if weight == 0 {
-            return Some(base);
+            return Some(base.canonical());
         }
-        base.plus(values[lower + 1].exact_minus(base)?.quarters(weight)?)
+        base.interpolated(values[lower + 1], weight)
     };
-    let quartiles = if values.len() >= 4 {
-        Some((quartile(1)?, quartile(2)?, quartile(3)?))
-    } else {
-        None
-    };
+    let quartiles = values.len() >= 4;
     Some(ExactNumericStats {
         min: extremes.0?.exact_string()?,
         max: extremes.1?.exact_string()?,
-        median: Some(quartile(2)?.canonical()),
-        q1: quartiles.map(|(q1, _, _)| q1.canonical()),
-        q2: quartiles.map(|(_, q2, _)| q2.canonical()),
-        q3: quartiles.map(|(_, _, q3)| q3.canonical()),
+        median: quartile(2),
+        q1: quartiles.then(|| quartile(1)).flatten(),
+        q2: quartiles.then(|| quartile(2)).flatten(),
+        q3: quartiles.then(|| quartile(3)).flatten(),
         mode: match mode {
             Some(number) => Some(number.exact_value()?.canonical()),
             None => None,
@@ -917,6 +914,49 @@ mod tests {
             .collect();
         let stats = compute_numeric_stats(&cells);
         assert!(stats.quartiles.is_some());
+    }
+
+    /// Near the top of `i128` the interpolated quartiles still fit, and a
+    /// value that does not drops only itself, not the extremes beside it
+    /// (#1186 review).
+    #[test]
+    fn exact_quartiles_interpolate_near_the_top_of_i128() {
+        let ten_37 = "10000000000000000000000000000000000000";
+        let (same, _) = compute_decimal_stats_with_parsed_count(&cells(&[ten_37, ten_37]));
+        let same = same.exact.expect("exact");
+        assert_eq!(same.median.as_deref(), Some(ten_37));
+
+        let (apart, _) = compute_decimal_stats_with_parsed_count(&cells(&[
+            ten_37,
+            "10000000000000000000000000000000000002",
+        ]));
+        assert_eq!(
+            apart.exact.and_then(|e| e.median).as_deref(),
+            Some("10000000000000000000000000000000000001")
+        );
+
+        let top = "99999999999999999999999999999999999999";
+        let below = "99999999999999999999999999999999999998";
+        let (halves, _) = compute_decimal_stats_with_parsed_count(&cells(&[below, top]));
+        assert_eq!(
+            halves.exact.and_then(|e| e.median).as_deref(),
+            Some("99999999999999999999999999999999999998.5")
+        );
+
+        // Negative values take the complementary quarter.
+        let negative = compute_integer_stats(&cells(&["-3", "-2", "-2", "-1", "5"]));
+        assert_eq!(negative.q1.as_deref(), Some("-2"));
+        let quarters = compute_integer_stats(&cells(&["-3", "-2", "0", "1"]));
+        assert_eq!(quarters.q1.as_deref(), Some("-2.25"));
+        assert_eq!(quarters.median.as_deref(), Some("-1"));
+        assert_eq!(quarters.q3.as_deref(), Some("0.25"));
+    }
+
+    fn compute_integer_stats(values: &[String]) -> ExactNumericStats {
+        compute_integer_stats_with_parsed_count(values)
+            .0
+            .exact
+            .expect("exact")
     }
 
     /// One value read as a float, as an integer past 2^53 or as a decimal is

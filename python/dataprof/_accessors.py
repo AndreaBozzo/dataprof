@@ -107,6 +107,9 @@ class _ExactField(_Field[dict[str, int | Decimal] | None]):
         integer = instance.data_type == "integer"
         exact: dict[str, int | Decimal] = {}
         for key, text in values.items():
+            # A stored document may write an absent statistic as null.
+            if text is None:
+                continue
             value = Decimal(text)
             exact[key] = int(value) if integer and value == value.to_integral_value() else value
         return exact

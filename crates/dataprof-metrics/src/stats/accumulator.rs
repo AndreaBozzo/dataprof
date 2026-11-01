@@ -1041,36 +1041,47 @@ impl ExactDecimal {
         DecimalLiteral::read(text.trim())?.exact()
     }
 
-    /// `self + other`, or `None` past `i128`.
-    pub(crate) fn plus(self, other: Self) -> Option<Self> {
-        let scale = self.scale.max(other.scale);
-        let left = scale_up(self.unscaled, scale - self.scale)?;
-        let right = scale_up(other.unscaled, scale - other.scale)?;
-        Some(Self {
-            unscaled: left.checked_add(right)?,
-            scale,
-        })
-    }
-
-    /// `self - other` exactly, or `None` past `i128`.
-    pub(crate) fn exact_minus(self, other: Self) -> Option<Self> {
-        other.negated()?.plus(self)
-    }
-
-    fn negated(self) -> Option<Self> {
-        Some(Self {
-            unscaled: self.unscaled.checked_neg()?,
-            scale: self.scale,
-        })
-    }
-
-    /// `self × numerator / 4` for `numerator` in `0..=4`: a Type 7 quartile
-    /// weight, which `10^2 / 4` turns into an integer factor of 25.
-    pub(crate) fn quarters(self, numerator: i128) -> Option<Self> {
-        Some(Self {
-            unscaled: self.unscaled.checked_mul(numerator * 25)?,
-            scale: self.scale + 2,
-        })
+    /// `self + (next - self) × quarters / 4` for `quarters` in `1..=3`, the
+    /// Type 7 interpolation between two sorted values, as a canonical decimal
+    /// string. Whole steps of the last place are added to `self`, and the
+    /// quarter of a step left over is written as trailing digits, so `self` is
+    /// never scaled up: only the two values at one scale, and their gap, need
+    /// to fit in `i128`, as they do near its top (#1186 review).
+    pub(crate) fn interpolated(self, next: Self, quarters: i128) -> Option<String> {
+        let scale = self.scale.max(next.scale);
+        let base = scale_up(self.unscaled, scale - self.scale)?;
+        // Non-negative: `next` follows `self` in sorted order.
+        let gap = scale_up(next.unscaled, scale - next.scale)?.checked_sub(base)?;
+        let steps = (gap / 4)
+            .checked_mul(quarters)?
+            .checked_add(gap % 4 * quarters / 4)?;
+        let whole = base.checked_add(steps)?;
+        let fraction = gap % 4 * quarters % 4;
+        if fraction == 0 {
+            return Some(
+                Self {
+                    unscaled: whole,
+                    scale,
+                }
+                .canonical(),
+            );
+        }
+        // `whole + fraction / 4` steps. Below zero that is
+        // `-((-whole - 1) + (4 - fraction) / 4)`: one step less in magnitude
+        // and the complementary quarter.
+        let (negative, magnitude, fraction) = if whole < 0 {
+            (true, (whole + 1).unsigned_abs(), 4 - fraction)
+        } else {
+            (false, whole.unsigned_abs(), fraction)
+        };
+        let scale = scale as usize;
+        let digits = format!("{magnitude:0>width$}", width = scale + 1);
+        let (integer, places) = digits.split_at(digits.len() - scale);
+        let quarter = ["", "25", "5", "75"][fraction as usize];
+        let places = format!("{places}{quarter}");
+        let places = places.trim_end_matches('0');
+        let sign = if negative { "-" } else { "" };
+        Some(format!("{sign}{integer}.{places}"))
     }
 
     /// The canonical decimal spelling: no exponent, no trailing zeros in a
@@ -1991,10 +2002,10 @@ mod tests {
         }
         // A quarter of a gap is exact, beside a base past 2^53.
         let base = ExactDecimal::from_text("9007199254740993").unwrap();
-        let gap = ExactDecimal::from_text("3").unwrap();
+        let next = ExactDecimal::from_text("9007199254740996").unwrap();
         assert_eq!(
-            base.plus(gap.quarters(1).unwrap()).unwrap().canonical(),
-            "9007199254740993.75"
+            base.interpolated(next, 1).as_deref(),
+            Some("9007199254740993.75")
         );
     }
 

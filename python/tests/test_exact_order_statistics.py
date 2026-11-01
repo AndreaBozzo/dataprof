@@ -182,3 +182,34 @@ def test_documents_carry_canonical_strings(tmp_path: Path):
     assert _exact(restored) == _exact(report)
     # A restored report writes the strings back out unchanged.
     assert restored.to_dict()["columns"] == report.to_dict()["columns"]
+
+
+def test_review_cases_keep_exact_values():
+    """Review of #1186: values near the top of decimal128, a decimal below 1e-6
+    and a stored ``null`` statistic."""
+    pa = pytest.importorskip("pyarrow")
+    top = Decimal("1" + "0" * 37)
+    report = dp.profile(
+        pa.table(
+            {
+                "top": pa.array([top, top], pa.decimal128(38, 0)),
+                "tiny": pa.array(
+                    [Decimal("0.0000001"), Decimal("0.0000002")], pa.decimal128(10, 7)
+                ),
+            }
+        )
+    )
+    assert report["top"].exact == {"min": top, "max": top, "median": top, "mode": top}
+
+    # A restored summary writes the canonical strings back, without an exponent.
+    summary = report.to_dict()
+    tiny = {c["name"]: c["stats"]["exact"] for c in summary["columns"]}["tiny"]
+    assert tiny["min"] == "0.0000001"
+    assert dp.ProfileReport.from_dict(summary).to_dict()["columns"] == summary["columns"]
+
+    # A document may spell an absent statistic as null.
+    stored = json.loads(json.dumps(summary))
+    for column in stored["columns"]:
+        column["stats"]["exact"]["mode"] = None
+    restored = dp.ProfileReport.from_dict(stored)
+    assert "mode" not in restored["tiny"].exact
