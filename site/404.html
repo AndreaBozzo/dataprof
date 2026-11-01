@@ -13,7 +13,7 @@
     (function () {
       var segments = window.location.pathname.split('/').filter(Boolean);
       // segments[0] is the repo name for project pages ("dataprof")
-      if (segments.length >= 3 && segments[1] !== 'benchmarks' && segments.includes('report')) {
+      if (segments.length >= 2 && segments[1] !== 'benchmarks' && segments.slice(1).includes('report')) {
         var base = '/' + segments[0] + '/benchmarks/';
         window.location.replace(base + segments.slice(1).join('/') + window.location.search + window.location.hash);
       }
