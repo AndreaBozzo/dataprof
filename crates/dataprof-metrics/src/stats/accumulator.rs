@@ -572,7 +572,13 @@ impl NumericAccumulator {
             M2Scale::Raised => (delta * UNDERFLOW_HALF) * (delta * UNDERFLOW_HALF) * weight,
             M2Scale::Unit => delta * delta * weight,
             M2Scale::Reduced => (delta * OVERFLOW_SCALE) * delta * weight,
-            M2Scale::Shrunk => (delta * SHRUNK_HALF) * (delta * SHRUNK_HALF) * weight,
+            // The last scale: weighed before the square is completed, so a
+            // weight below one, as two single values have, cannot let the
+            // square overflow where the increment fits.
+            M2Scale::Shrunk => {
+                let gap = delta * SHRUNK_HALF;
+                gap * (gap * weight)
+            }
         });
         self.count += other.count;
 
@@ -1659,6 +1665,26 @@ mod tests {
                 "split {split} variance {} vs {}",
                 merged.sample_variance(),
                 single.sample_variance()
+            );
+        }
+    }
+
+    /// At the shrunk scale a merged increment is the square of a scaled gap
+    /// times a weight, which is 0.5 for two single values. Squared before
+    /// weighing, the gap of `0.0` and `5e304` overflowed although the weighted
+    /// increment fits, and the merge lost a standard deviation a single pass
+    /// reports.
+    #[test]
+    fn merging_single_values_keeps_a_standard_deviation_that_fits() {
+        let single = accumulate(&[0.0, 5e304]);
+        let mut merged = accumulate(&[0.0]);
+        merged.merge(&accumulate(&[5e304]));
+        let expected = 5e304 / 2f64.sqrt();
+        for (path, accumulator) in [("single", single), ("merged", merged)] {
+            let got = accumulator.sample_std_dev();
+            assert!(
+                (got - expected).abs() <= expected * 1e-15,
+                "{path}: std_dev {got:e}, exact {expected:e}"
             );
         }
     }

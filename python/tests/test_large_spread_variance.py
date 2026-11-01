@@ -53,7 +53,7 @@ def _assert_spread(report: dp.ProfileReport, label: str) -> None:
     assert exceeds.get("skewness") is not None, (label, exceeds)
     assert abs(exceeds["skewness"]) <= 1e-9, (label, exceeds)
     assert exceeds.get("kurtosis") is not None, (label, exceeds)
-    assert math.isclose(exceeds["kurtosis"], KURTOSIS, rel_tol=1e-3), (label, exceeds)
+    assert math.isclose(exceeds["kurtosis"], KURTOSIS, rel_tol=0, abs_tol=1e-4), (label, exceeds)
 
 
 @pytest.fixture
