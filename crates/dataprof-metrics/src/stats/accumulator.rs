@@ -915,6 +915,18 @@ impl ExactDecimal {
     /// The order of two decimals, exactly and whatever their scales: by sign,
     /// then by the digits of their magnitudes, so no product can overflow.
     pub(crate) fn exact_cmp(self, other: Self) -> std::cmp::Ordering {
+        // Repeated values tie on every earlier key and land here, so the
+        // common cases stay in `i128`: the digits are only the fallback.
+        if self.scale == other.scale {
+            return self.unscaled.cmp(&other.unscaled);
+        }
+        let scale = self.scale.max(other.scale);
+        if let (Some(mine), Some(theirs)) = (
+            scale_up(self.unscaled, scale - self.scale),
+            scale_up(other.unscaled, scale - other.scale),
+        ) {
+            return mine.cmp(&theirs);
+        }
         let sign = self.unscaled.signum().cmp(&other.unscaled.signum());
         if sign.is_ne() {
             return sign;
@@ -1807,6 +1819,25 @@ mod tests {
                 "{path}: std_dev {got:e}, exact {expected:e}"
             );
         }
+    }
+
+    /// Decimals whose common scale leaves `i128` are ordered by their digits,
+    /// sign first, as the ones that fit are by their unscaled values.
+    #[test]
+    fn exact_cmp_orders_decimals_past_a_common_scale() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let decimal = |unscaled: i128, scale: u32| ExactDecimal { unscaled, scale };
+        let big = decimal(10_i128.pow(37), 0);
+        let tiny = decimal(1, 37);
+        assert_eq!(big.exact_cmp(tiny), Greater);
+        assert_eq!(tiny.exact_cmp(big), Less);
+        assert_eq!(
+            decimal(-(10_i128.pow(37)), 0).exact_cmp(decimal(-1, 37)),
+            Less
+        );
+        assert_eq!(decimal(-1, 37).exact_cmp(big), Less);
+        assert_eq!(decimal(250, 2).exact_cmp(decimal(25, 1)), Equal);
+        assert_eq!(decimal(0, 5).exact_cmp(decimal(0, 0)), Equal);
     }
 
     #[test]
