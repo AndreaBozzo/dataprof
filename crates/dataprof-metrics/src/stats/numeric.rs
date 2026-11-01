@@ -812,6 +812,37 @@ mod tests {
         assert_eq!(stats.outlier_count, Some(1));
     }
 
+    /// Values past `i128` with one nearest `f64`, two held exactly and one read
+    /// as the float it spells: the comparator must stay a total order, or the
+    /// sort of a shuffled sample can panic (#1185 review).
+    #[test]
+    fn exact_and_float_values_sharing_an_f64_sort_consistently() {
+        let spellings = [
+            "170141183460469231731687303715884105727",
+            "170141183460469231731687303715884105726",
+            "170141183460469230000000000000000000000",
+        ];
+        let parsed: Vec<ParsedNumber> = spellings
+            .iter()
+            .map(|text| ParsedNumber::parse(text).unwrap())
+            .collect();
+        for a in &parsed {
+            for b in &parsed {
+                for c in &parsed {
+                    if a.value_cmp(*b).is_le() && b.value_cmp(*c).is_le() {
+                        assert!(a.value_cmp(*c).is_le(), "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+        // A shuffled sample long enough for the sort to check its comparator.
+        let cells: Vec<String> = (0..97)
+            .map(|i| spellings[(i * 7 + i / 5) % 3].to_string())
+            .collect();
+        let stats = compute_numeric_stats(&cells);
+        assert!(stats.quartiles.is_some());
+    }
+
     /// One value read as a float, as an integer past 2^53 or as a decimal is
     /// one value however it is written, so its spellings count together for
     /// the mode: 1e20 written in full reads as a float, and with a zero
