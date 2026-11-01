@@ -4,7 +4,9 @@
 its sample variance, 1.04e310 / 103, is about 1.01e308, but the running sum of
 squared deviations overflows, and ``variance`` and ``std_dev`` used to be
 ``None``. The blocks flip every four-lane SIMD lane too. ``exceeds`` is
-ten times the spread, a variance no ``f64`` holds, and still reports ``None``.
+ten times the spread, a variance no ``f64`` holds, and still reports ``None``,
+while its standard deviation and the skewness and kurtosis taken from it fit
+and are reported (#1150).
 
 ``tests/large_spread_variance.rs`` is the Rust twin.
 """
@@ -32,6 +34,10 @@ COLUMNS: dict[str, list[float]] = {
 }
 #: 1.04e310 / 103 by exact arithmetic.
 FITS_VARIANCE = 1.0097087378640777e308
+#: sqrt(1.04e312 / 103), the sample standard deviation of ``exceeds``.
+EXCEEDS_STD_DEV = 1.0048426433348047e155
+#: -2 * 103 / 101, the sample excess kurtosis of two equal halves of 104 values.
+KURTOSIS = -2.0396039603960396
 
 
 def _assert_spread(report: dp.ProfileReport, label: str) -> None:
@@ -41,7 +47,13 @@ def _assert_spread(report: dp.ProfileReport, label: str) -> None:
     assert math.isclose(fits["variance"], FITS_VARIANCE, rel_tol=1e-9), (label, fits)
     assert math.isclose(fits["std_dev"], math.sqrt(FITS_VARIANCE), rel_tol=1e-9), (label, fits)
     exceeds = stats["exceeds"]
-    assert exceeds["variance"] is None and exceeds["std_dev"] is None, (label, exceeds)
+    assert exceeds["variance"] is None, (label, exceeds)
+    assert exceeds["std_dev"] is not None, (label, exceeds)
+    assert math.isclose(exceeds["std_dev"], EXCEEDS_STD_DEV, rel_tol=1e-9), (label, exceeds)
+    assert exceeds.get("skewness") is not None, (label, exceeds)
+    assert abs(exceeds["skewness"]) <= 1e-9, (label, exceeds)
+    assert exceeds.get("kurtosis") is not None, (label, exceeds)
+    assert math.isclose(exceeds["kurtosis"], KURTOSIS, rel_tol=0, abs_tol=1e-4), (label, exceeds)
 
 
 @pytest.fixture

@@ -5,7 +5,9 @@
 //! variance times 103) and every sign-changing increment (2e308) overflow, and
 //! `variance` and `std_dev` used to be reported `null`. The blocks flip every
 //! four-lane SIMD lane too. `exceeds` is ten times the spread, a variance of
-//! about 1e310, which no `f64` holds: it still has to report `null`.
+//! about 1e310, which no `f64` holds: it still has to report `null`, while its
+//! standard deviation, about 1.005e155, and the skewness and kurtosis taken
+//! from it fit and are reported (#1150).
 //!
 //! `python/tests/test_large_spread_variance.py` is the Python twin.
 
@@ -21,6 +23,13 @@ const ROWS: usize = 104;
 
 /// 1.04e310 / 103 by exact arithmetic.
 const FITS_VARIANCE: f64 = 1.009_708_737_864_077_7e308;
+
+/// sqrt(1.04e312 / 103), the sample standard deviation of `exceeds`.
+const EXCEEDS_STD_DEV: f64 = 1.004_842_643_334_804_7e155;
+
+/// -2 * 103 / 101: the sample excess kurtosis of two equal halves of 104
+/// values, whatever their magnitude. Their skewness is 0.
+const KURTOSIS: f64 = -2.039_603_960_396_039_6;
 
 fn value(column: &str, row: usize) -> &'static str {
     match (column, (row / 4) % 2) {
@@ -142,14 +151,21 @@ fn profiles() -> Vec<(String, Vec<ColumnProfile>)> {
     profiles
 }
 
-/// Variance and standard deviation.
-fn spread(columns: &[ColumnProfile], name: &str) -> Result<(Option<f64>, Option<f64>), String> {
+/// Variance, standard deviation, skewness and kurtosis.
+type Spread = (Option<f64>, Option<f64>, Option<f64>, Option<f64>);
+
+fn spread(columns: &[ColumnProfile], name: &str) -> Result<Spread, String> {
     let column = columns
         .iter()
         .find(|column| column.name == name)
         .ok_or_else(|| format!("no column {name}"))?;
     match &column.stats {
-        ColumnStats::Numeric(stats) => Ok((stats.variance, stats.std_dev)),
+        ColumnStats::Numeric(stats) => Ok((
+            stats.variance,
+            stats.std_dev,
+            stats.skewness,
+            stats.kurtosis,
+        )),
         other => Err(format!("{name} has no numeric stats: {other:?}")),
     }
 }
@@ -164,7 +180,7 @@ fn every_path_reports_a_variance_that_fits() {
     let mut wrong = Vec::new();
     for (label, columns) in profiles() {
         match spread(&columns, "fits") {
-            Ok((variance, std_dev)) => {
+            Ok((variance, std_dev, _, _)) => {
                 if !close(variance, FITS_VARIANCE) || !close(std_dev, FITS_VARIANCE.sqrt()) {
                     wrong.push(format!(
                         "[{label}] fits: variance {variance:?}, std_dev {std_dev:?}"
@@ -173,10 +189,21 @@ fn every_path_reports_a_variance_that_fits() {
             }
             Err(error) => wrong.push(format!("[{label}] {error}")),
         }
-        // Guards against over-correction: this spread does not fit.
+        // Guards against over-correction: this variance does not fit.
         match spread(&columns, "exceeds") {
-            Ok((None, None)) => {}
-            other => wrong.push(format!("[{label}] exceeds: {other:?}")),
+            Ok((variance, std_dev, skewness, kurtosis)) => {
+                if variance.is_some()
+                    || !close(std_dev, EXCEEDS_STD_DEV)
+                    || !skewness.is_some_and(|value| value.abs() <= 1e-9)
+                    || !close(kurtosis, KURTOSIS)
+                {
+                    wrong.push(format!(
+                        "[{label}] exceeds: variance {variance:?}, std_dev {std_dev:?}, \
+                         skewness {skewness:?}, kurtosis {kurtosis:?}"
+                    ));
+                }
+            }
+            Err(error) => wrong.push(format!("[{label}] {error}")),
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");

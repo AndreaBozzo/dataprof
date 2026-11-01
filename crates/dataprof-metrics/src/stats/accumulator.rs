@@ -46,7 +46,9 @@
 /// repeated has a sample variance of about 1e308, and M2, that times n - 1,
 /// does not fit (#805). It is rescaled by the same factor once it would
 /// overflow, so `null` is reported only for a spread whose variance itself
-/// exceeds `f64`.
+/// exceeds `f64`. Its standard deviation usually fits, so M2 moves to a
+/// further scale, 2^-1000, once it overflows even at that one, and the standard
+/// deviation is taken at the scale M2 is held at (#1150).
 ///
 /// At the other end, the squared deviations of values near 1e-200 underflow
 /// to zero, and a varying column reported a variance of zero, which the
@@ -127,15 +129,29 @@ const LOST_SPREAD_PER_VALUE: f64 = f64::from_bits(1 << 40);
 /// 2^500, the factor each deviation is raised by before it is squared.
 const UNDERFLOW_HALF: f64 = f64::from_bits((1023 + 500) << 52);
 
+/// 2^-1000, the factor M2 is held at once it would overflow even at
+/// [`OVERFLOW_SCALE`]: a variance past about `f64::MAX * 2^64 / n`, whose
+/// standard deviation can still fit (#1150). M2 fits here up to
+/// `f64::MAX * 2^1000`, about 2e609, so the standard deviation is lost only
+/// past about 4e304 divided by the square root of the count. The square of
+/// [`SHRUNK_HALF`], as [`UNDERFLOW_SCALE`] is of [`UNDERFLOW_HALF`].
+const SHRUNK_SCALE: f64 = f64::from_bits((1023 - 1000) << 52);
+
+/// 2^-500, the factor each deviation is shrunk by before it is squared at
+/// [`SHRUNK_SCALE`]. A product of two deviations then overflows only past
+/// about 4e304 each, near the top of `f64`'s range.
+const SHRUNK_HALF: f64 = f64::from_bits((1023 - 500) << 52);
+
 /// The scale M2 is held at. M2 never decreases, so it only moves down this
 /// list: from [`Raised`](Self::Raised), where a tiny spread keeps its digits,
-/// to [`Unit`](Self::Unit), and to [`Reduced`](Self::Reduced) once it would
-/// overflow.
+/// to [`Unit`](Self::Unit), to [`Reduced`](Self::Reduced) once it would
+/// overflow, and to [`Shrunk`](Self::Shrunk) once it would overflow there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum M2Scale {
     Raised,
     Unit,
     Reduced,
+    Shrunk,
 }
 
 impl M2Scale {
@@ -145,6 +161,7 @@ impl M2Scale {
             Self::Raised => UNDERFLOW_SCALE,
             Self::Unit => 1.0,
             Self::Reduced => OVERFLOW_SCALE,
+            Self::Shrunk => SHRUNK_SCALE,
         }
     }
 
@@ -154,6 +171,7 @@ impl M2Scale {
             Self::Raised => UNDERFLOW_HALF,
             Self::Unit => 1.0,
             Self::Reduced => 1.0 / 4_294_967_296.0,
+            Self::Shrunk => SHRUNK_HALF,
         }
     }
 
@@ -161,17 +179,20 @@ impl M2Scale {
         match self {
             Self::Raised => Some(Self::Unit),
             Self::Unit => Some(Self::Reduced),
-            Self::Reduced => None,
+            Self::Reduced => Some(Self::Shrunk),
+            Self::Shrunk => None,
         }
     }
 
     /// `value`, held at this scale, held at `to` instead. Only called with
-    /// `to` at or after `self`, so the factor shrinks and nothing overflows.
+    /// `to` at or after `self`, so the factor shrinks. It is applied first:
+    /// a value held at [`Reduced`](Self::Reduced) can overflow at its true
+    /// scale on the way to [`Shrunk`](Self::Shrunk).
     fn convert(self, value: f64, to: Self) -> f64 {
         if self == to {
             value
         } else {
-            value / self.factor() * to.factor()
+            value * to.factor() / self.factor()
         }
     }
 }
@@ -344,6 +365,7 @@ impl NumericAccumulator {
             M2Scale::Raised => (delta * UNDERFLOW_HALF) * (deviation * UNDERFLOW_HALF),
             M2Scale::Unit => delta * deviation,
             M2Scale::Reduced => (delta * OVERFLOW_SCALE) * deviation,
+            M2Scale::Shrunk => (delta * SHRUNK_HALF) * (deviation * SHRUNK_HALF),
         });
 
         self.add_to_sum(high, low, false);
@@ -430,9 +452,9 @@ impl NumericAccumulator {
     /// increment at the scale it is given: the product at the true scale can
     /// underflow, or overflow, where the one at another scale fits.
     ///
-    /// An increment that still overflows at the reduced scale exceeds
-    /// `f64::MAX * 2^64`, so the variance it belongs to cannot be finite for
-    /// fewer than 2^64 values, and reporting it as overflowed is correct.
+    /// A total that still overflows at the shrunk scale exceeds
+    /// `f64::MAX * 2^1000`, about 2e609, and the standard deviation is reported
+    /// as overflowed with the variance.
     #[inline]
     fn add_to_m2(&mut self, m2: f64, scale: M2Scale, increment: impl Fn(M2Scale) -> f64) {
         let mut target = self.m2_scale.max(scale);
@@ -459,13 +481,12 @@ impl NumericAccumulator {
     }
 
     /// The square root of M2 divided by `denominator`, taken at the scale M2
-    /// is held at. Infinite or NaN where the variance is: an overflowing
-    /// spread reports no standard deviation either, as before #1088. NaN
-    /// where the spread was lost to underflow.
+    /// is held at, so it is finite where the variance overflows but M2, as
+    /// held, does not (#1150). Infinite or NaN where M2 is, and NaN where the
+    /// spread was lost to underflow.
     fn std_dev_over(&self, denominator: f64) -> f64 {
-        let variance = self.m2_over(denominator);
-        if !variance.is_finite() {
-            return variance.sqrt();
+        if !self.m2.is_finite() {
+            return self.m2.sqrt();
         }
         if self.spread_lost() {
             return f64::NAN;
@@ -551,6 +572,13 @@ impl NumericAccumulator {
             M2Scale::Raised => (delta * UNDERFLOW_HALF) * (delta * UNDERFLOW_HALF) * weight,
             M2Scale::Unit => delta * delta * weight,
             M2Scale::Reduced => (delta * OVERFLOW_SCALE) * delta * weight,
+            // The last scale: weighed before the square is completed, so a
+            // weight below one, as two single values have, cannot let the
+            // square overflow where the increment fits.
+            M2Scale::Shrunk => {
+                let gap = delta * SHRUNK_HALF;
+                gap * (gap * weight)
+            }
         });
         self.count += other.count;
 
@@ -606,7 +634,8 @@ impl NumericAccumulator {
     }
 
     /// Sample standard deviation, taken at the scale M2 is held at, so it is
-    /// finite where [`sample_variance`](Self::sample_variance) underflowed.
+    /// finite where [`sample_variance`](Self::sample_variance) underflowed or
+    /// overflowed and the standard deviation itself fits.
     pub fn sample_std_dev(&self) -> f64 {
         if self.count < 2 {
             return 0.0;
@@ -1424,9 +1453,27 @@ mod tests {
             assert!(accumulator.population_variance().is_finite(), "{path}");
         }
 
-        // Ten times the spread is a variance of about 1e310: still overflowed.
+        // Ten times the spread is a variance of about 1e310: still overflowed,
+        // but its standard deviation, ten times the one above, fits (#1150).
         let wider: Vec<f64> = values.iter().map(|value| value * 10.0).collect();
-        assert!(!accumulate(&wider).sample_variance().is_finite());
+        let mut merged = accumulate(&wider[..37]);
+        merged.merge(&accumulate(&wider[37..]));
+        let simd = crate::acceleration::simd::compute_stats_simd(&wider);
+        let std_dev = 10.0 * exact.sqrt();
+        for (path, accumulator) in [
+            ("single", accumulate(&wider)),
+            ("merged", merged),
+            ("simd", simd),
+        ] {
+            assert!(!accumulator.sample_variance().is_finite(), "{path}");
+            assert!(!accumulator.population_variance().is_finite(), "{path}");
+            let got = accumulator.sample_std_dev();
+            assert!(
+                (got - std_dev).abs() <= std_dev * 1e-14,
+                "{path}: std_dev {got}, exact {std_dev}"
+            );
+            assert!(accumulator.population_std_dev().is_finite(), "{path}");
+        }
     }
 
     /// 2^exponent, built from its bits so it is exact.
@@ -1618,6 +1665,26 @@ mod tests {
                 "split {split} variance {} vs {}",
                 merged.sample_variance(),
                 single.sample_variance()
+            );
+        }
+    }
+
+    /// At the shrunk scale a merged increment is the square of a scaled gap
+    /// times a weight, which is 0.5 for two single values. Squared before
+    /// weighing, the gap of `0.0` and `5e304` overflowed although the weighted
+    /// increment fits, and the merge lost a standard deviation a single pass
+    /// reports.
+    #[test]
+    fn merging_single_values_keeps_a_standard_deviation_that_fits() {
+        let single = accumulate(&[0.0, 5e304]);
+        let mut merged = accumulate(&[0.0]);
+        merged.merge(&accumulate(&[5e304]));
+        let expected = 5e304 / 2f64.sqrt();
+        for (path, accumulator) in [("single", single), ("merged", merged)] {
+            let got = accumulator.sample_std_dev();
+            assert!(
+                (got - expected).abs() <= expected * 1e-15,
+                "{path}: std_dev {got:e}, exact {expected:e}"
             );
         }
     }
