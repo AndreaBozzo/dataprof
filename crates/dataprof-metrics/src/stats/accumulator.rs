@@ -804,6 +804,55 @@ impl ParsedNumber {
             Self::Float(_) | Self::Unheld(_) => None,
         }
     }
+
+    /// The key two values share when they are the same number, so counting
+    /// them does not merge distinct values whose `f64` rounds alike (#1038).
+    /// An integer keys as one however it was read: a short float, a 64-bit
+    /// integer or a decimal with no fraction.
+    pub(crate) fn value_key(self) -> ValueKey {
+        match self {
+            Self::Integer(value) => ValueKey::Integer(value),
+            Self::Decimal { exact, .. } => exact.as_integer().map_or_else(
+                || {
+                    let (unscaled, scale) = exact.normalized();
+                    ValueKey::Decimal(unscaled, scale)
+                },
+                ValueKey::Integer,
+            ),
+            Self::Float(value) | Self::Unheld(value) => {
+                if value.fract() == 0.0 && value.abs() < i128::MAX as f64 {
+                    // Signed zeros both become 0.
+                    ValueKey::Integer(value as i128)
+                } else {
+                    ValueKey::Float(value.to_bits())
+                }
+            }
+        }
+    }
+
+    /// Orders two values by their exact value: by their nearest `f64`, then,
+    /// where those are equal, by what each holds beyond it.
+    pub(crate) fn value_cmp(self, other: Self) -> std::cmp::Ordering {
+        self.to_f64()
+            .total_cmp(&other.to_f64())
+            .then_with(|| self.remainder().total_cmp(&other.remainder()))
+    }
+
+    /// The exact value minus its nearest `f64`, zero where it is not held.
+    fn remainder(self) -> f64 {
+        self.exact()
+            .map_or(0.0, |exact| exact.low_part(self.to_f64()))
+    }
+}
+
+/// See [`ParsedNumber::value_key`]. A fraction keys as a decimal with no
+/// trailing zeros, so `2.50` and `2.5` written as decimals are one value; a
+/// fractional float keys by its bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ValueKey {
+    Integer(i128),
+    Decimal(i128, u32),
+    Float(u64),
 }
 
 /// The largest scale an [`ExactDecimal`] takes: `10^scale` is formed in two
@@ -837,6 +886,17 @@ impl ExactDecimal {
             return (unscaled % unit == 0).then_some(i128::from(unscaled / unit));
         }
         (self.unscaled % unit == 0).then_some(self.unscaled / unit)
+    }
+
+    /// The unscaled digits and scale with trailing zeros of the fraction
+    /// removed, one form for every way of writing the same decimal.
+    fn normalized(self) -> (i128, u32) {
+        let (mut unscaled, mut scale) = (self.unscaled, self.scale);
+        while scale > 0 && unscaled % 10 == 0 {
+            unscaled /= 10;
+            scale -= 1;
+        }
+        (unscaled, scale)
     }
 
     /// `self - other`, exact and then rounded, or `None` when bringing both to
