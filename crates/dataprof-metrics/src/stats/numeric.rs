@@ -795,6 +795,54 @@ mod tests {
         assert_eq!(leading.outlier_count, Some(2));
     }
 
+    /// Cents on 1.2e35 share one `f64`, and the part of each beyond it is
+    /// itself an `f64` of about 1e19, which cannot tell them apart: the sample
+    /// sorted out of order, and the quartile anchors gave an IQR of -0.0025
+    /// with every value an outlier. Exactly, the IQR is 0.025 and only `.09`
+    /// is outside the fences.
+    #[test]
+    fn wide_order_statistics_sort_decimals_a_cent_apart() {
+        let values: Vec<String> = ["01", "05", "02", "00", "09", "03", "01", "02"]
+            .iter()
+            .map(|cents| format!("123456789012345678901234567890123456.{cents}"))
+            .collect();
+        let stats = compute_numeric_stats(&values);
+        let iqr = stats.quartiles.and_then(|q| q.iqr).expect("an IQR");
+        assert!((iqr - 0.025).abs() < 1e-12, "iqr {iqr}");
+        assert_eq!(stats.outlier_count, Some(1));
+    }
+
+    /// Values past `i128` with one nearest `f64`, two held exactly and one read
+    /// as the float it spells: the comparator must stay a total order, or the
+    /// sort of a shuffled sample can panic (#1185 review).
+    #[test]
+    fn exact_and_float_values_sharing_an_f64_sort_consistently() {
+        let spellings = [
+            "170141183460469231731687303715884105727",
+            "170141183460469231731687303715884105726",
+            "170141183460469230000000000000000000000",
+        ];
+        let parsed: Vec<ParsedNumber> = spellings
+            .iter()
+            .map(|text| ParsedNumber::parse(text).unwrap())
+            .collect();
+        for a in &parsed {
+            for b in &parsed {
+                for c in &parsed {
+                    if a.value_cmp(*b).is_le() && b.value_cmp(*c).is_le() {
+                        assert!(a.value_cmp(*c).is_le(), "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+        // A shuffled sample long enough for the sort to check its comparator.
+        let cells: Vec<String> = (0..97)
+            .map(|i| spellings[(i * 7 + i / 5) % 3].to_string())
+            .collect();
+        let stats = compute_numeric_stats(&cells);
+        assert!(stats.quartiles.is_some());
+    }
+
     /// One value read as a float, as an integer past 2^53 or as a decimal is
     /// one value however it is written, so its spellings count together for
     /// the mode: 1e20 written in full reads as a float, and with a zero

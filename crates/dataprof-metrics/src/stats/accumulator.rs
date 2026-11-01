@@ -830,12 +830,25 @@ impl ParsedNumber {
         }
     }
 
-    /// Orders two values by their exact value: by their nearest `f64`, then,
-    /// where those are equal, by what each holds beyond it.
+    /// Orders two values by their exact value, as a total order: by their
+    /// nearest `f64`, then by what each holds beyond it, then, among values
+    /// still tied, a float before a held value and held values exactly.
+    ///
+    /// The remainder is an `f64` too, rounded from the exact one, so it never
+    /// orders two values against their exact order, but it can tie values it
+    /// cannot tell apart: cents near 1.2e35, whose remainders are about 1e19,
+    /// and every value past `i128`, whose remainder reads as 0. The last key
+    /// resolves those. Each key is an order on its own, so the whole is one:
+    /// comparing held values exactly first and the rest by remainder made
+    /// two held values unequal while both equalled a float (#1185 review).
     pub(crate) fn value_cmp(self, other: Self) -> std::cmp::Ordering {
         self.to_f64()
             .total_cmp(&other.to_f64())
             .then_with(|| self.remainder().total_cmp(&other.remainder()))
+            .then_with(|| match (self.exact(), other.exact()) {
+                (Some(mine), Some(theirs)) => mine.exact_cmp(theirs),
+                (mine, theirs) => mine.is_some().cmp(&theirs.is_some()),
+            })
     }
 
     /// `self - other`, exactly where both are held and then rounded once;
@@ -897,6 +910,54 @@ impl ExactDecimal {
             return (unscaled % unit == 0).then_some(i128::from(unscaled / unit));
         }
         (self.unscaled % unit == 0).then_some(self.unscaled / unit)
+    }
+
+    /// The order of two decimals, exactly and whatever their scales: by sign,
+    /// then by the digits of their magnitudes, so no product can overflow.
+    pub(crate) fn exact_cmp(self, other: Self) -> std::cmp::Ordering {
+        // Repeated values tie on every earlier key and land here, so the
+        // common cases stay in `i128`: the digits are only the fallback.
+        if self.scale == other.scale {
+            return self.unscaled.cmp(&other.unscaled);
+        }
+        let scale = self.scale.max(other.scale);
+        if let (Some(mine), Some(theirs)) = (
+            scale_up(self.unscaled, scale - self.scale),
+            scale_up(other.unscaled, scale - other.scale),
+        ) {
+            return mine.cmp(&theirs);
+        }
+        let sign = self.unscaled.signum().cmp(&other.unscaled.signum());
+        if sign.is_ne() {
+            return sign;
+        }
+        let magnitude = self.magnitude_digits().cmp(&other.magnitude_digits());
+        if self.unscaled < 0 {
+            magnitude.reverse()
+        } else {
+            magnitude
+        }
+    }
+
+    /// The magnitude as (digit count of the whole part, whole digits,
+    /// fraction digits padded to the longest fraction an `ExactDecimal`
+    /// takes), which order as the magnitudes do.
+    fn magnitude_digits(self) -> (usize, String, String) {
+        let (unscaled, scale) = self.normalized();
+        let digits = unscaled.unsigned_abs().to_string();
+        let scale = scale as usize;
+        let (whole, fraction) = if digits.len() > scale {
+            let (whole, fraction) = digits.split_at(digits.len() - scale);
+            (whole.to_string(), fraction.to_string())
+        } else {
+            (
+                String::new(),
+                format!("{}{digits}", "0".repeat(scale - digits.len())),
+            )
+        };
+        let whole = whole.trim_start_matches('0').to_string();
+        let width = MAX_DECIMAL_SCALE as usize;
+        (whole.len(), whole, format!("{fraction:0<width$}"))
     }
 
     /// The unscaled digits and scale with trailing zeros of the fraction
@@ -1758,6 +1819,25 @@ mod tests {
                 "{path}: std_dev {got:e}, exact {expected:e}"
             );
         }
+    }
+
+    /// Decimals whose common scale leaves `i128` are ordered by their digits,
+    /// sign first, as the ones that fit are by their unscaled values.
+    #[test]
+    fn exact_cmp_orders_decimals_past_a_common_scale() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let decimal = |unscaled: i128, scale: u32| ExactDecimal { unscaled, scale };
+        let big = decimal(10_i128.pow(37), 0);
+        let tiny = decimal(1, 37);
+        assert_eq!(big.exact_cmp(tiny), Greater);
+        assert_eq!(tiny.exact_cmp(big), Less);
+        assert_eq!(
+            decimal(-(10_i128.pow(37)), 0).exact_cmp(decimal(-1, 37)),
+            Less
+        );
+        assert_eq!(decimal(-1, 37).exact_cmp(big), Less);
+        assert_eq!(decimal(250, 2).exact_cmp(decimal(25, 1)), Equal);
+        assert_eq!(decimal(0, 5).exact_cmp(decimal(0, 0)), Equal);
     }
 
     #[test]
