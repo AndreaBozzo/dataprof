@@ -143,13 +143,19 @@ Integers of 2^53 or more in magnitude, up to the 64-bit range, are not exact as
 `f64`. `variance`, `std_dev`, `skewness` and `kurtosis` are computed from the
 exact integers on every input path, so epoch nanoseconds a few units apart keep
 their spread (#877). `mean` sums the exact integers in a compensated `f64`
-sum. `min`, `max`, `median`, quartiles, `mode` and `outlier_count` are taken
-from the nearest `f64` of each value.
+sum. `mode` is counted over the exact values, so distinct values that round
+alike do not tie for it, and is reported as the nearest `f64` of the exact
+mode. `quartiles.iqr` and the fences `outlier_count` uses come from exact
+differences between neighbouring values, so a spread of a few units has an IQR
+of a few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken from
+the nearest `f64` of each value, so `iqr` can differ from `q3 - q1` as
+reported.
 
 Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
-deviations, so cents on 10^15 keep their spread, and the other statistics are
-taken in `f64` as above. A column typed as a decimal (an Arrow decimal of any
+deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
+`outlier_count` are exact as above, and the other statistics are taken in
+`f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
 polars) is held exactly from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads

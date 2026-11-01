@@ -66,16 +66,13 @@ PLACES = {"null_percentage": 2, "coefficient_of_variation": 2, "quartiles": 2}
 #: (case, route, field) -> the issue that owns the disagreement. A route of
 #: "*" covers every route the case runs on.
 KNOWN: dict[tuple[str, str, str], str] = {
-    # 64-bit integer extrema and order statistics are taken in f64, so values
-    # past 2^53 collapse: the extremes round, distinct values tie for a mode,
-    # and the quartiles of a narrow spread coincide.
+    # 64-bit integer extrema are reported as f64, so past 2^53 they round to a
+    # neighbour; an exact form needs a schema change.
     **{
         (case, "*", field): "#1038"
         for case in ("above_2_pow_53", "epoch_nanoseconds", "uint64_edge")
-        for field in ("min", "max", "mode")
+        for field in ("min", "max")
     },
-    ("epoch_nanoseconds", "*", "quartiles.iqr"): "#1038",
-    ("uint64_edge", "*", "quartiles.iqr"): "#1038",
 }
 
 Route = tuple[str, Callable[[], dp.ProfileReport]]

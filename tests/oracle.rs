@@ -34,20 +34,14 @@ const REL_TOLERANCE: f64 = 1e-12;
 /// "*" covers every route the case runs on. The same entries as the Python
 /// twin, for the routes this file runs.
 const KNOWN: &[(&str, &str, &str, &str)] = &[
-    // 64-bit integer extrema and order statistics are taken in f64, so values
-    // past 2^53 collapse: the extremes round, distinct values tie for a mode,
-    // and the quartiles of a narrow spread coincide.
+    // 64-bit integer extrema are reported as `f64`, so past 2^53 they round
+    // to a neighbour; an exact form needs a schema change.
     ("above_2_pow_53", "*", "min", "#1038"),
     ("above_2_pow_53", "*", "max", "#1038"),
-    ("above_2_pow_53", "*", "mode", "#1038"),
     ("epoch_nanoseconds", "*", "min", "#1038"),
     ("epoch_nanoseconds", "*", "max", "#1038"),
-    ("epoch_nanoseconds", "*", "mode", "#1038"),
-    ("epoch_nanoseconds", "*", "quartiles.iqr", "#1038"),
     ("uint64_edge", "*", "min", "#1038"),
     ("uint64_edge", "*", "max", "#1038"),
-    ("uint64_edge", "*", "mode", "#1038"),
-    ("uint64_edge", "*", "quartiles.iqr", "#1038"),
 ];
 
 #[derive(Debug, Clone, PartialEq)]

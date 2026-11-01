@@ -1,5 +1,6 @@
 use crate::acceleration::simd::compute_stats_auto;
-use crate::stats::ParsedNumber;
+use crate::stats::accumulator::ValueKey;
+use crate::stats::{ExactDecimal, ParsedNumber};
 use crate::types::{ColumnStats, NumericStats, Quartiles};
 use std::collections::HashMap;
 
@@ -83,28 +84,32 @@ fn compute_parsed_stats(
     sorted_data.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let median = calculate_median(&sorted_data);
-    let quartiles = calculate_quartiles(&sorted_data);
-    let mode = calculate_mode(&sample_data);
+    let mut quartiles = calculate_quartiles(&sorted_data);
     let coefficient_of_variation =
         std_dev.and_then(|value| calculate_coefficient_of_variation(value, mean));
+
+    // A wide column's sample, held exactly: its rounded values can tie or
+    // coincide where the exact ones do not.
+    let reservoir;
+    let wide_sample: &[ParsedNumber] = if is_approximate == Some(true) && wide {
+        reservoir = reservoir_sample(&parsed, SAMPLE_THRESHOLD);
+        &reservoir
+    } else {
+        &parsed
+    };
+    let pivot = if wide { exact_pivot(wide_sample) } else { None };
 
     // Shape estimators use moments from the same population. If a reservoir
     // was needed, its mean and sample deviation belong with its higher moments.
     // They do not depend on a shift, so a wide column takes them from exact
     // deviations: the rounded values would standardize to multiples of the
     // `f64` spacing over a spread far smaller than it.
-    let deviations;
-    let shape_data: &[f64] = if wide {
-        let sample = if is_approximate == Some(true) {
-            reservoir_sample(&parsed, SAMPLE_THRESHOLD)
-        } else {
-            parsed
-        };
-        deviations = deviations_from_pivot(&sample);
-        &deviations
+    let deviations = if wide {
+        deviations_from(wide_sample, pivot)
     } else {
-        &sample_data
+        Vec::new()
     };
+    let shape_data: &[f64] = if wide { &deviations } else { &sample_data };
     let shape_base = if wide || is_approximate == Some(true) {
         compute_stats_auto(shape_data)
     } else {
@@ -118,7 +123,28 @@ fn compute_parsed_stats(
     // Per-column outlier count using the same Tukey IQR rule as the global
     // accuracy.outlier_ratio dimension (k = 1.5). Returns `None` for tiny
     // samples to mirror the global metric's behaviour.
-    let outlier_count = count_outliers_iqr(&numbers, quartiles.as_ref(), 4);
+    //
+    // A wide column counts its mode over exact values, and takes the IQR and
+    // the outlier fences from exact differences between its values: rounded,
+    // distinct values tie for a mode, and the quartiles of a spread narrower
+    // than the `f64` spacing coincide (#1038).
+    let (mode, outlier_count) = if wide {
+        let mut sorted_sample = wide_sample.to_vec();
+        sorted_sample.sort_by(|a, b| a.value_cmp(*b));
+        let tukey = ExactTukey::new(&sorted_sample, TUKEY_K);
+        if let (Some(reported), Some(tukey)) = (quartiles.as_mut(), tukey.as_ref()) {
+            reported.iqr = tukey.iqr;
+        }
+        let outliers = tukey
+            .filter(|_| parsed.len() >= 4)
+            .map(|tukey| tukey.count_outliers(&parsed));
+        (calculate_exact_mode(wide_sample), outliers)
+    } else {
+        (
+            calculate_mode(&sample_data),
+            count_outliers_iqr(&numbers, quartiles.as_ref(), 4),
+        )
+    };
 
     (
         NumericStats {
@@ -323,19 +349,25 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
     value.is_finite().then_some(value)
 }
 
-/// Each value minus the first one held exactly, an integer beyond 2^53 or a
-/// decimal beyond `f64`, with the differences between exact values taken
-/// exactly. Values near 1.76e18 sit 256 apart as `f64`, so a spread of a few
-/// units only survives as deviations (#877), and so does a spread of cents on
-/// 10^15 (#1149).
-fn deviations_from_pivot(values: &[ParsedNumber]) -> Vec<f64> {
-    let Some((pivot, pivot_high)) = values
-        .iter()
-        .find_map(|number| Some((number.exact()?, number.to_f64())))
-    else {
+/// The first value held exactly, an integer beyond 2^53 or a decimal beyond
+/// `f64`, with its nearest `f64` and the remainder beyond it: the pivot
+/// [`deviations_from`] measures from.
+fn exact_pivot(values: &[ParsedNumber]) -> Option<(ExactDecimal, f64, f64)> {
+    values.iter().find_map(|number| {
+        let exact = number.exact()?;
+        let high = number.to_f64();
+        Some((exact, high, exact.low_part(high)))
+    })
+}
+
+/// Each value minus `pivot`, with the differences between exact values taken
+/// exactly; every value as its `f64` when there is no pivot. Values near
+/// 1.76e18 sit 256 apart as `f64`, so a spread of a few units only survives
+/// as deviations (#877), and so does a spread of cents on 10^15 (#1149).
+fn deviations_from(values: &[ParsedNumber], pivot: Option<(ExactDecimal, f64, f64)>) -> Vec<f64> {
+    let Some((pivot, pivot_high, pivot_low)) = pivot else {
         return values.iter().map(|number| number.to_f64()).collect();
     };
-    let pivot_low = pivot.low_part(pivot_high);
     values
         .iter()
         .map(|number| {
@@ -345,6 +377,97 @@ fn deviations_from_pivot(values: &[ParsedNumber]) -> Vec<f64> {
                 .unwrap_or_else(|| (number.to_f64() - pivot_high) - pivot_low)
         })
         .collect()
+}
+
+/// The Tukey multiplier the per-column outlier count uses.
+const TUKEY_K: f64 = 1.5;
+
+/// Tukey's IQR rule over values held exactly (#1038). Each quartile is
+/// interpolated between two neighbouring values (Type 7), and the IQR and the
+/// fences are formed from exact differences between those values and the one
+/// compared, each rounded once. Measuring every value from one distant pivot
+/// instead would round a spread of small values to nothing beside a large one.
+struct ExactTukey<'a> {
+    /// The value at or below each quartile, and the quartile's distance
+    /// above it.
+    q1_anchor: &'a ParsedNumber,
+    q1_offset: f64,
+    q3_anchor: &'a ParsedNumber,
+    q3_offset: f64,
+    /// `q3 - q1`, or `None` when it exceeds the `f64` range.
+    iqr: Option<f64>,
+    k: f64,
+}
+
+impl<'a> ExactTukey<'a> {
+    /// `None` below four values, as [`calculate_quartiles`].
+    fn new(sorted: &'a [ParsedNumber], k: f64) -> Option<Self> {
+        if sorted.len() < 4 {
+            return None;
+        }
+        let quartile = |p: f64| {
+            let position = p * (sorted.len() - 1) as f64;
+            let (lower, upper) = (position.floor() as usize, position.ceil() as usize);
+            let weight = position - lower as f64;
+            // A weight of zero leaves the anchor: an infinite difference to
+            // the next value must not turn that into NaN.
+            let offset = if weight == 0.0 {
+                0.0
+            } else {
+                weight * sorted[upper].minus_value(sorted[lower])
+            };
+            (&sorted[lower], offset)
+        };
+        let (q1_anchor, q1_offset) = quartile(0.25);
+        let (q3_anchor, q3_offset) = quartile(0.75);
+        let iqr = q3_anchor.minus_value(*q1_anchor) + q3_offset - q1_offset;
+        Some(Self {
+            q1_anchor,
+            q1_offset,
+            q3_anchor,
+            q3_offset,
+            iqr: iqr.is_finite().then_some(iqr),
+            k,
+        })
+    }
+
+    /// Values below `q1 - k·IQR` or above `q3 + k·IQR`, each compared by its
+    /// exact difference from the nearer quartile's anchor. An IQR beyond the
+    /// `f64` range puts both fences beyond it, as in [`count_outliers_iqr`].
+    fn count_outliers(&self, values: &[ParsedNumber]) -> usize {
+        let Some(iqr) = self.iqr else {
+            return 0;
+        };
+        let below = self.q1_offset - self.k * iqr;
+        let above = self.q3_offset + self.k * iqr;
+        values
+            .iter()
+            .filter(|value| {
+                value.minus_value(*self.q1_anchor) < below
+                    || value.minus_value(*self.q3_anchor) > above
+            })
+            .count()
+    }
+}
+
+/// [`calculate_mode`] over exact values: the most frequent value, the
+/// smallest of those tied, as its nearest `f64`; `None` when every value is
+/// distinct (#1038).
+fn calculate_exact_mode(values: &[ParsedNumber]) -> Option<f64> {
+    let mut counts: HashMap<ValueKey, (usize, ParsedNumber)> = HashMap::new();
+    for &number in values {
+        counts.entry(number.value_key()).or_insert((0, number)).0 += 1;
+    }
+    let max_freq = counts.values().map(|(count, _)| *count).max()?;
+    if max_freq == 1 {
+        return None;
+    }
+    counts
+        .values()
+        .filter(|(count, _)| *count == max_freq)
+        .map(|(_, number)| *number)
+        .min_by(|a, b| a.value_cmp(*b))
+        .map(ParsedNumber::to_f64)
 }
 
 /// Reservoir sampling for large datasets, seeded so the sample is the same
@@ -567,6 +690,130 @@ mod tests {
         assert_eq!(constant.variance, Some(0.0));
         assert_eq!(constant.std_dev, Some(0.0));
         assert_eq!(constant.mean, 1e9);
+    }
+
+    fn cells(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// Distinct values past what `f64` holds round alike, and tied for a mode
+    /// that named a value which does not occur (#1038).
+    #[test]
+    fn wide_mode_counts_exact_values() {
+        let distinct = compute_numeric_stats(&cells(&[
+            "9007199254740993",
+            "9007199254740995",
+            "9007199254740997",
+        ]));
+        assert_eq!(distinct.mode, None);
+
+        let (decimals, _) = compute_decimal_stats_with_parsed_count(&cells(&[
+            "99999999999999999999.99",
+            "99999999999999999999.98",
+            "0.01",
+        ]));
+        assert_eq!(decimals.mode, None);
+
+        // Exactly repeated, the repeat is the mode, as its nearest `f64`.
+        let repeated = compute_numeric_stats(&cells(&[
+            "9007199254740993",
+            "9007199254740993",
+            "9007199254740995",
+        ]));
+        assert_eq!(repeated.mode, Some(9007199254740993_i64 as f64));
+    }
+
+    /// Values near 1.76e18 sit 256 apart as `f64`, so the quartiles of a
+    /// spread of a few units coincided and the IQR read 0 (#1038). 23/4 from
+    /// the exact values.
+    #[test]
+    fn wide_iqr_is_taken_from_exact_values() {
+        let epoch = compute_numeric_stats(&cells(&[
+            "1759700000123456789",
+            "1759700000123456791",
+            "1759700000123456795",
+            "1759700000123456800",
+        ]));
+        assert_eq!(epoch.quartiles.and_then(|q| q.iqr), Some(5.75));
+    }
+
+    /// Near 1.76e18 `f64` values sit 256 apart, and fences taken from rounded
+    /// quartiles snap to the same grid as the values. Exactly, the first value
+    /// is 404 below the next and about 6 below the lower fence, an outlier;
+    /// rounded, it fell inside the fence, from the rounded quartiles and from
+    /// the exact IQR beside them alike (#1038).
+    #[test]
+    fn wide_outliers_are_counted_against_exact_fences() {
+        let stats = compute_numeric_stats(&cells(&[
+            "1759700000123456512",
+            "1759700000123456916",
+            "1759700000123456940",
+            "1759700000123456945",
+            "1759700000123457061",
+            "1759700000123457175",
+            "1759700000123457320",
+            "1759700000123457409",
+        ]));
+        assert_eq!(stats.outlier_count, Some(1));
+    }
+
+    /// One large exact value beside small ones: measured from it, the small
+    /// values all rounded to one deviation, and the IQR of a spread the `f64`
+    /// values keep read 0. The small values are compared with each other, so
+    /// the IQR and the outliers are those of the rounded values, which are
+    /// exact here (review of #1180).
+    #[test]
+    fn wide_order_statistics_keep_a_small_spread_beside_a_large_value() {
+        let trailing = compute_numeric_stats(&cells(&[
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "100",
+            "1759700000123456789",
+        ]));
+        assert_eq!(trailing.quartiles.and_then(|q| q.iqr), Some(5.5));
+        assert_eq!(trailing.outlier_count, Some(2));
+
+        let leading = compute_numeric_stats(&cells(&[
+            "1759700000123456789",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "100",
+        ]));
+        assert_eq!(leading.quartiles.and_then(|q| q.iqr), Some(26.75));
+        assert_eq!(leading.outlier_count, Some(2));
+    }
+
+    /// One value read as a float, as an integer past 2^53 or as a decimal is
+    /// one value however it is written, so its spellings count together for
+    /// the mode: 1e20 written in full reads as a float, and with a zero
+    /// fraction as a decimal; trailing zeros of a fraction do not matter.
+    #[test]
+    fn exact_mode_counts_one_value_however_it_is_written() {
+        let integers = compute_numeric_stats(&cells(&[
+            "100000000000000000000",
+            "100000000000000000000.0",
+            "9007199254740993",
+        ]));
+        assert_eq!(integers.mode, Some(1e20));
+
+        let (fractions, _) = compute_decimal_stats_with_parsed_count(&cells(&[
+            "99999999999999999999.99",
+            "99999999999999999999.990",
+            "0.01",
+        ]));
+        assert_eq!(fractions.mode, Some(99999999999999999999.99_f64));
     }
 
     /// The batch path has no exact aggregates to fall back on, so a spread
