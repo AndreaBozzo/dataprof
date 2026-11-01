@@ -6,8 +6,10 @@ constant column: 0.0 at 1e-200, and a drifting kurtosis already at 1e-160. They
 do not depend on scale, so every column below must report the coefficient of
 variation, skewness and kurtosis of the same values at unit scale, from 1e-300
 to 1e100. A variance below ``f64``'s range is reported as absent, as one above
-it is (#805). From 1e160 the spread itself overflows, and below about 1e-304
-subnormal rounding takes its digits; every statistic derived from it is then
+it is (#805), from 1e160, where the standard deviation and what follows from it
+are kept too (#1150). At 1.5e307 a squared deviation overflows even at the
+smallest scale the sum of squares is held at, and below about 1e-304 subnormal
+rounding takes the spread's digits; every statistic derived from it is then
 absent rather than wrong.
 
 ``cycled`` repeats its pattern every row, so each four-lane SIMD lane is
@@ -39,8 +41,8 @@ SHAPES = {
     "blocked": [PATTERN[(row // 4) % 4] for row in range(ROWS)],
 }
 #: Scale -> what the variance, about the scale squared, does in f64: "fits",
-#: "underflows" (reported absent, the rest kept), "overflows" or "lost" to
-#: subnormal rounding (all absent).
+#: "underflows" or "exceeds" (reported absent, the rest kept), "overflows" or
+#: "lost" to subnormal rounding (all absent).
 SCALES = {
     "1": "fits",
     "1e-160": "fits",
@@ -49,8 +51,9 @@ SCALES = {
     "1e-313": "lost",
     "5e-324": "lost",
     "1e100": "fits",
-    "1e160": "overflows",
-    "1e300": "overflows",
+    "1e160": "exceeds",
+    "1e300": "exceeds",
+    "1.5e307": "overflows",
 }
 COLUMNS: dict[str, list[float]] = {
     f"{shape}_{scale}": [value * float(scale) for value in values]

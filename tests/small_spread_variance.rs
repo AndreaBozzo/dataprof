@@ -5,9 +5,12 @@
 //! described a constant column. They do not depend on scale, so every column
 //! from 1e-300 to 1e100 must report those of the same values at unit scale, and
 //! a standard deviation scaled with the values. A variance below `f64`'s range
-//! is reported as `null`, as one above it is (#805). From 1e160 the spread
-//! itself overflows, and below about 1e-304 subnormal rounding takes its
-//! digits; every statistic derived from it is then absent rather than wrong.
+//! is reported as `null`, as one above it is (#805), from 1e160, where the
+//! standard deviation and what follows from it are kept too (#1150). Near the
+//! top of `f64`'s range, at 1.5e307, a squared deviation overflows even at the
+//! smallest scale M2 is held at, and below about 1e-304 subnormal rounding
+//! takes the spread's digits; every statistic derived from it is then absent
+//! rather than wrong.
 //!
 //! `cycled` repeats its pattern every row, so each four-lane SIMD lane is
 //! constant and the spread is all in the merge of the lanes; `blocked` repeats
@@ -32,13 +35,16 @@ enum Fate {
     Fits,
     /// Reported `null`; the standard deviation and what follows from it kept.
     Underflows,
+    /// Reported `null` for being too large; the standard deviation and what
+    /// follows from it kept (#1150).
+    Exceeds,
     /// The standard deviation and everything derived from it absent too.
     Overflows,
     /// Lost to subnormal rounding: absent as for `Overflows`.
     Lost,
 }
 
-const SCALES: [(&str, Fate); 9] = [
+const SCALES: [(&str, Fate); 10] = [
     ("1", Fate::Fits),
     ("1e-160", Fate::Fits),
     ("1e-200", Fate::Underflows),
@@ -46,8 +52,9 @@ const SCALES: [(&str, Fate); 9] = [
     ("1e-313", Fate::Lost),
     ("5e-324", Fate::Lost),
     ("1e100", Fate::Fits),
-    ("1e160", Fate::Overflows),
-    ("1e300", Fate::Overflows),
+    ("1e160", Fate::Exceeds),
+    ("1e300", Fate::Exceeds),
+    ("1.5e307", Fate::Overflows),
 ];
 
 fn names() -> Vec<String> {
