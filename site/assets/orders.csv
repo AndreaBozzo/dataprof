@@ -1,0 +1,9 @@
+order_id,amount,region
+101,10,north
+102,20,south
+103,20,
+104,30,north
+105,30,south
+106,30,north
+107,40,
+108,60,south
