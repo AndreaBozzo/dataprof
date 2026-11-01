@@ -714,6 +714,52 @@
       ],
       "type": "object"
     },
+    "ExactNumericStats": {
+      "description": "The order statistics of an integer or decimal column, exactly, as\ncanonical decimal strings: no exponent, no trailing zeros in a fraction,\n`-` for a negative value (#1038). An integer past 2^53 or a decimal with\nmore digits than `f64` keeps is rounded in the `f64` fields beside these.\n\nPresent on every integer column and every decimal-typed column, absent on\na float column. Each field covers what the `f64` field of the same name\ncovers: `min` and `max` every value, the others the same sample, and each\nis present exactly when that field is.",
+      "properties": {
+        "max": {
+          "type": "string"
+        },
+        "median": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "min": {
+          "type": "string"
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "q1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "q2": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "q3": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
     "ExecutionMetadata": {
       "description": "Metadata about the profiling execution.",
       "properties": {
@@ -1055,6 +1101,17 @@
             "number",
             "null"
           ]
+        },
+        "exact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExactNumericStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The order statistics exactly, on an integer or decimal column; `None`\non a float column, whose values are not held exactly. See\n[`ExactNumericStats`]."
         },
         "is_approximate": {
           "type": [
@@ -1565,6 +1622,16 @@
           "type": [
             "number",
             "null"
+          ]
+        },
+        "exact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExactNumericStats"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "false_count": {

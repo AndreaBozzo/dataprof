@@ -65,15 +65,11 @@ PLACES = {"null_percentage": 2, "coefficient_of_variation": 2, "quartiles": 2}
 
 #: (case, route, field) -> the issue that owns the disagreement. A route of
 #: "*" covers every route the case runs on.
-KNOWN: dict[tuple[str, str, str], str] = {
-    # 64-bit integer extrema are reported as f64, so past 2^53 they round to a
-    # neighbour; an exact form needs a schema change.
-    **{
-        (case, "*", field): "#1038"
-        for case in ("above_2_pow_53", "epoch_nanoseconds", "uint64_edge")
-        for field in ("min", "max")
-    },
-}
+KNOWN: dict[tuple[str, str, str], str] = {}
+
+#: Every typed route hands a decimal column to the profiler as a decimal, so its
+#: order statistics are exact; the text routes read it as a float column.
+_ARROW_DECIMAL_ROUTES: tuple[str, ...] = tuple(_oracle_fixture.TYPED_ROUTES)
 
 Route = tuple[str, Callable[[], dp.ProfileReport]]
 Mismatch = tuple[str, str, str, Any, Any]
@@ -315,6 +311,7 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
     # Past 2^53 an exact integer can fall between two binary64 values; either
     # neighbour is a faithful float, so the bound is half an ulp.
     wide = case["dtype"] in ("int64", "uint64") and any(abs(int(v)) > 2**53 for v in present)
+    _check_exact(case, route, column, stats, found)
     if case.get("relative"):
         # 4dp carries no information at this magnitude.
         for name in ("mean", "variance", "std_dev", "min", "max"):
@@ -324,17 +321,10 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
     for name in ("variance", "std_dev", "skewness", "kurtosis", "coefficient_of_variation"):
         compare(name, stats.get(name), expected[name])
     compare("outlier_count", stats.get("outlier_count"), expected["outlier_count"])
-    for name in ("min", "max"):
-        if wide:
-            # An exact integer extreme needs an integer-preserving value;
-            # comparing after float() would erase the defect (#1038).
-            actual = stats.get(name)
-            if actual is None or Fraction(actual) != Fraction(expected[name]):
-                found.append((case["id"], route, name, expected[name], actual))
-        else:
-            compare(name, stats.get(name), expected[name])
+    # Past 2^53 the float fields are faithful at best; `exact` carries the
+    # values themselves (#1038).
     how = "faithful" if wide else "serialized"
-    for name in ("mean", "median", "mode"):
+    for name in ("min", "max", "mean", "median", "mode"):
         compare(name, stats.get(name), expected[name], how)
     quartiles = stats.get("quartiles")
     if expected["quartiles"] is None:
@@ -343,6 +333,42 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
         for name, value in expected["quartiles"].items():
             compare(f"quartiles.{name}", (quartiles or {}).get(name), value, how)
     return found
+
+
+def _check_exact(
+    case: dict[str, Any],
+    route: str,
+    column: dict[str, Any],
+    stats: dict[str, Any],
+    found: list[Mismatch],
+) -> None:
+    """The exact order statistics (#1038): present on every integer column and
+    on a decimal one read from Arrow, and where present each equal to the exact
+    answer."""
+    exact = stats.get("exact")
+    expected = case["expected"]
+    arrow_decimal = case["dtype"].startswith("decimal") and route in _ARROW_DECIMAL_ROUTES
+    if exact is None and (column.get("data_type") == "integer" or arrow_decimal):
+        found.append((case["id"], route, "exact", "present", None))
+    if exact is None:
+        return
+    quartiles = expected.get("quartiles") or {}
+    wanted = {
+        "min": expected["min"],
+        "max": expected["max"],
+        "median": expected["median"],
+        "mode": expected["mode"],
+        **{name: quartiles.get(name) for name in ("q1", "q2", "q3")},
+    }
+    for name, value in wanted.items():
+        actual = exact.get(name)
+        good = (
+            actual is None
+            if value is None
+            else (actual is not None and Fraction(actual) == Fraction(value))
+        )
+        if not good:
+            found.append((case["id"], route, f"exact.{name}", value, actual))
 
 
 def _owner(mismatch: Mismatch) -> str | None:

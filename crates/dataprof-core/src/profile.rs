@@ -106,6 +106,31 @@ pub struct Quartiles {
     pub iqr: Option<f64>,
 }
 
+/// The order statistics of an integer or decimal column, exactly, as
+/// canonical decimal strings: no exponent, no trailing zeros in a fraction,
+/// `-` for a negative value (#1038). An integer past 2^53 or a decimal with
+/// more digits than `f64` keeps is rounded in the `f64` fields beside these.
+///
+/// Present on every integer column and every decimal-typed column, absent on
+/// a float column. Each field covers what the `f64` field of the same name
+/// covers: `min` and `max` every value, the others the same sample, and each
+/// is present exactly when that field is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExactNumericStats {
+    pub min: String,
+    pub max: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q1: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q2: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q3: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
 /// A value and its frequency count within a column.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FrequencyItem {
@@ -196,6 +221,11 @@ pub struct NumericStats {
     /// minimum or non-numeric column).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outlier_count: Option<usize>,
+    /// The order statistics exactly, on an integer or decimal column; `None`
+    /// on a float column, whose values are not held exactly. See
+    /// [`ExactNumericStats`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact: Option<ExactNumericStats>,
 }
 
 impl NumericStats {
@@ -214,6 +244,7 @@ impl NumericStats {
             kurtosis: None,
             is_approximate: None,
             outlier_count: None,
+            exact: None,
         }
     }
 }
@@ -419,6 +450,7 @@ mod tests {
                 kurtosis: Some(-1.2),
                 is_approximate: Some(false),
                 outlier_count: Some(0),
+                exact: None,
             }),
             patterns: Some(vec![]),
         };

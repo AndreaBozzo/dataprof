@@ -1,7 +1,7 @@
 use crate::acceleration::simd::compute_stats_auto;
 use crate::stats::accumulator::ValueKey;
 use crate::stats::{ExactDecimal, ParsedNumber};
-use crate::types::{ColumnStats, NumericStats, Quartiles};
+use crate::types::{ColumnStats, ExactNumericStats, NumericStats, Quartiles};
 use std::collections::HashMap;
 
 const SAMPLE_THRESHOLD: usize = 10_000;
@@ -25,18 +25,28 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
 /// cells that parsed as a finite number. Lets callers derive invalid-value
 /// counts without a second parse pass over the data.
 pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
-    compute_parsed_stats(data, ParsedNumber::parse)
+    compute_parsed_stats(data, ParsedNumber::parse, false)
+}
+
+/// [`compute_numeric_stats_with_parsed_count`] for an integer column, which
+/// also reports its order statistics exactly in `exact` (#1038).
+pub fn compute_integer_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
+    compute_parsed_stats(data, ParsedNumber::parse, true)
 }
 
 /// [`compute_numeric_stats_with_parsed_count`] for the renderings of a column
-/// typed as a decimal, read with [`ParsedNumber::parse_decimal`] (#1149).
+/// typed as a decimal, read with [`ParsedNumber::parse_decimal`] (#1149), with
+/// its order statistics exactly in `exact` (#1038).
 pub fn compute_decimal_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
-    compute_parsed_stats(data, ParsedNumber::parse_decimal)
+    compute_parsed_stats(data, ParsedNumber::parse_decimal, true)
 }
 
+/// `exact`: the column is of a kind held exactly, an integer or a decimal one,
+/// and reports [`ExactNumericStats`].
 fn compute_parsed_stats(
     data: &[String],
     parse: fn(&str) -> Option<ParsedNumber>,
+    exact: bool,
 ) -> (NumericStats, usize) {
     // Cells that do not parse are non-numeric values (nulls, tokens like
     // "N/A"), excluded from numeric stats by design.
@@ -88,14 +98,27 @@ fn compute_parsed_stats(
     let coefficient_of_variation =
         std_dev.and_then(|value| calculate_coefficient_of_variation(value, mean));
 
-    // A wide column's sample, held exactly: its rounded values can tie or
-    // coincide where the exact ones do not.
+    // The sample held exactly, for a wide column and for a column whose kind
+    // reports exact order statistics: rounded values can tie or coincide where
+    // the exact ones do not. The same indices as `sample_data`.
     let reservoir;
-    let wide_sample: &[ParsedNumber] = if is_approximate == Some(true) && wide {
+    let wide_sample: &[ParsedNumber] = if is_approximate == Some(true) && (wide || exact) {
         reservoir = reservoir_sample(&parsed, SAMPLE_THRESHOLD);
         &reservoir
     } else {
         &parsed
+    };
+    let sorted_sample = if wide || exact {
+        let mut sorted = wide_sample.to_vec();
+        sorted.sort_by(|a, b| a.value_cmp(*b));
+        sorted
+    } else {
+        Vec::new()
+    };
+    let exact_mode = if wide || exact {
+        calculate_exact_mode(wide_sample)
+    } else {
+        None
     };
     let pivot = if wide { exact_pivot(wide_sample) } else { None };
 
@@ -129,8 +152,6 @@ fn compute_parsed_stats(
     // distinct values tie for a mode, and the quartiles of a spread narrower
     // than the `f64` spacing coincide (#1038).
     let (mode, outlier_count) = if wide {
-        let mut sorted_sample = wide_sample.to_vec();
-        sorted_sample.sort_by(|a, b| a.value_cmp(*b));
         let tukey = ExactTukey::new(&sorted_sample, TUKEY_K);
         if let (Some(reported), Some(tukey)) = (quartiles.as_mut(), tukey.as_ref()) {
             reported.iqr = tukey.iqr;
@@ -138,7 +159,7 @@ fn compute_parsed_stats(
         let outliers = tukey
             .filter(|_| parsed.len() >= 4)
             .map(|tukey| tukey.count_outliers(&parsed));
-        (calculate_exact_mode(wide_sample), outliers)
+        (exact_mode.map(ParsedNumber::to_f64), outliers)
     } else {
         (
             calculate_mode(&sample_data),
@@ -161,9 +182,66 @@ fn compute_parsed_stats(
             kurtosis,
             is_approximate,
             outlier_count,
+            exact: if exact {
+                exact_order_stats(
+                    &sorted_sample,
+                    (base.min_value(), base.max_value()),
+                    exact_mode,
+                )
+            } else {
+                None
+            },
         },
         parsed_count,
     )
+}
+
+/// The order statistics of a sample sorted by value, exactly (#1038): Type 7
+/// quartiles, as the `f64` ones, interpolated in quarters, and the median as
+/// the second quartile, which is the midpoint of the middle two for an even
+/// count. `extremes` cover every value, as `min` and `max` do, where the
+/// sample may not. `None` when a value has no exact form or the arithmetic
+/// leaves `i128`.
+fn exact_order_stats(
+    sorted: &[ParsedNumber],
+    extremes: (Option<ParsedNumber>, Option<ParsedNumber>),
+    mode: Option<ParsedNumber>,
+) -> Option<ExactNumericStats> {
+    let values: Vec<ExactDecimal> = sorted
+        .iter()
+        .map(|number| number.exact_value())
+        .collect::<Option<_>>()?;
+    if values.is_empty() {
+        return None;
+    }
+    // The `quarter`-th quartile: position `(n - 1) × quarter / 4`, counted in
+    // quarters so that it stays an integer.
+    let quartile = |quarter: usize| -> Option<ExactDecimal> {
+        let position = (values.len() - 1) * quarter;
+        let (lower, weight) = (position / 4, (position % 4) as i128);
+        let base = values[lower];
+        if weight == 0 {
+            return Some(base);
+        }
+        base.plus(values[lower + 1].exact_minus(base)?.quarters(weight)?)
+    };
+    let quartiles = if values.len() >= 4 {
+        Some((quartile(1)?, quartile(2)?, quartile(3)?))
+    } else {
+        None
+    };
+    Some(ExactNumericStats {
+        min: extremes.0?.exact_string()?,
+        max: extremes.1?.exact_string()?,
+        median: Some(quartile(2)?.canonical()),
+        q1: quartiles.map(|(q1, _, _)| q1.canonical()),
+        q2: quartiles.map(|(_, q2, _)| q2.canonical()),
+        q3: quartiles.map(|(_, _, q3)| q3.canonical()),
+        mode: match mode {
+            Some(number) => Some(number.exact_value()?.canonical()),
+            None => None,
+        },
+    })
 }
 
 /// Count IQR outliers given pre-computed quartiles. Returns `None` when the
@@ -451,9 +529,8 @@ impl<'a> ExactTukey<'a> {
 }
 
 /// [`calculate_mode`] over exact values: the most frequent value, the
-/// smallest of those tied, as its nearest `f64`; `None` when every value is
-/// distinct (#1038).
-fn calculate_exact_mode(values: &[ParsedNumber]) -> Option<f64> {
+/// smallest of those tied; `None` when every value is distinct (#1038).
+fn calculate_exact_mode(values: &[ParsedNumber]) -> Option<ParsedNumber> {
     let mut counts: HashMap<ValueKey, (usize, ParsedNumber)> = HashMap::new();
     for &number in values {
         counts.entry(number.value_key()).or_insert((0, number)).0 += 1;
@@ -467,7 +544,6 @@ fn calculate_exact_mode(values: &[ParsedNumber]) -> Option<f64> {
         .filter(|(count, _)| *count == max_freq)
         .map(|(_, number)| *number)
         .min_by(|a, b| a.value_cmp(*b))
-        .map(ParsedNumber::to_f64)
 }
 
 /// Reservoir sampling for large datasets, seeded so the sample is the same

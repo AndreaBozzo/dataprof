@@ -7,7 +7,9 @@ use crate::analysis::inference::{
     parse_strict_boolean_token,
 };
 use crate::analysis::patterns::detect_patterns;
-use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
+use crate::stats::numeric::{
+    compute_integer_stats_with_parsed_count, compute_numeric_stats_with_parsed_count,
+};
 use crate::stats::{calculate_datetime_stats, calculate_text_stats_from_refs};
 
 /// Which parts of a column analysis to perform.
@@ -125,7 +127,11 @@ fn analyze_column_with_options(
     } else {
         match data_type {
             DataType::Integer | DataType::Float => {
-                let (numeric, parsed) = compute_numeric_stats_with_parsed_count(data);
+                let (numeric, parsed) = if data_type == DataType::Integer {
+                    compute_integer_stats_with_parsed_count(data)
+                } else {
+                    compute_numeric_stats_with_parsed_count(data)
+                };
                 // Non-null values that fail the finite-numeric parse are excluded
                 // from the statistics; expose the count so denominators stay
                 // auditable.

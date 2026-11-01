@@ -130,6 +130,13 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
                 "quartiles": _round_quartiles(col.quartiles),
                 "is_approximate": col.is_approximate,
                 "outlier_count": col.outlier_count,
+                # The canonical decimal strings of the report: `str` gives an
+                # int's digits and keeps a Decimal's spelling (#1038).
+                "exact": (
+                    None
+                    if col.exact is None
+                    else {name: str(value) for name, value in col.exact.items()}
+                ),
             }.items()
             if v is not None
         }

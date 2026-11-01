@@ -40,8 +40,8 @@ pub use partial::{
 };
 pub use pattern::{Pattern, PatternMatchCount};
 pub use profile::{
-    BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, FrequencyItem, NumericStats,
-    Quartiles, ShapeMomentEstimator, SlashDateOrder, TextStats,
+    BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, ExactNumericStats, FrequencyItem,
+    NumericStats, Quartiles, ShapeMomentEstimator, SlashDateOrder, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{

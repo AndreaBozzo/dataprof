@@ -7,6 +7,7 @@ Native readers never serialize: their floats keep the extension's precision.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Generic, NoReturn, Protocol, TypeVar, overload
 
 from ._dataprof import DataQualityMetrics as _NativeQuality
@@ -88,6 +89,29 @@ class _Field(Generic[_T]):
         raise AttributeError(f"attribute {self._name!r} is read-only")
 
 
+class _ExactField(_Field[dict[str, int | Decimal] | None]):
+    """`ColumnProfile.exact` as Python numbers (#1038).
+
+    Backings store the canonical decimal strings of the report. An integral
+    value of an integer column reads as ``int``; every other value, a decimal
+    column's and an integer column's fractional median or quartile, as
+    ``Decimal``, exactly.
+    """
+
+    def __get__(self, instance: Any, owner: type | None = None) -> Any:
+        if instance is None:
+            return self
+        values = instance._accessor.get(self._name)
+        if values is None:
+            return None
+        integer = instance.data_type == "integer"
+        exact: dict[str, int | Decimal] = {}
+        for key, text in values.items():
+            value = Decimal(text)
+            exact[key] = int(value) if integer and value == value.to_integral_value() else value
+        return exact
+
+
 class Pattern(_View):
     """Detected pattern evidence shared by live and restored column views."""
 
@@ -134,6 +158,10 @@ class ColumnProfile(_View):
     quartiles = _Field[dict[str, float | None] | None](section="stats")
     is_approximate = _Field[bool | None](section="stats")
     outlier_count = _Field[int | None](section="stats")
+    #: The order statistics exactly, on an integer or decimal column: ``min``,
+    #: ``max``, ``median``, ``q1``, ``q2``, ``q3`` and ``mode`` where the float
+    #: field of the same name is present. ``None`` on a float column.
+    exact = _ExactField(section="stats")
     min_length = _Field[int | None](section="stats")
     max_length = _Field[int | None](section="stats")
     avg_length = _Field[float | None](section="stats")

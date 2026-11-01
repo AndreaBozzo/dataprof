@@ -501,6 +501,7 @@ Per-column profiling statistics.
 | `coefficient_of_variation` | `float \| None` | CV |
 | `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}`; `iqr` is `None` when `q3 - q1` overflows `f64` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
+| `exact` | `dict \| None` | The order statistics exactly, on an integer or decimal-typed column: `min`, `max`, `median`, `q1`, `q2`, `q3` and `mode` where the float field is present. An integral value of an integer column is an `int`, every other value a `decimal.Decimal`; `to_dict()` and `to_json()` carry them as decimal strings. `None` on a float column |
 | `min_length` | `int \| None` | Shortest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `max_length` | `int \| None` | Longest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `avg_length` | `float \| None` | Mean length, in Unicode scalar values (0.11: UTF-8 bytes) |

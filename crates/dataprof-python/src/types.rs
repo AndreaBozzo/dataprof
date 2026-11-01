@@ -120,6 +120,11 @@ pub struct PyColumnProfile {
     pub is_approximate: Option<bool>,
     #[pyo3(get)]
     pub outlier_count: Option<usize>,
+    /// The exact order statistics of an integer or decimal column as
+    /// canonical decimal strings, keyed by name; `None` on a float column
+    /// (#1038). `ColumnProfile.exact` converts them.
+    #[pyo3(get)]
+    pub exact: Option<std::collections::BTreeMap<String, String>>,
     // Text statistics (None for non-text columns)
     #[pyo3(get)]
     pub min_length: Option<usize>,
@@ -208,6 +213,23 @@ impl From<&ColumnProfile> for PyColumnProfile {
             ColumnStats::Numeric(n) => n.outlier_count,
             _ => None,
         };
+        let exact = match &profile.stats {
+            ColumnStats::Numeric(n) => n.exact.as_ref().map(|exact| {
+                [
+                    ("min", Some(&exact.min)),
+                    ("max", Some(&exact.max)),
+                    ("median", exact.median.as_ref()),
+                    ("q1", exact.q1.as_ref()),
+                    ("q2", exact.q2.as_ref()),
+                    ("q3", exact.q3.as_ref()),
+                    ("mode", exact.mode.as_ref()),
+                ]
+                .into_iter()
+                .filter_map(|(key, value)| Some((key.to_string(), value?.clone())))
+                .collect()
+            }),
+            _ => None,
+        };
 
         // Length statistics of a zero-row text column were computed over no
         // values, so they are absent rather than 0.
@@ -269,6 +291,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             quartiles,
             is_approximate,
             outlier_count,
+            exact,
             min_length,
             max_length,
             avg_length,

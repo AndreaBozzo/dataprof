@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import dataprof
@@ -11,7 +12,7 @@ from dataprof import _dataprof as native, interop
 
 def _public_values(value: Any) -> Any:
     """Snapshot every public member, including nested native pattern objects."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, float, bool, Decimal)):
         return value
     if isinstance(value, dict):
         return {name: _public_values(item) for name, item in value.items()}
@@ -41,7 +42,13 @@ def raw_report(tmp_path):
 def test_public_views_preserve_every_native_field_exactly(raw_report):
     """New native fields cannot silently disappear behind the shared views."""
     report = dataprof.ProfileReport(raw_report)
-    assert _public_values(report.profiles) == _public_values(raw_report.column_profiles)
+    native_columns = _public_values(raw_report.column_profiles)
+    # `exact` is the one documented conversion: the native canonical strings
+    # read as Python numbers (#1038).
+    for column in native_columns:
+        if column["exact"] is not None:
+            column["exact"] = {name: Decimal(text) for name, text in column["exact"].items()}
+    assert _public_values(report.profiles) == native_columns
     assert _public_values(report.quality) == _public_values(raw_report.quality)
     assert report["number"].mean == raw_report.column_profiles[0].mean == 1 / 3
     assert report["number"].mean != report.to_dict()["columns"][0]["stats"]["mean"]

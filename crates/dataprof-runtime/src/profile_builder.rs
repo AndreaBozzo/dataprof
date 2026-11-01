@@ -12,6 +12,7 @@ use dataprof_core::{
     TextStats,
 };
 use dataprof_metrics::{
+    ParsedNumber,
     analysis::column::stats_over_values,
     analysis::inference::{
         classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_inferred_date_token,
@@ -20,7 +21,7 @@ use dataprof_metrics::{
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{
         calculate_coefficient_of_variation, compute_decimal_stats_with_parsed_count,
-        compute_numeric_stats_with_parsed_count,
+        compute_integer_stats_with_parsed_count, compute_numeric_stats_with_parsed_count,
     },
 };
 
@@ -85,6 +86,11 @@ pub struct ExactNumericAggregates {
     pub variance: f64,
     /// Number of parsed numeric values covered by these aggregates.
     pub count: usize,
+    /// The smallest and largest value as given, which `min` and `max` round
+    /// past what `f64` holds: the exact extremes of an integer or decimal
+    /// column (#1038).
+    pub min_value: Option<ParsedNumber>,
+    pub max_value: Option<ParsedNumber>,
 }
 
 /// Pre-computed text length stats from streaming/columnar engines.
@@ -113,6 +119,8 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
             DataType::Integer | DataType::Float => {
                 let (mut numeric, sampled_numeric) = if input.decimal_values {
                     compute_decimal_stats_with_parsed_count(input.sample_values)
+                } else if input.data_type == DataType::Integer {
+                    compute_integer_stats_with_parsed_count(input.sample_values)
                 } else {
                     compute_numeric_stats_with_parsed_count(input.sample_values)
                 };
@@ -132,6 +140,20 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                 if let Some(exact) = &input.exact_numeric {
                     numeric.min = exact.min;
                     numeric.max = exact.max;
+                    // The exact extremes cover every value, as `min` and
+                    // `max` do; without them the column has no exact form.
+                    if let Some(order) = numeric.exact.as_mut() {
+                        match (
+                            exact.min_value.and_then(ParsedNumber::exact_string),
+                            exact.max_value.and_then(ParsedNumber::exact_string),
+                        ) {
+                            (Some(min), Some(max)) => {
+                                order.min = min;
+                                order.max = max;
+                            }
+                            _ => numeric.exact = None,
+                        }
+                    }
                     numeric.mean = exact.mean;
                     numeric.std_dev = exact.std_dev.is_finite().then_some(exact.std_dev);
                     numeric.variance = exact.variance.is_finite().then_some(exact.variance);
@@ -656,6 +678,8 @@ mod tests {
                     std_dev: 0.0,
                     variance: 0.0,
                     count: 2,
+                    min_value: None,
+                    max_value: None,
                 }),
                 exact_date_matches: None,
                 decimal_values: false,
@@ -706,6 +730,8 @@ mod tests {
                 std_dev: f64::NAN,
                 variance: f64::NAN,
                 count: 20_000,
+                min_value: None,
+                max_value: None,
             }),
             exact_date_matches: None,
             decimal_values: false,

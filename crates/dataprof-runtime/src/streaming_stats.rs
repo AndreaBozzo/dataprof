@@ -401,6 +401,8 @@ impl StreamingStatistics {
             std_dev: self.welford.sample_std_dev(),
             variance: self.welford.sample_variance(),
             count: count as usize,
+            min_value: self.welford.min_value(),
+            max_value: self.welford.max_value(),
         })
     }
 

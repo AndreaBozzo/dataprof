@@ -69,6 +69,14 @@ EXPECTED_EXCEPTIONS: dict[tuple[str, str, str], Any] = {
     ("pandas", "n", "data_type"): "float",
 }
 
+# Statistics an engine leaves out for the same representational reason:
+# (engine, column) -> stats keys absent there.
+ABSENT_STATS: dict[tuple[str, str], tuple[str, ...]] = {
+    # Downstream of the `n` widening: a float column has no exact order
+    # statistics, which integer columns carry (#1038).
+    ("pandas", "n"): ("exact",),
+}
+
 # Same mechanism for the quality block: (engine, dimension, field) -> value.
 QUALITY_EXCEPTIONS: dict[tuple[str, str, str], Any] = {
     # Downstream of the `n` widening above: four more values are numeric once
@@ -179,6 +187,9 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
             if exception_engine == engine and name == column["name"]:
                 assert field in column, f"exception names an unknown serialized field: {field}"
                 column[field] = value
+        for key in ABSENT_STATS.get((engine, column["name"]), ()):
+            assert key in column["stats"], f"absence names an unknown statistic: {key}"
+            del column["stats"][key]
     # No approximation or post-export re-rounding here: consumers see these
     # exact numbers, including every optional statistic and absence marker.
     assert report.to_dict()["columns"] == expected_columns, engine
@@ -189,6 +200,8 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
         for (exception_engine, name, field), value in exceptions.items():
             if exception_engine == engine and name == column["name"]:
                 column[field] = value.capitalize() if field == "data_type" else value
+        for key in ABSENT_STATS.get((engine, column["name"]), ()):
+            del column["stats"]["Numeric"][key]
     assert json.loads(report.to_json())["column_profiles"] == canonical_columns, engine
     # Quality scores are rounded metrics, not execution provenance, so they are
     # on the contract surface too. Left out, an engine could agree on every
