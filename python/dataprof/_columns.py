@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal as _Decimal
 from typing import Any as _Any
 
 from ._accessors import ColumnProfile, Pattern as _Pattern
@@ -18,6 +19,15 @@ from ._rounding import _r2, _r4, _round_quartiles
 #: class, so both layers name the same winner when two classes hold equal counts.
 #: Serialization keys are sorted instead — see :func:`_homogeneity_counts`.
 _LEXICAL_CLASS_ORDER = ("numeric", "date", "boolean", "text")
+
+
+def _exact_text(value: object) -> str:
+    """One exact statistic as its canonical decimal string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, _Decimal):
+        return format(value, "f")
+    return str(value)
 
 
 def _homogeneity_counts(value: _Any) -> dict[str, int] | None:
@@ -130,16 +140,13 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
                 "quartiles": _round_quartiles(col.quartiles),
                 "is_approximate": col.is_approximate,
                 "outlier_count": col.outlier_count,
-                # The canonical decimal strings of the report (#1038): `str`
-                # of an int, and a Decimal in fixed point, which `str` would
-                # write with an exponent below 1e-6.
+                # The canonical decimal strings of the report (#1038). A native
+                # column already holds them; a view holds ints and Decimals,
+                # written in fixed point, which `str` would not do below 1e-6.
                 "exact": (
                     None
                     if col.exact is None
-                    else {
-                        name: str(value) if isinstance(value, int) else format(value, "f")
-                        for name, value in col.exact.items()
-                    }
+                    else {name: _exact_text(value) for name, value in col.exact.items()}
                 ),
             }.items()
             if v is not None
