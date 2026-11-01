@@ -838,6 +838,17 @@ impl ParsedNumber {
             .then_with(|| self.remainder().total_cmp(&other.remainder()))
     }
 
+    /// `self - other`, exactly where both are held and then rounded once;
+    /// otherwise from their nearest `f64` and what each holds beyond it.
+    pub(crate) fn minus_value(self, other: Self) -> f64 {
+        if let (Some(mine), Some(theirs)) = (self.exact(), other.exact())
+            && let Some(difference) = mine.minus(theirs)
+        {
+            return difference;
+        }
+        (self.to_f64() - other.to_f64()) + (self.remainder() - other.remainder())
+    }
+
     /// The exact value minus its nearest `f64`, zero where it is not held.
     fn remainder(self) -> f64 {
         self.exact()

@@ -125,27 +125,20 @@ fn compute_parsed_stats(
     // samples to mirror the global metric's behaviour.
     //
     // A wide column counts its mode over exact values, and takes the IQR and
-    // the outlier fences from the quartiles of its exact deviations: rounded,
+    // the outlier fences from exact differences between its values: rounded,
     // distinct values tie for a mode, and the quartiles of a spread narrower
     // than the `f64` spacing coincide (#1038).
     let (mode, outlier_count) = if wide {
-        let mut sorted_deviations = deviations.clone();
-        sorted_deviations.sort_by(f64::total_cmp);
-        let exact_quartiles = calculate_quartiles(&sorted_deviations);
-        if let (Some(reported), Some(exact)) = (quartiles.as_mut(), exact_quartiles.as_ref()) {
-            reported.iqr = exact.iqr;
+        let mut sorted_sample = wide_sample.to_vec();
+        sorted_sample.sort_by(|a, b| a.value_cmp(*b));
+        let tukey = ExactTukey::new(&sorted_sample, TUKEY_K);
+        if let (Some(reported), Some(tukey)) = (quartiles.as_mut(), tukey.as_ref()) {
+            reported.iqr = tukey.iqr;
         }
-        let every_deviation;
-        let population: &[f64] = if is_approximate == Some(true) {
-            every_deviation = deviations_from(&parsed, pivot);
-            &every_deviation
-        } else {
-            &deviations
-        };
-        (
-            calculate_exact_mode(wide_sample),
-            count_outliers_iqr(population, exact_quartiles.as_ref(), 4),
-        )
+        let outliers = tukey
+            .filter(|_| parsed.len() >= 4)
+            .map(|tukey| tukey.count_outliers(&parsed));
+        (calculate_exact_mode(wide_sample), outliers)
     } else {
         (
             calculate_mode(&sample_data),
@@ -384,6 +377,77 @@ fn deviations_from(values: &[ParsedNumber], pivot: Option<(ExactDecimal, f64, f6
                 .unwrap_or_else(|| (number.to_f64() - pivot_high) - pivot_low)
         })
         .collect()
+}
+
+/// The Tukey multiplier the per-column outlier count uses.
+const TUKEY_K: f64 = 1.5;
+
+/// Tukey's IQR rule over values held exactly (#1038). Each quartile is
+/// interpolated between two neighbouring values (Type 7), and the IQR and the
+/// fences are formed from exact differences between those values and the one
+/// compared, each rounded once. Measuring every value from one distant pivot
+/// instead would round a spread of small values to nothing beside a large one.
+struct ExactTukey<'a> {
+    /// The value at or below each quartile, and the quartile's distance
+    /// above it.
+    q1_anchor: &'a ParsedNumber,
+    q1_offset: f64,
+    q3_anchor: &'a ParsedNumber,
+    q3_offset: f64,
+    /// `q3 - q1`, or `None` when it exceeds the `f64` range.
+    iqr: Option<f64>,
+    k: f64,
+}
+
+impl<'a> ExactTukey<'a> {
+    /// `None` below four values, as [`calculate_quartiles`].
+    fn new(sorted: &'a [ParsedNumber], k: f64) -> Option<Self> {
+        if sorted.len() < 4 {
+            return None;
+        }
+        let quartile = |p: f64| {
+            let position = p * (sorted.len() - 1) as f64;
+            let (lower, upper) = (position.floor() as usize, position.ceil() as usize);
+            let weight = position - lower as f64;
+            // A weight of zero leaves the anchor: an infinite difference to
+            // the next value must not turn that into NaN.
+            let offset = if weight == 0.0 {
+                0.0
+            } else {
+                weight * sorted[upper].minus_value(sorted[lower])
+            };
+            (&sorted[lower], offset)
+        };
+        let (q1_anchor, q1_offset) = quartile(0.25);
+        let (q3_anchor, q3_offset) = quartile(0.75);
+        let iqr = q3_anchor.minus_value(*q1_anchor) + q3_offset - q1_offset;
+        Some(Self {
+            q1_anchor,
+            q1_offset,
+            q3_anchor,
+            q3_offset,
+            iqr: iqr.is_finite().then_some(iqr),
+            k,
+        })
+    }
+
+    /// Values below `q1 - k·IQR` or above `q3 + k·IQR`, each compared by its
+    /// exact difference from the nearer quartile's anchor. An IQR beyond the
+    /// `f64` range puts both fences beyond it, as in [`count_outliers_iqr`].
+    fn count_outliers(&self, values: &[ParsedNumber]) -> usize {
+        let Some(iqr) = self.iqr else {
+            return 0;
+        };
+        let below = self.q1_offset - self.k * iqr;
+        let above = self.q3_offset + self.k * iqr;
+        values
+            .iter()
+            .filter(|value| {
+                value.minus_value(*self.q1_anchor) < below
+                    || value.minus_value(*self.q3_anchor) > above
+            })
+            .count()
+    }
 }
 
 /// [`calculate_mode`] over exact values: the most frequent value, the
@@ -691,6 +755,44 @@ mod tests {
             "1759700000123457409",
         ]));
         assert_eq!(stats.outlier_count, Some(1));
+    }
+
+    /// One large exact value beside small ones: measured from it, the small
+    /// values all rounded to one deviation, and the IQR of a spread the `f64`
+    /// values keep read 0. The small values are compared with each other, so
+    /// the IQR and the outliers are those of the rounded values, which are
+    /// exact here (review of #1180).
+    #[test]
+    fn wide_order_statistics_keep_a_small_spread_beside_a_large_value() {
+        let trailing = compute_numeric_stats(&cells(&[
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "100",
+            "1759700000123456789",
+        ]));
+        assert_eq!(trailing.quartiles.and_then(|q| q.iqr), Some(5.5));
+        assert_eq!(trailing.outlier_count, Some(2));
+
+        let leading = compute_numeric_stats(&cells(&[
+            "1759700000123456789",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "100",
+        ]));
+        assert_eq!(leading.quartiles.and_then(|q| q.iqr), Some(26.75));
+        assert_eq!(leading.outlier_count, Some(2));
     }
 
     /// One value read as a float, as an integer past 2^53 or as a decimal is

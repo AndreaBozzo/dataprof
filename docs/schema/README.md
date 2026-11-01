@@ -145,9 +145,9 @@ exact integers on every input path, so epoch nanoseconds a few units apart keep
 their spread (#877). `mean` sums the exact integers in a compensated `f64`
 sum. `mode` is counted over the exact values, so distinct values that round
 alike do not tie for it, and is reported as the nearest `f64` of the exact
-mode. `quartiles.iqr` and the fences `outlier_count` uses come from the
-quartiles of the exact deviations, so a spread of a few units has an IQR of a
-few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken from
+mode. `quartiles.iqr` and the fences `outlier_count` uses come from exact
+differences between neighbouring values, so a spread of a few units has an IQR
+of a few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken from
 the nearest `f64` of each value, so `iqr` can differ from `q3 - q1` as
 reported.
 
