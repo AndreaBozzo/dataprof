@@ -120,14 +120,15 @@ canonical report. They are `null` when the spread of finite input values cannot
 be represented as a finite `f64`; a true constant column reports `0.0`. A
 variance too large for `f64`, as for values near ±1e155, is `null` while its
 standard deviation, about the size of the values, fits: it is taken without
-forming the variance and reported with the coefficient of variation, skewness
-and kurtosis that follow from it (#1150). Only when the sum of squared
-deviations passes about 2e609, a standard deviation past about 4e304 divided by
-the square root of the row count, is the standard deviation `null` too. A variance too small for
-`f64`, as for values near 1e-200, is `null` too rather than `0.0`, and its
-standard deviation is reported the same way (#1088). Values below about
-1e-306, at the bottom of `f64`'s range, square to products that lose their
-digits even so: their `std_dev` is
+forming the variance and reported with the skewness and kurtosis that follow
+from it, and with the coefficient of variation wherever the mean allows one;
+values balanced around a mean of 0 have none (#1150). Only when the sum of
+squared deviations passes about 2e609, a standard deviation past about 4e304
+divided by the square root of the row count, is the standard deviation `null`
+too. A variance too small for `f64`, as for values near 1e-200, is `null` too
+rather than `0.0`, and its standard deviation is reported the same way (#1088).
+Values below about 1e-306, at the bottom of `f64`'s range, square to products
+that lose their digits even so: their `std_dev` is
 `null` as well rather than a number with too few digits. Statistics derived
 from an unrepresentable standard deviation, including the coefficient of
 variation, skewness and kurtosis, are absent. The same rule
