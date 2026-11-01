@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Page not found — dataprof</title>
+  <title>Page not found: dataprof</title>
   <meta name="robots" content="noindex">
   <link rel="icon" type="image/png" sizes="32x32" href="/dataprof/assets/favicon-32.png">
   <link rel="stylesheet" href="/dataprof/style.css">
   <script>
     // Benchmark reports used to live at the site root (e.g. /dataprof/csv_parsing/report/).
-    // They now live under /dataprof/benchmarks/ — forward old deep links there once.
+    // They now live under /dataprof/benchmarks/; forward old deep links there once.
     (function () {
       var segments = window.location.pathname.split('/').filter(Boolean);
       // segments[0] is the repo name for project pages ("dataprof")
-      if (segments.length >= 2 && segments[1] !== 'benchmarks') {
+      if (segments.length >= 2 && segments[1] !== 'benchmarks' && segments.slice(1).includes('report')) {
         var base = '/' + segments[0] + '/benchmarks/';
         window.location.replace(base + segments.slice(1).join('/') + window.location.search + window.location.hash);
       }
@@ -21,7 +21,7 @@
   </script>
   <style>
     .nf { min-height: 60vh; display: flex; align-items: center; }
-    .nf-inner { text-align: center; margin: 0 auto; padding: 64px 24px; }
+    .nf-inner { text-align: center; margin: 0 auto; padding: 64px 0; }
     .nf h1 { font-size: clamp(2rem, 4vw, 3rem); margin: 16px 0 12px; font-weight: 800; }
     .nf p { color: var(--muted); max-width: 52ch; margin: 0 auto 26px; }
     .nf-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
@@ -46,8 +46,8 @@
   <div class="nf-inner">
     <span class="eyebrow">404</span>
     <h1>This page doesn&rsquo;t exist</h1>
-    <p>The link may be stale &mdash; benchmark reports regenerate on every CI run, and individual
-      report paths can change between runs.</p>
+    <p>Return to the profiling quickstart or find a report in the benchmark index.
+      Individual report paths can change when the benchmark site is regenerated.</p>
     <div class="nf-actions">
       <a class="btn btn-primary" href="/dataprof/">Go to the homepage</a>
       <a class="btn btn-ghost" href="/dataprof/benchmarks/">Browse benchmarks</a>

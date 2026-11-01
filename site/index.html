@@ -4,19 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>dataprof: data profiling and quality gates for Python and Rust</title>
-  <meta name="description" content="Profile CSV, JSON, Parquet, DataFrames and Arrow in one call: types, nulls, distributions, patterns and a quality score. Then gate your pipeline on it. Local, deterministic, bounded memory.">
+  <meta name="description" content="Local, deterministic data profiling and quality assessment for Python and Rust. Profile CSV, JSON, JSONL, Parquet, DataFrames and Arrow, then gate your pipeline on the report.">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
   <link rel="stylesheet" href="style.css">
   <meta property="og:title" content="dataprof: know what's in your data before it ships">
-  <meta property="og:description" content="Profiling and quality gates for tabular data. The same numbers from every input, verdicts that say when they cannot tell. Python package and Rust crate.">
+  <meta property="og:description" content="Local profiling for tabular data: types, nulls and quality evidence. Quality gates return pass, fail or inconclusive. Python package and Rust crate.">
   <meta property="og:image" content="https://andreabozzo.github.io/dataprof/assets/og-image.jpg">
   <meta property="og:url" content="https://andreabozzo.github.io/dataprof/">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <style>
     /* ---- hero ---- */
-    .hero { padding: 72px 0 24px; }
+    .hero { padding: 72px 24px 24px; }
     .hero-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
@@ -40,29 +40,30 @@
     .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
     .hero-meta .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rust); display: inline-block; }
 
-    /* terminal card */
-    .terminal {
-      background: var(--terminal-bg);
-      color: var(--terminal-ink);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      border: 1px solid rgba(255, 255, 255, 0.07);
-      overflow: hidden;
-      font-size: 0.86rem;
-    }
-    .terminal-bar {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 11px 16px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      color: #8b9cab;
-      font-size: 0.8rem;
-      font-weight: 600;
-    }
-    .terminal-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; opacity: 0.85; }
-    .terminal pre { margin: 0; padding: 18px 20px 22px; overflow-x: auto; line-height: 1.62; }
-    .t-cm { color: #64788c; }
+    /* A compact view of the report for assets/orders.csv. */
+    .profile-preview { margin: 0; min-width: 0; overflow: hidden; }
+    .profile-heading { padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+    .profile-heading h2 { font: 650 1rem ui-monospace, Consolas, monospace; margin: 6px 0; }
+    .profile-heading p { color: var(--muted); font-size: 0.85rem; margin: 0; }
+    .profile-columns { padding: 8px 14px; }
+    .profile-columns th, .profile-columns td { padding: 12px 8px; }
+    .profile-columns td { font-size: 0.88rem; }
+    .profile-columns th[scope="row"] { color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
+    .profile-columns td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .profile-columns tr:last-child > * { border-bottom: 0; }
+    .profile-columns .null-gap { color: var(--rust-ink); font-weight: 700; }
+    .profile-distribution { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 22px 18px; }
+    .profile-distribution p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+    .profile-distribution svg { width: 128px; height: 46px; flex-shrink: 0; color: var(--accent); }
+    .profile-score { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 22px; border-block: 1px solid var(--line); }
+    .profile-score p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+    .profile-score strong { display: block; color: var(--ink); font-size: 1.7rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
+    .profile-score small { color: var(--muted); font-size: 0.5em; font-weight: 500; }
+    .gate-fail { color: var(--rust-ink); background: color-mix(in srgb, var(--rust) 12%, transparent); }
+    .profile-preview figcaption { padding: 16px 22px; color: var(--muted); font-size: 0.84rem; }
+    .profile-preview figcaption p { margin: 0 0 8px; }
+    .profile-preview figcaption p:last-child { margin-bottom: 0; }
+    .t-cm { color: #93a8ba; }
     .t-kw { color: #7fb5e0; }
     .t-str { color: #d9a06c; }
     .t-fn { color: #8fd0b8; }
@@ -70,12 +71,12 @@
     .t-num { color: #d8b06c; }
 
     /* ---- sections ---- */
-    section.block { padding: 64px 0 0; }
+    section.block { padding: 64px 24px 0; }
     .section-head { max-width: 68ch; margin-bottom: 34px; }
     .section-head h2 { font-size: clamp(1.6rem, 3vw, 2.1rem); margin: 10px 0 12px; font-weight: 750; }
     .section-head p { color: var(--muted); margin: 0; font-size: 1.05rem; }
 
-    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
     .qa-card { padding: 22px 24px; }
     .qa-card h3 { font-size: 1.04rem; margin-bottom: 8px; }
     .qa-card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
@@ -95,7 +96,7 @@
       cursor: pointer;
     }
     .tab[aria-selected="true"] { background: var(--bg-raised); color: var(--ink); }
-    .quickstart-panel { border-top-left-radius: 0; padding: 26px 28px 28px; }
+    .quickstart-panel { border-top-left-radius: 0; padding: 26px 28px 28px; min-width: 0; }
     .quickstart-panel[hidden] { display: none; }
     .install-row {
       display: flex;
@@ -148,6 +149,7 @@
     .feature-card .glyph svg { width: 20px; height: 20px; }
     .feature-card h3 { font-size: 1.02rem; margin-bottom: 7px; }
     .feature-card p { margin: 0; color: var(--muted); font-size: 0.94rem; }
+    .feature-card p code, .note code { overflow-wrap: anywhere; }
 
     /* quality dimensions */
     .dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
@@ -169,10 +171,7 @@
       grid-template-columns: minmax(0, 1.5fr) auto;
       gap: 28px;
       align-items: center;
-      background:
-        radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
-        radial-gradient(circle at 88% 100%, color-mix(in srgb, var(--rust) 13%, transparent), transparent 40%),
-        var(--bg-raised);
+      border-left: 3px solid var(--accent);
     }
     .bench-band h2 { font-size: 1.7rem; margin: 10px 0 10px; }
     .bench-band p { margin: 0; color: var(--muted); max-width: 60ch; }
@@ -202,7 +201,21 @@
       .hero { padding-top: 48px; }
       .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 34px; }
       .bench-band { grid-template-columns: 1fr; padding: 32px 26px; }
-      .site-nav a:not(.nav-cta) { display: none; }
+    }
+    @media (max-width: 480px) {
+      .quickstart-panel { padding: 20px 16px; }
+      .quickstart-panel pre { padding: 16px 12px; font-size: 0.8rem; }
+      .hero h1 { font-size: 2.2rem; }
+      .profile-distribution { gap: 10px; }
+      .formats-card { padding-inline: 12px; }
+      .formats-card table { min-width: 0; font-size: 0.82rem; }
+      .formats-card thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      .formats-card tbody { display: block; }
+      .formats-card tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 14px 6px; border-bottom: 1px solid var(--line); }
+      .formats-card td { padding: 0; border: 0; }
+      .formats-card td:first-child { font-weight: 650; }
+      .formats-card td:nth-child(2) { text-align: right; color: var(--muted); }
+      .formats-card td:last-child { grid-column: 1 / -1; }
     }
   </style>
 </head>
@@ -230,18 +243,18 @@
   <section class="hero wrap">
     <div class="hero-grid">
       <div>
-        <a class="pill release-pill" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md">0.12.0 release notes &rarr;</a>
-        <span class="eyebrow">Rust core &middot; Python native &middot; ISO 8000/25012</span>
-        <h1>Know your data <em>before</em> it bites.</h1>
+        <a class="pill release-pill" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md">Release notes &rarr;</a>
+        <span class="eyebrow">Local profiling &middot; Python + Rust</span>
+        <h1>Know your data <em>before</em> it ships.</h1>
         <p class="hero-sub">
-          Profile CSV, JSON, Parquet, DataFrames and Arrow in one call: types, nulls,
+          Profile CSV, JSON, JSONL, Parquet, DataFrames and Arrow in one call: types, nulls,
           distributions, patterns and a quality score. Then gate your pipeline on what it found.
-          It runs locally, gives the same numbers however you load the data, and says
-          &ldquo;can&rsquo;t tell&rdquo; instead of guessing.
+          It runs locally, records what it analyzed, and says &ldquo;can&rsquo;t tell&rdquo;
+          when the evidence is insufficient.
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="#quickstart">Start in 30 seconds</a>
-          <a class="btn btn-ghost" href="benchmarks/">Live benchmarks</a>
+          <a class="btn btn-primary" href="#quickstart">Profile a dataset</a>
+          <a class="btn btn-ghost" href="benchmarks/">Benchmarks</a>
         </div>
         <div class="hero-meta">
           <span><i class="dot"></i><a href="https://crates.io/crates/dataprof">crates.io</a></span>
@@ -250,32 +263,45 @@
           <span><i class="dot"></i>MIT or Apache-2.0</span>
         </div>
       </div>
-      <div class="terminal" aria-label="Python example">
-        <div class="terminal-bar">
-          <i style="background:#e0794c"></i><i style="background:#d8b06c"></i><i style="background:#8fd0b8"></i>
-          <span style="margin-left:6px">python</span>
+      <figure class="card profile-preview" aria-labelledby="profile-title">
+        <div class="profile-heading">
+          <span class="eyebrow">Profile report</span>
+          <h2 id="profile-title">orders.csv</h2>
+          <p>8 rows &middot; 3 columns &middot; full scan</p>
         </div>
-        <pre><code><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
-
-report = dp.<span class="t-fn">profile</span>(<span class="t-str">"orders.csv"</span>)
-
-report.rows, report.columns, report.quality_score
-<span class="t-out">(200, 5, 92.98)</span>
-
-[(f.code, f.column) <span class="t-kw">for</span> f <span class="t-kw">in</span> report.<span class="t-fn">findings</span>()]
-<span class="t-out">[('locale_numbers', 'price'),
- ('null_heavy', 'email'),
- ('sensitive_pattern', 'email')]</span>
-
-report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90</span>).verdict
-<span class="t-out">'pass'</span>  <span class="t-cm"># or 'fail', or 'inconclusive'</span></code></pre>
-      </div>
+        <div class="profile-columns">
+          <table aria-label="Column types and null percentages">
+            <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nulls</th></tr></thead>
+            <tbody>
+              <tr><th scope="row"><code>order_id</code></th><td>integer</td><td>0%</td></tr>
+              <tr><th scope="row"><code>amount</code></th><td>integer</td><td>0%</td></tr>
+              <tr><th scope="row"><code>region</code></th><td>string</td><td class="null-gap">25%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="profile-distribution">
+          <p><code>amount</code><br>Median 30 &middot; range 10&ndash;60</p>
+          <svg viewBox="0 0 128 46" role="img" aria-labelledby="amount-chart-title">
+            <title id="amount-chart-title">Amount frequencies: 10 occurs once, 20 twice, 30 three times, 40 once, 50 zero times, 60 once</title>
+            <path d="M0 45h128" stroke="currentColor" opacity="0.35"/>
+            <g fill="currentColor"><rect x="4" y="31" width="14" height="12" rx="2"/><rect x="25" y="19" width="14" height="24" rx="2"/><rect x="46" y="7" width="14" height="36" rx="2"/><rect x="67" y="31" width="14" height="12" rx="2"/><rect x="109" y="31" width="14" height="12" rx="2"/></g>
+          </svg>
+        </div>
+        <div class="profile-score">
+          <p>Quality score<strong>93.19 <small>/ 100</small></strong></p>
+          <span class="pill gate-fail">Gate: fail</span>
+        </div>
+        <figcaption>
+          <p><code>region</code> has 2 missing cells out of 8, above the gate&rsquo;s 20% null limit. The quality score meets the minimum of 90.</p>
+          <p>From <a href="assets/orders.csv" download>this small CSV</a>, profiled with dataprof 0.13.1 and default options. The report also flags the small sample size. Reproduce it in the quickstart below.</p>
+        </figcaption>
+      </figure>
     </div>
   </section>
 
   <section id="answers" class="block wrap">
     <div class="section-head">
-      <span class="eyebrow">The first ten minutes</span>
+      <span class="eyebrow">Reading the report</span>
       <h2>Built for the questions you ask unfamiliar data</h2>
       <p>Find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious
         values before they turn into pipeline bugs.</p>
@@ -286,11 +312,11 @@ report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90<
         <p>Null counts, completeness metrics, and schema shape in one pass.</p>
       </article>
       <article class="card qa-card">
-        <h3>Did this feed drift or spike somewhere suspicious?</h3>
+        <h3>Where do the numeric values cluster?</h3>
         <p>Numeric summaries, outlier signals, and range checks.</p>
       </article>
       <article class="card qa-card">
-        <h3>Are these IDs really unique, or just pretending to be keys?</h3>
+        <h3>Are the ID values unique?</h3>
         <p>Distinct counts, uniqueness ratios, and duplicate warnings.</p>
       </article>
       <article class="card qa-card">
@@ -313,51 +339,72 @@ report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90<
       <span class="eyebrow">Quickstart</span>
       <h2>Profile, then gate</h2>
       <p>A Python package for notebooks, scripts and CI, and a Rust crate for services and
-        batch jobs. Same engine, same numbers.</p>
+        batch jobs. Save <a href="assets/orders.csv" download>orders.csv</a> beside your script to reproduce the report above.</p>
     </div>
 
     <div class="tabs" role="tablist" aria-label="Language">
       <button class="tab" role="tab" id="tab-python" aria-selected="true" aria-controls="panel-python">Python</button>
-      <button class="tab" role="tab" id="tab-rust" aria-selected="false" aria-controls="panel-rust">Rust</button>
+      <button class="tab" role="tab" id="tab-rust" aria-selected="false" aria-controls="panel-rust" tabindex="-1">Rust</button>
     </div>
 
-    <div class="card quickstart-panel" id="panel-python" role="tabpanel" aria-labelledby="tab-python">
+    <div class="card quickstart-panel" id="panel-python" role="tabpanel" aria-labelledby="tab-python" tabindex="0">
       <div class="install-row">
         <code id="install-python">uv pip install dataprof</code>
         <button class="copy-btn" data-copy="install-python">Copy</button>
       </div>
       <pre><code><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
 
-report = dp.<span class="t-fn">profile</span>(<span class="t-str">"data.csv"</span>)          <span class="t-cm"># files, dicts, bytes, DataFrames, Arrow</span>
-<span class="t-fn">print</span>(report.<span class="t-fn">quality_summary</span>())        <span class="t-cm"># per-dimension ISO scores</span>
+report = dp.<span class="t-fn">profile</span>(<span class="t-str">"orders.csv"</span>)
+<span class="t-fn">print</span>(report.quality_score)  <span class="t-cm"># 93.19</span>
+region = report[<span class="t-str">"region"</span>]
+<span class="t-fn">print</span>(region.null_percentage)  <span class="t-cm"># 25.0</span>
 
-result = report.<span class="t-fn">check</span>(min_quality_score=<span class="t-num">90</span>, max_null_percentage={<span class="t-str">"*"</span>: <span class="t-num">20</span>})
-<span class="t-fn">print</span>(result.verdict)                        <span class="t-cm"># pass, fail or inconclusive</span>
+result = report.<span class="t-fn">check</span>(
+    min_quality_score=<span class="t-num">90</span>,
+    max_null_percentage={<span class="t-str">"*"</span>: <span class="t-num">20</span>},
+)
+<span class="t-fn">print</span>(result.verdict)  <span class="t-cm"># fail</span>
 
-report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)             <span class="t-cm"># full report, reloadable</span>
-<span class="t-fn">print</span>(report.<span class="t-fn">to_llm_context</span>(max_tokens=<span class="t-num">500</span>))  <span class="t-cm"># for an agent, no raw values</span></code></pre>
-      <p class="note">In CI, with no code: <code>python -m dataprof.check data.csv --min-quality 90</code>
-        exits 0, 1 or 2 for pass, fail or inconclusive.
+<span class="t-cm"># Save the full report for later.</span>
+report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)
+context = report.<span class="t-fn">to_llm_context</span>(
+    max_tokens=<span class="t-num">500</span>,
+)
+<span class="t-fn">print</span>(context)</code></pre>
+      <p class="note">In CI: <code>python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"</code>
+        exits 1 for this CSV. Exit codes are 0 for pass, 1 for fail, 2 for inconclusive, and 3 for an input, policy or output error.
         Wheels for CPython 3.11 to 3.15 with no Python dependencies; pandas is optional, for DataFrame-typed exports.
         See the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide</a>.</p>
     </div>
 
-    <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" hidden>
+    <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" tabindex="0" hidden>
       <div class="install-row">
         <code id="install-rust">cargo add dataprof</code>
         <button class="copy-btn" data-copy="install-rust">Copy</button>
       </div>
       <pre><code><span class="t-kw">use</span> dataprof::Profiler;
 
-<span class="t-kw">let</span> report = Profiler::<span class="t-fn">new</span>().<span class="t-fn">analyze_file</span>(<span class="t-str">"data.csv"</span>)?;
-<span class="t-fn">println!</span>(<span class="t-str">"Rows: {}"</span>, report.execution.rows_processed);
-<span class="t-fn">println!</span>(<span class="t-str">"Quality: {:.1}%"</span>, report.<span class="t-fn">quality_score</span>().<span class="t-fn">unwrap_or</span>(<span class="t-num">0.0</span>));
+<span class="t-kw">let</span> report = Profiler::<span class="t-fn">new</span>()
+    .<span class="t-fn">analyze_file</span>(<span class="t-str">"orders.csv"</span>)?;
+<span class="t-fn">println!</span>(
+    <span class="t-str">"Rows: {}"</span>,
+    report.execution.rows_processed,
+);
+<span class="t-fn">println!</span>(
+    <span class="t-str">"Quality: {:?}"</span>,
+    report.<span class="t-fn">quality_score</span>(),
+);
 
 <span class="t-kw">for</span> col <span class="t-kw">in</span> &amp;report.column_profiles {
-    <span class="t-fn">println!</span>(<span class="t-str">"{} {:?} nulls={}"</span>, col.name, col.data_type, col.null_count);
+    <span class="t-fn">println!</span>(
+        <span class="t-str">"{} {:?} nulls={}"</span>,
+        col.name,
+        col.data_type,
+        col.null_count,
+    );
 }</code></pre>
       <p class="note">MSRV 1.96. Feature flags cover Arrow, Parquet, async streaming, and
-        PostgreSQL / MySQL / SQLite connectors &mdash; or go lean with
+        PostgreSQL / MySQL / SQLite connectors. For a smaller build, use
         <code>default-features = false</code>.
         See <a href="https://docs.rs/dataprof">docs.rs</a>.</p>
     </div>
@@ -370,34 +417,35 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
     </div>
     <div class="card-grid">
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
-        <h3>Same data, same numbers</h3>
-        <p>CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile on every engine. CI checks it on every push.</p>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h6v5H3zM3 15h6v5H3zM6 9v6m3-3h6m0-5h6v10h-6zM17 10h2m-2 4h2"/></svg></div>
+        <h3>Metrics checked across inputs</h3>
+        <p>CI compares serialized metrics across input paths and engines against a shared
+          <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract">numeric contract</a>, which defines precision and known limits.</p>
       </article>
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg></div>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4m-2-2 2 2-2 2M18 12h4m-2-2 2 2-2 2M8 4H6v16h2M16 4h2v16h-2M9 8h6M9 12h6M9 16h6"/></svg></div>
         <h3>Bounded memory</h3>
-        <p>Files larger than RAM stream through fixed-size accumulators, and exact counts hold up to a million distinct values.</p>
+        <p>The incremental engine reads chunks into bounded accumulators. Distinct counts stay exact up to a million values, then become estimates marked in the report.</p>
       </article>
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5M2 8h5M2 12h5M7 8h4v4h4M2 20h5M7 20h4v-8M15 5h7v14h-7zM18 8h1m-1 4h1m-1 4h1"/></svg></div>
         <h3>Multi-format by default</h3>
-        <p>CSV, JSON, JSONL, Parquet, live databases, DataFrames, and Arrow batches &mdash; one tool across all of them.</p>
+        <p>CSV, JSON, JSONL, Parquet, pandas and polars DataFrames, and Arrow tables and streams share a report model. Database connectors are available in source builds.</p>
       </article>
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></div>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V3h18v18M3 8h18M8 8v13m0-7h5m-2-2 2 2-2 2M15 17l2 2 4-4"/></svg></div>
         <h3>Verdicts that can say &ldquo;can&rsquo;t tell&rdquo;</h3>
-        <p>A sampled or partial scan never passes a claim about the whole file. Scores carry their confidence interval, and the gate decides on it.</p>
+        <p>Gates return pass, fail or inconclusive. Whole-source ratio checks stay inconclusive on partial scans; sampled quality scores carry bounds.</p>
       </article>
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-        <h3>Absence is not zero</h3>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10v5H7zM7 16h10v5H7zM7 12h2m6 0h2"/></svg></div>
+        <h3>Unassessed metrics stay missing</h3>
         <p>A metric that was not computed is reported as missing, never as a plausible default. Findings list the rules they could not evaluate.</p>
       </article>
       <article class="card feature-card">
-        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 4v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V7l7-4z"/></svg></div>
-        <h3>Agent-safe summaries</h3>
-        <p>Token-bounded LLM context that carries counts and patterns, never your values. Profiling that plugs into agent workflows.</p>
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h16v18H4zM8 7h8M8 11h5M8 17v-2m4 2v-4m4 4v-6"/></svg></div>
+        <h3>Report context for agents</h3>
+        <p><code>to_llm_context()</code> produces a token-bounded summary of counts, patterns and quality evidence, with no raw cell values.</p>
       </article>
     </div>
   </section>
@@ -405,37 +453,44 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
   <section id="quality" class="block wrap">
     <div class="section-head">
       <span class="eyebrow">ISO 8000-8 &middot; ISO/IEC 25012</span>
-      <h2>A quality model you can point an auditor at</h2>
+      <h2>Quality scores with the evidence behind them</h2>
       <p>When quality analysis is requested, dataprof assesses up to seven dimensions
         informed by international data-quality standards. Its configurable aggregate
         score uses only the dimensions the data could actually support.</p>
     </div>
     <div class="dims">
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10v5H7zM7 16h10v5H7zM7 12h2m6 0h2"/></svg>
         <h3>Completeness</h3>
         <p>Missing-cell percentage, share of fully-populated rows, columns past the null threshold.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h6v4H3zM3 10h6v4H3zM3 16h6v4H3zM14 6h7m-7 6h7m-7 6h7"/></svg>
         <h3>Consistency</h3>
         <p>Data type consistency, format violations, encoding issues.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h7v5H3zM3 15h7v5H3zM15 7h6m-6 10h6M6 9v6"/></svg>
         <h3>Uniqueness</h3>
         <p>Duplicate rows, key uniqueness, high-cardinality warnings.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18M5 20v-6h3v6m3 0V7h3v13m3 0V4h3v16M3 10h18"/></svg>
         <h3>Accuracy</h3>
         <p>Outlier ratio, range violations, negatives in positive-only columns.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M6 3v6m12-6v6M3 12h18M5 16h2m3 0h2m3 0h2m-12 4h2m3 0h2M3 6v15h18V6"/></svg>
         <h3>Timeliness</h3>
         <p>Future dates, stale-data ratio, temporal ordering violations.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10v16H3zM6 8h4m-4 4h4m-4 4h2M15 12l2 2 4-5"/></svg>
         <h3>Validity</h3>
         <p>Conformance to confidently detected semantic patterns, with weak evidence left unassessed.</p>
       </article>
       <article class="card dim">
+        <svg class="dimension-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h5m4 0h3m3 0h3M3 12h5m4 0h3m3 0h3M3 20h5m4 0h3m3 0h3"/><path d="M10 2v20" stroke-dasharray="2 3"/></svg>
         <h3>Precision</h3>
         <p>Consistency of observed decimal scale within floating-point columns.</p>
       </article>
@@ -445,22 +500,22 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
   <section class="block wrap">
     <div class="section-head">
       <span class="eyebrow">Supported inputs</span>
-      <h2>Meet your data where it lives</h2>
+      <h2>Files, tables and streams</h2>
     </div>
     <div class="card formats-card">
-      <table>
+      <table role="table" aria-label="Supported inputs and profiling engines">
         <thead>
-          <tr><th>Format</th><th>Engine</th><th>Notes</th></tr>
+          <tr><th scope="col">Format</th><th scope="col">Engine</th><th scope="col">Notes</th></tr>
         </thead>
         <tbody>
           <tr><td>CSV</td><td>Incremental, Columnar</td><td>Auto-detects <code>,</code> <code>;</code> <code>|</code> <code>\t</code> delimiters</td></tr>
           <tr><td>JSON / JSONL</td><td>Incremental</td><td>Array-of-objects or one object per line</td></tr>
-          <tr><td>Parquet</td><td>Columnar</td><td>Schema and counts from metadata, no row scan needed</td></tr>
-          <tr><td>Database query</td><td>Async</td><td>PostgreSQL, MySQL, SQLite via connection string</td></tr>
+          <tr><td>Parquet</td><td>Columnar</td><td>Row counts from metadata; profiling scans values</td></tr>
+          <tr><td>Database query</td><td>Async</td><td>PostgreSQL, MySQL, SQLite; source build with connector features</td></tr>
           <tr><td>pandas / polars DataFrame</td><td>Columnar</td><td>Python API</td></tr>
-          <tr><td>Arrow RecordBatch</td><td>Columnar</td><td>Zero-copy via PyCapsule, or the Rust API</td></tr>
-          <tr><td>dict / bytes / BytesIO</td><td>Columnar</td><td>Python API, no dependencies</td></tr>
-          <tr><td>Async byte stream</td><td>Incremental</td><td>Any <code>AsyncRead</code> source (HTTP, WebSocket, &hellip;)</td></tr>
+          <tr><td>Arrow tables / batches / streams</td><td>Columnar</td><td>Python PyCapsule interface; streams are consumed batch by batch</td></tr>
+          <tr><td>dict / bytes / BytesIO</td><td>Source-dependent</td><td>Python API, no dependencies; bytes require a format</td></tr>
+          <tr><td>Async byte stream</td><td>Incremental</td><td>Rust <code>AsyncRead</code> sources; Python async file, bytes and URL APIs</td></tr>
         </tbody>
       </table>
     </div>
@@ -469,11 +524,11 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
   <section class="wrap">
     <div class="card bench-band">
       <div>
-        <span class="eyebrow">Measured, not promised</span>
-        <h2>Every change is benchmarked in CI</h2>
-        <p>Criterion runs on each push to <code>master</code>, and the full reports &mdash;
-          throughput, scaling behavior, end-to-end pipeline timings &mdash; are published here,
-          generated straight from the run&rsquo;s artifacts.</p>
+        <span class="eyebrow">Benchmark evidence</span>
+        <h2>Profiling costs, measured in CI</h2>
+        <p>The benchmark workflow runs for changes to the library, benchmarks and their configuration.
+          Reports cover throughput, scaling and end-to-end pipeline timings,
+          generated from the run&rsquo;s artifacts.</p>
       </div>
       <a class="btn btn-primary" href="benchmarks/">Browse benchmark reports</a>
     </div>
@@ -496,7 +551,7 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
   <section id="contribute" class="block wrap">
     <div class="section-head">
       <span class="eyebrow">Contribute</span>
-      <h2>Good first issues, with a mentor</h2>
+      <h2>Tests, docs and compiling examples</h2>
     </div>
     <p class="dims-note">A good first contribution here is small and self-contained:
       a focused test, a documentation fix, or one compiling example. Issues tagged
@@ -506,13 +561,13 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
         <h3>Pick an issue</h3>
         <p>Open tickets labelled
           <a href="https://github.com/AndreaBozzo/dataprof/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22">good first issue</a>,
-          each with scope, acceptance criteria, and the commands to verify it.</p>
+          and check their scope and verification steps.</p>
       </article>
       <article class="card feature-card">
-        <h3>Set up in one command</h3>
+        <h3>Run the contributor smoke check</h3>
         <p>The <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md#build--test">contributor smoke path</a>
           builds the extension and runs the focused tests:</p>
-        <p><code>python .github/scripts/contributor_smoke.py</code></p>
+        <p><code>uv run --no-project python .github/scripts/contributor_smoke.py</code></p>
       </article>
       <article class="card feature-card">
         <h3>Ask first if unsure</h3>
@@ -528,7 +583,7 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
 
 <footer class="site-footer">
   <div class="wrap">
-    <span>dataprof &mdash; dual-licensed MIT or Apache-2.0</span>
+    <span>dataprof &middot; dual-licensed MIT or Apache-2.0</span>
     <span class="spacer"></span>
     <a href="https://github.com/AndreaBozzo/dataprof">GitHub</a>
     <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md">Getting started</a>
@@ -539,23 +594,51 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
 </footer>
 
 <script>
-  document.querySelectorAll('.tab').forEach(function (tab) {
+  var tabs = Array.from(document.querySelectorAll('.tab'));
+  function selectTab(tab) {
+    tabs.forEach(function (t) {
+      var selected = t === tab;
+      t.setAttribute('aria-selected', selected ? 'true' : 'false');
+      t.tabIndex = selected ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !selected;
+    });
+  }
+  tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
-      document.querySelectorAll('.tab').forEach(function (t) {
-        var selected = t === tab;
-        t.setAttribute('aria-selected', selected ? 'true' : 'false');
-        document.getElementById(t.getAttribute('aria-controls')).hidden = !selected;
-      });
+      selectTab(tab);
+    });
+    tab.addEventListener('keydown', function (event) {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      var index = tabs.indexOf(tab);
+      var offset = event.key === 'ArrowLeft' ? -1 : 1;
+      var next = event.key === 'Home' ? tabs[0]
+        : event.key === 'End' ? tabs[tabs.length - 1]
+        : tabs[(index + offset + tabs.length) % tabs.length];
+      selectTab(next);
+      next.focus();
     });
   });
 
   document.querySelectorAll('.copy-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      var text = document.getElementById(btn.dataset.copy).textContent;
+      var command = document.getElementById(btn.dataset.copy);
+      var text = command.textContent;
+      function selectCommand() {
+        var range = document.createRange();
+        range.selectNodeContents(command);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        btn.textContent = 'Selected';
+      }
+      if (!navigator.clipboard) {
+        selectCommand();
+        return;
+      }
       navigator.clipboard.writeText(text).then(function () {
         btn.textContent = 'Copied!';
         setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
-      });
+      }).catch(selectCommand);
     });
   });
 </script>

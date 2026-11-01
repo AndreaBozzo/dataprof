@@ -1,4 +1,4 @@
-/* dataprof site — shared design tokens and components.
+/* dataprof site: shared design tokens and components.
    Used by the landing page and the generated benchmark pages. */
 
 :root {
@@ -10,6 +10,8 @@
   --accent: #26658f;
   --accent-ink: #1d5379;
   --rust: #c05a2c;
+  --rust-ink: #a44721;
+  --accent-button-ink: #fff;
   --terminal-bg: #101a24;
   --terminal-ink: #d7e2ec;
   --shadow: 0 1px 2px rgba(23, 34, 46, 0.05), 0 12px 32px rgba(23, 34, 46, 0.07);
@@ -27,6 +29,8 @@
     --accent: #64a9d6;
     --accent-ink: #8ec4e8;
     --rust: #e07c4c;
+    --rust-ink: #eda07c;
+    --accent-button-ink: #0d141c;
     --terminal-bg: #0a1119;
     --terminal-ink: #cfdae4;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 32px rgba(0, 0, 0, 0.35);
@@ -52,6 +56,7 @@ code, pre, kbd {
 }
 
 a { color: var(--accent-ink); }
+:focus-visible { outline: 3px solid var(--rust); outline-offset: 4px; }
 
 h1, h2, h3 { line-height: 1.15; margin: 0; letter-spacing: -0.015em; }
 
@@ -117,7 +122,7 @@ h1, h2, h3 { line-height: 1.15; margin: 0; letter-spacing: -0.015em; }
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--rust);
+  color: var(--rust-ink);
 }
 
 .card {
@@ -143,7 +148,7 @@ h1, h2, h3 { line-height: 1.15; margin: 0; letter-spacing: -0.015em; }
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-button-ink);
 }
 .btn-primary:hover { filter: brightness(1.08); }
 
@@ -205,3 +210,14 @@ td a:hover { text-decoration: underline; }
 .site-footer a { color: var(--muted); font-weight: 600; text-decoration: none; }
 .site-footer a:hover { color: var(--ink); }
 .site-footer .spacer { flex: 1; }
+
+.dimension-glyph { width: 20px; height: 20px; color: var(--accent-ink); margin-bottom: 10px; }
+:is(section, article)[id] { scroll-margin-top: 80px; }
+
+@media (max-width: 900px) {
+  .site-nav a:not(.nav-cta) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
