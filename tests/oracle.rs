@@ -33,16 +33,7 @@ const REL_TOLERANCE: f64 = 1e-12;
 /// (case, route, field) and the issue that owns the disagreement. A route of
 /// "*" covers every route the case runs on. The same entries as the Python
 /// twin, for the routes this file runs.
-const KNOWN: &[(&str, &str, &str, &str)] = &[
-    // 64-bit integer extrema are reported as `f64`, so past 2^53 they round
-    // to a neighbour; an exact form needs a schema change.
-    ("above_2_pow_53", "*", "min", "#1038"),
-    ("above_2_pow_53", "*", "max", "#1038"),
-    ("epoch_nanoseconds", "*", "min", "#1038"),
-    ("epoch_nanoseconds", "*", "max", "#1038"),
-    ("uint64_edge", "*", "min", "#1038"),
-    ("uint64_edge", "*", "max", "#1038"),
-];
+const KNOWN: &[(&str, &str, &str, &str)] = &[];
 
 #[derive(Debug, Clone, PartialEq)]
 struct Mismatch {
@@ -313,6 +304,7 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
 
     let stats = &column["stats"];
     let field = |name: &str| stats.get(name).cloned().unwrap_or(Value::Null);
+    check_exact(&mut checker, expected, column, stats);
     if case["relative"] == true {
         // 4dp carries no information at this magnitude.
         for name in ["mean", "variance", "std_dev", "min", "max"] {
@@ -340,20 +332,10 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
     ] {
         checker.compare(name, &field(name), &expected[name], How::Serialized);
     }
-    for name in ["min", "max"] {
-        if wide {
-            // An exact integer extreme needs an integer-preserving value;
-            // comparing after a float conversion would erase the defect (#1038).
-            let wanted = expected[name].as_str().unwrap();
-            if exact_integer(&field(name)) != Some(rational(wanted).0) {
-                checker.record(name, wanted, &field(name));
-            }
-        } else {
-            checker.compare(name, &field(name), &expected[name], How::Serialized);
-        }
-    }
+    // Past 2^53 the `f64` fields are faithful at best; `exact` carries the
+    // values themselves (#1038).
     let how = if wide { How::Faithful } else { How::Serialized };
-    for name in ["mean", "median", "mode"] {
+    for name in ["min", "max", "mean", "median", "mode"] {
         checker.compare(name, &field(name), &expected[name], how);
     }
     match expected["quartiles"].as_object() {
@@ -366,6 +348,47 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
         }
     }
     checker.found
+}
+
+/// The exact order statistics (#1038): present on every integer column, and
+/// where present each equal to the exact answer, compared as rationals.
+fn check_exact(checker: &mut Checker<'_>, expected: &Value, column: &Value, stats: &Value) {
+    let exact = &stats["exact"];
+    if column["data_type"] == "integer" && exact.is_null() {
+        checker.record("exact", "present", exact);
+    }
+    if exact.is_null() {
+        return;
+    }
+    let quartile = |name: &str| {
+        expected["quartiles"]
+            .get(name)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let wanted = [
+        ("min", expected["min"].clone()),
+        ("max", expected["max"].clone()),
+        ("median", expected["median"].clone()),
+        ("mode", expected["mode"].clone()),
+        ("q1", quartile("q1")),
+        ("q2", quartile("q2")),
+        ("q3", quartile("q3")),
+    ];
+    for (name, wanted) in wanted {
+        let actual = exact.get(name).cloned().unwrap_or(Value::Null);
+        let good = match (wanted.as_str(), actual.as_str()) {
+            (None, None) => true,
+            (Some(wanted), Some(actual)) => {
+                let ((a, b), (c, d)) = (rational(wanted), rational(actual));
+                a.checked_mul(d).is_some() && a.checked_mul(d) == c.checked_mul(b)
+            }
+            _ => false,
+        };
+        if !good {
+            checker.record(&format!("exact.{name}"), &wanted, &actual);
+        }
+    }
 }
 
 fn owner(m: &Mismatch) -> Option<&'static str> {

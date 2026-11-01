@@ -711,6 +711,8 @@ struct PythonColumnStatsDocument {
     is_approximate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     outlier_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact: Option<dataprof_core::ExactNumericStats>,
     /// Shortest value, in Unicode scalar values. Not UTF-8 bytes and not
     /// grapheme clusters: ASCII text is unaffected by that distinction, while a
     /// combining sequence counts each scalar, so the decomposed and precomposed

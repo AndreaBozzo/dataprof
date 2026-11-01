@@ -188,6 +188,7 @@ class ColumnProfile:
     quartiles: dict[str, float | None] | None
     is_approximate: bool | None
     outlier_count: int | None
+    exact: dict[str, str] | None
     #: Shortest value in Unicode scalar values, not UTF-8 bytes and not
     #: grapheme clusters. ASCII text is unaffected by that distinction; a
     #: combining sequence counts each scalar.

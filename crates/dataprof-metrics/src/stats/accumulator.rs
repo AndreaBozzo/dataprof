@@ -92,6 +92,10 @@ pub struct NumericAccumulator {
     scaled: bool,
     min: f64,
     max: f64,
+    /// The smallest and largest value as given, which `min` and `max` round
+    /// past what `f64` holds, so they can be reported exactly (#1038).
+    min_value: Option<ParsedNumber>,
+    max_value: Option<ParsedNumber>,
 }
 
 impl Default for NumericAccumulator {
@@ -232,6 +236,8 @@ impl NumericAccumulator {
             scaled: false,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
+            min_value: None,
+            max_value: None,
         }
     }
 
@@ -240,7 +246,31 @@ impl NumericAccumulator {
     #[inline]
     pub fn update(&mut self, value: f64) {
         debug_assert!(value.is_finite());
+        self.note_extremes(ParsedNumber::Float(value));
         self.push(value, 0.0);
+    }
+
+    /// Keep `number` as the smallest or largest value where it is one. Only a
+    /// value whose `f64` reaches the running `min` or `max` can be, so the
+    /// exact comparison runs for those alone. Called before `min` and `max`
+    /// take the value in, or after, in `merge`, for values already in them.
+    #[inline]
+    fn note_extremes(&mut self, number: ParsedNumber) {
+        let value = number.to_f64();
+        if value <= self.min
+            && self
+                .min_value
+                .is_none_or(|min| number.value_cmp(min).is_lt())
+        {
+            self.min_value = Some(number);
+        }
+        if value >= self.max
+            && self
+                .max_value
+                .is_none_or(|max| number.value_cmp(max).is_gt())
+        {
+            self.max_value = Some(number);
+        }
     }
 
     /// Fold in an integer without rounding it to `f64` first. Min, max and the
@@ -263,9 +293,14 @@ impl NumericAccumulator {
         match number {
             ParsedNumber::Float(value) => self.update(value),
             ParsedNumber::Integer(value) => self.update_wide_integer(value),
-            ParsedNumber::Decimal { exact, nearest } => self.update_decimal(exact, nearest),
+            ParsedNumber::Decimal { exact, nearest } => {
+                self.note_extremes(number);
+                self.update_decimal(exact, nearest);
+            }
             ParsedNumber::Unheld(value) => {
-                self.update(value);
+                debug_assert!(value.is_finite());
+                self.note_extremes(number);
+                self.push(value, 0.0);
                 self.note_unheld(value);
             }
         }
@@ -279,6 +314,7 @@ impl NumericAccumulator {
             self.update(value as f64);
             return;
         }
+        self.note_extremes(ParsedNumber::Integer(value));
         let high = value as f64;
         let exact = ExactDecimal::integer(value);
         // Against an integer anchor, or none, the split below is already
@@ -417,6 +453,9 @@ impl NumericAccumulator {
             scaled: false,
             min,
             max,
+            // Lanes hold `f64` values only, so their extremes are exact.
+            min_value: (count > 0).then_some(ParsedNumber::Float(min)),
+            max_value: (count > 0).then_some(ParsedNumber::Float(max)),
         }
     }
 
@@ -586,11 +625,27 @@ impl NumericAccumulator {
 
         self.min = self.min.min(other.min);
         self.max = self.max.max(other.max);
+        for extreme in [other.min_value, other.max_value].into_iter().flatten() {
+            self.note_extremes(extreme);
+        }
     }
 
     #[inline]
     pub fn count(&self) -> u64 {
         self.count
+    }
+
+    /// The smallest value as it was given, or `None` when nothing was
+    /// accumulated. Exact where [`min`](Self::min) rounds (#1038).
+    #[inline]
+    pub fn min_value(&self) -> Option<ParsedNumber> {
+        self.min_value
+    }
+
+    /// The largest value as it was given. See [`min_value`](Self::min_value).
+    #[inline]
+    pub fn max_value(&self) -> Option<ParsedNumber> {
+        self.max_value
     }
 
     /// Smallest value seen, or `None` when nothing was accumulated.
@@ -862,6 +917,26 @@ impl ParsedNumber {
         (self.to_f64() - other.to_f64()) + (self.remainder() - other.remainder())
     }
 
+    /// The value as an exact decimal: an integer or a held decimal as it is,
+    /// a float as the shortest decimal that reads back as it, which is the
+    /// value itself for an integral float and the written decimal for one
+    /// of a decimal column too short to be held. `None` for a literal too
+    /// wide to hold.
+    pub(crate) fn exact_value(self) -> Option<ExactDecimal> {
+        match self {
+            Self::Integer(_) | Self::Decimal { .. } => self.exact(),
+            Self::Float(value) => ExactDecimal::from_text(&value.to_string()),
+            Self::Unheld(_) => None,
+        }
+    }
+
+    /// The value as a canonical decimal string (see
+    /// `dataprof_core::ExactNumericStats`), or `None` where it has no exact
+    /// form.
+    pub fn exact_string(self) -> Option<String> {
+        self.exact_value().map(ExactDecimal::canonical)
+    }
+
     /// The exact value minus its nearest `f64`, zero where it is not held.
     fn remainder(self) -> f64 {
         self.exact()
@@ -958,6 +1033,74 @@ impl ExactDecimal {
         let whole = whole.trim_start_matches('0').to_string();
         let width = MAX_DECIMAL_SCALE as usize;
         (whole.len(), whole, format!("{fraction:0<width$}"))
+    }
+
+    /// The decimal `text` holds exactly, or `None` when it is not a finite
+    /// decimal literal or its digits leave `i128`.
+    pub(crate) fn from_text(text: &str) -> Option<Self> {
+        DecimalLiteral::read(text.trim())?.exact()
+    }
+
+    /// `self + (next - self) × quarters / 4` for `quarters` in `1..=3`, the
+    /// Type 7 interpolation between two sorted values, as a canonical decimal
+    /// string. Whole steps of the last place are added to `self`, and the
+    /// quarter of a step left over is written as trailing digits, so `self` is
+    /// never scaled up: only the two values at one scale, and their gap, need
+    /// to fit in `i128`, as they do near its top (#1186 review).
+    pub(crate) fn interpolated(self, next: Self, quarters: i128) -> Option<String> {
+        let scale = self.scale.max(next.scale);
+        let base = scale_up(self.unscaled, scale - self.scale)?;
+        // Non-negative: `next` follows `self` in sorted order.
+        let gap = scale_up(next.unscaled, scale - next.scale)?.checked_sub(base)?;
+        let steps = (gap / 4)
+            .checked_mul(quarters)?
+            .checked_add(gap % 4 * quarters / 4)?;
+        let whole = base.checked_add(steps)?;
+        let fraction = gap % 4 * quarters % 4;
+        if fraction == 0 {
+            return Some(
+                Self {
+                    unscaled: whole,
+                    scale,
+                }
+                .canonical(),
+            );
+        }
+        // `whole + fraction / 4` steps. Below zero that is
+        // `-((-whole - 1) + (4 - fraction) / 4)`: one step less in magnitude
+        // and the complementary quarter.
+        let (negative, magnitude, fraction) = if whole < 0 {
+            (true, (whole + 1).unsigned_abs(), 4 - fraction)
+        } else {
+            (false, whole.unsigned_abs(), fraction)
+        };
+        let scale = scale as usize;
+        let digits = format!("{magnitude:0>width$}", width = scale + 1);
+        let (integer, places) = digits.split_at(digits.len() - scale);
+        let quarter = ["", "25", "5", "75"][fraction as usize];
+        let places = format!("{places}{quarter}");
+        let places = places.trim_end_matches('0');
+        let sign = if negative { "-" } else { "" };
+        Some(format!("{sign}{integer}.{places}"))
+    }
+
+    /// The canonical decimal spelling: no exponent, no trailing zeros in a
+    /// fraction, `-` before a negative value, `0` for zero.
+    pub(crate) fn canonical(self) -> String {
+        let (unscaled, scale) = self.normalized();
+        let digits = unscaled.unsigned_abs().to_string();
+        let sign = if unscaled < 0 { "-" } else { "" };
+        let scale = scale as usize;
+        if scale == 0 {
+            return format!("{sign}{digits}");
+        }
+        let digits = if digits.len() <= scale {
+            format!("{}{digits}", "0".repeat(scale + 1 - digits.len()))
+        } else {
+            digits
+        };
+        let (whole, fraction) = digits.split_at(digits.len() - scale);
+        format!("{sign}{whole}.{fraction}")
     }
 
     /// The unscaled digits and scale with trailing zeros of the fraction
@@ -1838,6 +1981,61 @@ mod tests {
         assert_eq!(decimal(-1, 37).exact_cmp(big), Less);
         assert_eq!(decimal(250, 2).exact_cmp(decimal(25, 1)), Equal);
         assert_eq!(decimal(0, 5).exact_cmp(decimal(0, 0)), Equal);
+    }
+
+    /// One spelling per value: no exponent, no trailing zeros in a fraction,
+    /// a leading zero before a fraction below one (#1038).
+    #[test]
+    fn canonical_decimals_have_one_spelling() {
+        for (text, canonical) in [
+            ("0", "0"),
+            ("-0.0", "0"),
+            ("12.30", "12.3"),
+            ("-0.05", "-0.05"),
+            ("1e20", "100000000000000000000"),
+            ("1.5e-3", "0.0015"),
+            ("18446744073709551615", "18446744073709551615"),
+            ("99999999999999999999.990", "99999999999999999999.99"),
+        ] {
+            let exact = ExactDecimal::from_text(text).unwrap_or_else(|| panic!("{text}"));
+            assert_eq!(exact.canonical(), canonical, "{text}");
+        }
+        // A quarter of a gap is exact, beside a base past 2^53.
+        let base = ExactDecimal::from_text("9007199254740993").unwrap();
+        let next = ExactDecimal::from_text("9007199254740996").unwrap();
+        assert_eq!(
+            base.interpolated(next, 1).as_deref(),
+            Some("9007199254740993.75")
+        );
+    }
+
+    /// The smallest and largest value as given, past what `min` and `max`
+    /// hold, through single values, merges and SIMD lanes (#1038).
+    #[test]
+    fn extremes_are_kept_as_given() {
+        let mut accumulator = NumericAccumulator::new();
+        for value in ["9007199254740995", "9007199254740993", "9007199254740997"] {
+            accumulator.update_number(ParsedNumber::parse(value).unwrap());
+        }
+        let mut merged = accumulate(&[1.5, -2.0]);
+        merged.merge(&accumulator);
+        let text = |number: Option<ParsedNumber>| number.and_then(ParsedNumber::exact_string);
+        assert_eq!(
+            text(accumulator.min_value()).as_deref(),
+            Some("9007199254740993")
+        );
+        assert_eq!(
+            text(accumulator.max_value()).as_deref(),
+            Some("9007199254740997")
+        );
+        assert_eq!(text(merged.min_value()).as_deref(), Some("-2"));
+        assert_eq!(
+            text(merged.max_value()).as_deref(),
+            Some("9007199254740997")
+        );
+        let simd = crate::acceleration::simd::compute_stats_simd(&[3.0, -1.25, 8.0, 0.5, 7.0]);
+        assert_eq!(text(simd.min_value()).as_deref(), Some("-1.25"));
+        assert_eq!(text(simd.max_value()).as_deref(), Some("8"));
     }
 
     #[test]

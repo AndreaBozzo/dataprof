@@ -151,6 +151,18 @@ of a few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken fr
 the nearest `f64` of each value, so `iqr` can differ from `q3 - q1` as
 reported.
 
+`stats.exact` carries the order statistics themselves, as canonical decimal
+strings (no exponent, no trailing zeros in a fraction): `min`, `max`, `median`,
+`q1`, `q2`, `q3` and `mode`, each present when the `f64` field of the same name
+is, over the same values. It is present on every integer column and every
+decimal-typed column (an Arrow decimal read from Arrow, Parquet, pandas or
+polars), and absent on a float column, whose values are not held exactly. A
+CSV or JSON column of long decimal text is typed `float` and has no `exact`
+although its spread is exact, and so is a database `numeric` column, which
+arrives as text. A median or quartile between two integers is a decimal, such
+as `"9007199254740997.5"`. `exact` is absent on a report written before it
+existed (#1038).
+
 Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
 deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and

@@ -808,6 +808,8 @@ impl ColumnAnalyzer {
             std_dev: self.numeric.sample_std_dev(),
             variance: self.numeric.sample_variance(),
             count: self.numeric.count() as usize,
+            min_value: self.numeric.min_value(),
+            max_value: self.numeric.max_value(),
         })
     }
 

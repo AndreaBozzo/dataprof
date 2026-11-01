@@ -193,7 +193,7 @@ def _assert_parity(native: Any, restored: Any, path: str) -> None:
         )
         return
 
-    if isinstance(native, (int, str)):
+    if isinstance(native, (int, str, Decimal)):
         assert type(native) is type(restored), (
             f"{path}: type changed - native={native!r}, round-tripped={restored!r}"
         )
