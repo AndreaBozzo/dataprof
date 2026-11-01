@@ -831,11 +831,19 @@ impl ParsedNumber {
     }
 
     /// Orders two values by their exact value: by their nearest `f64`, then,
-    /// where those are equal, by what each holds beyond it.
+    /// where those are equal, by the sign of their exact difference when both
+    /// are held, and otherwise by what each holds beyond its `f64`. Those
+    /// remainders are `f64` themselves: near 1.2e35 they are about 1e19, too
+    /// coarse for cents, and decimals a cent apart sorted out of order.
     pub(crate) fn value_cmp(self, other: Self) -> std::cmp::Ordering {
-        self.to_f64()
-            .total_cmp(&other.to_f64())
-            .then_with(|| self.remainder().total_cmp(&other.remainder()))
+        self.to_f64().total_cmp(&other.to_f64()).then_with(|| {
+            if let (Some(mine), Some(theirs)) = (self.exact(), other.exact())
+                && let Some(difference) = mine.minus(theirs)
+            {
+                return difference.total_cmp(&0.0);
+            }
+            self.remainder().total_cmp(&other.remainder())
+        })
     }
 
     /// `self - other`, exactly where both are held and then rounded once;

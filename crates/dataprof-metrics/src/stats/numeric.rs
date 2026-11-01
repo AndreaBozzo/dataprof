@@ -795,6 +795,23 @@ mod tests {
         assert_eq!(leading.outlier_count, Some(2));
     }
 
+    /// Cents on 1.2e35 share one `f64`, and the part of each beyond it is
+    /// itself an `f64` of about 1e19, which cannot tell them apart: the sample
+    /// sorted out of order, and the quartile anchors gave an IQR of -0.0025
+    /// with every value an outlier. Exactly, the IQR is 0.025 and only `.09`
+    /// is outside the fences.
+    #[test]
+    fn wide_order_statistics_sort_decimals_a_cent_apart() {
+        let values: Vec<String> = ["01", "05", "02", "00", "09", "03", "01", "02"]
+            .iter()
+            .map(|cents| format!("123456789012345678901234567890123456.{cents}"))
+            .collect();
+        let stats = compute_numeric_stats(&values);
+        let iqr = stats.quartiles.and_then(|q| q.iqr).expect("an IQR");
+        assert!((iqr - 0.025).abs() < 1e-12, "iqr {iqr}");
+        assert_eq!(stats.outlier_count, Some(1));
+    }
+
     /// One value read as a float, as an integer past 2^53 or as a decimal is
     /// one value however it is written, so its spellings count together for
     /// the mode: 1e20 written in full reads as a float, and with a zero
