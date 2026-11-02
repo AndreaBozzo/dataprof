@@ -63,7 +63,7 @@ serde = { version = "1.0", features = ["derive"] }
 # execution metadata, so resaving a canonical report cannot change its last bit.
 serde_json = { version = "1.0.149", features = ["preserve_order", "float_roundtrip"] }
 sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio-rustls", "chrono", "uuid"] }
-sysinfo = "0.39"
+sysinfo = "0.40"
 thiserror = "2.0"
 tokio = "1.49"
 tokio-util = { version = "0.7", features = ["io-util"] }
