@@ -10,6 +10,12 @@ from typing import Any as _Any
 # Rounding helpers — match the convention in dataprof-core serde helpers.
 # ---------------------------------------------------------------------------
 
+#: The decimal context every helper rounds in, so a caller's own context (a
+#: lower precision, or ``Inexact`` trapped) cannot change a result or raise.
+_HALF_UP = _decimal.Context(
+    prec=28, rounding=_decimal.ROUND_HALF_UP, traps=[_decimal.InvalidOperation]
+)
+
 
 def _half_up(v: float, ndigits: int) -> float:
     """Round ``v`` at ``ndigits``, ties away from zero, as the Rust layer does.
@@ -27,8 +33,7 @@ def _half_up(v: float, ndigits: int) -> float:
     and the engine's answer is the one that wins.
     """
     scale = 10.0**ndigits
-    with _decimal.localcontext() as ctx:
-        ctx.rounding = _decimal.ROUND_HALF_UP
+    with _decimal.localcontext(_HALF_UP):
         try:
             # Decimal(float) is the exact binary value, so quantizing it to an
             # integer under ROUND_HALF_UP reproduces f64::round() exactly.
@@ -94,8 +99,7 @@ def _rstat(v: float | None) -> float | None:
     places = _STATISTIC_SIGNIFICANT_DIGITS - 1 - _decimal_exponent(abs(v))
     if places >= 0:
         return _half_up(v, places)
-    with _decimal.localcontext() as ctx:
-        ctx.rounding = _decimal.ROUND_HALF_UP
+    with _decimal.localcontext(_HALF_UP):
         # At most 12 digits, so the quotient rounds to an exact integer.
         steps = int(_decimal.Decimal(v / _power_of_ten(-places)).quantize(_decimal.Decimal(1)))
     # Read back from its decimal form, as the Rust layer does, so the result is

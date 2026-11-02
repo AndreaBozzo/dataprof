@@ -74,9 +74,9 @@ def test_large_magnitude_moments_serialize_alike_on_every_route():
 
 
 def test_every_export_rounds_the_moments_as_to_dict_does():
-    """``column_to_dict()``, the flat records behind ``to_dataframe()`` and the
-    markdown, HTML and text views round in Python, so they must apply the same
-    rule as the Rust summary."""
+    """``column_to_dict()``, the flat records behind ``to_dataframe()``,
+    ``describe()``, ``repr()`` and the markdown, HTML and text views round in
+    Python, so they must apply the same rule as the Rust summary."""
     report = dp.profile(str(FIXTURE))
     summary = report.to_dict()["columns"][0]["stats"]
     expected = {name: summary[name] for name in MOMENTS}
@@ -86,6 +86,11 @@ def test_every_export_rounds_the_moments_as_to_dict_does():
     assert {name: record[name] for name in MOMENTS} == expected
     table = report.to_markdown()
     assert f"mean={expected['mean']}, std={expected['std_dev']}" in table
+    described = report.describe()["amount"]
+    assert (described["mean"], described["std"]) == (expected["mean"], expected["std_dev"])
+    text = repr(report)
+    assert f"mean={expected['mean']} " in text
+    assert f"std={expected['std_dev']}" in text
 
 
 def test_reports_record_the_statistic_rounding():

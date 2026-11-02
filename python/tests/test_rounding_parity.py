@@ -112,6 +112,20 @@ def test_statistic_helper_matches_the_shared_fixture(rounding_cases):
     assert not failures, "\n".join(failures)
 
 
+def test_helpers_ignore_the_callers_decimal_context(rounding_cases):
+    """A caller's decimal context, at a low precision or with ``Inexact``
+    trapped, changes no result and raises nothing."""
+    import decimal
+
+    helpers = [(_r2, case["value"]) for case in rounding_cases["cases"]]
+    helpers += [(_r4, case["value"]) for case in rounding_cases["cases"]]
+    helpers += [(_rstat, case["value"]) for case in rounding_cases["statistic_cases"]]
+    expected = [helper(value) for helper, value in helpers]
+    for context in (decimal.Context(prec=8), decimal.Context(traps=[decimal.Inexact])):
+        with decimal.localcontext(context):
+            assert [helper(value) for helper, value in helpers] == expected, context
+
+
 def test_fixture_covers_the_ties_that_discriminate_the_rule(rounding_cases):
     """A fixture of well-behaved values would pass under either rule.
 
