@@ -50,10 +50,12 @@ impl ChunkSize {
 
     /// Derive a chunk size from system available memory and the source size.
     fn adaptive_size(&self, file_size_bytes: u64) -> usize {
-        let mut system = System::new_all();
-        system.refresh_memory();
-
-        let available_memory = system.available_memory();
+        // An unsupported platform reads as zero available memory, which the
+        // 64 MB floor below turns into a usable chunk size.
+        let available_memory = System::new().map_or(0, |mut system| {
+            system.refresh_memory();
+            system.available_memory()
+        });
 
         // Use max 10% of available memory for each chunk
         let bytes_per_chunk = (available_memory / 10).max(64 * 1024 * 1024) as usize; // Min 64MB
