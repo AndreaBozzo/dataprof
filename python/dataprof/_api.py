@@ -141,7 +141,8 @@ def profile_file(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. A source ending inside a quoted field is likewise
+            first such row the profile reads: a row past ``max_rows`` is not
+            judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
             False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
@@ -281,10 +282,10 @@ def profile(
             span lines, and a line may not hold more than one value. Byte
             sources have no extension to read the grammar from, so they require
             this argument.
-        max_rows: Maximum rows to analyze. Parquet files and byte buffers
-            select up to 32 ranges spread across the source; other inputs
-            stop at the row cap. Parquet records the selection in
-            ``report.sampled_row_ranges``.
+        max_rows: Maximum rows to analyze. Parquet files and Parquet bytes
+            select up to 32 ranges spread across the source and record the
+            selection in ``report.sampled_row_ranges``; other inputs, CSV and
+            JSON bytes included, stop at the row cap.
         name: Name for DataFrame sources in the report.
         csv_delimiter: Single-character CSV delimiter (default: detected
             from the data).
@@ -292,7 +293,8 @@ def profile(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. A source ending inside a quoted field is likewise
+            first such row the profile reads: a row past ``max_rows`` is not
+            judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
             False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
@@ -527,7 +529,7 @@ def profile(
         skipped = 0
         row_count: int | None = None
         if fmt == "csv":
-            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter)
+            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter, max_rows)
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)

@@ -293,8 +293,15 @@ impl ArrowProfiler {
         // One record past the cap, read but not counted. It is the only thing
         // that separates a profile cut short from one that reached the end of
         // its file, and the Arrow decode stops at the cap so it will never see
-        // this record itself.
-        let has_more_rows = max_rows.is_some() && reader.read_byte_record(&mut record)?;
+        // this record itself. Strict parsing does not judge it either: a record
+        // of the wrong width still proves a row exists past the cap, and the
+        // cap bounds what the profile answers for (#757).
+        let has_more_rows = max_rows.is_some()
+            && match reader.read_byte_record(&mut record) {
+                Ok(more) => more,
+                Err(error) if matches!(error.kind(), csv::ErrorKind::UnequalLengths { .. }) => true,
+                Err(error) => return Err(error.into()),
+            };
 
         Ok(CsvPreScan {
             ragged_row_count,

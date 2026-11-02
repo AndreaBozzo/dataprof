@@ -183,12 +183,16 @@ impl IncrementalProfiler {
                 ),
                 None => chunk_size_bytes,
             };
-            let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
-                offset,
-                read_size,
-                first_chunk && source_has_header,
-                self.csv_config.as_ref(),
-            )?;
+            // A record strict parsing refuses ends the chunk, and is raised
+            // below only if the row cap does not stop the scan first: a record
+            // past the cap is not part of the profile, so it is not judged.
+            let (chunk_headers, records, actual_bytes, ragged) = reader
+                .read_csv_chunk_until_ragged(
+                    offset,
+                    read_size,
+                    first_chunk && source_has_header,
+                    self.csv_config.as_ref(),
+                )?;
 
             if records.is_empty() && actual_bytes == 0 {
                 break;
@@ -298,13 +302,16 @@ impl IncrementalProfiler {
                         // Reaching the cap is only truncation if a row actually
                         // remains. A file holding exactly `limit` rows was read in
                         // full, and must not report a truncation reason.
-                        let more_rows_remain = row_idx + 1 < records.len() || {
-                            let (_, next_records, next_bytes) = reader.read_csv_chunk(
-                                offset + actual_bytes as u64,
-                                chunk_size_bytes,
-                                false,
-                                self.csv_config.as_ref(),
-                            )?;
+                        // A refused record is a row as well, past the cap,
+                        // and so is the next chunk's, refused or not.
+                        let more_rows_remain = row_idx + 1 < records.len() || ragged.is_some() || {
+                            let (_, next_records, next_bytes, _) = reader
+                                .read_csv_chunk_until_ragged(
+                                    offset + actual_bytes as u64,
+                                    chunk_size_bytes,
+                                    false,
+                                    self.csv_config.as_ref(),
+                                )?;
                             !(next_records.is_empty() && next_bytes == 0)
                         };
 
@@ -315,6 +322,17 @@ impl IncrementalProfiler {
                         break;
                     }
                 }
+            }
+
+            if !hit_row_limit && let Some(error) = ragged {
+                if row_limit != Some(0) {
+                    return Err(error.into());
+                }
+                // The refused record was the chunk's first, so the zero-row
+                // check above never ran. A cap of zero is met before it.
+                hit_row_limit = true;
+                source_exhausted = false;
+                stop_eval.update(0, actual_bytes as u64, 0.0);
             }
 
             // Sample after processing, while the chunk buffer and the stats it

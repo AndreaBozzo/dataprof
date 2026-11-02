@@ -39,6 +39,11 @@ struct ParsedChunk {
     /// The JSON reader stopped at the row cap with a record left unread, which
     /// it did not decode. Such a chunk is the last one and holds no records.
     past_cap: bool,
+    /// Strict CSV parsing refused the record after this chunk's rows for its
+    /// field count. Such a chunk is the last one. The processor raises the
+    /// refusal only if the row cap has not stopped it first: a record past the
+    /// cap is not part of the profile, so it is not judged (#757).
+    refusal: Option<DataProfilerError>,
 }
 
 /// Structural violations the blocking reader task observed while parsing.
@@ -585,6 +590,7 @@ impl AsyncStreamingProfiler {
         let header_chunk = ParsedChunk {
             new_columns: Vec::new(),
             past_cap: false,
+            refusal: None,
             records: vec![header_fields],
             containers: Vec::new(),
             bytes_read: byte_offset,
@@ -616,11 +622,20 @@ impl AsyncStreamingProfiler {
         let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
+        let mut refusal = None;
 
-        while csv_reader
-            .read_record(&mut record)
-            .map_err(|e| Self::csv_error(e, flexible))?
-        {
+        loop {
+            match csv_reader.read_record(&mut record) {
+                Ok(true) => {}
+                Ok(false) => break,
+                // Handed to the processor with the rows before it, which
+                // judges it only if the row cap does not stop it first.
+                Err(e) if matches!(e.kind(), csv::ErrorKind::UnequalLengths { .. }) => {
+                    refusal = Some(Self::csv_error(e, flexible));
+                    break;
+                }
+                Err(e) => return Err(Self::csv_error(e, flexible)),
+            }
             // A field count differing from the header is a structural violation.
             // Counted here, before the row is queued, so the signal covers every
             // record read rather than only the ones that survive sampling.
@@ -639,6 +654,7 @@ impl AsyncStreamingProfiler {
                 let chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    refusal: None,
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
                     bytes_read: bytes_in_chunk,
@@ -653,10 +669,11 @@ impl AsyncStreamingProfiler {
         }
 
         // Send remaining records
-        if !current_chunk.is_empty() {
+        if !current_chunk.is_empty() || refusal.is_some() {
             let chunk = ParsedChunk {
                 new_columns: Vec::new(),
                 past_cap: false,
+                refusal,
                 records: current_chunk,
                 containers: Vec::new(),
                 bytes_read: bytes_in_chunk,
@@ -765,6 +782,7 @@ impl AsyncStreamingProfiler {
                 let header_chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    refusal: None,
                     records: vec![cols.to_vec()],
                     containers: Vec::new(),
                     bytes_read: 0,
@@ -781,6 +799,7 @@ impl AsyncStreamingProfiler {
                 let data_chunk = ParsedChunk {
                     new_columns: cols[*sent_columns..].to_vec(),
                     past_cap: false,
+                    refusal: None,
                     records,
                     containers,
                     bytes_read: *bytes,
@@ -1160,6 +1179,7 @@ impl AsyncStreamingProfiler {
                 bytes_read: 0,
                 new_columns: Vec::new(),
                 past_cap: true,
+                refusal: None,
             });
         }
 
@@ -1280,6 +1300,8 @@ impl AsyncStreamingProfiler {
             let mut hit_row_limit = false;
             headers.extend(chunk.new_columns);
             let mut chunk_containers = chunk.containers.into_iter();
+            let mut refusal = chunk.refusal;
+            let refused = refusal.is_some();
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
                 // decode-audit: no-data — CSV chunks carry no container list,
@@ -1339,6 +1361,16 @@ impl AsyncStreamingProfiler {
                 }
             }
 
+            if !hit_row_limit && let Some(error) = refusal.take() {
+                if row_limit != Some(0) {
+                    return Err(error);
+                }
+                // The refused record was the chunk's first, so the zero-row
+                // check above never ran. A cap of zero is met before it.
+                rows_consumed = 0;
+                hit_row_limit = true;
+            }
+
             total_rows += rows_consumed;
             // A key first seen in this chunk is a column once a consumed row
             // reaches it; tell progress consumers before the chunk's update.
@@ -1350,10 +1382,10 @@ impl AsyncStreamingProfiler {
                 // otherwise ask the reader for one more chunk, which resolves
                 // to `None` when the source is exhausted.
                 let more_rows_remain = rows_consumed < chunk_rows
-                    || rx
-                        .recv()
-                        .await
-                        .is_some_and(|next| !next.records.is_empty() || next.past_cap);
+                    || refused
+                    || rx.recv().await.is_some_and(|next| {
+                        !next.records.is_empty() || next.past_cap || next.refusal.is_some()
+                    });
 
                 if more_rows_remain {
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
