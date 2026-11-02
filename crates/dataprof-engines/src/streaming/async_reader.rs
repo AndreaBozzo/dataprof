@@ -48,16 +48,14 @@ struct ParsedChunk {
 
 /// Structural violations the blocking reader task observed while parsing.
 ///
-/// Both counters describe what the *reader* saw, so an early-stopped scan
-/// reports the violations within the data it actually read.
+/// The malformed count describes what the *reader* saw. Ragged CSV rows are
+/// counted by the processor instead, over the rows it consumes: the reader runs
+/// ahead of the row cap, so its count would include rows past it (#1203).
 #[derive(Default)]
 struct ReaderOutcome {
     /// Malformed JSON/JSONL records skipped under the tolerant policy
     /// (always 0 for CSV, and in strict mode where the first one aborts).
     malformed_records: usize,
-    /// CSV records whose field count differed from the header (always 0 for
-    /// JSON/JSONL, whose rows are aligned to the column set by construction).
-    ragged_rows: usize,
     /// Whether the CSV source ended inside a quoted field; `None` for JSON and
     /// for a scan that stopped before the end of its source.
     unterminated_quote: Option<bool>,
@@ -397,6 +395,7 @@ impl AsyncStreamingProfiler {
             total_bytes,
             truncation_reason,
             container_counts,
+            ragged_rows,
         ) = match process_result {
             Ok(result) => result,
             Err(process_err) => {
@@ -487,7 +486,7 @@ impl AsyncStreamingProfiler {
             .with_error_count(reader_outcome.malformed_records)
             // Ragged CSV records are recovered, never silently: the count is the
             // same signal the incremental file path reports.
-            .with_ragged_row_count(reader_outcome.ragged_rows);
+            .with_ragged_row_count(ragged_rows);
         if let Some(ended_inside_quotes) = unterminated_quote {
             execution = execution.with_unterminated_quote(ended_inside_quotes);
         }
@@ -581,7 +580,6 @@ impl AsyncStreamingProfiler {
 
         let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
         dataprof_core::validate_unique_column_names(&header_fields, "CSV header")?;
-        let header_len = header_fields.len();
         // Byte counts come from the parser's own position rather than from the
         // parsed fields: a record's fields exclude delimiters, quotes and line
         // endings, so summing them under-reports every row and would leave
@@ -636,13 +634,6 @@ impl AsyncStreamingProfiler {
                 }
                 Err(e) => return Err(Self::csv_error(e, flexible)),
             }
-            // A field count differing from the header is a structural violation.
-            // Counted here, before the row is queued, so the signal covers every
-            // record read rather than only the ones that survive sampling.
-            if record.len() != header_len {
-                outcome.ragged_rows += 1;
-            }
-
             let position = csv_reader.position().byte();
             bytes_in_chunk += position.saturating_sub(byte_offset);
             byte_offset = position;
@@ -1189,9 +1180,10 @@ impl AsyncStreamingProfiler {
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
     /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read,
-    /// truncation_reason, container_counts). `container_counts` is, per column,
-    /// how many of the values folded into `column_stats` were a JSON object or
-    /// array.
+    /// truncation_reason, container_counts, ragged_rows). `container_counts`
+    /// is, per column, how many of the values folded into `column_stats` were a
+    /// JSON object or array. `ragged_rows` counts the consumed CSV rows whose
+    /// field count differs from the header.
     #[allow(clippy::type_complexity)]
     async fn process_chunks(
         &self,
@@ -1209,6 +1201,7 @@ impl AsyncStreamingProfiler {
             u64,
             Option<TruncationReason>,
             HashMap<String, usize>,
+            usize,
         ),
         DataProfilerError,
     > {
@@ -1219,6 +1212,7 @@ impl AsyncStreamingProfiler {
         let mut total_rows: usize = 0;
         let mut sampled_rows: usize = 0;
         let mut total_bytes: u64 = 0;
+        let mut ragged_rows: usize = 0;
 
         // Initialize stop condition evaluator
         let mut estimated_total = exact_total_rows;
@@ -1321,6 +1315,15 @@ impl AsyncStreamingProfiler {
 
                 // Consumed from here on, kept by the sampler or not.
                 discovered = discovered.max(values.len().min(headers.len()));
+                // A field count differing from the header is a structural
+                // violation. Counted before sampling, so the signal covers
+                // every row consumed, and here rather than in the reader, so
+                // it covers no row past the cap. CSV rows reach this point
+                // unpadded; a JSON row covers a prefix of a growing schema by
+                // construction, so its width says nothing.
+                if format == FileFormat::Csv && values.len() != headers.len() {
+                    ragged_rows += 1;
+                }
                 if !sampler.accept() {
                     continue;
                 }
@@ -1488,6 +1491,7 @@ impl AsyncStreamingProfiler {
             total_bytes,
             truncation_reason,
             container_counts,
+            ragged_rows,
         ))
     }
 
