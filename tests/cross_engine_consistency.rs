@@ -1462,7 +1462,7 @@ fn type_homogeneity_agrees_across_engines() {
 /// A ragged row past `max_rows` is not part of the profile, so no engine may
 /// fail over one. The columnar engine used to: it decoded a whole batch before
 /// applying the cap, and `arrow-csv` refuses a record wider than its schema
-/// (#753). Strict parsing is the deliberate exception, pinned below.
+/// (#753). Strict parsing does not judge it either: `tests/strict_csv_row_cap.rs`.
 #[test]
 fn a_ragged_row_past_the_row_cap_is_ignored_by_every_engine() {
     for row_past_cap in ["Bob,30", "Bob,30,Milan,extra"] {
@@ -1495,44 +1495,6 @@ fn a_ragged_row_past_the_row_cap_is_ignored_by_every_engine() {
                 ),
                 "{engine:?}: {:?}",
                 report.execution.truncation_reason
-            );
-        }
-    }
-}
-
-/// Strict parsing rejects a ragged row past the cap on every engine, because
-/// each one reads past the cap before applying it: the incremental engine
-/// parses a whole chunk, the columnar engine a whole pre-scan record. Whether
-/// that is the right contract is #757; until it is decided, the three must not
-/// drift apart, which is what this pins.
-#[test]
-fn strict_parsing_rejects_a_ragged_row_past_the_row_cap_on_every_engine() {
-    for row_past_cap in ["Bob,30", "Bob,30,Milan,extra"] {
-        let mut csv = NamedTempFile::new().unwrap();
-        writeln!(csv, "name,age,city").unwrap();
-        writeln!(csv, "Alice,25,Rome").unwrap();
-        writeln!(csv, "{row_past_cap}").unwrap();
-        csv.flush().unwrap();
-
-        for engine in [
-            EngineType::Auto,
-            EngineType::Incremental,
-            EngineType::Columnar,
-        ] {
-            let error = Profiler::new()
-                .engine(engine)
-                .csv_flexible(false)
-                .stop_when(StopCondition::MaxRows(1))
-                .analyze_file(csv.path())
-                .expect_err(&format!("{engine:?} must reject {row_past_cap:?}"));
-
-            // Every engine names both field counts, the `csv` crate's phrasing
-            // rather than Arrow's opaque "incorrect number of fields".
-            let message = error.to_string();
-            assert!(message.contains("fields"), "{engine:?}: {message}");
-            assert!(
-                !message.contains("incorrect number of fields"),
-                "{engine:?}: {message}"
             );
         }
     }

@@ -39,9 +39,35 @@ impl MemoryMappedCsvReader {
         has_headers: bool,
         csv_config: Option<&CsvParserConfig>,
     ) -> Result<(Option<csv::StringRecord>, Vec<csv::StringRecord>, usize)> {
+        let (headers, records, actual_bytes, ragged) =
+            self.read_csv_chunk_until_ragged(offset, chunk_size, has_headers, csv_config)?;
+        match ragged {
+            Some(error) => Err(error),
+            None => Ok((headers, records, actual_bytes)),
+        }
+    }
+
+    /// [`Self::read_csv_chunk`], except that a record strict parsing refuses
+    /// for its field count ends the chunk instead of failing it: the records
+    /// before it are returned with the refusal. A caller under a row cap
+    /// raises it only if the cap is not reached first, so a record the
+    /// profile never reaches is never judged (#757).
+    #[allow(clippy::type_complexity)]
+    pub fn read_csv_chunk_until_ragged(
+        &self,
+        offset: u64,
+        chunk_size: usize,
+        has_headers: bool,
+        csv_config: Option<&CsvParserConfig>,
+    ) -> Result<(
+        Option<csv::StringRecord>,
+        Vec<csv::StringRecord>,
+        usize,
+        Option<anyhow::Error>,
+    )> {
         let start = offset as usize;
         if start >= self.mmap.len() {
-            return Ok((None, Vec::new(), 0));
+            return Ok((None, Vec::new(), 0, None));
         }
 
         let quote = csv_config.map_or(b'"', |config| config.quote_char);
@@ -95,10 +121,16 @@ impl MemoryMappedCsvReader {
 
         let mut records = Vec::new();
         for result in reader.records() {
-            records.push(result?);
+            match result {
+                Ok(record) => records.push(record),
+                Err(error) if matches!(error.kind(), csv::ErrorKind::UnequalLengths { .. }) => {
+                    return Ok((headers, records, actual_bytes, Some(error.into())));
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
 
-        Ok((headers, records, actual_bytes))
+        Ok((headers, records, actual_bytes, None))
     }
 
     /// Whether the file ends inside a quoted field, scanning from `offset` on.

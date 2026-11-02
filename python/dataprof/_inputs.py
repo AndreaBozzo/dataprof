@@ -372,11 +372,18 @@ def _unclosed_quote_at(text: str, delimiter: str, quote: str = '"') -> int | Non
     return opened
 
 
-def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[_Column]:
+def _columns_from_csv_bytes(
+    buffer: _io.BytesIO, delimiter: str | None, max_rows: int | None = None
+) -> list[_Column]:
     """Parse CSV bytes into columns, treating an empty field as null.
 
     This follows the file-based CSV engine, where an empty field is missing data
     rather than an empty string.
+
+    ``max_rows`` bounds the rows judged: a ragged row or an unclosed quote past
+    the cap is not part of the profile, so it is not refused (#757). As in
+    :func:`_columns_from_records`, one row past the cap is kept, cut or padded
+    to the header, for the Rust profiler to tell that the source was truncated.
     """
     # Match the Rust CSV readers: a UTF-8 BOM marks the encoding and is not part
     # of the first column's name.
@@ -387,18 +394,23 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
         # the same way. csv.Sniffer silently became comma on a sample it could
         # not resolve, which hid a column and passed a gate (#1095).
         delimiter = _detect_csv_delimiter(raw)
-    # This reader has no flexible mode to record the problem in, so it refuses,
-    # as it refuses a ragged row.
-    unclosed = _unclosed_quote_at(text, delimiter)
-    if unclosed is not None:
-        before = text[:unclosed]
-        line = before.count("\n") + before.count("\r") - before.count("\r\n") + 1
-        raise ValueError(
-            f"csv bytes: the quote opened on line {line} is never closed, so every "
-            f"row after it would be read into one field. Close the quote, or write "
-            f"the data to a file to use the flexible CSV engine (csv_flexible=True), "
-            f"which profiles it and sets unterminated_quote."
-        )
+
+    def refuse_an_unclosed_quote() -> None:
+        # This reader has no flexible mode to record the problem in, so it
+        # refuses, as it refuses a ragged row. A quote left open swallows every
+        # row after it, so only a read that reached the end of the text has
+        # reached it: one stopped by the cap leaves it unjudged.
+        unclosed = _unclosed_quote_at(text, delimiter)
+        if unclosed is not None:
+            before = text[:unclosed]
+            line = before.count("\n") + before.count("\r") - before.count("\r\n") + 1
+            raise ValueError(
+                f"csv bytes: the quote opened on line {line} is never closed, so every "
+                f"row after it would be read into one field. Close the quote, or write "
+                f"the data to a file to use the flexible CSV engine (csv_flexible=True), "
+                f"which profiles it and sets unterminated_quote."
+            )
+
     reader = _csv.reader(_io.StringIO(text, newline=""), delimiter=delimiter)
     try:
         # Rust's CSV readers ignore blank physical records, including those
@@ -425,17 +437,31 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
         )
 
     cells: list[list[str | None]] = [[] for _ in header]
+    rows_read = 0
     for row in reader:
         if not row:
             continue
-        if len(row) != len(header):
+        past_cap = max_rows is not None and rows_read >= max_rows
+        if past_cap:
+            row = (row + [""] * len(header))[: len(header)]
+        elif len(row) != len(header):
+            # A row that swallowed the rest of the text is ragged for that
+            # reason, which is the one to report.
+            line = reader.line_num
+            if next(reader, None) is None:
+                refuse_an_unclosed_quote()
             raise ValueError(
-                f"csv bytes: row {reader.line_num} has {len(row)} fields, "
+                f"csv bytes: row {line} has {len(row)} fields, "
                 f"expected {len(header)}. Write the data to a file to use "
                 f"the flexible CSV engine (csv_flexible=True)."
             )
         for i, field in enumerate(row):
             cells[i].append(field if field != "" else None)
+        if past_cap:
+            break
+        rows_read += 1
+    else:
+        refuse_an_unclosed_quote()
     return [(str(name), cells[i], []) for i, name in enumerate(header)]
 
 

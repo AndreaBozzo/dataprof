@@ -141,7 +141,8 @@ def profile_file(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. A source ending inside a quoted field is likewise
+            first such row the profile reads: a row past ``max_rows`` is not
+            judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
             False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
@@ -292,7 +293,8 @@ def profile(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. A source ending inside a quoted field is likewise
+            first such row the profile reads: a row past ``max_rows`` is not
+            judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
             False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
@@ -527,7 +529,7 @@ def profile(
         skipped = 0
         row_count: int | None = None
         if fmt == "csv":
-            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter)
+            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter, max_rows)
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
