@@ -7,7 +7,10 @@ use super::utils::{calculate_percentile, has_identifier_word};
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::types::{ColumnProfile, DataType};
+use crate::stats::numeric::ExactTukey;
+use crate::stats::{ExactDecimal, ParsedNumber};
+use crate::types::{ColumnProfile, ColumnStats, DataType};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 /// Accuracy metrics container
@@ -181,30 +184,48 @@ impl<'a> AccuracyCalculator<'a> {
             }
 
             if let Some(column_data) = data.get(&profile.name) {
-                // Parse once into a numeric vector; the helper below operates
-                // on the pre-parsed values directly to avoid a second pass.
-                let numeric_values: Vec<f64> = column_data
+                // Read as the column's statistics read it, so a value held
+                // exactly there is held exactly here (#1181).
+                let parse = if read_as_decimal(profile) {
+                    ParsedNumber::parse_decimal
+                } else {
+                    ParsedNumber::parse
+                };
+                let values: Vec<ParsedNumber> = column_data
                     .iter()
-                    .filter_map(|v| {
-                        if is_null_like_token(v.trim()) {
-                            None
-                        } else {
-                            v.trim().parse::<f64>().ok().filter(|n| n.is_finite())
-                        }
-                    })
+                    .filter(|v| !is_null_like_token(v.trim()))
+                    .filter_map(|v| parse(v))
                     .collect();
 
-                if numeric_values.len() < self.thresholds.outlier_min_samples {
+                if values.len() < self.thresholds.outlier_min_samples {
                     continue;
                 }
 
-                let outlier_count = self.count_outliers_preparsed(&numeric_values);
-                total_outliers += outlier_count;
-                total_numeric_values += numeric_values.len();
+                total_outliers += self.count_column_outliers(&values);
+                total_numeric_values += values.len();
             }
         }
 
         Ok((total_outliers, total_numeric_values))
+    }
+
+    /// Count one column's outliers as its `outlier_count` does: a column
+    /// holding a value exactly, an integer past 2^53 or a decimal past `f64`,
+    /// takes its fences from exact differences between values, where the
+    /// `f64` fences snap to a grid coarser than its spread (#1181).
+    fn count_column_outliers(&self, values: &[ParsedNumber]) -> usize {
+        let wide = values
+            .iter()
+            .any(|number| !matches!(number, ParsedNumber::Float(_)));
+        if wide {
+            let mut sorted = values.to_vec();
+            sorted.sort_by(|a, b| a.value_cmp(*b));
+            if let Some(tukey) = ExactTukey::new(&sorted, self.thresholds.outlier_iqr_multiplier) {
+                return tukey.count_outliers(values);
+            }
+        }
+        let numeric: Vec<f64> = values.iter().map(|number| number.to_f64()).collect();
+        self.count_outliers_preparsed(&numeric)
     }
 
     /// Count IQR outliers in a pre-parsed numeric vector using the Tukey rule
@@ -235,8 +256,9 @@ impl<'a> AccuracyCalculator<'a> {
             .count()
     }
 
-    /// Check one column's finite numeric values against the name-based range
-    /// rules and, when `positive`, the sign rule.
+    /// Check one column's numeric values against the name-based range rules
+    /// and, when `positive`, the sign rule, each value compared with a bound
+    /// exactly (#1181).
     ///
     /// The rule component's unit is a value of a column under at least one
     /// rule, counted once however many rules it breaks (#1005): a negative
@@ -249,15 +271,11 @@ impl<'a> AccuracyCalculator<'a> {
         let mut counts = RuleCounts::default();
 
         for value in values {
-            if is_null_like_token(value.trim()) {
+            let text = value.trim();
+            if is_null_like_token(text) {
                 continue;
             }
-            let Some(num_value) = value
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|number| number.is_finite())
-            else {
+            let Some(nearest) = rule_value(text) else {
                 continue;
             };
             counts.numeric_values += 1;
@@ -266,20 +284,24 @@ impl<'a> AccuracyCalculator<'a> {
             }
             counts.rule_values += 1;
 
+            let outside = |low: i32, high: i32| {
+                cmp_bound(text, nearest, low).is_lt() || cmp_bound(text, nearest, high).is_gt()
+            };
+            let below_zero = || cmp_bound(text, nearest, 0).is_lt();
             let range_failures = [
                 // Age should be reasonable (0-150)
-                rules.age && !(0.0..=150.0).contains(&num_value),
+                rules.age && outside(0, 150),
                 // Percentage should be 0-100
-                rules.percent && !(0.0..=100.0).contains(&num_value),
+                rules.percent && outside(0, 100),
                 // Counts should be non-negative
-                rules.count && num_value < 0.0,
+                rules.count && below_zero(),
                 // Years should be reasonable (1900-2100)
-                rules.year && !(1900.0..=2100.0).contains(&num_value),
+                rules.year && outside(1900, 2100),
             ]
             .into_iter()
             .filter(|failed| *failed)
             .count();
-            let negative = positive && num_value < 0.0;
+            let negative = positive && below_zero();
 
             counts.range_violations += range_failures;
             counts.negative_values += usize::from(negative);
@@ -287,6 +309,55 @@ impl<'a> AccuracyCalculator<'a> {
         }
 
         counts
+    }
+}
+
+/// Whether `profile`'s statistics read its values as a decimal's renderings,
+/// with [`ParsedNumber::parse_decimal`]: a `Float` column reports exact order
+/// statistics only then. A decimal column whose exact form was dropped reads
+/// as text, as before #1181.
+fn read_as_decimal(profile: &ColumnProfile) -> bool {
+    profile.data_type == DataType::Float
+        && matches!(&profile.stats, ColumnStats::Numeric(stats) if stats.exact.is_some())
+}
+
+/// The nearest `f64` of a cell the range and sign rules check: a finite
+/// number, or a literal past the `f64` range, whose infinity still orders it
+/// beyond every bound (#1181). `None` for a non-number and for `inf` and
+/// `NaN` spelled out, which hold no digit. The `positive` hint binds on the
+/// same cells.
+pub(crate) fn rule_value(text: &str) -> Option<f64> {
+    // decode-audit: no-data — a cell that does not parse is not a number,
+    // and no rule applies to it.
+    let value = text.parse::<f64>().ok()?;
+    (value.is_finite() || (value.is_infinite() && text.bytes().any(|b| b.is_ascii_digit())))
+        .then_some(value)
+}
+
+/// The order of the value `text` holds against `bound`, exactly. `nearest` is
+/// its nearest `f64`; rounding never crosses a bound an `f64` holds, so only a
+/// value that rounds onto the bound needs its digits: `100.000000000000000001`
+/// lies above 100 and `-1e-400` below 0, though they read as `100.0` and
+/// `-0.0`.
+fn cmp_bound(text: &str, nearest: f64, bound: i32) -> Ordering {
+    let at = f64::from(bound);
+    if nearest != at {
+        return nearest.total_cmp(&at);
+    }
+    if let Some(exact) = ExactDecimal::from_text(text) {
+        return exact.exact_cmp(ExactDecimal::integer(i128::from(bound)));
+    }
+    // Too wide to hold: past 38 digits, or with a scale past 600. A value
+    // rounding to 0 is still placed by its sign; one this close to another
+    // bound counts as on it.
+    let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+    if bound != 0 || !mantissa.bytes().any(|b| matches!(b, b'1'..=b'9')) {
+        return Ordering::Equal;
+    }
+    if text.starts_with('-') {
+        Ordering::Less
+    } else {
+        Ordering::Greater
     }
 }
 
@@ -501,6 +572,29 @@ mod tests {
         assert_eq!(
             (alone.numeric_values_checked, beside.numeric_values_checked),
             (2, 5)
+        );
+    }
+
+    /// A value that reads as a bound, or past the `f64` range, is placed by
+    /// its digits (#1181): `-1e-700` has a scale no exact decimal holds and
+    /// is placed by its sign.
+    #[test]
+    fn rules_compare_values_with_their_bounds_exactly() {
+        let counts = |name, values: &[&str]| {
+            let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+            AccuracyCalculator::check_value_rules(name, &values, true)
+        };
+        let balance = counts("balance", &["-1e-400", "-1e-700", "0", "-0", "1e-700"]);
+        assert_eq!((balance.numeric_values, balance.negative_values), (5, 2));
+        let percent = counts(
+            "discount_percent",
+            &["100.000000000000000001", "1e400", "100"],
+        );
+        assert_eq!((percent.rule_values, percent.range_violations), (3, 2));
+        // `inf` and `NaN` spelled out hold no number.
+        assert_eq!(
+            counts("balance", &["inf", "-Infinity", "NaN"]).numeric_values,
+            0
         );
     }
 

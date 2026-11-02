@@ -462,7 +462,8 @@ const TUKEY_K: f64 = 1.5;
 /// fences are formed from exact differences between those values and the one
 /// compared, each rounded once. Measuring every value from one distant pivot
 /// instead would round a spread of small values to nothing beside a large one.
-struct ExactTukey<'a> {
+/// `accuracy.outlier_ratio` counts with it too, so the two agree (#1181).
+pub(crate) struct ExactTukey<'a> {
     /// The value at or below each quartile, and the quartile's distance
     /// above it.
     q1_anchor: &'a ParsedNumber,
@@ -476,7 +477,7 @@ struct ExactTukey<'a> {
 
 impl<'a> ExactTukey<'a> {
     /// `None` below four values, as [`calculate_quartiles`].
-    fn new(sorted: &'a [ParsedNumber], k: f64) -> Option<Self> {
+    pub(crate) fn new(sorted: &'a [ParsedNumber], k: f64) -> Option<Self> {
         if sorted.len() < 4 {
             return None;
         }
@@ -509,7 +510,7 @@ impl<'a> ExactTukey<'a> {
     /// Values below `q1 - k·IQR` or above `q3 + k·IQR`, each compared by its
     /// exact difference from the nearer quartile's anchor. An IQR beyond the
     /// `f64` range puts both fences beyond it, as in [`count_outliers_iqr`].
-    fn count_outliers(&self, values: &[ParsedNumber]) -> usize {
+    pub(crate) fn count_outliers(&self, values: &[ParsedNumber]) -> usize {
         let Some(iqr) = self.iqr else {
             return 0;
         };

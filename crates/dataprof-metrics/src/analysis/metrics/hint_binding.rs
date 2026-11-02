@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 
+use super::accuracy::rule_value;
+
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 
 use super::utils::extract_year;
@@ -88,11 +90,9 @@ fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
 /// binding evidence from drifting away from the sampled quality calculation.
 pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
     match kind {
-        // Mirror accuracy.rs: numeric cells accept surrounding whitespace.
-        SemanticHintKind::Positive => value
-            .trim()
-            .parse::<f64>()
-            .is_ok_and(|number| number.is_finite()),
+        // The sign rule's own reading of a cell, surrounding whitespace
+        // accepted.
+        SemanticHintKind::Positive => rule_value(value.trim()).is_some(),
         // Mirror timeliness.rs: it extracts a year from the original cell.
         SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
             extract_year(value).is_some()
@@ -194,6 +194,20 @@ mod tests {
             .expect("temporal binding");
         assert_eq!(temporal.checked_values, 2);
         assert_eq!(temporal.matched_values, 1);
+    }
+
+    /// A literal past the `f64` range is a value the sign rule checks
+    /// (#1181), so the hint binds on it.
+    #[test]
+    fn positive_hint_binds_on_the_values_the_sign_rule_checks() {
+        // `NaN` is a null token and is not checked; `inf` holds no number.
+        let d = data(&[("balance", &["-1e400", "1e-400", "inf", "NaN"])]);
+        let hints = SemanticHints::new(vec!["balance".to_string()], vec![]);
+        let bindings = compute_value_hint_bindings(&d, &hints, true);
+        assert_eq!(
+            (bindings[0].checked_values, bindings[0].matched_values),
+            (3, 2)
+        );
     }
 
     #[test]
