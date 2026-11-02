@@ -123,12 +123,14 @@ pub struct AccuracyMetrics {
     /// Negative values in positive-only columns. A diagnostic; the score
     /// reads `rule_violating_values`.
     pub negative_values_in_positive: usize,
-    /// Finite numeric values examined across all columns. The dimension is
+    /// Numeric values examined across all columns, a literal past the `f64`
+    /// range included. The dimension is
     /// assessed when the outlier or the rule component had units, not by this
     /// count alone; see [`AccuracyMetrics::is_assessed`].
     #[serde(default)]
     pub numeric_values_checked: usize,
-    /// Finite numeric values of the columns a range or sign rule applies to:
+    /// Numeric values of the columns a range or sign rule applies to, a
+    /// literal past the `f64` range included:
     /// the units of the rule component. 0 means no rule applied, and the
     /// component takes nothing off the score. Additive: documents written
     /// before it read as 0, so the schema does not require it.

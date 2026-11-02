@@ -967,7 +967,7 @@ pub struct ExactDecimal {
 }
 
 impl ExactDecimal {
-    fn integer(value: i128) -> Self {
+    pub(crate) fn integer(value: i128) -> Self {
         Self {
             unscaled: value,
             scale: 0,

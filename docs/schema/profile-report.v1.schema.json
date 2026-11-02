@@ -11,7 +11,7 @@
         },
         "numeric_values_checked": {
           "default": 0,
-          "description": "Finite numeric values examined across all columns. The dimension is\nassessed when the outlier or the rule component had units, not by this\ncount alone; see [`AccuracyMetrics::is_assessed`].",
+          "description": "Numeric values examined across all columns, a literal past the `f64`\nrange included. The dimension is\nassessed when the outlier or the rule component had units, not by this\ncount alone; see [`AccuracyMetrics::is_assessed`].",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -38,7 +38,7 @@
         },
         "rule_values_checked": {
           "default": 0,
-          "description": "Finite numeric values of the columns a range or sign rule applies to:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score. Additive: documents written\nbefore it read as 0, so the schema does not require it.",
+          "description": "Numeric values of the columns a range or sign rule applies to, a\nliteral past the `f64` range included:\nthe units of the rule component. 0 means no rule applied, and the\ncomponent takes nothing off the score. Additive: documents written\nbefore it read as 0, so the schema does not require it.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"

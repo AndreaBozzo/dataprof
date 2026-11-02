@@ -776,7 +776,7 @@ remain valid.
 
 | field | meaning |
 | --- | --- |
-| `rule_values_checked` | finite numeric values of the columns a range rule (`age`, percentage, `count`, `year` names) or the sign rule (`positive_columns`) applies to |
+| `rule_values_checked` | numeric values, a literal past the `f64` range included, of the columns a range rule (`age`, percentage, `count`, `year` names) or the sign rule (`positive_columns`) applies to |
 | `rule_violating_values` | of those, the values breaking at least one rule, each counted once |
 
 The accuracy score subtracts `100 * rule_violating_values / rule_values_checked`
