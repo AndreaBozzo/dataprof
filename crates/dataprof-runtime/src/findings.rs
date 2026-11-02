@@ -36,8 +36,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, PatternCategory};
-use dataprof_metrics::QualityAssessment;
+use dataprof_core::{DataType, PatternCategory, TypeHomogeneity};
 
 use crate::profile_report::ProfileReport;
 use crate::quality_gate::{
@@ -142,8 +141,7 @@ impl FindingCode {
     /// A fixed sentence naming what the rule observed.
     ///
     /// Deliberately free of numbers, as the gate's messages are: the evidence
-    /// carries those, so the Rust and Python layers cannot drift on rounding
-    /// inside a string.
+    /// carries those, at the precision it serializes with.
     fn summary(self) -> &'static str {
         match self {
             Self::AllNull => "every value in this column is null",
@@ -237,6 +235,7 @@ pub struct Finding {
 #[non_exhaustive]
 pub enum NotEvaluatedReason {
     /// The report carries no quality assessment, for this recorded reason.
+    #[non_exhaustive]
     QualityUnavailable {
         /// The report's `quality_status` state, verbatim.
         quality_status: String,
@@ -305,6 +304,162 @@ pub struct FindingsResult {
     pub not_evaluated: Vec<UnevaluatedRule>,
 }
 
+/// The facts of a report the findings rules read, and nothing else (#909).
+///
+/// [`FindingPolicy::evaluate`] builds one from a [`ProfileReport`]. A report a
+/// binding loaded from a flat summary has no `ProfileReport` behind it: the
+/// binding writes these facts from the summary as JSON and reads them with
+/// [`FindingsInput::from_json`], so both kinds of report go through one set
+/// of rules. A count the summary does not carry reads as zero, as the rules
+/// read an absent count.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[non_exhaustive]
+pub struct FindingsInput {
+    /// 0 for a document written before 0.10, which did not count ragged rows.
+    schema_version: u32,
+    rows_processed: usize,
+    source_exhausted: bool,
+    /// Whether the report records a truncation reason.
+    truncated: bool,
+    sampling_applied: bool,
+    ragged_row_count: usize,
+    unterminated_quote: bool,
+    error_count: usize,
+    /// The report's `quality_status` state, read when `quality` is absent.
+    quality_status: String,
+    quality: Option<QualityFacts>,
+    columns: Vec<ColumnFacts>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct QualityFacts {
+    uniqueness: Option<UniquenessFacts>,
+    timeliness: Option<TimelinessFacts>,
+    /// The sampled component labels, `None` when the report did not record
+    /// them.
+    sampled_dimensions: Option<Vec<String>>,
+    /// Components with signal that neither recorded list names. Empty for a
+    /// flat summary, which records no exact list.
+    unlisted_components: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct UniquenessFacts {
+    #[serde(default)]
+    rows_checked: usize,
+    #[serde(default)]
+    duplicate_rows: usize,
+    #[serde(default)]
+    duplicate_rows_approximate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct TimelinessFacts {
+    #[serde(default)]
+    date_values_checked: usize,
+    #[serde(default)]
+    future_dates_count: usize,
+    #[serde(default)]
+    temporal_pairs_checked: usize,
+    #[serde(default)]
+    temporal_violations: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct ColumnFacts {
+    name: String,
+    /// Typed as an identifier, which `mixed_types` and `locale_numbers` exempt.
+    identifier: bool,
+    total_count: usize,
+    null_count: usize,
+    unique_count: Option<usize>,
+    type_homogeneity: Option<TypeHomogeneity>,
+    locale_number_count: Option<usize>,
+    patterns: Option<Vec<PatternFacts>>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct PatternFacts {
+    name: String,
+    /// The category as the report names it; a summary from a later release
+    /// may name one this build does not know.
+    category: String,
+    confidence: f64,
+    match_percentage: f64,
+}
+
+impl FindingsInput {
+    /// Read the facts a binding wrote for a report it holds no
+    /// [`ProfileReport`] for.
+    pub fn from_json(text: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(text)
+    }
+}
+
+impl From<&ProfileReport> for FindingsInput {
+    fn from(report: &ProfileReport) -> Self {
+        let execution = &report.execution;
+        Self {
+            schema_version: report.schema_version,
+            rows_processed: execution.rows_processed,
+            source_exhausted: execution.source_exhausted,
+            truncated: execution.truncation_reason.is_some(),
+            sampling_applied: execution.sampling_applied,
+            ragged_row_count: execution.ragged_row_count,
+            unterminated_quote: execution.unterminated_quote == Some(true),
+            error_count: execution.error_count,
+            quality_status: quality_status_name(&report.quality_status).to_string(),
+            quality: report.quality.as_ref().map(|quality| QualityFacts {
+                uniqueness: quality
+                    .metrics
+                    .uniqueness
+                    .as_ref()
+                    .map(|uniqueness| UniquenessFacts {
+                        rows_checked: uniqueness.rows_checked,
+                        duplicate_rows: uniqueness.duplicate_rows,
+                        duplicate_rows_approximate: uniqueness.duplicate_rows_approximate,
+                    }),
+                timeliness: quality
+                    .metrics
+                    .timeliness
+                    .as_ref()
+                    .map(|timeliness| TimelinessFacts {
+                        date_values_checked: timeliness.date_values_checked,
+                        future_dates_count: timeliness.future_dates_count,
+                        temporal_pairs_checked: timeliness.temporal_pairs_checked,
+                        temporal_violations: timeliness.temporal_violations,
+                    }),
+                sampled_dimensions: quality.sampled_dimensions(),
+                unlisted_components: quality.unlisted_components(),
+            }),
+            columns: report
+                .column_profiles
+                .iter()
+                .map(|column| ColumnFacts {
+                    name: column.name.clone(),
+                    identifier: column.data_type == DataType::Identifier,
+                    total_count: column.total_count,
+                    null_count: column.null_count,
+                    unique_count: column.unique_count,
+                    type_homogeneity: column.type_homogeneity.clone(),
+                    locale_number_count: column.locale_number_count,
+                    patterns: column.patterns.as_ref().map(|patterns| {
+                        patterns
+                            .iter()
+                            .map(|pattern| PatternFacts {
+                                name: pattern.name.clone(),
+                                category: pattern.category.to_string(),
+                                confidence: pattern.confidence,
+                                match_percentage: pattern.match_percentage,
+                            })
+                            .collect()
+                    }),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// A finding threshold that cannot be applied as written.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -312,6 +467,7 @@ pub enum FindingPolicyError {
     /// A threshold fell outside `(0, 100]` at the 2dp precision it is applied
     /// at, or was not a finite number. Percentages are on the report's 0..100
     /// scale, not 0..1 ratios, and a zero threshold would report every column.
+    #[non_exhaustive]
     ThresholdOutOfRange {
         /// The setting that carried it.
         setting: &'static str,
@@ -340,6 +496,7 @@ impl std::error::Error for FindingPolicyError {}
 /// a finished report, including one read back from disk that no profiler
 /// configuration accompanies.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct FindingPolicy {
     null_heavy_percentage: f64,
     mixed_types_percentage: f64,
@@ -394,8 +551,17 @@ impl FindingPolicy {
     ///
     /// The report is not modified and nothing is printed.
     pub fn evaluate(&self, report: &ProfileReport) -> Result<FindingsResult, FindingPolicyError> {
+        self.evaluate_input(&FindingsInput::from(report))
+    }
+
+    /// [`evaluate`](Self::evaluate) over the facts of a report, for a report
+    /// a binding holds no [`ProfileReport`] for.
+    pub fn evaluate_input(
+        &self,
+        input: &FindingsInput,
+    ) -> Result<FindingsResult, FindingPolicyError> {
         self.validate()?;
-        Ok(self.collect(report))
+        Ok(self.collect(input))
     }
 
     /// The thresholds as applied: at the precision a percentage is compared
@@ -408,17 +574,17 @@ impl FindingPolicy {
         rounded_2(self.mixed_types_percentage)
     }
 
-    fn collect(&self, report: &ProfileReport) -> FindingsResult {
+    fn collect(&self, input: &FindingsInput) -> FindingsResult {
         let mut collector = Collector::default();
-        scan_findings(report, &mut collector);
-        quality_findings(report, &mut collector);
-        for (index, column) in report.column_profiles.iter().enumerate() {
+        scan_findings(input, &mut collector);
+        quality_findings(input, &mut collector);
+        for (index, column) in input.columns.iter().enumerate() {
             self.column_findings(index, column, &mut collector);
         }
         collector.finish()
     }
 
-    fn column_findings(&self, index: usize, column: &ColumnProfile, out: &mut Collector) {
+    fn column_findings(&self, index: usize, column: &ColumnFacts, out: &mut Collector) {
         let name = column.name.as_str();
         let non_null = column.total_count.saturating_sub(column.null_count);
 
@@ -485,14 +651,14 @@ impl FindingPolicy {
     fn mixed_types(
         &self,
         index: usize,
-        column: &ColumnProfile,
+        column: &ColumnFacts,
         non_null: usize,
         out: &mut Collector,
     ) {
         let name = column.name.as_str();
         // Mixing forms ("A1", "123") is what an identifier scheme does, not a
         // defect: the same exemption the consistency dimension makes.
-        if column.data_type == DataType::Identifier {
+        if column.identifier {
             return;
         }
         let Some(homogeneity) = column.type_homogeneity.as_ref() else {
@@ -545,11 +711,11 @@ impl FindingPolicy {
 /// `string` with no numeric statistics, and a numeric column whose
 /// decimal-comma values were counted as invalid. At least half, so that a free
 /// text column holding a stray `1,5` is not reported.
-fn locale_numbers(index: usize, column: &ColumnProfile, out: &mut Collector) {
+fn locale_numbers(index: usize, column: &ColumnFacts, out: &mut Collector) {
     let name = column.name.as_str();
     // The exemption `mixed_types` makes: `1.234.567` in an identifier
     // scheme is a code, not an amount.
-    if column.data_type == DataType::Identifier {
+    if column.identifier {
         return;
     }
     let Some(homogeneity) = column.type_homogeneity.as_ref() else {
@@ -606,15 +772,14 @@ impl ProfileReport {
     /// Shorthand for `FindingPolicy::default().evaluate(self)`, which cannot
     /// fail because the defaults are in range.
     pub fn findings(&self) -> FindingsResult {
-        FindingPolicy::default().collect(self)
+        FindingPolicy::default().collect(&FindingsInput::from(self))
     }
 }
 
-fn scan_findings(report: &ProfileReport, out: &mut Collector) {
-    let execution = &report.execution;
-    let partial = if !execution.source_exhausted || execution.truncation_reason.is_some() {
+fn scan_findings(input: &FindingsInput, out: &mut Collector) {
+    let partial = if !input.source_exhausted || input.truncated {
         Some("truncated")
-    } else if execution.sampling_applied {
+    } else if input.sampling_applied {
         Some("sampled")
     } else {
         None
@@ -624,63 +789,53 @@ fn scan_findings(report: &ProfileReport, out: &mut Collector) {
             FindingCode::PartialScan,
             [
                 ("reason", EvidenceValue::Text(reason.to_string())),
-                (
-                    "rows_processed",
-                    EvidenceValue::Count(execution.rows_processed),
-                ),
+                ("rows_processed", EvidenceValue::Count(input.rows_processed)),
             ],
         );
     }
-    if report.schema_version == 0 {
+    if input.schema_version == 0 {
         // Ragged rows were first counted by the release that introduced
         // schema versioning (0.10, #452). An older document reads back with a
         // defaulted zero that was never measured.
         out.skip_report(FindingCode::RaggedRows, NotEvaluatedReason::Unrecorded);
-    } else if execution.ragged_row_count > 0 {
+    } else if input.ragged_row_count > 0 {
         out.report(
             FindingCode::RaggedRows,
             [
                 (
                     "ragged_row_count",
-                    EvidenceValue::Count(execution.ragged_row_count),
+                    EvidenceValue::Count(input.ragged_row_count),
                 ),
-                (
-                    "rows_processed",
-                    EvidenceValue::Count(execution.rows_processed),
-                ),
+                ("rows_processed", EvidenceValue::Count(input.rows_processed)),
             ],
         );
     }
-    if execution.unterminated_quote == Some(true) {
+    if input.unterminated_quote {
         out.report(
             FindingCode::UnterminatedQuote,
-            [(
-                "rows_processed",
-                EvidenceValue::Count(execution.rows_processed),
-            )],
+            [("rows_processed", EvidenceValue::Count(input.rows_processed))],
         );
     }
-    if execution.error_count > 0 {
+    if input.error_count > 0 {
         out.report(
             FindingCode::RecordsSkipped,
-            [("error_count", EvidenceValue::Count(execution.error_count))],
+            [("error_count", EvidenceValue::Count(input.error_count))],
         );
     }
 }
 
-fn quality_findings(report: &ProfileReport, out: &mut Collector) {
+fn quality_findings(input: &FindingsInput, out: &mut Collector) {
     const QUALITY_RULES: [FindingCode; 3] = [
         FindingCode::DuplicateRows,
         FindingCode::FutureDates,
         FindingCode::TemporalOrderViolations,
     ];
-    let Some(quality) = report.quality.as_ref() else {
-        let quality_status = quality_status_name(&report.quality_status).to_string();
+    let Some(quality) = input.quality.as_ref() else {
         for code in QUALITY_RULES {
             out.skip_report(
                 code,
                 NotEvaluatedReason::QualityUnavailable {
-                    quality_status: quality_status.clone(),
+                    quality_status: input.quality_status.clone(),
                 },
             );
         }
@@ -688,7 +843,6 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
     };
 
     match quality
-        .metrics
         .uniqueness
         .as_ref()
         .filter(|uniqueness| uniqueness.rows_checked > 0)
@@ -713,7 +867,7 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
         Some(_) => skip_unless_complete(out, FindingCode::DuplicateRows, quality, "duplicate_rows"),
     }
 
-    let timeliness = quality.metrics.timeliness.as_ref();
+    let timeliness = quality.timeliness.as_ref();
     match timeliness.filter(|timeliness| timeliness.date_values_checked > 0) {
         None => out.skip_report(FindingCode::FutureDates, NotEvaluatedReason::NotAssessed),
         Some(timeliness) if timeliness.future_dates_count > 0 => out.report(
@@ -769,13 +923,15 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
 fn skip_unless_complete(
     out: &mut Collector,
     code: FindingCode,
-    quality: &QualityAssessment,
+    quality: &QualityFacts,
     component: &'static str,
 ) {
+    // A component's coverage does not depend on the dimensions the overall
+    // score weighs, so none are passed.
     let coverage = sampled_component_evidence(
-        quality.sampled_dimensions().as_deref(),
-        &quality.unlisted_components(),
-        &quality.metrics.assessed_dimensions(),
+        quality.sampled_dimensions.as_deref(),
+        &quality.unlisted_components,
+        &[],
         Provenance::Component(component),
     );
     match coverage {
@@ -788,14 +944,14 @@ fn skip_unless_complete(
 }
 
 /// Whether a detected pattern names personal or financial data.
-fn is_sensitive(category: &PatternCategory, name: &str) -> bool {
-    matches!(
-        category,
-        PatternCategory::Contact | PatternCategory::Financial
-    ) || PERSONAL_IDENTIFIER_PATTERNS.contains(&name)
+fn is_sensitive(category: &str, name: &str) -> bool {
+    [PatternCategory::Contact, PatternCategory::Financial]
+        .iter()
+        .any(|sensitive| sensitive.to_string() == category)
+        || PERSONAL_IDENTIFIER_PATTERNS.contains(&name)
 }
 
-fn sensitive_patterns(index: usize, column: &ColumnProfile, non_null: usize, out: &mut Collector) {
+fn sensitive_patterns(index: usize, column: &ColumnFacts, non_null: usize, out: &mut Collector) {
     let Some(patterns) = column.patterns.as_ref() else {
         out.skip(
             FindingCode::SensitivePattern,
@@ -826,10 +982,7 @@ fn sensitive_patterns(index: usize, column: &ColumnProfile, non_null: usize, out
                 column: Some(column.name.clone()),
                 evidence: evidence([
                     ("pattern", EvidenceValue::Text(pattern.name.clone())),
-                    (
-                        "category",
-                        EvidenceValue::Text(pattern.category.to_string()),
-                    ),
+                    ("category", EvidenceValue::Text(pattern.category.clone())),
                     ("match_percentage", percentage(pattern.match_percentage)),
                 ]),
                 summary: FindingCode::SensitivePattern.summary().to_string(),
@@ -841,8 +994,7 @@ fn sensitive_patterns(index: usize, column: &ColumnProfile, non_null: usize, out
 }
 
 /// Percentage evidence at the precision it serializes with, so a finding
-/// compares equal to one rebuilt from its own document, and to what the
-/// Python layer holds.
+/// compares equal to one rebuilt from its own document.
 fn percentage(value: f64) -> EvidenceValue {
     EvidenceValue::Percentage(rounded_2(value))
 }
@@ -968,8 +1120,8 @@ impl Collector {
 #[cfg(test)]
 mod tests {
     use dataprof_core::{
-        ColumnStats, DataSource, ExecutionMetadata, FileFormat, Pattern, TruncationReason,
-        TypeHomogeneity,
+        ColumnProfile, ColumnStats, DataSource, ExecutionMetadata, FileFormat, Pattern,
+        TruncationReason, TypeHomogeneity,
     };
     use dataprof_metrics::{
         MetricConfidence, QualityAssessment, QualityMetrics, TimelinessMetrics, UniquenessMetrics,

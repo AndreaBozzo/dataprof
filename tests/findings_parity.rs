@@ -1,13 +1,11 @@
 //! The findings contract, asserted against the shared fixture (#375).
 //!
-//! Rust and Python each derive findings through their own code, and a finding
-//! that appeared in one layer and not the other would make the same dataset
-//! look clean in one pipeline and not in the next.
+//! The rules are implemented once, here in Rust; Python calls them (#909).
 //! `tests/fixtures/findings_parity.json` states the inputs, profiling options,
 //! thresholds, and the exact findings document for each case; this file
-//! asserts the Rust rules against it and
-//! `python/tests/test_findings_parity.py` asserts the Python ones against the
-//! same file, so changing either implementation alone fails that layer's test.
+//! asserts the Rust API against it and `python/tests/test_findings_parity.py`
+//! asserts the Python one, including a report loaded from a flat summary, so
+//! a finding that changed on one surface alone fails that surface's test.
 //!
 //! Every case is also derived from the report read back from its own JSON
 //! document. Findings are not stored, so a saved report has to reproduce them

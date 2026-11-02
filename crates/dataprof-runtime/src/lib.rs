@@ -17,8 +17,8 @@ pub use async_source::ReqwestSource;
 pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
 pub use findings::{
     DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE, EvidenceValue, Finding,
-    FindingCode, FindingPolicy, FindingPolicyError, FindingsResult, NotEvaluatedReason, Severity,
-    UnevaluatedRule,
+    FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult,
+    NotEvaluatedReason, Severity, UnevaluatedRule,
 };
 pub use hint_binding::ValueHintBindingAccumulator;
 pub use memory_config::MemoryConfig;

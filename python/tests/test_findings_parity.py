@@ -1,10 +1,10 @@
 """The findings contract, asserted against the shared fixture (#375).
 
 ``tests/fixtures/findings_parity.json`` states the inputs, profiling options,
-thresholds, and the exact findings document for each case. This file asserts
-the Python rules against it and ``tests/findings_parity.rs`` asserts the Rust
-ones against the same file, so changing either implementation alone fails that
-layer's test.
+thresholds, and the exact findings document for each case. The rules run in
+Rust (#909); this file asserts what Python returns for them, on a native report
+and on one loaded from a flat summary, and ``tests/findings_parity.rs`` asserts
+the Rust API against the same file.
 
 Every case is also derived from the report read back from its own JSON
 document: findings are not stored, so a saved report has to reproduce them
@@ -69,6 +69,14 @@ def test_python_findings_match_the_shared_fixture(
             f"{case['name']}: a report read back from its document derived different findings"
         )
 
+        # A flat summary has no native report behind it: its facts reach the
+        # Rust rules through its accessors (#909), and must read the same.
+        summary = dp.ProfileReport.from_dict(report.to_dict())
+        assert summary._native_report is None, case["name"]
+        assert summary.findings(**case["policy"]).to_dict() == case["expected"], (
+            f"{case['name']}: a report read back from its flat summary derived different findings"
+        )
+
 
 def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
     """The fixture is the coverage claim, so state what it must contain.
@@ -76,8 +84,8 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
     A parity fixture that quietly lost a rule would still pass on both sides
     while guarding nothing for it. Three reasons are absent: ``estimated`` and
     ``sampled`` need more rows than a fixture should carry, and ``unrecorded``
-    needs a document from an older release, so the unit tests in both layers
-    cover them instead.
+    needs a document from an older release, so the Rust unit tests and
+    ``test_findings.py`` cover them instead.
     """
     codes = {finding["code"] for case in cases for finding in case["expected"]["findings"]}
     assert codes == {

@@ -1153,19 +1153,6 @@ impl PyProfileReport {
             .and_then(QualityAssessment::sampled_dimensions)
     }
 
-    /// Components computed with signal that the recorded confidence lists
-    /// neither as exact nor as sampled, so their coverage is unrecorded. Empty
-    /// for every report a release wrote; read by the Python findings, which
-    /// resolve coverage as the Rust gate does.
-    #[getter]
-    fn quality_unlisted_components(&self) -> Vec<String> {
-        self.inner
-            .quality
-            .as_ref()
-            .map(QualityAssessment::unlisted_components)
-            .unwrap_or_default()
-    }
-
     /// Where the whole-source quality scores lie, when some were computed
     /// over a retained sample of the scanned rows.
     ///
@@ -1543,6 +1530,19 @@ impl PyProfileReport {
         })
     }
 
+    /// The findings document under these thresholds, as JSON (#909).
+    /// `ProfileReport.findings()` converts it into its result classes.
+    fn findings_json(
+        &self,
+        null_heavy_percentage: f64,
+        mixed_types_percentage: f64,
+    ) -> PyResult<String> {
+        let policy = dataprof::FindingPolicy::new()
+            .null_heavy_percentage(null_heavy_percentage)
+            .mixed_types_percentage(mixed_types_percentage);
+        findings_document(policy.evaluate(&self.inner))
+    }
+
     /// Compatibility summary; the runtime owns both its producer and schema.
     fn summary_json(&self) -> PyResult<String> {
         self.inner.summary_json().map_err(|e| {
@@ -1560,6 +1560,35 @@ impl PyProfileReport {
             self.inner.quality_score(),
         )
     }
+}
+
+/// The findings document for the facts of a report loaded from a flat
+/// summary, which has no native report behind it (#909): the same rules as
+/// `ProfileReport.findings_json`, over what the summary recorded.
+#[pyfunction]
+pub fn findings_from_input_json(
+    input: &str,
+    null_heavy_percentage: f64,
+    mixed_types_percentage: f64,
+) -> PyResult<String> {
+    let input = dataprof::FindingsInput::from_json(input).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "findings(): the report's facts cannot be read: {e}"
+        ))
+    })?;
+    let policy = dataprof::FindingPolicy::new()
+        .null_heavy_percentage(null_heavy_percentage)
+        .mixed_types_percentage(mixed_types_percentage);
+    findings_document(policy.evaluate_input(&input))
+}
+
+fn findings_document(
+    result: Result<dataprof::FindingsResult, dataprof::FindingPolicyError>,
+) -> PyResult<String> {
+    let result = result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    serde_json::to_string(&result).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
+    })
 }
 
 /// One side of `report_delta_json`: a native report, or the flat summary of

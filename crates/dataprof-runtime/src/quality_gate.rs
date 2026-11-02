@@ -2845,10 +2845,19 @@ mod tests {
     /// declared in this module carries `#[non_exhaustive]`, and so does every
     /// variant with named fields inside a `pub enum`. Reading the source keeps
     /// the check independent of the variants and fields the types gain, and
-    /// covers a type or variant added later without a list to update.
+    /// covers a type or variant added later without a list to update. The
+    /// findings module shares the gate's evidence and takes the same rule
+    /// (#909).
     #[test]
     fn every_public_type_is_non_exhaustive() {
-        let lines: Vec<&str> = include_str!("quality_gate.rs").lines().collect();
+        assert_non_exhaustive(include_str!("quality_gate.rs"), 15, 6);
+        assert_non_exhaustive(include_str!("findings.rs"), 10, 2);
+    }
+
+    /// `source` declares at least `types` public types and `variants`
+    /// variants with named fields, all of them `#[non_exhaustive]`.
+    fn assert_non_exhaustive(source: &str, types: usize, variants_with_fields: usize) {
+        let lines: Vec<&str> = source.lines().collect();
         let marked = |i: usize| {
             lines[..i]
                 .iter()
@@ -2899,8 +2908,8 @@ mod tests {
         }
         // Guard the premise: the scan found the module's types and the
         // variants with named fields at all.
-        assert!(declared.len() >= 15, "{declared:?}");
-        assert!(variants.len() >= 6, "{variants:?}");
+        assert!(declared.len() >= types, "{declared:?}");
+        assert!(variants.len() >= variants_with_fields, "{variants:?}");
         assert!(unmarked.is_empty(), "not #[non_exhaustive]: {unmarked:?}");
     }
     use crate::ReportAssembler;
