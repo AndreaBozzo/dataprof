@@ -206,7 +206,15 @@ def test_a_symlink_loop_is_an_error_not_a_traceback(
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("looping,kind", [("--report", "output"), ("source", "input")])
+@pytest.mark.parametrize(
+    "looping,kind",
+    [
+        ("--report", "output"),
+        ("source", "input"),
+        ("--policy", "policy"),
+        ("--baseline", "baseline"),
+    ],
+)
 @pytest.mark.parametrize("json_output", [False, True])
 def test_a_path_that_cannot_be_resolved_is_an_error(
     source: Path,
@@ -231,6 +239,8 @@ def test_a_path_that_cannot_be_resolved_is_an_error(
     monkeypatch.setattr(entrypoint, "profile_file", profiler)
     report = loop if looping == "--report" else tmp_path / "report.json"
     argv = [str(loop if looping == "source" else source), "--max-null", "*=100"]
+    if looping in ("--policy", "--baseline"):
+        argv += [looping, str(loop)]
     argv += ["--report", str(report)] + (["--json"] if json_output else [])
     assert entrypoint.main(argv) == 3
     assert profiler.call_count == 0
@@ -245,6 +255,46 @@ def test_a_path_that_cannot_be_resolved_is_an_error(
         assert out == ""
         assert str(loop) in err
         assert "Symlink loop" in err
+
+
+@pytest.mark.parametrize("compared", ["source", "--policy", "--baseline"])
+def test_a_report_path_that_cannot_be_read_is_an_output_error(
+    source: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    compared: str,
+):
+    # On 3.11 to 3.13 Path.exists() lets EACCES through; that error is the
+    # report path's, not the path the report is compared against.
+    report = tmp_path / "report.json"
+    denied = report.resolve()
+    stat = Path.stat
+
+    def raising_stat(self: Path, *args: Any, **kwargs: Any):
+        if self == denied:
+            raise PermissionError(13, "Permission denied", str(self))
+        return stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", raising_stat)
+    profiler = Mock()
+    monkeypatch.setattr(entrypoint, "profile_file", profiler)
+    argv = [str(source), "--max-null", "*=100"]
+    if compared == "--policy":
+        policy = tmp_path / "policy.json"
+        policy.write_text('{"max_null_percentage": {"*": 100}}', encoding="utf-8")
+        argv += ["--policy", str(policy)]
+    elif compared == "--baseline":
+        baseline = tmp_path / "baseline.json"
+        dp.profile_file(source).save(baseline)
+        argv += ["--baseline", str(baseline)]
+    argv += ["--report", str(report), "--json"]
+    assert entrypoint.main(argv) == 3
+    assert profiler.call_count == 0
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert error["kind"] == "output"
+    assert error["path"] == str(report)
+    assert "Permission denied" in error["message"]
 
 
 @pytest.mark.parametrize("protected", ["source", "--policy", "--baseline"])

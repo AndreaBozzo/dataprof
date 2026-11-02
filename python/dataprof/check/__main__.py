@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 from argparse import ArgumentParser
 from collections.abc import Sequence
@@ -138,6 +140,24 @@ class _CheckArgumentParser(ArgumentParser):
             self.print_usage(sys.stderr)
             sys.stderr.write(f"{self.prog}: error: {message}\n")
         raise SystemExit(_ERROR_EXIT_CODE)
+
+
+# The errors Path.exists() treats as "not there" on Python 3.11 to 3.13.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+
+
+def _stat_if_present(path: Path) -> os.stat_result | None:
+    """Stat ``path``, or return None where ``Path.exists()`` would be False.
+
+    Any other OSError, such as EACCES, is raised for the caller to report
+    against this path.
+    """
+    try:
+        return path.stat()
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return None
+        raise
 
 
 def _report_error(kind: str, message: str, *, path: Path | None, json_output: bool) -> int:
@@ -426,9 +446,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
     if args.report is not None:
         # Up to Python 3.12, resolve() raises RuntimeError on a symlink loop
-        # even when not strict; report that like any other bad path.
+        # even when not strict; report that like any other bad path. The
+        # report is stat'ed here too, so an error reading it (EACCES, say)
+        # is reported against the report and not the path compared with it.
         try:
             target = args.report.resolve()
+            target_stat = _stat_if_present(target)
         except (OSError, RuntimeError) as exc:
             return _report_error(
                 "output",
@@ -446,9 +469,13 @@ def main(argv: list[str] | None = None) -> int:
             if other is None:
                 continue
             try:
-                overwrites = target == Path(other).resolve() or (
-                    target.exists() and Path(other).exists() and target.samefile(other)
-                )
+                other_path = Path(other)
+                overwrites = target == other_path.resolve()
+                if not overwrites and target_stat is not None:
+                    other_stat = _stat_if_present(other_path)
+                    overwrites = other_stat is not None and os.path.samestat(
+                        target_stat, other_stat
+                    )
             except (OSError, RuntimeError) as exc:
                 return _report_error(
                     kind,
