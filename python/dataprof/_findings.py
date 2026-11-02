@@ -1,9 +1,11 @@
 """Structured, prioritized findings over a :class:`~dataprof.ProfileReport`.
 
-This mirrors ``dataprof_runtime::findings`` in Rust. Both layers apply the same
-rules in the same order and produce the same document; the shared fixture in
-``tests/fixtures/findings_parity.json`` asserts it from both sides, so changing
-one implementation alone fails that layer's test.
+The rules live in Rust, in ``dataprof_runtime::findings`` (#909). This module
+turns the thresholds into the policy those rules apply and the document they
+return into the classes below. A report loaded from a flat summary has no
+native report behind it, so its facts are read from its accessors and handed
+to the same rules. ``tests/fixtures/findings_parity.json`` states the expected
+findings, and both layers assert them.
 
 Findings are interpretation, not data cleaning. Each one names what was
 observed and the evidence behind it, and none carries a raw cell value. They
@@ -18,76 +20,14 @@ from collections.abc import Iterator as _Iterator
 from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any, NoReturn as _NoReturn
 
-from ._columns import _homogeneity_counts, _type_mixture
+from ._columns import _homogeneity_counts
+from ._dataprof import findings_from_input_json as _findings_from_input_json
 from ._gate import _real_number
 from ._render import _MIXED_TYPE_PCT, _NULL_HEAVY_PCT
 from ._rounding import _r2
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
     from ._report import ProfileReport
-
-#: Pattern confidence a detection needs before a finding reports it: the
-#: threshold validity scoring and the report summaries already use.
-_MIN_PATTERN_CONFIDENCE = 0.5
-
-#: Pattern categories that name personal or financial data.
-_SENSITIVE_CATEGORIES = ("contact", "financial")
-
-#: Identifier patterns that name a person. The rest of the identifier category
-#: (UUIDs, product codes, VAT numbers) identifies things.
-_PERSONAL_IDENTIFIER_PATTERNS = ("Codice Fiscale (IT)", "SSN (US)")
-
-#: Severity per code. Warnings sort first.
-_SEVERITY = {
-    "all_null": "warning",
-    "constant_column": "info",
-    "duplicate_rows": "warning",
-    "future_dates": "warning",
-    "locale_numbers": "warning",
-    "mixed_types": "warning",
-    "null_heavy": "warning",
-    "partial_scan": "info",
-    "ragged_rows": "warning",
-    "records_skipped": "warning",
-    "sensitive_pattern": "info",
-    "temporal_order_violations": "warning",
-    "unterminated_quote": "warning",
-}
-_SEVERITY_ORDER = ("warning", "info")
-
-#: A fixed sentence per code. Deliberately free of numbers, as the gate's
-#: messages are: the evidence carries those, so the Rust and Python layers
-#: cannot drift on rounding inside a string.
-_SUMMARY = {
-    "all_null": "every value in this column is null",
-    "constant_column": "every non-null value in this column is the same",
-    "duplicate_rows": "the source contains exact duplicate rows",
-    "future_dates": "some date values lie in the future",
-    "locale_numbers": (
-        "at least half of the text values in this column are numbers written with a "
-        "decimal comma or digit grouping, so no numeric statistic includes them"
-    ),
-    "mixed_types": "this column's values are split across lexical types",
-    "null_heavy": "this column's null share is at or above the threshold",
-    "partial_scan": "only part of the source was read; findings describe the rows that were",
-    "ragged_rows": "some rows had a different field count from the header and were recovered",
-    "records_skipped": "errors were counted while reading the source",
-    "sensitive_pattern": "values in this column match a pattern for personal or financial data",
-    "temporal_order_violations": "some start dates fall after their paired end dates",
-    "unterminated_quote": (
-        "the source ends inside a quoted field, so its last record may hold several rows"
-    ),
-}
-
-_REASON_ORDER = (
-    "quality_unavailable",
-    "not_assessed",
-    "estimated",
-    "sampled",
-    "unrecorded",
-    "not_computed",
-    "no_values",
-)
 
 
 @_dataclass(frozen=True)
@@ -181,338 +121,128 @@ def _threshold(setting: str, value: _Any) -> float:
     return applied
 
 
-class _Collector:
-    def __init__(self) -> None:
-        self.ranked: list[tuple[tuple[int, str, int, str], Finding]] = []
-        self.not_evaluated: list[dict[str, _Any]] = []
+def _evaluate(
+    report: ProfileReport,
+    *,
+    null_heavy_percentage: float | None,
+    mixed_types_percentage: float | None,
+) -> FindingsResult:
+    """The findings of ``report`` under these thresholds, from the Rust rules.
 
-    def add(
-        self,
-        code: str,
-        evidence: dict[str, _Any],
-        *,
-        column: str | None = None,
-        index: int | None = None,
-        detail: str = "",
-    ) -> None:
-        severity = _SEVERITY[code]
-        finding = Finding(
-            code=code,
-            severity=severity,
-            column=column,
-            evidence=dict(sorted(evidence.items())),
-            summary=_SUMMARY[code],
-        )
-        # Report-level findings (no index) sort before column findings.
-        position = -1 if index is None else index
-        key = (_SEVERITY_ORDER.index(severity), code, position, detail)
-        self.ranked.append((key, finding))
-
-    def skip_report(self, code: str, reason: dict[str, _Any]) -> None:
-        self.not_evaluated.append({"code": code, **reason})
-
-    def skip(self, code: str, reason: str, column: str) -> None:
-        """Record a column a rule could not look at, joining the entry for the
-        same rule and reason so each pair is listed once.
-        """
-        for entry in self.not_evaluated:
-            if entry["code"] == code and entry["reason"] == reason:
-                entry["columns"].append(column)
-                return
-        self.not_evaluated.append({"code": code, "reason": reason, "columns": [column]})
-
-    def finish(self) -> FindingsResult:
-        self.ranked.sort(key=lambda item: item[0])
-        # Stable, so the columns inside one entry keep report order.
-        self.not_evaluated.sort(
-            key=lambda entry: (entry["code"], _REASON_ORDER.index(entry["reason"]))
-        )
-        return FindingsResult(
-            findings=tuple(finding for _, finding in self.ranked),
-            not_evaluated=tuple(self.not_evaluated),
-        )
-
-
-class _FindingPolicy:
-    """The evaluator. Constructed from :meth:`ProfileReport.findings` keywords."""
-
-    def __init__(
-        self,
-        *,
-        null_heavy_percentage: float | None,
-        mixed_types_percentage: float | None,
-    ) -> None:
-        self.null_heavy_percentage = (
-            _threshold("null_heavy_percentage", _NULL_HEAVY_PCT)
-            if null_heavy_percentage is None
-            else _threshold("null_heavy_percentage", null_heavy_percentage)
-        )
-        self.mixed_types_percentage = (
-            _threshold("mixed_types_percentage", _MIXED_TYPE_PCT)
-            if mixed_types_percentage is None
-            else _threshold("mixed_types_percentage", mixed_types_percentage)
-        )
-
-    def evaluate(self, report: ProfileReport) -> FindingsResult:
-        out = _Collector()
-        _scan_findings(report, out)
-        _quality_findings(report, out)
-        for index, column in enumerate(report.profiles):
-            self._column_findings(index, column, out)
-        return out.finish()
-
-    def _column_findings(self, index: int, column: _Any, out: _Collector) -> None:
-        name = column.name
-        total = column.total_count
-        nulls = column.null_count
-        non_null = max(total - nulls, 0)
-
-        if total == 0:
-            out.skip("all_null", "no_values", name)
-            out.skip("null_heavy", "no_values", name)
-        elif non_null == 0:
-            out.add(
-                "all_null",
-                {"null_count": nulls, "total_count": total},
-                column=name,
-                index=index,
-            )
-        else:
-            # From the counts rather than the accessor's percentage, and
-            # compared at the serialized precision, so a report read back from
-            # its document lands on the same side of the threshold.
-            percentage = _r2(nulls / total * 100.0)
-            if percentage is not None and percentage >= self.null_heavy_percentage:
-                out.add(
-                    "null_heavy",
-                    {
-                        "null_percentage": percentage,
-                        "threshold": self.null_heavy_percentage,
-                    },
-                    column=name,
-                    index=index,
-                )
-
-        unique = column.unique_count
-        if unique is None:
-            out.skip("constant_column", "not_computed", name)
-        elif non_null == 0:
-            out.skip("constant_column", "no_values", name)
-        elif unique == 1 and non_null > 1:
-            # One value seen once is not a constant, just a single value.
-            out.add(
-                "constant_column",
-                {"unique_count": 1, "non_null_count": non_null},
-                column=name,
-                index=index,
-            )
-
-        _locale_numbers(index, column, out)
-        self._mixed_types(index, column, non_null, out)
-        _sensitive_patterns(index, column, non_null, out)
-
-    def _mixed_types(self, index: int, column: _Any, non_null: int, out: _Collector) -> None:
-        name = column.name
-        # Mixing forms ("A1", "123") is what an identifier scheme does, not a
-        # defect: the same exemption the consistency dimension makes.
-        if column.data_type == "identifier":
-            return
-        counts = _homogeneity_counts(column.type_homogeneity)
-        if counts is None:
-            out.skip("mixed_types", "not_computed", name)
-            return
-        classified = sum(counts.values())
-        if classified == 0:
-            out.skip("mixed_types", "no_values", name)
-            return
-        # Largest first, ties in declaration order, as the Rust layer's
-        # `TypeHomogeneity::dominant` resolves them.
-        dominant, dominant_count, _ = _type_mixture(column)[0]
-        outside = classified - dominant_count
-        if outside == 0:
-            return
-        outside_percentage = _r2(outside / classified * 100.0)
-        if outside_percentage is None or outside_percentage < self.mixed_types_percentage:
-            return
-        out.add(
-            "mixed_types",
-            {
-                "dominant_type": dominant,
-                "dominant_percentage": _r2(dominant_count / classified * 100.0),
-                "threshold": self.mixed_types_percentage,
-                # Shares are counted over the values the profiler retained; a
-                # classified count short of the non-null count says they were
-                # sampled.
-                "classified_count": classified,
-                "non_null_count": non_null,
-            },
-            column=name,
-            index=index,
-        )
-
-
-def _locale_numbers(index: int, column: _Any, out: _Collector) -> None:
-    """Report a column at least half of whose text values are locale-formatted numbers.
-
-    Measured against the text values, so it covers a ``1.234,56`` column
-    typed ``string`` and a numeric column whose decimal-comma values were
-    counted invalid alike. At least half, so a stray ``1,5`` in free text is
-    not reported.
+    A native report is evaluated as it is. A report loaded from a flat summary
+    has no native report behind it, so the facts the rules read are taken from
+    its accessors, which apply the summary's legacy defaults, and evaluated by
+    the same rules.
     """
-    name = column.name
-    # The exemption ``mixed_types`` makes: ``1.234.567`` in an identifier
-    # scheme is a code, not an amount.
-    if column.data_type == "identifier":
-        return
-    counts = _homogeneity_counts(column.type_homogeneity)
-    if counts is None:
-        out.skip("locale_numbers", "not_computed", name)
-        return
-    locale_numbers = column.locale_number_count
-    # Classified, but by a release that did not count these yet.
-    if locale_numbers is None:
-        out.skip("locale_numbers", "unrecorded", name)
-        return
-    classified = sum(counts.values())
-    if classified == 0:
-        out.skip("locale_numbers", "no_values", name)
-        return
-    text = counts["text"]
-    if locale_numbers == 0 or locale_numbers * 2 < text:
-        return
-    out.add(
-        "locale_numbers",
-        {
-            "locale_number_count": locale_numbers,
-            "text_count": text,
-            # Counted over the values the profiler retained, as in
-            # ``mixed_types``.
-            "classified_count": classified,
-            "non_null_count": max(column.total_count - column.null_count, 0),
-        },
-        column=name,
-        index=index,
+    null_heavy = _threshold(
+        "null_heavy_percentage",
+        _NULL_HEAVY_PCT if null_heavy_percentage is None else null_heavy_percentage,
+    )
+    mixed_types = _threshold(
+        "mixed_types_percentage",
+        _MIXED_TYPE_PCT if mixed_types_percentage is None else mixed_types_percentage,
+    )
+    native = report._native_report
+    if native is not None:
+        document = native.findings_json(null_heavy, mixed_types)
+    else:
+        facts = _json.dumps(_summary_facts(report))
+        document = _findings_from_input_json(facts, null_heavy, mixed_types)
+    return _result(_json.loads(document))
+
+
+def _result(document: dict[str, _Any]) -> FindingsResult:
+    return FindingsResult(
+        findings=tuple(
+            Finding(
+                code=entry["code"],
+                severity=entry["severity"],
+                evidence=entry["evidence"],
+                summary=entry["summary"],
+                column=entry.get("column"),
+            )
+            for entry in document["findings"]
+        ),
+        not_evaluated=tuple(document["not_evaluated"]),
     )
 
 
-def _sensitive_patterns(index: int, column: _Any, non_null: int, out: _Collector) -> None:
-    patterns = column.patterns
-    if patterns is None:
-        out.skip("sensitive_pattern", "not_computed", column.name)
-        return
-    if non_null == 0:
-        # Detection ran over nothing, which is no evidence either way.
-        out.skip("sensitive_pattern", "no_values", column.name)
-        return
-    for pattern in patterns:
-        category = pattern.category
-        if pattern.confidence < _MIN_PATTERN_CONFIDENCE or not (
-            category in _SENSITIVE_CATEGORIES or pattern.name in _PERSONAL_IDENTIFIER_PATTERNS
-        ):
-            continue
-        out.add(
-            "sensitive_pattern",
-            {
-                "pattern": pattern.name,
-                "category": category,
-                "match_percentage": _r2(pattern.match_percentage),
-            },
-            column=column.name,
-            index=index,
-            detail=pattern.name,
-        )
+def _count(value: _Any) -> int:
+    """A recorded count; an absent one reads as zero, as the rules read it."""
+    return int(value or 0)
 
 
-def _scan_findings(report: ProfileReport, out: _Collector) -> None:
-    if not report.source_exhausted or report.truncation_reason is not None:
-        partial = "truncated"
-    elif report.sampling_applied:
-        partial = "sampled"
-    else:
-        partial = None
-    if partial is not None:
-        out.add("partial_scan", {"reason": partial, "rows_processed": report.rows})
-    if report._schema_version == 0:
-        # Ragged rows were first counted by the release that introduced schema
-        # versioning (0.10, #452). An older document loads with a defaulted
-        # zero that was never measured.
-        out.skip_report("ragged_rows", {"reason": "unrecorded"})
-    elif report.ragged_row_count:
-        out.add(
-            "ragged_rows",
-            {"ragged_row_count": report.ragged_row_count, "rows_processed": report.rows},
-        )
-    if report.unterminated_quote:
-        out.add("unterminated_quote", {"rows_processed": report.rows})
-    if report.error_count:
-        out.add("records_skipped", {"error_count": report.error_count})
-
-
-def _quality_findings(report: ProfileReport, out: _Collector) -> None:
+def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
+    """What ``dataprof_runtime::FindingsInput`` reads, from a summary's accessors."""
     quality = report.quality
-    if quality is None:
-        unavailable = {"reason": "quality_unavailable", "quality_status": report.quality_status}
-        for code in ("duplicate_rows", "future_dates", "temporal_order_violations"):
-            out.skip_report(code, unavailable)
-        return
+    return {
+        "schema_version": report._schema_version,
+        "rows_processed": _count(report.rows),
+        "source_exhausted": bool(report.source_exhausted),
+        "truncated": report.truncation_reason is not None,
+        "sampling_applied": bool(report.sampling_applied),
+        "ragged_row_count": _count(report.ragged_row_count),
+        "unterminated_quote": bool(report.unterminated_quote),
+        "error_count": _count(report.error_count),
+        "quality_status": report.quality_status,
+        "quality": None
+        if quality is None
+        else {
+            "uniqueness": _metric_facts(
+                quality.uniqueness,
+                counts=("rows_checked", "duplicate_rows"),
+                flags=("duplicate_rows_approximate",),
+            ),
+            "timeliness": _metric_facts(
+                quality.timeliness,
+                counts=(
+                    "date_values_checked",
+                    "future_dates_count",
+                    "temporal_pairs_checked",
+                    "temporal_violations",
+                ),
+            ),
+            "sampled_dimensions": report.quality_sampled_dimensions,
+            # A summary records no exact list, so no component can be found
+            # missing from both.
+            "unlisted_components": [],
+        },
+        "columns": [_column_facts(column) for column in report.profiles],
+    }
 
-    uniqueness = quality.uniqueness
-    if not uniqueness or not uniqueness.get("rows_checked"):
-        out.skip_report("duplicate_rows", {"reason": "not_assessed"})
-    elif uniqueness.get("duplicate_rows_approximate"):
-        out.skip_report("duplicate_rows", {"reason": "estimated"})
-    elif uniqueness["duplicate_rows"] > 0:
-        out.add(
-            "duplicate_rows",
+
+def _metric_facts(
+    metrics: dict[str, _Any] | None,
+    *,
+    counts: tuple[str, ...],
+    flags: tuple[str, ...] = (),
+) -> dict[str, _Any] | None:
+    if not metrics:
+        return None
+    facts: dict[str, _Any] = {name: _count(metrics.get(name)) for name in counts}
+    facts.update({name: bool(metrics.get(name)) for name in flags})
+    return facts
+
+
+def _column_facts(column: _Any) -> dict[str, _Any]:
+    patterns = column.patterns
+    return {
+        "name": column.name,
+        "identifier": column.data_type == "identifier",
+        "total_count": column.total_count,
+        "null_count": column.null_count,
+        "unique_count": column.unique_count,
+        "type_homogeneity": _homogeneity_counts(column.type_homogeneity),
+        "locale_number_count": column.locale_number_count,
+        "patterns": None
+        if patterns is None
+        else [
             {
-                "duplicate_rows": int(uniqueness["duplicate_rows"]),
-                "rows_checked": int(uniqueness["rows_checked"]),
-            },
-        )
-    else:
-        _skip_unless_complete(report, out, "duplicate_rows", "duplicate_rows")
-
-    timeliness = quality.timeliness
-    if not timeliness or not timeliness.get("date_values_checked"):
-        out.skip_report("future_dates", {"reason": "not_assessed"})
-    elif timeliness["future_dates_count"] > 0:
-        out.add(
-            "future_dates",
-            {
-                "future_dates_count": int(timeliness["future_dates_count"]),
-                "date_values_checked": int(timeliness["date_values_checked"]),
-            },
-        )
-    else:
-        _skip_unless_complete(report, out, "future_dates", "timeliness")
-    if not timeliness or not timeliness.get("temporal_pairs_checked"):
-        out.skip_report("temporal_order_violations", {"reason": "not_assessed"})
-    elif timeliness["temporal_violations"] > 0:
-        out.add(
-            "temporal_order_violations",
-            {
-                "temporal_violations": int(timeliness["temporal_violations"]),
-                "temporal_pairs_checked": int(timeliness["temporal_pairs_checked"]),
-            },
-        )
-    else:
-        _skip_unless_complete(report, out, "temporal_order_violations", "timeliness")
-
-
-def _skip_unless_complete(
-    report: ProfileReport, out: _Collector, code: str, component: str
-) -> None:
-    """A zero count is a clean result only when it covers every scanned row.
-
-    A count from the retained quality sample, or from a report that does not
-    record where its counts came from, rules nothing out for the rows it did
-    not see, so the rule is listed rather than read as clean. The component
-    labels are the ones the quality gate resolves provenance by, and so is
-    the order: a component with signal that neither recorded list names has
-    unrecorded coverage before anything is read as sampled.
-    """
-    sampled = report.quality_sampled_dimensions
-    if sampled is None or component in report._quality_unlisted_components:
-        out.skip_report(code, {"reason": "unrecorded"})
-    elif component in sampled:
-        out.skip_report(code, {"reason": "sampled"})
+                "name": pattern.name,
+                "category": pattern.category,
+                "confidence": pattern.confidence,
+                "match_percentage": pattern.match_percentage,
+            }
+            for pattern in patterns
+        ],
+    }

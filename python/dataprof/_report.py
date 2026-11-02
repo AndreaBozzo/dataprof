@@ -21,7 +21,7 @@ from typing import Any as _Any, cast as _cast
 from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _ReportView
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ProfileReport as _RustProfileReport, report_delta_json as _report_delta_json
-from ._findings import FindingsResult as _FindingsResult, _FindingPolicy
+from ._findings import FindingsResult as _FindingsResult, _evaluate as _evaluate_findings
 from ._gate import QualityGateResult as _QualityGateResult, _Policy
 from ._paths import _normalize_pathlike
 from ._render import (
@@ -489,17 +489,6 @@ class ProfileReport:
         return self._report.schema_version
 
     @property
-    def _quality_unlisted_components(self) -> list[str]:
-        """Components computed with signal that the recorded confidence lists
-        neither as exact nor as sampled, so their coverage is unrecorded.
-
-        Private: findings read it to resolve coverage as the Rust gate does.
-        Empty for every report a release wrote, and for a flat summary, which
-        records no exact list.
-        """
-        return list(self._report.quality_unlisted_components)
-
-    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 
@@ -927,10 +916,11 @@ class ProfileReport:
         Raises:
             ValueError: a threshold is not a percentage above 0 and at most 100.
         """
-        return _FindingPolicy(
+        return _evaluate_findings(
+            self,
             null_heavy_percentage=null_heavy_percentage,
             mixed_types_percentage=mixed_types_percentage,
-        ).evaluate(self)
+        )
 
     def quality_summary(self) -> dict[str, _Any]:
         """Single-row quality summary for easy aggregation.

@@ -62,10 +62,11 @@ pub use dataprof_runtime::{
     AnalysisSettings, BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode,
     CheckStatus, ColumnSelection, DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE,
     Diagnostic, DiagnosticCode, Evidence, EvidenceGap, EvidenceValue, Expectation, Finding,
-    FindingCode, FindingPolicy, FindingPolicyError, FindingsResult, GateResult, MetricSemantics,
-    MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError, PolicyScope,
-    ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, ReportGenerator,
-    RequiredMetric, SettingDifference, Severity, SourceIdentity, UnevaluatedRule, Verdict,
+    FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult, GateResult,
+    MetricSemantics, MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError,
+    PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION,
+    ReportGenerator, RequiredMetric, SettingDifference, Severity, SourceIdentity, UnevaluatedRule,
+    Verdict,
 };
 pub use dataprof_runtime::{
     ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
