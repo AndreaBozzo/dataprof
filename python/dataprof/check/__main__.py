@@ -425,18 +425,38 @@ def main(argv: list[str] | None = None) -> int:
     if args.report is not None and args.report.suffix.lower() != ".json":
         parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
     if args.report is not None:
-        target = args.report.resolve()
+        # Up to Python 3.12, resolve() raises RuntimeError on a symlink loop
+        # even when not strict; report that like any other bad path.
+        try:
+            target = args.report.resolve()
+        except (OSError, RuntimeError) as exc:
+            return _report_error(
+                "output",
+                f"could not resolve report path {args.report}: {exc}",
+                path=args.report,
+                json_output=args.json,
+            )
         # A report is written whatever the verdict, so writing it over the
         # baseline would make a failing run the next run's baseline.
-        for flag, other in (
-            ("source", args.source),
-            ("--policy", args.policy),
-            ("--baseline", args.baseline),
+        for flag, kind, other in (
+            ("source", "input", args.source),
+            ("--policy", "policy", args.policy),
+            ("--baseline", "baseline", args.baseline),
         ):
-            if other is not None and (
-                target == Path(other).resolve()
-                or (target.exists() and Path(other).exists() and target.samefile(other))
-            ):
+            if other is None:
+                continue
+            try:
+                overwrites = target == Path(other).resolve() or (
+                    target.exists() and Path(other).exists() and target.samefile(other)
+                )
+            except (OSError, RuntimeError) as exc:
+                return _report_error(
+                    kind,
+                    f"could not resolve {flag} path {other}: {exc}",
+                    path=other,
+                    json_output=args.json,
+                )
+            if overwrites:
                 parser.error(f"--report would overwrite the {flag} file: {args.report}")
     baseline = None
     if args.baseline is not None:
