@@ -40,13 +40,11 @@ class FindingsResult:
     def to_dict(self) -> dict[str, Any]: ...
     def to_json(self, indent: int = ...) -> str: ...
 
-class _FindingPolicy:
-    def __init__(
-        self,
-        *,
-        null_heavy_percentage: float | None,
-        mixed_types_percentage: float | None,
-    ) -> None: ...
-    # `ProfileReport` is deliberately not named here, for the reason _gate.pyi
-    # gives: the stub and the runtime class are distinct symbols to a checker.
-    def evaluate(self, report: Any) -> FindingsResult: ...
+# `ProfileReport` is deliberately not named here, for the reason _gate.pyi
+# gives: the stub and the runtime class are distinct symbols to a checker.
+def _evaluate(
+    report: Any,
+    *,
+    null_heavy_percentage: float | None,
+    mixed_types_percentage: float | None,
+) -> FindingsResult: ...

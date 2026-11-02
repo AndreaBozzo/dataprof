@@ -133,6 +133,8 @@ class ProfileReport:
     @property
     def _schema_version(self) -> int: ...
     def _delta_input(self) -> Any: ...
+    # The native report, `None` for one loaded from a flat summary.
+    _native_report: Any
     def to_llm_context(self, max_tokens: int = 1000, include_samples: bool = False) -> str:
         """Token-bounded, agent-oriented summary: shape, caveats, flags, schema, patterns.
 

@@ -441,7 +441,7 @@ impl From<&ProfileReport> for FindingsInput {
                     total_count: column.total_count,
                     null_count: column.null_count,
                     unique_count: column.unique_count,
-                    type_homogeneity: column.type_homogeneity.clone(),
+                    type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
                     patterns: column.patterns.as_ref().map(|patterns| {
                         patterns
