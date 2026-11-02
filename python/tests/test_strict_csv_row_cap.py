@@ -12,6 +12,7 @@ ragged record inside the cap still fails everywhere.
 from __future__ import annotations
 
 import asyncio
+import csv
 from collections.abc import Callable
 from pathlib import Path
 
@@ -55,10 +56,13 @@ def _routes(path: Path, data: bytes, cap: int) -> dict[str, Callable[[], dp.Prof
         )
         for engine in ("auto", "incremental", "columnar")
     }
-    routes["async file"] = lambda: asyncio.run(profile_file(path, csv_flexible=False, max_rows=cap))
-    routes["async bytes"] = lambda: asyncio.run(
-        profile_bytes(data, format="csv", csv_flexible=False, max_rows=cap)
-    )
+    if dp.capabilities().async_streaming:
+        routes["async file"] = lambda: asyncio.run(
+            profile_file(path, csv_flexible=False, max_rows=cap)
+        )
+        routes["async bytes"] = lambda: asyncio.run(
+            profile_bytes(data, format="csv", csv_flexible=False, max_rows=cap)
+        )
     # Always strict: it refuses csv_flexible=True rather than ignore it.
     routes["bytes"] = lambda: dp.profile(data, format="csv", max_rows=cap)
     return routes
@@ -103,3 +107,19 @@ def test_bytes_still_refuse_an_unclosed_quote_the_cap_reaches(cap: int | None) -
     data = b'name,age,city\nAlice,25,Rome\nBob,"30,Milan\nCarl,40,Turin\n'
     with pytest.raises(ValueError, match="never closed"):
         dp.profile(data, format="csv", max_rows=cap)
+
+
+def test_bytes_never_parse_a_record_past_the_cap() -> None:
+    # A field longer than the csv module's limit raises as soon as it is
+    # parsed, so a record past the cap that held one used to fail the profile.
+    huge = b"x" * (csv.field_size_limit() + 1)
+    report = dp.profile(b'name,age,city\nAlice,25,Rome\nBob,"' + huge, format="csv", max_rows=1)
+    assert (report.rows, report.truncation_reason is not None) == (1, True)
+
+
+def test_bytes_report_a_ragged_row_inside_the_cap_before_looking_further() -> None:
+    # The record after the ragged one is past the cap and over the field-size
+    # limit; it must not replace the ragged-row refusal with its own error.
+    huge = b"x" * (csv.field_size_limit() + 1)
+    with pytest.raises(ValueError, match="row 3 has 1 fields"):
+        dp.profile(b"a,b\n1,2\n3\n4," + huge + b"\n", format="csv", max_rows=2)

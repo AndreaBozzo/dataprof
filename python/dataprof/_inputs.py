@@ -372,6 +372,9 @@ def _unclosed_quote_at(text: str, delimiter: str, quote: str = '"') -> int | Non
     return opened
 
 
+_NOT_A_LINE_END = _re.compile(r"[^\r\n]")
+
+
 def _columns_from_csv_bytes(
     buffer: _io.BytesIO, delimiter: str | None, max_rows: int | None = None
 ) -> list[_Column]:
@@ -380,10 +383,9 @@ def _columns_from_csv_bytes(
     This follows the file-based CSV engine, where an empty field is missing data
     rather than an empty string.
 
-    ``max_rows`` bounds the rows judged: a ragged row or an unclosed quote past
-    the cap is not part of the profile, so it is not refused (#757). As in
-    :func:`_columns_from_records`, one row past the cap is kept, cut or padded
-    to the header, for the Rust profiler to tell that the source was truncated.
+    ``max_rows`` bounds the rows read: a record past the cap is not part of the
+    profile, so it is never parsed, and a ragged row or an unclosed quote there
+    is not refused (#757).
     """
     # Match the Rust CSV readers: a UTF-8 BOM marks the encoding and is not part
     # of the first column's name.
@@ -411,7 +413,8 @@ def _columns_from_csv_bytes(
                 f"which profiles it and sets unterminated_quote."
             )
 
-    reader = _csv.reader(_io.StringIO(text, newline=""), delimiter=delimiter)
+    stream = _io.StringIO(text, newline="")
+    reader = _csv.reader(stream, delimiter=delimiter)
     try:
         # Rust's CSV readers ignore blank physical records, including those
         # before the header. A quoted empty field is still a real record.
@@ -436,32 +439,43 @@ def _columns_from_csv_bytes(
             f"{collisions!r}. Column names must be unique."
         )
 
+    def read_to_the_end() -> bool:
+        # Whether only line ends are left after the records read. The rest is
+        # looked at, never parsed: a record past the cap is not judged, not
+        # even against the field-size limit.
+        return _NOT_A_LINE_END.search(text, stream.tell()) is None
+
     cells: list[list[str | None]] = [[] for _ in header]
     rows_read = 0
-    for row in reader:
+    while max_rows is None or rows_read < max_rows:
+        row = next(reader, None)
+        if row is None:
+            refuse_an_unclosed_quote()
+            break
         if not row:
             continue
-        past_cap = max_rows is not None and rows_read >= max_rows
-        if past_cap:
-            row = (row + [""] * len(header))[: len(header)]
-        elif len(row) != len(header):
+        if len(row) != len(header):
             # A row that swallowed the rest of the text is ragged for that
             # reason, which is the one to report.
-            line = reader.line_num
-            if next(reader, None) is None:
+            if read_to_the_end():
                 refuse_an_unclosed_quote()
             raise ValueError(
-                f"csv bytes: row {line} has {len(row)} fields, "
+                f"csv bytes: row {reader.line_num} has {len(row)} fields, "
                 f"expected {len(header)}. Write the data to a file to use "
                 f"the flexible CSV engine (csv_flexible=True)."
             )
         for i, field in enumerate(row):
             cells[i].append(field if field != "" else None)
-        if past_cap:
-            break
         rows_read += 1
     else:
-        refuse_an_unclosed_quote()
+        # The cap stopped the read. A record left past it is marked by one
+        # null row, as `_columns_from_records` marks it, for the Rust profiler
+        # to tell that the source was truncated.
+        if read_to_the_end():
+            refuse_an_unclosed_quote()
+        else:
+            for column in cells:
+                column.append(None)
     return [(str(name), cells[i], []) for i, name in enumerate(header)]
 
 

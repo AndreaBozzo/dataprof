@@ -282,10 +282,10 @@ def profile(
             span lines, and a line may not hold more than one value. Byte
             sources have no extension to read the grammar from, so they require
             this argument.
-        max_rows: Maximum rows to analyze. Parquet files and byte buffers
-            select up to 32 ranges spread across the source; other inputs
-            stop at the row cap. Parquet records the selection in
-            ``report.sampled_row_ranges``.
+        max_rows: Maximum rows to analyze. Parquet files and Parquet bytes
+            select up to 32 ranges spread across the source and record the
+            selection in ``report.sampled_row_ranges``; other inputs, CSV and
+            JSON bytes included, stop at the row cap.
         name: Name for DataFrame sources in the report.
         csv_delimiter: Single-character CSV delimiter (default: detected
             from the data).
