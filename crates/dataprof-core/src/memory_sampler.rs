@@ -23,7 +23,8 @@ const MIN_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 /// includes host-process memory — it is an upper bound on what profiling used,
 /// suitable for verifying the bounded-memory claim, not an exact attribution.
 pub struct PeakMemorySampler {
-    system: System,
+    /// `None` on platforms sysinfo does not support.
+    system: Option<System>,
     pid: Option<Pid>,
     peak_bytes: u64,
     last_sample: Option<Instant>,
@@ -34,7 +35,7 @@ impl PeakMemorySampler {
     /// Create a sampler and take an initial reading.
     pub fn new() -> Self {
         let mut sampler = Self {
-            system: System::new(),
+            system: System::new().ok(),
             pid: sysinfo::get_current_pid().ok(),
             peak_bytes: 0,
             last_sample: None,
@@ -61,14 +62,16 @@ impl PeakMemorySampler {
     /// covers the work done after the last throttled sample.
     pub fn sample_now(&mut self) {
         self.last_sample = Some(Instant::now());
-        let Some(pid) = self.pid else { return };
+        let (Some(system), Some(pid)) = (self.system.as_mut(), self.pid) else {
+            return;
+        };
         self.refreshes += 1;
-        self.system.refresh_processes_specifics(
+        system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid]),
             false,
             ProcessRefreshKind::nothing().with_memory(),
         );
-        if let Some(process) = self.system.process(pid) {
+        if let Some(process) = system.process(pid) {
             self.peak_bytes = self.peak_bytes.max(process.memory());
         }
     }
