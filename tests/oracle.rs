@@ -5,7 +5,8 @@
 //! `python/tests/_oracle_fixture.py` computes with rational arithmetic,
 //! independently of this code. This runs each case that has a text spelling
 //! as CSV through the incremental and columnar engines and as JSON and JSONL,
-//! rounds the exact answers as the output contract serializes them, and
+//! rounds the exact answers as the output contract serializes them (moment
+//! statistics at 4 decimals and at most 12 significant digits), and
 //! collects every disagreement before asserting. `KNOWN` lists the ones an
 //! open issue owns, strictly: a listed disagreement that stops occurring
 //! fails too.
@@ -216,10 +217,19 @@ fn ulp(value: f64) -> f64 {
     f64::from_bits(magnitude.to_bits() + 1) - magnitude
 }
 
-/// Decimal places the output contract serializes for `field`.
-fn places(field: &str) -> i32 {
+/// Decimal places the output contract serializes for `field` holding
+/// `exact`. A moment statistic also keeps at most 12 significant digits
+/// (#1178), so past 1e8 it is rounded at fewer places, negative ones included.
+fn places(field: &str, exact: f64) -> i32 {
     match field.split('.').next().unwrap() {
         "null_percentage" | "coefficient_of_variation" | "quartiles" => 2,
+        "mean" | "variance" | "std_dev" | "skewness" | "kurtosis" if exact.abs() >= 1e8 => {
+            let mut exponent = exact.abs().log10().floor() as i32;
+            if 10_f64.powi(exponent) > exact.abs() {
+                exponent -= 1;
+            }
+            4.min(11 - exponent)
+        }
         _ => 4,
     }
 }
@@ -253,7 +263,7 @@ impl Checker<'_> {
         let good = match wanted {
             Value::Null => actual.is_null(),
             Value::String(text) if field != "data_type" => match how {
-                How::Serialized => serialized(actual, text, places(field)),
+                How::Serialized => serialized(actual, text, places(field, number(text))),
                 How::Faithful => faithful(actual, text),
                 How::Relative => actual.as_f64().is_some_and(|a| {
                     (a - number(text)).abs() <= REL_TOLERANCE * number(text).abs()
@@ -322,7 +332,11 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
             .filter_map(Value::as_str)
             .any(|v| rational(v).0.unsigned_abs() > 1 << 53);
 
+    // The moment statistics keep at most 12 significant digits, coarser than
+    // the `f64` spacing at any magnitude, so they are checked serialized even
+    // past 2^53 (#1178).
     for name in [
+        "mean",
         "variance",
         "std_dev",
         "skewness",
@@ -332,10 +346,10 @@ fn check(case: &Value, route: &'static str, report: &ProfileReport) -> Vec<Misma
     ] {
         checker.compare(name, &field(name), &expected[name], How::Serialized);
     }
-    // Past 2^53 the `f64` fields are faithful at best; `exact` carries the
+    // Past 2^53 the data values are faithful at best; `exact` carries the
     // values themselves (#1038).
     let how = if wide { How::Faithful } else { How::Serialized };
-    for name in ["min", "max", "mean", "median", "mode"] {
+    for name in ["min", "max", "median", "mode"] {
         checker.compare(name, &field(name), &expected[name], how);
     }
     match expected["quartiles"].as_object() {

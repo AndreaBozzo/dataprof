@@ -83,7 +83,7 @@ fn decimal_exponent(magnitude: f64) -> i32 {
 /// [`STATISTIC_SIGNIFICANT_DIGITS`] significant digits (#1178).
 pub fn rounded_statistic(value: f64) -> f64 {
     // Below 1e8, 4 decimals keep at most 12 significant digits.
-    if !(value.abs() >= 1e8) {
+    if value.abs() < 1e8 || !value.is_finite() {
         return round_finite(value, 10000.0);
     }
     let places = STATISTIC_SIGNIFICANT_DIGITS - 1 - decimal_exponent(value.abs());

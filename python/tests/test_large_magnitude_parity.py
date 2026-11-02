@@ -89,5 +89,6 @@ def test_every_export_rounds_the_moments_as_to_dict_does():
 
 
 def test_reports_record_the_statistic_rounding():
-    report = dp.profile(str(FIXTURE))
-    assert report.metric_semantics["statistic_rounding"] == "four_decimals_twelve_significant"
+    semantics = dp.profile(str(FIXTURE)).metric_semantics
+    assert semantics is not None
+    assert semantics["statistic_rounding"] == "four_decimals_twelve_significant"
