@@ -7,7 +7,7 @@ from typing import Any as _Any
 
 from ._accessors import ColumnProfile, Pattern as _Pattern
 from ._dataprof import ColumnProfile as _NativeColumn
-from ._rounding import _r2, _r4, _round_quartiles
+from ._rounding import _r2, _r4, _round_quartiles, _rstat
 
 # ---------------------------------------------------------------------------
 # Shared column record builder
@@ -91,7 +91,8 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
 
     Floating-point values are rounded: 2dp for ``0..100`` percentages, 4dp for
     statistics and for ``0..1`` ratios such as ``uniqueness_ratio``, so that a
-    ratio carries the same resolution as the equivalent percentage.
+    ratio carries the same resolution as the equivalent percentage. Moment
+    statistics also keep at most 12 significant digits (#1178).
     """
     col_data: dict[str, _Any] = {
         "name": col.name,
@@ -127,13 +128,13 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
             for k, v in {
                 "min": _r4(col.min),
                 "max": _r4(col.max),
-                "mean": _r4(col.mean),
-                "std_dev": _r4(col.std_dev),
-                "variance": _r4(col.variance),
+                "mean": _rstat(col.mean),
+                "std_dev": _rstat(col.std_dev),
+                "variance": _rstat(col.variance),
                 "median": _r4(col.median),
                 "mode": _r4(col.mode),
-                "skewness": _r4(col.skewness),
-                "kurtosis": _r4(col.kurtosis),
+                "skewness": _rstat(col.skewness),
+                "kurtosis": _rstat(col.kurtosis),
                 # A 0..100 percentage (std_dev/mean * 100), so 2dp like every
                 # other percentage — not 4dp like the statistics around it.
                 "coefficient_of_variation": _r2(col.coefficient_of_variation),
@@ -227,13 +228,13 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
         "dominant_type_share": dominant_type_share,
         "min": _r4(col.min),
         "max": _r4(col.max),
-        "mean": _r4(col.mean),
-        "std_dev": _r4(col.std_dev),
-        "variance": _r4(col.variance),
+        "mean": _rstat(col.mean),
+        "std_dev": _rstat(col.std_dev),
+        "variance": _rstat(col.variance),
         "median": _r4(col.median),
         "mode": _r4(col.mode),
-        "skewness": _r4(col.skewness),
-        "kurtosis": _r4(col.kurtosis),
+        "skewness": _rstat(col.skewness),
+        "kurtosis": _rstat(col.kurtosis),
         # A 0..100 percentage (std_dev/mean * 100), so 2dp like every other
         # percentage — not 4dp like the statistics around it.
         "coefficient_of_variation": _r2(col.coefficient_of_variation),

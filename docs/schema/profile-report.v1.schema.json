@@ -1075,6 +1075,10 @@
           "$ref": "#/$defs/ShapeMomentEstimator",
           "description": "The estimator behind every column's `skewness` and `kurtosis`.\n\nAbsent means not recorded: through 0.12 both used a form that matches\nneither the population nor the adjusted estimators."
         },
+        "statistic_rounding": {
+          "$ref": "#/$defs/StatisticRounding",
+          "description": "How every column's `mean`, `std_dev`, `variance`, `skewness` and\n`kurtosis` are rounded when serialized.\n\nAbsent means not recorded: through 0.13 they kept 4 decimal places at\nany magnitude, where accumulation order could change the last digits."
+        },
         "text_length_unit": {
           "$ref": "#/$defs/TextLengthUnit",
           "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
@@ -2832,6 +2836,16 @@
         }
       },
       "type": "object"
+    },
+    "StatisticRounding": {
+      "description": "How a report's moment statistics (`mean`, `std_dev`, `variance`,\n`skewness`, `kurtosis`) are rounded when serialized, as recorded in its\nmetric semantics.\n\nOnly the current rule has a value. Through 0.13 they kept 4 decimal places\nat any magnitude, and those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "four_decimals_twelve_significant",
+          "description": "4 decimal places and at most 12 significant digits, so a value past\n1e8 drops the digits where accumulation order drifts (#1178).",
+          "type": "string"
+        }
+      ]
     },
     "StreamSourceSystem": {
       "anyOf": [

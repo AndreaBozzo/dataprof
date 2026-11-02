@@ -14,8 +14,9 @@ and every disagreement is collected before asserting, so one failing run shows
 which routes and fields are wrong.
 
 The fixture holds exact answers, and the comparison rounds them as the output
-contract serializes: 4 decimal places, 2 for percentages and quartiles, ties
-away from zero. Only a tie the binary64 computation could land on either side
+contract serializes: 4 decimal places, 2 for percentages and quartiles, and
+moment statistics at most 12 significant digits as well (#1178), ties away
+from zero. Only a tie the binary64 computation could land on either side
 of accepts both neighbours.
 
 `KNOWN` lists the disagreements an open issue owns. It is strict both ways: a
@@ -62,6 +63,24 @@ REL_TOLERANCE = 1e-12
 
 #: Decimal places the output contract serializes, by field; 4 otherwise.
 PLACES = {"null_percentage": 2, "coefficient_of_variation": 2, "quartiles": 2}
+
+#: Fields that also keep at most 12 significant digits (#1178).
+MOMENTS = {"mean", "variance", "std_dev", "skewness", "kurtosis"}
+
+
+def _places(field: str, wanted: str) -> int:
+    """Decimal places the contract serializes for `field` holding `wanted`.
+
+    Past 1e8 a moment statistic is rounded at fewer places, negative ones
+    included, so that it keeps 12 significant digits.
+    """
+    name = field.split(".")[0]
+    magnitude = abs(Fraction(wanted))
+    if name in MOMENTS and magnitude >= 10**8:
+        exponent = len(str(math.floor(magnitude))) - 1
+        return min(4, 11 - exponent)
+    return PLACES.get(name, 4)
+
 
 #: (case, route, field) -> the issue that owns the disagreement. A route of
 #: "*" covers every route the case runs on.
@@ -243,7 +262,7 @@ def _serialized(actual: Any, wanted: str, places: int) -> bool:
         return False
     exact = Fraction(wanted)
     slack = Fraction(math.ulp(float(exact))) * TIE_ULPS
-    scale = 10**places
+    scale = Fraction(10) ** places
     lowest = _half_away((exact - slack) * scale)
     highest = _half_away((exact + slack) * scale)
     scaled = Fraction(actual) * scale
@@ -291,7 +310,7 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
         elif how == "relative":
             good = _relative(actual, wanted)
         else:
-            good = _serialized(actual, wanted, PLACES.get(field.split(".")[0], 4))
+            good = _serialized(actual, wanted, _places(field, wanted))
         if not good:
             found.append((case["id"], route, field, wanted, actual))
 
@@ -318,13 +337,16 @@ def _check(case: dict[str, Any], route: str, report: dp.ProfileReport) -> list[M
             compare(name, stats.get(name), expected[name], "relative")
         return found
 
-    for name in ("variance", "std_dev", "skewness", "kurtosis", "coefficient_of_variation"):
+    # The moment statistics keep at most 12 significant digits, coarser than
+    # the float spacing at any magnitude, so they are checked serialized even
+    # past 2^53 (#1178).
+    for name in ("mean", "variance", "std_dev", "skewness", "kurtosis", "coefficient_of_variation"):
         compare(name, stats.get(name), expected[name])
     compare("outlier_count", stats.get("outlier_count"), expected["outlier_count"])
-    # Past 2^53 the float fields are faithful at best; `exact` carries the
+    # Past 2^53 the data values are faithful at best; `exact` carries the
     # values themselves (#1038).
     how = "faithful" if wide else "serialized"
-    for name in ("min", "max", "mean", "median", "mode"):
+    for name in ("min", "max", "median", "mode"):
         compare(name, stats.get(name), expected[name], how)
     quartiles = stats.get("quartiles")
     if expected["quartiles"] is None:

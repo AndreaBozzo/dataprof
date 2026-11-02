@@ -195,7 +195,8 @@ cross-path equality targets. Whole report documents need not be identical.
 | Metric kind | Serialized precision |
 | --- | --- |
 | 0–100 percentages, including coefficient of variation | 2 decimal places |
-| Statistics and data values, including mean, standard deviation and extrema | 4 decimal places |
+| Moment statistics: mean, standard deviation, variance, skewness, kurtosis | 4 decimal places, at most 12 significant digits |
+| Data values: extrema, median, mode | 4 decimal places |
 | 0–1 ratios and average text length | 4 decimal places |
 | Quartiles | 2 decimal places |
 
@@ -208,11 +209,17 @@ restored from JSON. Parity tests supplement exact serialized comparisons with
 raw diagnostics using relative tolerance `1e-9` and absolute tolerance `1e-12`;
 those tolerances do not weaken the serialized contract.
 
-This decision changes no rounding rule and no schema version.
+Moment statistics are accumulated, so their last bits depend on the order the
+values were added in, which differs between routes. Four decimal places absorb
+that drift only while they are finer than it, below about 1e11, so moment
+statistics also keep at most 12 significant digits (#1178). Below 1e8 that is
+the 4dp value; above it the digits where the drift lives are dropped, and the
+rounded value is the float nearest its decimal form. Data values are read, not
+accumulated, and keep 4 decimal places at any magnitude.
 Rounding alone cannot mathematically guarantee equality for every possible
-floating-point input, especially near rounding boundaries or at large
-magnitudes. A difference that survives serialization remains a parity defect
-to investigate, rather than an allowed raw-precision difference. The known
+floating-point input, especially near rounding boundaries. A difference that
+survives serialization remains a parity defect to investigate, rather than an
+allowed raw-precision difference. The known
 nested JSON/Arrow representation mismatch (#637) is one such defect.
 
 Text frequencies are unassessed in newly computed profiles (#709):
@@ -872,6 +879,21 @@ quality gate leaves the uniqueness and overall score rules over it
 `definition_not_comparable`. Documents written before it keep their key and
 score as recorded. The field is additive and not `required`, so stored v1
 reports remain valid; an explicit `null` for `key_column_source` is malformed,
+as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.statistic_rounding`
+
+`metric_semantics` gains `statistic_rounding`, with the one value
+`"four_decimals_twelve_significant"`: every column's `mean`, `std_dev`,
+`variance`, `skewness` and `kurtosis` are serialized at 4 decimal places and at
+most 12 significant digits (#1178). Through 0.13 they kept 4 decimal places at
+any magnitude, where the order values were accumulated in could change the last
+serialized digits between input routes.
+
+A report that does not record it reads back with the definition unknown, and
+Python's `compare()` reports `comparable: None` against a current report. Every
+engine and input path records the same value. The field is additive and not
+`required`, so stored v1 reports remain valid; an explicit `null` is malformed,
 as for `text_length_unit`.
 
 ## v1 additive change: `generator`

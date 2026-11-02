@@ -30,6 +30,7 @@ from typing import Any, cast
 import dataprof
 import pytest
 from dataprof._render import _column_flags
+from dataprof._rounding import _rstat
 
 # Members that cannot participate in a value-parity sweep, each for a reason
 # that is not "it disagrees":
@@ -118,7 +119,8 @@ def _round_candidates(value: float) -> set[float]:
     """Every value the serializer could legitimately have written for ``value``.
 
     Covers both rounding algorithms at both documented precisions — see #513,
-    which owns the choice between them. Passing ``value`` through unrounded is
+    which owns the choice between them — and the 12-significant-digit rounding
+    of moment statistics (#1178). Passing ``value`` through unrounded is
     also allowed, for fields the serializer does not round at all.
     """
     candidates = {value}
@@ -141,6 +143,10 @@ def _round_candidates(value: float) -> set[float]:
             # integral at this scale, so rounding would not move it.
             rounded = scaled
         candidates.add(rounded / scale)
+    # Moment statistics also keep at most 12 significant digits (#1178).
+    statistic = _rstat(value)
+    if statistic is not None:
+        candidates.add(statistic)
     return candidates
 
 

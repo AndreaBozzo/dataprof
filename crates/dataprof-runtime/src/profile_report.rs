@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyColumnSource,
     KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights,
-    RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, TextLengthUnit,
+    RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -125,6 +125,18 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "ShapeMomentEstimator")]
     pub shape_moments: Option<ShapeMomentEstimator>,
+    /// How every column's `mean`, `std_dev`, `variance`, `skewness` and
+    /// `kurtosis` are rounded when serialized.
+    ///
+    /// Absent means not recorded: through 0.13 they kept 4 decimal places at
+    /// any magnitude, where accumulation order could change the last digits.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "StatisticRounding")]
+    pub statistic_rounding: Option<StatisticRounding>,
     /// What the range and sign rules behind the accuracy score count.
     ///
     /// Absent means not recorded: through 0.12 every rule failure counted,
@@ -189,6 +201,7 @@ impl MetricSemantics {
             null_tokens: Some(NullTokenSet::CommonMarkers),
             pattern_match_count: Some(PatternMatchCount::Validated),
             shape_moments: Some(ShapeMomentEstimator::AdjustedSample),
+            statistic_rounding: Some(StatisticRounding::FourDecimalsTwelveSignificant),
             range_rule_count: Some(RangeRuleCount::ViolatingValues),
             key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
             outlier_units: Some(OutlierUnits::TestedValues),
@@ -206,6 +219,7 @@ impl MetricSemantics {
             null_tokens,
             pattern_match_count,
             shape_moments,
+            statistic_rounding,
             range_rule_count,
             key_uniqueness_units,
             outlier_units,
@@ -215,6 +229,7 @@ impl MetricSemantics {
             && null_tokens.is_some()
             && pattern_match_count.is_some()
             && shape_moments.is_some()
+            && statistic_rounding.is_some()
             && range_rule_count.is_some()
             && key_uniqueness_units.is_some()
             && outlier_units.is_some()
@@ -1524,6 +1539,7 @@ mod tests {
             "null_tokens": "common_markers",
             "pattern_match_count": "validated",
             "shape_moments": "adjusted_sample",
+            "statistic_rounding": "four_decimals_twelve_significant",
             "range_rule_count": "violating_values",
             "key_uniqueness_units": "non_null_values",
             "outlier_units": "tested_values",

@@ -140,6 +140,20 @@ pub struct FrequencyItem {
     pub percentage: f64,
 }
 
+/// How a report's moment statistics (`mean`, `std_dev`, `variance`,
+/// `skewness`, `kurtosis`) are rounded when serialized, as recorded in its
+/// metric semantics.
+///
+/// Only the current rule has a value. Through 0.13 they kept 4 decimal places
+/// at any magnitude, and those releases recorded no definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StatisticRounding {
+    /// 4 decimal places and at most 12 significant digits, so a value past
+    /// 1e8 drops the digits where accumulation order drifts (#1178).
+    FourDecimalsTwelveSignificant,
+}
+
 /// The estimator behind `skewness` and `kurtosis`, as recorded in a report's
 /// metric semantics.
 ///
@@ -165,19 +179,19 @@ pub struct NumericStats {
     pub min: f64,
     #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub max: f64,
-    #[serde(serialize_with = "crate::serde_helpers::round_4")]
+    #[serde(serialize_with = "crate::serde_helpers::round_statistic")]
     pub mean: f64,
     /// `None` when the spread of the values exceeds the finite `f64` range.
     /// A constant column is `Some(0.0)`, so `None` never means "no spread".
     #[serde(
-        serialize_with = "crate::serde_helpers::round_4_opt",
+        serialize_with = "crate::serde_helpers::round_statistic_opt",
         deserialize_with = "crate::serde_helpers::required_nullable"
     )]
     pub std_dev: Option<f64>,
     /// `None` when the spread of the values exceeds the finite `f64` range.
     /// A constant column is `Some(0.0)`, so `None` never means "no spread".
     #[serde(
-        serialize_with = "crate::serde_helpers::round_4_opt",
+        serialize_with = "crate::serde_helpers::round_statistic_opt",
         deserialize_with = "crate::serde_helpers::required_nullable"
     )]
     pub variance: Option<f64>,
@@ -203,12 +217,12 @@ pub struct NumericStats {
     pub coefficient_of_variation: Option<f64>,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_helpers::round_4_opt"
+        serialize_with = "crate::serde_helpers::round_statistic_opt"
     )]
     pub skewness: Option<f64>,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_helpers::round_4_opt"
+        serialize_with = "crate::serde_helpers::round_statistic_opt"
     )]
     pub kurtosis: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -10,6 +10,12 @@ from typing import Any as _Any
 # Rounding helpers — match the convention in dataprof-core serde helpers.
 # ---------------------------------------------------------------------------
 
+#: The decimal context every helper rounds in, so a caller's own context (a
+#: lower precision, or ``Inexact`` trapped) cannot change a result or raise.
+_HALF_UP = _decimal.Context(
+    prec=28, rounding=_decimal.ROUND_HALF_UP, traps=[_decimal.InvalidOperation]
+)
+
 
 def _half_up(v: float, ndigits: int) -> float:
     """Round ``v`` at ``ndigits``, ties away from zero, as the Rust layer does.
@@ -27,8 +33,7 @@ def _half_up(v: float, ndigits: int) -> float:
     and the engine's answer is the one that wins.
     """
     scale = 10.0**ndigits
-    with _decimal.localcontext() as ctx:
-        ctx.rounding = _decimal.ROUND_HALF_UP
+    with _decimal.localcontext(_HALF_UP):
         try:
             # Decimal(float) is the exact binary value, so quantizing it to an
             # integer under ROUND_HALF_UP reproduces f64::round() exactly.
@@ -57,6 +62,49 @@ def _r4(v: float | None) -> float | None:
     if v is None or not _math.isfinite(v):
         return None
     return _half_up(v, 4)
+
+
+#: Significant digits a moment statistic keeps, besides its 4 decimals.
+_STATISTIC_SIGNIFICANT_DIGITS = 12
+
+
+def _power_of_ten(exponent: int) -> float:
+    """``10**exponent`` as the nearest float, as Rust parses ``"1e…"``."""
+    return float(f"1e{exponent}")
+
+
+def _decimal_exponent(magnitude: float) -> int:
+    """The exponent of the leading digit, checked against the powers of ten
+    themselves as the Rust layer does, since ``log10`` can be off by one."""
+    estimate = _math.floor(_math.log10(magnitude))
+    if _power_of_ten(estimate) > magnitude:
+        return estimate - 1
+    if _power_of_ten(estimate + 1) <= magnitude:
+        return estimate + 1
+    return estimate
+
+
+def _rstat(v: float | None) -> float | None:
+    """Round a moment statistic (mean, std_dev, variance, skewness, kurtosis):
+    4 decimal places and at most 12 significant digits (#1178). None/NaN → None.
+
+    Mirrors ``rounded_statistic`` in ``crates/dataprof-core/src/serde_helpers.rs``.
+    Below 1e8 this is :func:`_r4`; above it the digits where accumulation order
+    drifts between input routes are dropped.
+    """
+    if v is None or not _math.isfinite(v):
+        return None
+    if not abs(v) >= 1e8:
+        return _half_up(v, 4)
+    places = _STATISTIC_SIGNIFICANT_DIGITS - 1 - _decimal_exponent(abs(v))
+    if places >= 0:
+        return _half_up(v, places)
+    with _decimal.localcontext(_HALF_UP):
+        # At most 12 digits, so the quotient rounds to an exact integer.
+        steps = int(_decimal.Decimal(v / _power_of_ten(-places)).quantize(_decimal.Decimal(1)))
+    # Read back from its decimal form, as the Rust layer does, so the result is
+    # the float nearest the rounded value.
+    return float(f"{steps}e{-places}")
 
 
 def _round_quartiles(

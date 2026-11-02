@@ -38,7 +38,7 @@ from ._render import (
 )
 from ._report_backing import _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
-from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
+from ._rounding import _r2, _r4, _round_dimension, _round_quartiles, _rstat
 
 
 def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
@@ -533,7 +533,8 @@ class ProfileReport:
         """Convert the report to a nested Python dict.
 
         All floating-point values are rounded: 2dp for ``0..100`` percentages,
-        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``.
+        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``,
+        and moment statistics at most 12 significant digits.
         This is the historical flat summary, produced by the Rust runtime.
         Use :meth:`to_json` or JSON :meth:`save` for the complete persisted
         document. The summary carries ``schema_version``; see
@@ -703,8 +704,8 @@ class ProfileReport:
                 "count": col.total_count,
                 "null%": _r2(col.null_percentage),
                 "unique": col.unique_count,
-                "mean": _r4(col.mean),
-                "std": _r4(col.std_dev),
+                "mean": _rstat(col.mean),
+                "std": _rstat(col.std_dev),
                 "min": _r4(col.min),
                 "25%": q["q1"] if q else None,
                 # Small samples compute a median without full quartiles;
@@ -1392,9 +1393,9 @@ class ProfileReport:
                 approx = "" if col.unique_count_is_approximate is False else "~"
                 parts.append(f"{approx}{col.unique_count:,} unique")
             if col.mean is not None:
-                parts.append(f"mean={_r4(col.mean)}")
+                parts.append(f"mean={_rstat(col.mean)}")
                 if col.std_dev is not None:
-                    parts.append(f"std={_r4(col.std_dev)}")
+                    parts.append(f"std={_rstat(col.std_dev)}")
             elif col.true_count is not None:
                 pct = _r2(col.true_ratio * 100) if col.true_ratio is not None else 0
                 parts.append(f"true={col.true_count}({pct:.0f}%)")
