@@ -39,23 +39,111 @@ struct ParsedChunk {
     /// The JSON reader stopped at the row cap with a record left unread, which
     /// it did not decode. Such a chunk is the last one and holds no records.
     past_cap: bool,
-    /// Strict CSV parsing refused the record after this chunk's rows for its
-    /// field count. Such a chunk is the last one. The processor raises the
-    /// refusal only if the row cap has not stopped it first: a record past the
-    /// cap is not part of the profile, so it is not judged (#757).
+    /// Records the reader could not turn into rows, and faults in a JSON
+    /// document's grammar, each at its place among `records`. The processor
+    /// judges one only if the row cap has not stopped it first: a record past
+    /// the cap is not part of the profile, so it is neither counted nor refused
+    /// (#757, #1206). The reader parses ahead of the cap, so it cannot judge.
+    faults: Vec<ReadFault>,
+}
+
+/// The faults of the chunk the JSON reader is building.
+///
+/// Consecutive tolerated faults of one kind at one position are held as one
+/// entry with a count, so a run of malformed records between two rows costs
+/// one entry, as the counter this replaced cost one number.
+#[derive(Default)]
+struct FaultBuffer(Vec<ReadFault>);
+
+impl FaultBuffer {
+    fn push(&mut self, fault: ReadFault) {
+        if fault.refusal.is_none()
+            && let Some(last) = self.0.last_mut()
+            && last.refusal.is_none()
+            && last.position == fault.position
+            && last.kind == fault.kind
+        {
+            last.count += fault.count;
+            return;
+        }
+        self.0.push(fault);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn take(&mut self) -> Vec<ReadFault> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+/// Whether a chunk read only to look past where the processor stopped holds a
+/// row, judging on the way the grammar faults ahead of its first row: they
+/// follow the last row read, so they are reached, as within a chunk. Faults
+/// past them are not.
+fn judge_lookahead(
+    next: ParsedChunk,
+    malformed_records: &mut usize,
+) -> Result<bool, DataProfilerError> {
+    for fault in next.faults {
+        if fault.position > 0 || fault.kind == FaultKind::Record {
+            return Ok(true);
+        }
+        match fault.refusal {
+            Some(error) => return Err(error),
+            None => *malformed_records += fault.count,
+        }
+    }
+    Ok(!next.records.is_empty() || next.past_cap)
+}
+
+/// A record that yields no row, or a fault in a JSON document's grammar.
+struct ReadFault {
+    /// How many of the chunk's rows precede it.
+    position: usize,
+    kind: FaultKind,
+    /// How many faults this entry stands for: consecutive tolerated faults of
+    /// one kind at one position are held as one (see [`FaultBuffer`]).
+    count: usize,
+    /// The error strict parsing raises for it; `None` under a tolerant policy,
+    /// which counts it in `error_count` instead. The reader stops at the first
+    /// fault it refuses, so that fault is the chunk's last and the chunk is the
+    /// last one.
     refusal: Option<DataProfilerError>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FaultKind {
+    /// Takes the place of a record: a malformed JSONL line or array element, a
+    /// value that is not an object, a ragged CSV record. One past the cap is a
+    /// row past it, so it is not judged.
+    Record,
+    /// Follows the last record before the next one starts: a missing `]`, a
+    /// bad separator, content after the array. Judged at the cap as well, as
+    /// the reader that stops at the cap judges it before looking for a value.
+    Grammar,
+}
+
+impl ReadFault {
+    /// Whether the processor reaches this fault, given how many of the chunk's
+    /// rows it consumed and whether the cap stopped it inside the chunk.
+    fn reached(&self, rows_consumed: usize, hit_row_limit: bool) -> bool {
+        !hit_row_limit
+            || match self.kind {
+                FaultKind::Record => self.position < rows_consumed,
+                FaultKind::Grammar => self.position <= rows_consumed,
+            }
+    }
 }
 
 /// Structural violations the blocking reader task observed while parsing.
 ///
-/// The malformed count describes what the *reader* saw. Ragged CSV rows are
-/// counted by the processor instead, over the rows it consumes: the reader runs
-/// ahead of the row cap, so its count would include rows past it (#1203).
+/// Ragged CSV rows and malformed JSON records are counted by the processor
+/// instead, over the rows it consumes: the reader runs ahead of the row cap,
+/// so its count would include rows past it (#1203, #1206).
 #[derive(Default)]
 struct ReaderOutcome {
-    /// Malformed JSON/JSONL records skipped under the tolerant policy
-    /// (always 0 for CSV, and in strict mode where the first one aborts).
-    malformed_records: usize,
     /// Whether the CSV source ended inside a quoted field; `None` for JSON and
     /// for a scan that stopped before the end of its source.
     unterminated_quote: Option<bool>,
@@ -369,8 +457,7 @@ impl AsyncStreamingProfiler {
                 json_error_policy,
                 record_cap,
             )
-            .map(|(malformed_records, unread_after_fault)| ReaderOutcome {
-                malformed_records,
+            .map(|unread_after_fault| ReaderOutcome {
                 unread_after_fault,
                 ..ReaderOutcome::default()
             }),
@@ -396,6 +483,7 @@ impl AsyncStreamingProfiler {
             truncation_reason,
             container_counts,
             ragged_rows,
+            malformed_records,
         ) = match process_result {
             Ok(result) => result,
             Err(process_err) => {
@@ -483,7 +571,7 @@ impl AsyncStreamingProfiler {
             .with_bytes_consumed(bytes_consumed)
             // Tolerant JSONL scans surface skipped malformed records so callers
             // can distinguish a partial profile from a clean one.
-            .with_error_count(reader_outcome.malformed_records)
+            .with_error_count(malformed_records)
             // Ragged CSV records are recovered, never silently: the count is the
             // same signal the incremental file path reports.
             .with_ragged_row_count(ragged_rows);
@@ -588,7 +676,7 @@ impl AsyncStreamingProfiler {
         let header_chunk = ParsedChunk {
             new_columns: Vec::new(),
             past_cap: false,
-            refusal: None,
+            faults: Vec::new(),
             records: vec![header_fields],
             containers: Vec::new(),
             bytes_read: byte_offset,
@@ -620,7 +708,7 @@ impl AsyncStreamingProfiler {
         let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
-        let mut refusal = None;
+        let mut faults = Vec::new();
 
         loop {
             match csv_reader.read_record(&mut record) {
@@ -629,7 +717,12 @@ impl AsyncStreamingProfiler {
                 // Handed to the processor with the rows before it, which
                 // judges it only if the row cap does not stop it first.
                 Err(e) if matches!(e.kind(), csv::ErrorKind::UnequalLengths { .. }) => {
-                    refusal = Some(Self::csv_error(e, flexible));
+                    faults.push(ReadFault {
+                        position: current_chunk.len(),
+                        kind: FaultKind::Record,
+                        count: 1,
+                        refusal: Some(Self::csv_error(e, flexible)),
+                    });
                     break;
                 }
                 Err(e) => return Err(Self::csv_error(e, flexible)),
@@ -645,7 +738,7 @@ impl AsyncStreamingProfiler {
                 let chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
-                    refusal: None,
+                    faults: Vec::new(),
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
                     bytes_read: bytes_in_chunk,
@@ -660,11 +753,11 @@ impl AsyncStreamingProfiler {
         }
 
         // Send remaining records
-        if !current_chunk.is_empty() || refusal.is_some() {
+        if !current_chunk.is_empty() || !faults.is_empty() {
             let chunk = ParsedChunk {
                 new_columns: Vec::new(),
                 past_cap: false,
-                refusal,
+                faults,
                 records: current_chunk,
                 containers: Vec::new(),
                 bytes_read: bytes_in_chunk,
@@ -692,7 +785,7 @@ impl AsyncStreamingProfiler {
         format: FileFormat,
         error_policy: JsonErrorPolicy,
         record_cap: Option<usize>,
-    ) -> Result<(usize, bool), DataProfilerError> {
+    ) -> Result<bool, DataProfilerError> {
         use serde_json::Value;
         use std::io::BufRead;
 
@@ -711,7 +804,11 @@ impl AsyncStreamingProfiler {
         let mut headers_sent = false;
         // How many of `known_columns` the receiver has been sent.
         let mut sent_columns: usize = 0;
+        // Tolerated faults, for the guard against a source with no record at
+        // all and for the record positions strict messages quote. The count
+        // the report shows is the processor's, over the records it reached.
         let mut malformed_records: usize = 0;
+        let mut current_faults = FaultBuffer::default();
         let mut unread_after_fault = false;
         let mut emitted_records: usize = 0;
         let cap_reached = |emitted: usize| record_cap.is_some_and(|cap| emitted >= cap);
@@ -762,6 +859,7 @@ impl AsyncStreamingProfiler {
         // fieldless rows stay buffered rather than being emitted ahead of the
         // headers, where the receiver would read them *as* the headers.
         let send_chunk = |chunk: &mut Vec<(Vec<String>, Vec<usize>)>,
+                          faults: &mut FaultBuffer,
                           bytes: &mut u64,
                           cols: &[String],
                           headers_sent: &mut bool,
@@ -773,7 +871,7 @@ impl AsyncStreamingProfiler {
                 let header_chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
-                    refusal: None,
+                    faults: Vec::new(),
                     records: vec![cols.to_vec()],
                     containers: Vec::new(),
                     bytes_read: 0,
@@ -785,12 +883,12 @@ impl AsyncStreamingProfiler {
                 *sent_columns = cols.len();
             }
 
-            if *headers_sent && !chunk.is_empty() {
+            if *headers_sent && (!chunk.is_empty() || !faults.is_empty()) {
                 let (records, containers) = std::mem::take(chunk).into_iter().unzip();
                 let data_chunk = ParsedChunk {
                     new_columns: cols[*sent_columns..].to_vec(),
                     past_cap: false,
-                    refusal: None,
+                    faults: faults.take(),
                     records,
                     containers,
                     bytes_read: *bytes,
@@ -850,6 +948,7 @@ impl AsyncStreamingProfiler {
                             if bytes_in_chunk as usize >= bytes_per_chunk
                                 && !send_chunk(
                                     &mut current_chunk,
+                                    &mut current_faults,
                                     &mut bytes_in_chunk,
                                     &known_columns,
                                     &mut headers_sent,
@@ -858,26 +957,50 @@ impl AsyncStreamingProfiler {
                                     false,
                                 )?
                             {
-                                return Ok((malformed_records, unread_after_fault));
+                                return Ok(unread_after_fault);
                             }
                         }
                         JsonRecord::NonObject(kind) => {
                             if error_policy == JsonErrorPolicy::Strict {
-                                return Err(non_object_record_error(
-                                    kind,
-                                    emitted_records + malformed_records + 1,
-                                ));
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal: Some(non_object_record_error(
+                                        kind,
+                                        emitted_records + malformed_records + 1,
+                                    )),
+                                });
+                                break;
                             }
+                            current_faults.push(ReadFault {
+                                position: current_chunk.len(),
+                                kind: FaultKind::Record,
+                                count: 1,
+                                refusal: None,
+                            });
                             malformed_records += 1;
                             // Approximate progress for a record that yields no row.
                             bytes_in_chunk += 10;
                         }
                         JsonRecord::WideInteger => {
                             if error_policy == JsonErrorPolicy::Strict {
-                                return Err(wide_integer_record_error(&format!(
-                                    "on line {line_number}"
-                                )));
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal: Some(wide_integer_record_error(&format!(
+                                        "on line {line_number}"
+                                    ))),
+                                });
+                                break;
                             }
+                            current_faults.push(ReadFault {
+                                position: current_chunk.len(),
+                                kind: FaultKind::Record,
+                                count: 1,
+                                refusal: None,
+                            });
                             malformed_records += 1;
                             bytes_in_chunk += 10;
                         }
@@ -891,12 +1014,24 @@ impl AsyncStreamingProfiler {
                                     "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
                                     e.column()
                                 );
-                                return Err(DataProfilerError::json_parsing_with_source(
-                                    message, e,
-                                ));
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal: Some(DataProfilerError::json_parsing_with_source(
+                                        message, e,
+                                    )),
+                                });
+                                break;
                             }
                             // The offending line has already been consumed in
                             // full, so the next read starts at the next record.
+                            current_faults.push(ReadFault {
+                                position: current_chunk.len(),
+                                kind: FaultKind::Record,
+                                count: 1,
+                                refusal: None,
+                            });
                             malformed_records += 1;
                         }
                     }
@@ -935,27 +1070,42 @@ impl AsyncStreamingProfiler {
                                         emitted_records += 1;
                                     }
                                     _ => {
-                                        if error_policy == JsonErrorPolicy::Strict {
-                                            return Err(wide_integer_record_error("at position 1"));
-                                        }
-                                        malformed_records += 1;
+                                        let refusal = (error_policy == JsonErrorPolicy::Strict)
+                                            .then(|| wide_integer_record_error("at position 1"));
+                                        let refused = refusal.is_some();
+                                        malformed_records += usize::from(!refused);
+                                        current_faults.push(ReadFault {
+                                            position: current_chunk.len(),
+                                            kind: FaultKind::Record,
+                                            count: 1,
+                                            refusal,
+                                        });
                                     }
                                 }
                             }
                             Ok(value) => {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(non_object_record_error(
-                                        json_value_kind(&value),
-                                        1,
-                                    ));
-                                }
-                                malformed_records += 1;
+                                let refusal = (error_policy == JsonErrorPolicy::Strict)
+                                    .then(|| non_object_record_error(json_value_kind(&value), 1));
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal,
+                                });
                             }
                             Err(e) => {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(json_document_error(e));
-                                }
-                                malformed_records += 1;
+                                let refusal = (error_policy == JsonErrorPolicy::Strict)
+                                    .then(|| json_document_error(e));
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal,
+                                });
                             }
                         }
                     }
@@ -976,26 +1126,37 @@ impl AsyncStreamingProfiler {
                     let (next, whitespace) = peek_non_whitespace(&mut buf_reader)?;
                     bytes_in_chunk += whitespace as u64;
                     let Some(next) = next else {
-                        if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_array_error(
-                                "unexpected end of input before closing ']'",
-                            ));
-                        }
-                        malformed_records += 1;
-                        drain_remainder = true;
+                        let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
+                            malformed_array_error("unexpected end of input before closing ']'")
+                        });
+                        let refused = refusal.is_some();
+                        malformed_records += usize::from(!refused);
+                        current_faults.push(ReadFault {
+                            position: current_chunk.len(),
+                            kind: FaultKind::Grammar,
+                            count: 1,
+                            refusal,
+                        });
+                        drain_remainder = !refused;
                         break;
                     };
 
                     if expect_value {
                         if next == b']' {
                             if !allow_end {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_array_error(
-                                        "trailing comma before closing ']'",
-                                    ));
-                                }
-                                malformed_records += 1;
-                                drain_remainder = true;
+                                let refusal =
+                                    (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                        malformed_array_error("trailing comma before closing ']'")
+                                    });
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Grammar,
+                                    count: 1,
+                                    refusal,
+                                });
+                                drain_remainder = !refused;
                                 break;
                             }
                             buf_reader.consume(1);
@@ -1012,13 +1173,20 @@ impl AsyncStreamingProfiler {
                         }
 
                         if next == b',' {
-                            if error_policy == JsonErrorPolicy::Strict {
-                                return Err(malformed_array_error(
+                            let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                malformed_array_error(
                                     "unexpected comma where an array value was required",
-                                ));
-                            }
-                            malformed_records += 1;
-                            drain_remainder = true;
+                                )
+                            });
+                            let refused = refusal.is_some();
+                            malformed_records += usize::from(!refused);
+                            current_faults.push(ReadFault {
+                                position: current_chunk.len(),
+                                kind: FaultKind::Record,
+                                count: 1,
+                                refusal,
+                            });
+                            drain_remainder = !refused;
                             break;
                         }
 
@@ -1037,6 +1205,7 @@ impl AsyncStreamingProfiler {
                                 if bytes_in_chunk as usize >= bytes_per_chunk
                                     && !send_chunk(
                                         &mut current_chunk,
+                                        &mut current_faults,
                                         &mut bytes_in_chunk,
                                         &known_columns,
                                         &mut headers_sent,
@@ -1045,46 +1214,76 @@ impl AsyncStreamingProfiler {
                                         false,
                                     )?
                                 {
-                                    return Ok((malformed_records, unread_after_fault));
+                                    return Ok(unread_after_fault);
                                 }
                             }
                             JsonRecord::NonObject(kind) => {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(non_object_record_error(
-                                        kind,
-                                        emitted_records + malformed_records + 1,
-                                    ));
-                                }
                                 // The element was consumed in full, so the array
                                 // grammar is still intact and the objects after
                                 // it are still profileable.
-                                malformed_records += 1;
+                                let refusal =
+                                    (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                        non_object_record_error(
+                                            kind,
+                                            emitted_records + malformed_records + 1,
+                                        )
+                                    });
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal,
+                                });
+                                if refused {
+                                    break;
+                                }
                                 // Approximate progress for a record that yields no row.
                                 bytes_in_chunk += 10;
                             }
                             JsonRecord::WideInteger => {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(wide_integer_record_error(&format!(
-                                        "at position {}",
-                                        emitted_records + malformed_records + 1
-                                    )));
-                                }
                                 // Read in full: the array grammar is intact.
-                                malformed_records += 1;
+                                let refusal =
+                                    (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                        wide_integer_record_error(&format!(
+                                            "at position {}",
+                                            emitted_records + malformed_records + 1
+                                        ))
+                                    });
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal,
+                                });
+                                if refused {
+                                    break;
+                                }
                                 bytes_in_chunk += 10;
                             }
                             JsonRecord::Malformed(e) => {
                                 // A corrupt element leaves the array parser unable
                                 // to resync, so we stop here either way; strict mode
                                 // surfaces the failure instead of a partial profile.
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    let message = format!("malformed JSON record: {e}");
-                                    return Err(DataProfilerError::json_parsing_with_source(
-                                        message, e,
-                                    ));
-                                }
-                                malformed_records += 1;
-                                drain_remainder = true;
+                                let refusal =
+                                    (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                        DataProfilerError::json_parsing_with_source(
+                                            format!("malformed JSON record: {e}"),
+                                            e,
+                                        )
+                                    });
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Record,
+                                    count: 1,
+                                    refusal,
+                                });
+                                drain_remainder = !refused;
                                 break;
                             }
                         }
@@ -1104,13 +1303,21 @@ impl AsyncStreamingProfiler {
                                 break;
                             }
                             _ => {
-                                if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_array_error(
-                                        "expected ',' or ']' after an array value",
-                                    ));
-                                }
-                                malformed_records += 1;
-                                drain_remainder = true;
+                                let refusal =
+                                    (error_policy == JsonErrorPolicy::Strict).then(|| {
+                                        malformed_array_error(
+                                            "expected ',' or ']' after an array value",
+                                        )
+                                    });
+                                let refused = refusal.is_some();
+                                malformed_records += usize::from(!refused);
+                                current_faults.push(ReadFault {
+                                    position: current_chunk.len(),
+                                    kind: FaultKind::Grammar,
+                                    count: 1,
+                                    refusal,
+                                });
+                                drain_remainder = !refused;
                                 break;
                             }
                         }
@@ -1128,13 +1335,20 @@ impl AsyncStreamingProfiler {
                     let (trailing, whitespace) = peek_non_whitespace(&mut buf_reader)?;
                     bytes_in_chunk += whitespace as u64;
                     if trailing.is_some() {
-                        if error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_array_error(
-                                "non-whitespace content follows the closing ']'",
-                            ));
+                        let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
+                            malformed_array_error("non-whitespace content follows the closing ']'")
+                        });
+                        let refused = refusal.is_some();
+                        malformed_records += usize::from(!refused);
+                        current_faults.push(ReadFault {
+                            position: current_chunk.len(),
+                            kind: FaultKind::Grammar,
+                            count: 1,
+                            refusal,
+                        });
+                        if !refused {
+                            bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
                         }
-                        malformed_records += 1;
-                        bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
                     }
                 }
             }
@@ -1152,9 +1366,10 @@ impl AsyncStreamingProfiler {
         }
 
         // Flush remaining
-        if !current_chunk.is_empty() || !headers_sent {
+        if !current_chunk.is_empty() || !current_faults.is_empty() || !headers_sent {
             let _ = send_chunk(
                 &mut current_chunk,
+                &mut current_faults,
                 &mut bytes_in_chunk,
                 &known_columns,
                 &mut headers_sent,
@@ -1170,20 +1385,22 @@ impl AsyncStreamingProfiler {
                 bytes_read: 0,
                 new_columns: Vec::new(),
                 past_cap: true,
-                refusal: None,
+                faults: Vec::new(),
             });
         }
 
-        Ok((malformed_records, unread_after_fault))
+        Ok(unread_after_fault)
     }
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
     /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read,
-    /// truncation_reason, container_counts, ragged_rows). `container_counts`
+    /// truncation_reason, container_counts, ragged_rows, malformed_records).
+    /// `container_counts`
     /// is, per column, how many of the values folded into `column_stats` were a
     /// JSON object or array. `ragged_rows` counts the consumed CSV rows whose
-    /// field count differs from the header.
+    /// field count differs from the header, and `malformed_records` the JSON
+    /// records the reader could not turn into rows that the processor reached.
     #[allow(clippy::type_complexity)]
     async fn process_chunks(
         &self,
@@ -1202,6 +1419,7 @@ impl AsyncStreamingProfiler {
             Option<TruncationReason>,
             HashMap<String, usize>,
             usize,
+            usize,
         ),
         DataProfilerError,
     > {
@@ -1213,6 +1431,7 @@ impl AsyncStreamingProfiler {
         let mut sampled_rows: usize = 0;
         let mut total_bytes: u64 = 0;
         let mut ragged_rows: usize = 0;
+        let mut malformed_records: usize = 0;
 
         // Initialize stop condition evaluator
         let mut estimated_total = exact_total_rows;
@@ -1294,8 +1513,7 @@ impl AsyncStreamingProfiler {
             let mut hit_row_limit = false;
             headers.extend(chunk.new_columns);
             let mut chunk_containers = chunk.containers.into_iter();
-            let mut refusal = chunk.refusal;
-            let refused = refusal.is_some();
+            let faults = chunk.faults;
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
                 // decode-audit: no-data — CSV chunks carry no container list,
@@ -1364,14 +1582,25 @@ impl AsyncStreamingProfiler {
                 }
             }
 
-            if !hit_row_limit && let Some(error) = refusal.take() {
-                if row_limit != Some(0) {
-                    return Err(error);
-                }
-                // The refused record was the chunk's first, so the zero-row
-                // check above never ran. A cap of zero is met before it.
+            if !hit_row_limit && row_limit == Some(0) && !faults.is_empty() {
+                // A chunk of faults alone runs no row through the zero-row
+                // check above. A cap of zero is met before its first fault.
                 rows_consumed = 0;
                 hit_row_limit = true;
+            }
+            // Faults are in source order, so the first one the cap leaves
+            // unreached ends the judging: every fault after it follows a
+            // record past the cap. A record there means a row remained.
+            let mut record_past_cap = false;
+            for fault in faults {
+                if !fault.reached(rows_consumed, hit_row_limit) {
+                    record_past_cap = fault.kind == FaultKind::Record;
+                    break;
+                }
+                match fault.refusal {
+                    Some(error) => return Err(error),
+                    None => malformed_records += fault.count,
+                }
             }
 
             total_rows += rows_consumed;
@@ -1384,11 +1613,14 @@ impl AsyncStreamingProfiler {
                 // remained. Rows left in this chunk prove it outright;
                 // otherwise ask the reader for one more chunk, which resolves
                 // to `None` when the source is exhausted.
-                let more_rows_remain = rows_consumed < chunk_rows
-                    || refused
-                    || rx.recv().await.is_some_and(|next| {
-                        !next.records.is_empty() || next.past_cap || next.refusal.is_some()
-                    });
+                let more_rows_remain = if rows_consumed < chunk_rows || record_past_cap {
+                    true
+                } else {
+                    match rx.recv().await {
+                        None => false,
+                        Some(next) => judge_lookahead(next, &mut malformed_records)?,
+                    }
+                };
 
                 if more_rows_remain {
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
@@ -1452,6 +1684,15 @@ impl AsyncStreamingProfiler {
                 if !reached_eof {
                     truncation_reason = stop_eval.truncation_reason();
                 }
+                // A JSON document's grammar faults after the last row read can
+                // arrive in a chunk of their own; they are reached all the
+                // same, as the cap's lookahead above reaches them. JSONL and
+                // CSV have no grammar faults, so they do not wait for a chunk.
+                if format == FileFormat::Json
+                    && let Some(next) = rx.recv().await
+                {
+                    judge_lookahead(next, &mut malformed_records)?;
+                }
                 drop(rx); // signal reader task to stop
                 break;
             }
@@ -1492,6 +1733,7 @@ impl AsyncStreamingProfiler {
             truncation_reason,
             container_counts,
             ragged_rows,
+            malformed_records,
         ))
     }
 
@@ -1518,6 +1760,37 @@ mod tests {
     use super::*;
     use dataprof_core::DataType;
     use dataprof_runtime::{AsyncSourceInfo, BytesSource, QualityAnalysisStatus};
+
+    fn tolerated(position: usize) -> ReadFault {
+        ReadFault {
+            position,
+            kind: FaultKind::Record,
+            count: 1,
+            refusal: None,
+        }
+    }
+
+    /// A run of malformed records costs the reader one entry, as the counter
+    /// the faults replaced cost one number; a fault at the next position, or
+    /// one strict parsing refuses, is an entry of its own.
+    #[test]
+    fn a_run_of_tolerated_faults_is_one_entry() {
+        let mut buffer = FaultBuffer::default();
+        for _ in 0..1000 {
+            buffer.push(tolerated(3));
+        }
+        buffer.push(tolerated(4));
+        buffer.push(ReadFault {
+            refusal: Some(DataProfilerError::json_parsing_error("refused")),
+            ..tolerated(4)
+        });
+        let entries: Vec<_> = buffer
+            .take()
+            .iter()
+            .map(|fault| (fault.position, fault.count, fault.refusal.is_some()))
+            .collect();
+        assert_eq!(entries, [(3, 1000, false), (4, 1, false), (4, 1, true)]);
+    }
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
