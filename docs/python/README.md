@@ -439,14 +439,19 @@ by what the number *is*, not by which object it lives on:
 | Kind | Precision | Examples |
 | --- | --- | --- |
 | `0..100` percentage | 2dp | `null_percentage`, `coefficient_of_variation`, every float in the quality dimension dicts |
-| statistic | 4dp | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis`, `avg_length` |
+| moment statistic | 4dp, at most 12 significant digits | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis` |
+| other statistic | 4dp | `avg_length` |
 | data value | 4dp | `min`, `max`, `median`, `mode` |
 | `0..1` ratio | 4dp | `uniqueness_ratio`, `true_ratio` |
 
 A `0..1` ratio takes 4dp so it carries the same resolution as the equivalent
 percentage at 2dp. Data values take 4dp because a profiler must not report a
 `min` the column never contained. Quartiles are the deliberate exception: they
-stay at 2dp, being distribution landmarks rather than exact values.
+stay at 2dp, being distribution landmarks rather than exact values. Moment
+statistics are accumulated, and the order differs between input routes, so past
+1e8 they also drop the digits beyond the twelfth significant one, where that
+order shows.
+
 
 **Ties** round the stored float, away from zero. This is the value actually
 held, not the shortest decimal string that prints for it -- `23 / 4000 * 100`

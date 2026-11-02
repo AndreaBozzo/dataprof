@@ -12,7 +12,8 @@
 //! | Kind | Precision | Examples |
 //! | --- | --- | --- |
 //! | `0..100` percentage | 2dp | `null_percentage`, `missing_values_ratio`, `coefficient_of_variation` |
-//! | statistic | 4dp | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis`, `avg_length` |
+//! | moment statistic | 4dp, at most 12 significant digits | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis` |
+//! | other statistic | 4dp | `avg_length` |
 //! | data value | 4dp | `min`, `max`, `median`, `mode` |
 //! | `0..1` ratio | 4dp | `true_ratio`, `uniqueness_ratio` |
 //!
@@ -23,6 +24,14 @@
 //!
 //! Quartiles are the deliberate exception: they stay at 2dp because they are
 //! read as distribution landmarks rather than as exact values.
+//!
+//! A moment statistic is accumulated, and its last bits depend on the order
+//! the values were added in, which differs between input routes. Four decimals
+//! absorb that drift only while they are finer than it, below about 1e11; past
+//! that the serialized values of two routes differed (#1178). So a moment
+//! statistic keeps at most 12 significant digits as well: below 1e8 that is
+//! the 4dp value, above it the digits where the drift lives are dropped. Data
+//! values are read, not accumulated, so they keep 4dp at any magnitude.
 //!
 //! **Tie-breaking** rounds the stored `f64`, ties away from zero — that is,
 //! `(v * 10^n).round() / 10^n`, since [`f64::round`] rounds half away from
@@ -42,6 +51,76 @@ fn round_finite(value: f64, scale: f64) -> f64 {
         // At this magnitude every representable value is already integral.
         // Scaling must not turn a finite statistic into a serialized null.
         value
+    }
+}
+
+/// Significant digits a moment statistic keeps, besides its 4 decimals.
+const STATISTIC_SIGNIFICANT_DIGITS: i32 = 12;
+
+/// `10^exponent` as the `f64` nearest to it, as Python's `float("1e…")`
+/// reads it, so both layers round at the same unit.
+fn power_of_ten(exponent: i32) -> f64 {
+    format!("1e{exponent}")
+        .parse()
+        .expect("a power of ten is a valid float literal")
+}
+
+/// The exponent of the leading digit of a positive, finite `magnitude`.
+/// `log10` can be off by one next to a power of ten, so the estimate is
+/// checked against the powers themselves.
+fn decimal_exponent(magnitude: f64) -> i32 {
+    let estimate = magnitude.log10().floor() as i32;
+    if power_of_ten(estimate) > magnitude {
+        estimate - 1
+    } else if power_of_ten(estimate + 1) <= magnitude {
+        estimate + 1
+    } else {
+        estimate
+    }
+}
+
+/// The value [`round_statistic`] serializes: 4 decimal places, and at most
+/// [`STATISTIC_SIGNIFICANT_DIGITS`] significant digits (#1178).
+pub fn rounded_statistic(value: f64) -> f64 {
+    // Below 1e8, 4 decimals keep at most 12 significant digits.
+    if !(value.abs() >= 1e8) {
+        return round_finite(value, 10000.0);
+    }
+    let places = STATISTIC_SIGNIFICANT_DIGITS - 1 - decimal_exponent(value.abs());
+    if places >= 0 {
+        return round_finite(value, power_of_ten(places));
+    }
+    // Read back from its decimal form, so the result is the `f64` nearest the
+    // rounded value: multiplying the steps by the unit can land an ulp away,
+    // and print with more digits than were kept.
+    let steps = (value / power_of_ten(-places)).round();
+    format!("{steps}e{}", -places)
+        .parse()
+        .expect("a rounded statistic is a valid float literal")
+}
+
+/// Round a moment statistic (`mean`, `std_dev`, `variance`, `skewness`,
+/// `kurtosis`) with [`rounded_statistic`]. Returns null for NaN or infinite
+/// values.
+pub fn round_statistic<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if !value.is_finite() {
+        return serializer.serialize_none();
+    }
+    serializer.serialize_f64(rounded_statistic(*value))
+}
+
+/// [`round_statistic`] for an `Option<f64>`. Returns null for None or
+/// non-finite values.
+pub fn round_statistic_opt<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) if v.is_finite() => serializer.serialize_some(&rounded_statistic(*v)),
+        _ => serializer.serialize_none(),
     }
 }
 

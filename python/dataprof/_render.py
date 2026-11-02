@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from ._accessors import ColumnProfile
 from ._columns import _dominant_pattern, _homogeneity_counts, _type_mixture
-from ._rounding import _r2, _r4
+from ._rounding import _r2, _r4, _rstat
 
 
 def _pct_str(value: float | None) -> str:
@@ -26,9 +26,9 @@ def _stats_cell(col: ColumnProfile) -> str:
     """
     parts: list[str] = []
     if col.mean is not None:
-        parts.append(f"mean={_r4(col.mean)}")
+        parts.append(f"mean={_rstat(col.mean)}")
         if col.std_dev is not None:
-            parts.append(f"std={_r4(col.std_dev)}")
+            parts.append(f"std={_rstat(col.std_dev)}")
         if col.median is not None:
             parts.append(f"median={_r4(col.median)}")
     elif col.true_count is not None:

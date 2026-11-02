@@ -298,6 +298,7 @@ _METRIC_SEMANTICS = {
     "null_tokens": ("common_markers",),
     "pattern_match_count": ("validated",),
     "shape_moments": ("adjusted_sample",),
+    "statistic_rounding": ("four_decimals_twelve_significant",),
     "range_rule_count": ("violating_values",),
     "key_uniqueness_units": ("non_null_values",),
     "outlier_units": ("tested_values",),

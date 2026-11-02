@@ -31,7 +31,7 @@ import pytest
 # they are not part of the declared surface #514 pins. Reaching them here is
 # intentional: the convention has to be exercised on arbitrary values, which no
 # public accessor allows.
-from dataprof._rounding import _r2, _r4
+from dataprof._rounding import _r2, _r4, _rstat
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 _CONVENTION = "round the stored f64 at n decimal places, ties away from zero"
@@ -98,6 +98,18 @@ def test_helpers_match_the_shared_rounding_fixture(rounding_cases):
         f"{len(failures)} of {len(cases)} fixture cases disagree with the Python helpers:\n"
         + "\n".join(failures)
     )
+
+
+def test_statistic_helper_matches_the_shared_fixture(rounding_cases):
+    """_rstat produces what the Rust statistic serializers produce (#1178)."""
+    cases = rounding_cases["statistic_cases"]
+    assert cases, "fixture lists no statistic cases"
+    failures = [
+        f"_rstat({case['value']!r}): expected {case['stat']!r}, got {_rstat(case['value'])!r}"
+        for case in cases
+        if _rstat(case["value"]) != case["stat"]
+    ]
+    assert not failures, "\n".join(failures)
 
 
 def test_fixture_covers_the_ties_that_discriminate_the_rule(rounding_cases):

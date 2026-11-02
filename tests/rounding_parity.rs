@@ -16,7 +16,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use dataprof_core::serde_helpers::{round_2, round_2_opt, round_4, round_4_opt};
+use dataprof_core::serde_helpers::{
+    round_2, round_2_opt, round_4, round_4_opt, round_statistic, round_statistic_opt,
+};
 use serde_json::Value;
 use serde_json::value::Serializer;
 
@@ -100,6 +102,40 @@ fn rust_serializers_match_the_shared_rounding_fixture() {
         cases(&fixture).len(),
         failures.join("\n")
     );
+}
+
+/// Moment statistics keep 4 decimals and at most 12 significant digits
+/// (#1178); `python/tests/test_rounding_parity.py` asserts `_rstat` against
+/// the same cases.
+#[test]
+fn rust_statistic_serializers_match_the_shared_fixture() {
+    let fixture = fixture();
+    let cases = fixture["statistic_cases"]
+        .as_array()
+        .expect("fixture has statistic cases");
+    assert!(!cases.is_empty(), "fixture lists no statistic cases");
+    let mut failures = Vec::new();
+    for case in cases {
+        let value = number(case, "value");
+        let expected = number(case, "stat");
+        for (name, actual) in [
+            (
+                "round_statistic",
+                emitted(round_statistic(&value, Serializer).unwrap()),
+            ),
+            (
+                "round_statistic_opt",
+                emitted(round_statistic_opt(&Some(value), Serializer).unwrap()),
+            ),
+        ] {
+            if actual != expected {
+                failures.push(format!(
+                    "{name}({value:?}): expected {expected:?}, got {actual:?}"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 #[test]

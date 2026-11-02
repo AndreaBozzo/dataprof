@@ -7,7 +7,7 @@ use dataprof::{
     OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
     QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
     RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator, SourceIdentity,
-    TextLengthUnit, TruncationReason,
+    StatisticRounding, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1249,6 +1249,16 @@ impl PyProfileReport {
                 "shape_moments",
                 match estimator {
                     ShapeMomentEstimator::AdjustedSample => "adjusted_sample",
+                },
+            )?;
+        }
+        if let Some(rounding) = semantics.statistic_rounding {
+            dict.set_item(
+                "statistic_rounding",
+                match rounding {
+                    StatisticRounding::FourDecimalsTwelveSignificant => {
+                        "four_decimals_twelve_significant"
+                    }
                 },
             )?;
         }

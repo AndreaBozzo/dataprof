@@ -533,7 +533,8 @@ class ProfileReport:
         """Convert the report to a nested Python dict.
 
         All floating-point values are rounded: 2dp for ``0..100`` percentages,
-        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``.
+        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``,
+        and moment statistics at most 12 significant digits.
         This is the historical flat summary, produced by the Rust runtime.
         Use :meth:`to_json` or JSON :meth:`save` for the complete persisted
         document. The summary carries ``schema_version``; see
