@@ -13,6 +13,11 @@ use crate::execution::TruncationReason;
 #[derive(Debug, Clone, Default)]
 pub enum StopCondition {
     /// Stop after processing this many rows.
+    ///
+    /// Under sampling, the engine decides which rows count: a systematic
+    /// interval counts the rows it keeps, a fixed-size sample the rows read
+    /// (see `RowSampler::rows_against_cap`). An engine that sets no such count
+    /// through [`StopEvaluator::set_rows_against_cap`] caps the rows read.
     MaxRows(u64),
     /// Stop after consuming this many bytes from the source.
     ///
@@ -173,6 +178,7 @@ pub struct StopEvaluator {
     bytes_consumed: u64,
     estimated_total_rows: Option<u64>,
     schema_stable_rows: Option<u64>,
+    rows_against_cap: Option<u64>,
     triggered_reason: Option<TruncationReason>,
 }
 
@@ -185,6 +191,7 @@ impl StopEvaluator {
             bytes_consumed: 0,
             estimated_total_rows: None,
             schema_stable_rows: None,
+            rows_against_cap: None,
             triggered_reason: None,
         }
     }
@@ -224,6 +231,15 @@ impl StopEvaluator {
         self.schema_stable_rows = Some(rows);
     }
 
+    /// Provide the total row count a `MaxRows` leaf is measured against, when
+    /// it differs from the rows read: a systematic sample caps the rows it
+    /// keeps. Without it the cap counts the rows passed to
+    /// [`update`](Self::update). The fraction a `ConfidenceThreshold` measures
+    /// is always of the rows read.
+    pub fn set_rows_against_cap(&mut self, rows: u64) {
+        self.rows_against_cap = Some(rows);
+    }
+
     /// Update counters and evaluate the stop condition.
     ///
     /// Returns `true` when profiling should stop.
@@ -241,11 +257,14 @@ impl StopEvaluator {
 
         let reason = evaluate(
             &self.condition,
-            self.rows_processed,
-            self.bytes_consumed,
-            memory_fraction,
-            self.estimated_total_rows,
-            self.schema_stable_rows,
+            Counters {
+                rows: self.rows_processed,
+                rows_against_cap: self.rows_against_cap.unwrap_or(self.rows_processed),
+                bytes: self.bytes_consumed,
+                memory_fraction,
+                estimated_total: self.estimated_total_rows,
+                schema_stable_rows: self.schema_stable_rows,
+            },
         );
 
         if reason.is_some() {
@@ -277,26 +296,33 @@ impl StopEvaluator {
     }
 }
 
-/// Recursively evaluate a condition against current counters.
-/// Returns `Some(reason)` if the condition is met.
-fn evaluate(
-    condition: &StopCondition,
+/// The counters a condition is evaluated against.
+#[derive(Clone, Copy)]
+struct Counters {
+    /// Rows read.
     rows: u64,
+    /// Rows a `MaxRows` leaf counts, which a systematic sample bounds by the
+    /// rows it keeps.
+    rows_against_cap: u64,
     bytes: u64,
     memory_fraction: f64,
     estimated_total: Option<u64>,
     schema_stable_rows: Option<u64>,
-) -> Option<TruncationReason> {
+}
+
+/// Recursively evaluate a condition against current counters.
+/// Returns `Some(reason)` if the condition is met.
+fn evaluate(condition: &StopCondition, counters: Counters) -> Option<TruncationReason> {
     match condition {
         StopCondition::MaxRows(limit) => {
-            if rows >= *limit {
+            if counters.rows_against_cap >= *limit {
                 Some(TruncationReason::MaxRows(*limit))
             } else {
                 None
             }
         }
         StopCondition::MaxBytes(limit) => {
-            if bytes >= *limit {
+            if counters.bytes >= *limit {
                 Some(TruncationReason::MaxBytes(*limit))
             } else {
                 None
@@ -305,7 +331,10 @@ fn evaluate(
         StopCondition::SchemaStable {
             consecutive_stable_rows,
         } => {
-            if schema_stable_rows.is_some_and(|rows| rows >= *consecutive_stable_rows) {
+            if counters
+                .schema_stable_rows
+                .is_some_and(|rows| rows >= *consecutive_stable_rows)
+            {
                 Some(TruncationReason::StopCondition(format!(
                     "schema_stable({consecutive_stable_rows})"
                 )))
@@ -314,10 +343,10 @@ fn evaluate(
             }
         }
         StopCondition::ConfidenceThreshold(threshold) => {
-            if let Some(total) = estimated_total
+            if let Some(total) = counters.estimated_total
                 && total > 0
             {
-                let confidence = rows as f64 / total as f64;
+                let confidence = counters.rows as f64 / total as f64;
                 if confidence >= *threshold {
                     return Some(TruncationReason::StopCondition(format!(
                         "confidence_threshold({})",
@@ -328,27 +357,13 @@ fn evaluate(
             None
         }
         StopCondition::MemoryPressure(threshold) => {
-            if memory_fraction >= *threshold {
+            if counters.memory_fraction >= *threshold {
                 Some(TruncationReason::MemoryPressure)
             } else {
                 None
             }
         }
-        StopCondition::Any(conditions) => {
-            for c in conditions {
-                if let Some(reason) = evaluate(
-                    c,
-                    rows,
-                    bytes,
-                    memory_fraction,
-                    estimated_total,
-                    schema_stable_rows,
-                ) {
-                    return Some(reason);
-                }
-            }
-            None
-        }
+        StopCondition::Any(conditions) => conditions.iter().find_map(|c| evaluate(c, counters)),
         StopCondition::All(conditions) => {
             if conditions.is_empty() {
                 return None;
@@ -356,14 +371,7 @@ fn evaluate(
             // All must have triggered — collect reasons, return first
             let mut first_reason = None;
             for c in conditions {
-                let reason = evaluate(
-                    c,
-                    rows,
-                    bytes,
-                    memory_fraction,
-                    estimated_total,
-                    schema_stable_rows,
-                )?;
+                let reason = evaluate(c, counters)?;
                 if first_reason.is_none() {
                     first_reason = Some(reason);
                 }

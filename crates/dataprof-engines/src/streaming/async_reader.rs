@@ -1564,17 +1564,10 @@ impl AsyncStreamingProfiler {
                     sampled_rows += 1;
                 }
 
-                // A fixed-size strategy folds nothing in until the stream
-                // ends, so the cap bounds the rows read and the sample is drawn
-                // from those. Counting only folded rows would let the sample
-                // exceed the caller's hard ceiling.
-                let rows_against_cap = if sampler.is_buffered() {
-                    sampler.iterated_rows()
-                } else {
-                    sampler.sampled_rows()
-                };
+                // The sampler says which rows the cap bounds, and the
+                // chunk-level check below counts the same ones.
                 if let Some(limit) = row_limit
-                    && rows_against_cap as u64 >= limit
+                    && sampler.rows_against_cap() as u64 >= limit
                 {
                     rows_consumed = row_idx + 1;
                     hit_row_limit = true;
@@ -1623,6 +1616,7 @@ impl AsyncStreamingProfiler {
                 };
 
                 if more_rows_remain {
+                    stop_eval.set_rows_against_cap(sampler.rows_against_cap() as u64);
                     stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
                     truncation_reason = stop_eval.truncation_reason();
                 }
@@ -1680,6 +1674,10 @@ impl AsyncStreamingProfiler {
                 estimated_total.map(|rows| rows as usize),
             );
 
+            // The rows read feed the read fraction; a row cap counts what the
+            // per-row check counts, so a chunk of read but unkept rows cannot
+            // fire it early.
+            stop_eval.set_rows_against_cap(sampler.rows_against_cap() as u64);
             if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
                 if !reached_eof {
                     truncation_reason = stop_eval.truncation_reason();

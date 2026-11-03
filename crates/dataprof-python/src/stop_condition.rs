@@ -36,6 +36,9 @@ impl PyStopCondition {
     }
 
     /// Stop after processing this many rows.
+    ///
+    /// Under sampling, `systematic` counts the rows it keeps, while `random`
+    /// and `reservoir` count the rows read and sample from those.
     #[staticmethod]
     fn max_rows(n: u64) -> PyResult<Self> {
         if n == 0 {
