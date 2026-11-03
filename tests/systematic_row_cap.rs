@@ -47,8 +47,9 @@ fn expected(sampler: &str, cap: u64) -> (usize, bool) {
 }
 
 /// `(label, condition, the cap it enforces)`. The composite names its larger
-/// cap first: a cap counted on rows read meets eight before the five kept
-/// rows meet five, and reports the cap that did not stop the scan.
+/// cap first: when the fifth kept row stops a systematic(2) scan, nine rows
+/// have been read, so a cap counted on rows read also meets eight and the
+/// report names `max_rows(8)`, a cap that did not stop the scan.
 fn conditions() -> [(&'static str, StopCondition, u64); 4] {
     [
         ("max_rows(5)", StopCondition::MaxRows(5), 5),
