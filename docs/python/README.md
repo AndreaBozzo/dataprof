@@ -601,6 +601,10 @@ the sample is not settled until the source ends. The other strategies decide
 each row as it arrives and add no memory. Sampling bounds the cost of
 *analysis*, not of reading: use a `StopCondition` to stop early.
 
+Under a row cap, `systematic` counts the rows it keeps: `max_rows=1000` with
+`systematic(10)` reads until 1,000 rows are kept, about 10,000 read. `random`
+and `reservoir` count the rows read and draw the sample from those.
+
 ### `StopCondition`
 
 Composable early-termination conditions. Combine with `|` (any) or `&` (all):

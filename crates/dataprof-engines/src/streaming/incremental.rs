@@ -283,18 +283,10 @@ impl IncrementalProfiler {
                     }
 
                     // Per-row stop check for MaxRows to avoid chunk-boundary
-                    // overshoot. A fixed-size strategy has folded nothing in yet
-                    // — its sample is drawn at end of scan — so the cap bounds
-                    // the rows read and the sample is taken from those.
-                    // Counting only folded rows would let `reservoir(100)` under
-                    // `max_rows(20)` return 100 rows.
-                    let rows_against_cap = if sampler.is_buffered() {
-                        sampler.iterated_rows()
-                    } else {
-                        analyzed_rows
-                    };
+                    // overshoot, counting the rows the sampler says the cap
+                    // bounds, as the chunk-level check below does.
                     if let Some(limit) = row_limit
-                        && rows_against_cap as u64 >= limit
+                        && sampler.rows_against_cap() as u64 >= limit
                     {
                         hit_row_limit = true;
                         rows_read_before_cap = row_idx + 1;
@@ -317,6 +309,7 @@ impl IncrementalProfiler {
 
                         if more_rows_remain {
                             source_exhausted = false;
+                            stop_eval.set_rows_against_cap(sampler.rows_against_cap() as u64);
                             stop_eval.update((row_idx + 1) as u64, actual_bytes as u64, 0.0);
                         }
                         break;
@@ -383,6 +376,10 @@ impl IncrementalProfiler {
                 tracker.update(fingerprint, records.len() as u64);
                 stop_eval.set_schema_stable_rows(tracker.consecutive_stable_rows());
             }
+            // The rows read feed the read fraction; a row cap counts what the
+            // per-row check counts, so a chunk of read but unkept rows cannot
+            // fire it early.
+            stop_eval.set_rows_against_cap(sampler.rows_against_cap() as u64);
             if stop_eval.update(records.len() as u64, actual_bytes as u64, memory_fraction) {
                 source_exhausted = reached_eof;
                 break;

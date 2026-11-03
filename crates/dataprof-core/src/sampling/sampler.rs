@@ -175,6 +175,24 @@ impl<R> RowSampler<R> {
     pub fn sampled_rows(&self) -> usize {
         self.accepted
     }
+
+    /// Rows a `max_rows` cap counts so far.
+    ///
+    /// A streaming strategy folds rows in as it keeps them, so the cap bounds
+    /// the rows kept: a systematic interval under `max_rows(n)` reads until it
+    /// has kept `n`. A fixed-size strategy has kept nothing until the stream
+    /// ends, so the cap bounds the rows read and the sample is drawn from
+    /// those; counting kept rows would let `reservoir(100)` under
+    /// `max_rows(20)` return 100 rows. Engines check the cap per row and per
+    /// chunk, and both checks use this count, so the rows analyzed do not
+    /// depend on where a chunk ends.
+    pub fn rows_against_cap(&self) -> usize {
+        if self.is_buffered() {
+            self.iterated
+        } else {
+            self.accepted
+        }
+    }
 }
 
 #[cfg(test)]
