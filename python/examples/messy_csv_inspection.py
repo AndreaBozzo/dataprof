@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run python python/examples/messy_csv_inspection.py
+    uv run --no-sync python python/examples/messy_csv_inspection.py
 
 The scenario: a partner sends you `orders.csv`. Nobody can tell you whether
 `order_id` is really unique, whether `email` is populated, or why the finance

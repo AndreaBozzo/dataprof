@@ -9,11 +9,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 STEPS = (
-    ("Install Python development dependencies", ("uv", "sync")),
-    ("Build the local Python extension", ("uv", "run", "maturin", "develop")),
+    ("Install Python development dependencies", ("uv", "sync", "--no-install-project")),
+    ("Build the local Python extension", ("uv", "run", "--no-sync", "maturin", "develop")),
     (
         "Run focused Python API tests",
-        ("uv", "run", "pytest", "python/tests/test_python_api.py", "-q"),
+        ("uv", "run", "--no-sync", "pytest", "python/tests/test_python_api.py", "-q"),
     ),
     ("Run dataprof-core tests", ("cargo", "test", "-p", "dataprof-core")),
     ("Run dataprof-python tests", ("cargo", "test", "-p", "dataprof-python")),

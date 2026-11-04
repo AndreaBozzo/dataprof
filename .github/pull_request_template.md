@@ -38,11 +38,11 @@ cargo clippy --all --all-targets -- -D warnings
 **Python:**
 
 ```bash
-uv run maturin develop
-uv run pytest python/tests/<file-you-changed>.py -q
-uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ty check python/
+uv run --no-sync maturin develop
+uv run --no-sync pytest python/tests/<file-you-changed>.py -q
+uv run --no-sync ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ty check python/
 ```
 
 **Docs or examples** — build the examples you touched; CI runs them:

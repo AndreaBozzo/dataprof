@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run python python/examples/etl_quality_gate.py
+    uv run --no-sync python python/examples/etl_quality_gate.py
 
 The scenario: a daily drop lands in a staging bucket. You want the pipeline to
 stop on the bad file rather than propagate it downstream, and you want the

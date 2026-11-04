@@ -43,19 +43,25 @@ uv run --no-project python .github/scripts/contributor_smoke.py
 The runner stops at the first failure and executes exactly these five steps:
 
 ```bash
-# Install Python dev dependencies
-uv sync
+# Install Python dev dependencies, without building dataprof itself
+uv sync --no-install-project
 
 # Build and install the local Python extension into the uv environment
-uv run maturin develop
+uv run --no-sync maturin develop
 
 # Run focused Python API tests
-uv run pytest python/tests/test_python_api.py -q
+uv run --no-sync pytest python/tests/test_python_api.py -q
 
 # Run focused Rust tests
 cargo test -p dataprof-core
 cargo test -p dataprof-python
 ```
+
+`uv sync` on its own also installs dataprof itself, which builds the extension
+a first time through the PEP 517 backend, in release mode with full LTO; plain
+`uv run` then rebuilds it whenever `maturin develop` has replaced it. Hence
+`--no-install-project` once and `--no-sync` on every later `uv run`, as CI does
+(`.github/workflows/ci.yml`, "Build Python bindings").
 
 It does not lint or format. Those are separate, and CI runs them over the same
 paths, so run the ones covering what you changed before you open a PR. CI checks
@@ -70,9 +76,9 @@ uv run --no-project python .github/scripts/check_decode_audit.py
 
 # Python. The paths matter: CI checks the scripts directories too, so a
 # narrower path can pass locally and still fail there.
-uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ty check python/
+uv run --no-sync ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ty check python/
 ```
 
 You do not need to run every expensive workspace check for a small docs or
@@ -161,10 +167,10 @@ Python package metadata cannot exclude the free-threaded ABI or PyPy by itself;
 the artifact check and this policy define that boundary.
 
 ```bash
-uv run python .github/scripts/wheel_interpreters.py
-uv run pytest python/tests/test_wheel_interpreters.py -q
+uv run --no-sync python .github/scripts/wheel_interpreters.py
+uv run --no-sync pytest python/tests/test_wheel_interpreters.py -q
 # After building a complete set for one platform/CPU profile:
-uv run python .github/scripts/wheel_interpreters.py --wheels dist
+uv run --no-sync python .github/scripts/wheel_interpreters.py --wheels dist
 ```
 
 ### Rehearsing the release build
@@ -220,7 +226,7 @@ the native exports and the compiled connector before pytest so a missing feature
 cannot turn these regressions into skipped tests:
 
 ```bash
-uv run maturin develop --features "python,python-async,sqlite"
+uv run --no-sync maturin develop --features "python,python-async,sqlite"
 uv run --no-sync python - <<'PY'
 import dataprof
 from dataprof._dataprof import (
@@ -266,7 +272,7 @@ Use descriptive branch names:
 2. **Write tests** - new features should have corresponding tests
 3. **Test locally**:
    ```bash
-   uv run pytest python/tests/test_python_api.py -q
+   uv run --no-sync pytest python/tests/test_python_api.py -q
    cargo test -p dataprof-core
    cargo test -p dataprof-python
    ```
@@ -276,7 +282,7 @@ Use descriptive branch names:
    ```
 5. **Lint checking**:
    ```bash
-   uv run ruff check python/dataprof python/tests
+   uv run --no-sync ruff check python/dataprof python/tests
    cargo clippy --all --all-targets -- -D warnings
    uv run --no-project python .github/scripts/check_decode_audit.py
    ```
@@ -549,17 +555,17 @@ fn test_handles_empty_file() {
 ### Useful Commands
 
 ```bash
-# Install/update the Python dev environment
-uv sync
+# Install/update the Python dev environment, without building dataprof itself
+uv sync --no-install-project
 
 # Rebuild the local Python extension after Rust/PyO3 changes
-uv run maturin develop
+uv run --no-sync maturin develop
 
 # Run the main Python API regression file
-uv run pytest python/tests/test_python_api.py -q
+uv run --no-sync pytest python/tests/test_python_api.py -q
 
 # Run a focused Python test
-uv run pytest python/tests/test_llm_context.py::TestToLlmContext -v -ra
+uv run --no-sync pytest python/tests/test_llm_context.py::TestToLlmContext -v -ra
 
 # Generate documentation
 cargo doc --open
@@ -569,7 +575,7 @@ cargo test -p dataprof-core
 cargo test -p dataprof-python
 
 # Run lint checks
-uv run ruff check python/dataprof python/tests
+uv run --no-sync ruff check python/dataprof python/tests
 cargo clippy --all --all-targets -- -D warnings
 uv run --no-project python .github/scripts/check_decode_audit.py
 

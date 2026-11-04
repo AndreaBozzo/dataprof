@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run python python/examples/before_after_cleaning.py
+    uv run --no-sync python python/examples/before_after_cleaning.py
 
 The scenario: you wrote a cleaning script. Did it help? Profile the raw file,
 persist that report, run the cleaning, profile the result, and diff the two.

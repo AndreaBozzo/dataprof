@@ -51,7 +51,8 @@ dataprof = { version = "0.13", features = ["postgres"] }
 For local Python extension development:
 
 ```bash
-uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+uv sync --no-install-project
+uv run --no-sync maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
 
 The list is long because `--features` **replaces** `[tool.maturin] features`
@@ -80,7 +81,8 @@ on. Build the extension from a checkout with `python-async`, `database`, and the
 connector feature you need first:
 
 ```bash
-uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+uv sync --no-install-project
+uv run --no-sync maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
 
 Then the following APIs become available:

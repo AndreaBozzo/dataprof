@@ -2,7 +2,7 @@
 
 Run with:
 
-    uv run python python/examples/baseline_checkpoint.py
+    uv run --no-sync python python/examples/baseline_checkpoint.py
 
 The scenario: an orders extract lands every day. Absolute thresholds catch a
 broken file, but not a slow slide: a key column that goes from 0% to 15%

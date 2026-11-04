@@ -24,7 +24,7 @@ never printed.
 
 ```bash
 cargo run --example messy_csv_inspection
-uv run python python/examples/messy_csv_inspection.py
+uv run --no-sync python python/examples/messy_csv_inspection.py
 ```
 
 ### 2. ETL quality gate
@@ -45,7 +45,7 @@ A real gate would exit non-zero on anything but a pass.
 
 ```bash
 cargo run --example etl_quality_gate
-uv run python python/examples/etl_quality_gate.py
+uv run --no-sync python python/examples/etl_quality_gate.py
 ```
 
 ### 3. Before/after cleaning comparison
@@ -61,7 +61,7 @@ the specific defects you set out to fix.
 
 ```bash
 cargo run --example before_after_cleaning
-uv run python python/examples/before_after_cleaning.py
+uv run --no-sync python python/examples/before_after_cleaning.py
 ```
 
 ### 4. Baseline checkpoint
@@ -92,7 +92,7 @@ Seven drops cover the cases a pipeline meets:
    read null markers.
 
 ```bash
-uv run python python/examples/baseline_checkpoint.py
+uv run --no-sync python python/examples/baseline_checkpoint.py
 ```
 
 #### The same checkpoint as a CI job
@@ -165,9 +165,9 @@ cargo run --example messy_csv_inspection
 The Python examples need the extension module built into your environment:
 
 ```bash
-uv sync
-uv run maturin develop
-uv run python python/examples/messy_csv_inspection.py
+uv sync --no-install-project
+uv run --no-sync maturin develop
+uv run --no-sync python python/examples/messy_csv_inspection.py
 ```
 
 They use only the base wheel API, so `pip install dataprof` is enough outside a

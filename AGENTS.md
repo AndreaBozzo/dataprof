@@ -36,21 +36,25 @@ a newer standard-library API, raising the MSRV is a deliberate separate change â
 see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#rust-toolchains-msrv-vs-pinned).
 
 ```bash
-uv sync                     # install the Python dev environment
-uv run maturin develop      # build + install the local Python extension
+uv sync --no-install-project       # the Python dev environment, without building dataprof
+uv run --no-sync maturin develop   # build + install the local Python extension
 
 # Focused tests (prefer these; match the command to your change)
 cargo test -p dataprof-core
 cargo test -p dataprof-python
-uv run pytest python/tests/test_python_api.py -q
+uv run --no-sync pytest python/tests/test_python_api.py -q
 
 # Gates that CI enforces â€” run before committing
 cargo fmt --all
 cargo clippy --all --all-targets -- -D warnings
-uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
-uv run ty check python/
+uv run --no-sync ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run --no-sync ty check python/
 ```
+
+Plain `uv sync` also builds the extension once in release mode, and plain
+`uv run` rebuilds it after `maturin develop`: keep `--no-install-project` and
+`--no-sync` as above, which is what CI runs.
 
 Don't run every expensive workspace check for a small docs or Python-only
 change; run what matches the change and list the commands in the PR body.
