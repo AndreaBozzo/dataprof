@@ -248,7 +248,8 @@ def test_release_and_rehearsal_share_one_build():
     assert "contents: write" not in rehearsal
 
 
-def test_release_limits_token_permissions_and_checkout_credentials():
+@pytest.mark.parametrize("extra_step_indent", [0, 2, 4])
+def test_release_limits_token_permissions_and_checkout_credentials(extra_step_indent):
     """Only publishers may write, and no checkout may persist its token."""
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert re.findall(r"^permissions:\n((?:  [^\n]+\n)+)", release, re.M) == ["  contents: read\n"]
@@ -268,14 +269,21 @@ def test_release_limits_token_permissions_and_checkout_credentials():
             assert permissions == [f"      {exceptions[job]}\n"], job
         else:
             assert permissions in ([], ["      contents: read\n"]), job
-        for step in re.split(r"^    - ", body, flags=re.M)[1:]:
+        steps = body.partition("    steps:\n")[2]
+        # Exercise valid alternative list indentation, including six spaces.
+        steps = re.sub(r"^ +", lambda m: m[0] + " " * extra_step_indent, steps, flags=re.M)
+        first_step = re.search(r"^( +)- ", steps, re.M)
+        if first_step is None:
+            continue
+        indent = first_step[1]
+        for step in re.split(rf"^{indent}- ", steps, flags=re.M)[1:]:
             if re.search(r"^\s*uses: actions/checkout@", step, re.M):
-                checkouts.append((job, step))
+                checkouts.append((job, step, indent))
     assert checkouts, "expected at least one checkout in release.yml"
-    for job, step in checkouts:
-        options = re.search(r"^      with:\n((?:        [^\n]+\n)+)", step, re.M)
+    for job, step, indent in checkouts:
+        options = re.search(rf"^{indent}  with:\n((?:{indent}    [^\n]+\n)+)", step, re.M)
         assert options is not None, job
-        assert "        persist-credentials: false\n" in options[1], job
+        assert f"{indent}    persist-credentials: false\n" in options[1], job
 
 
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):
