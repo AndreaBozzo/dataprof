@@ -648,24 +648,28 @@ impl AsyncStreamingProfiler {
         // A stream cannot be rewound, so detection reads the head into memory
         // and chains it back in front of the rest — the parser still sees the
         // whole source, byte for byte.
-        let (source, csv_metadata): (Box<dyn Read>, CsvSourceMetadata) = match delimiter {
-            Some(delimiter) => (
-                Box::new(sync_reader),
-                CsvSourceMetadata::configured(delimiter),
-            ),
-            None => {
-                let mut sync_reader = sync_reader;
-                let (detection, head) =
-                    dataprof_csv::detect_delimiter_detailed_with_head(&mut sync_reader)?;
-                (
-                    Box::new(std::io::Cursor::new(head).chain(sync_reader)),
-                    CsvSourceMetadata::detected(detection),
-                )
-            }
-        };
-        // Detection only chooses an ASCII candidate, and a configured
-        // delimiter is one byte.
-        let delimiter = csv_metadata.delimiter.as_bytes()[0];
+        // The byte is kept as it was given: the metadata holds it as a
+        // character, and a configured byte above 0x7F would not read back as
+        // itself.
+        let (source, csv_metadata, delimiter): (Box<dyn Read>, CsvSourceMetadata, u8) =
+            match delimiter {
+                Some(delimiter) => (
+                    Box::new(sync_reader),
+                    CsvSourceMetadata::configured(delimiter),
+                    delimiter,
+                ),
+                None => {
+                    let mut sync_reader = sync_reader;
+                    let (detection, head) =
+                        dataprof_csv::detect_delimiter_detailed_with_head(&mut sync_reader)?;
+                    let delimiter = dataprof_csv::detection_byte(&detection);
+                    (
+                        Box::new(std::io::Cursor::new(head).chain(sync_reader)),
+                        CsvSourceMetadata::detected(detection),
+                        delimiter,
+                    )
+                }
+            };
         builder.delimiter(delimiter);
         let source = dataprof_csv::QuoteTrackingReader::new(source, delimiter, b'"');
         let quote_outcome = source.outcome();

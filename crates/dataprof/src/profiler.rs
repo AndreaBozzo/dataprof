@@ -727,7 +727,7 @@ impl Profiler {
         };
         let (detection, _) =
             dataprof_csv::detect_delimiter_detailed_with_head(&mut std::io::BufReader::new(file))?;
-        let delimiter = detection.delimiter.as_bytes()[0];
+        let delimiter = dataprof_csv::detection_byte(&detection);
         Ok((
             config.with_delimiter(delimiter),
             Some(CsvSourceMetadata::detected(detection)),

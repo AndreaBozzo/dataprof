@@ -291,8 +291,8 @@ pub fn detect_delimiter_detailed<R: Read>(mut reader: R) -> std::io::Result<Deli
 }
 
 /// The delimiter byte of a detection. Detection only ever chooses one of
-/// [`CANDIDATES`], all ASCII.
-fn detection_byte(detection: &DelimiterDetection) -> u8 {
+/// the ASCII candidates, so the recorded character is that byte.
+pub fn detection_byte(detection: &DelimiterDetection) -> u8 {
     detection.delimiter.as_bytes()[0]
 }
 
@@ -498,18 +498,27 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
     if config.trim_whitespace {
         csv_builder.trim(csv::Trim::All);
     }
-    let (boxed_reader, csv_metadata): (Box<dyn std::io::Read + '_>, _) = match config.delimiter {
-        Some(delimiter) => (Box::new(reader), CsvSourceMetadata::configured(delimiter)),
-        None => {
-            let mut reader = reader;
-            let (detection, head) = detect_delimiter_detailed_with_head(&mut reader)?;
-            (
-                Box::new(std::io::Cursor::new(head).chain(reader)),
-                CsvSourceMetadata::detected(detection),
-            )
-        }
-    };
-    csv_builder.delimiter(csv_metadata.delimiter.as_bytes()[0]);
+    // The byte is kept as it was given: the metadata holds it as a character,
+    // and a configured byte above 0x7F would not read back as itself.
+    let (boxed_reader, csv_metadata, delimiter): (Box<dyn std::io::Read + '_>, _, _) =
+        match config.delimiter {
+            Some(delimiter) => (
+                Box::new(reader),
+                CsvSourceMetadata::configured(delimiter),
+                delimiter,
+            ),
+            None => {
+                let mut reader = reader;
+                let (detection, head) = detect_delimiter_detailed_with_head(&mut reader)?;
+                let delimiter = detection_byte(&detection);
+                (
+                    Box::new(std::io::Cursor::new(head).chain(reader)),
+                    CsvSourceMetadata::detected(detection),
+                    delimiter,
+                )
+            }
+        };
+    csv_builder.delimiter(delimiter);
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
