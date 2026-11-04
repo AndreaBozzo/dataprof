@@ -732,13 +732,23 @@ fn count_from_reader<R: Read>(
                     Ok(count)
                 }
             }
-            let mut de = serde_json::Deserializer::from_reader(buf_reader);
-            let count = de.deserialize_seq(ArrayCountVisitor).map_err(|e| {
-                DataProfilerError::json_parsing_with_source(
-                    format!("Failed to parse JSON array: {}", e),
-                    e,
-                )
-            })?;
+            // The same document the file route counts: Unicode White_Space
+            // around the array, and nothing else after it (#1146).
+            let mut reader = after_leading_white_space(buf_reader)?;
+            let count = {
+                let mut de = serde_json::Deserializer::from_reader(&mut reader);
+                de.deserialize_seq(ArrayCountVisitor).map_err(|e| {
+                    DataProfilerError::json_parsing_with_source(
+                        format!("Failed to parse JSON array: {}", e),
+                        e,
+                    )
+                })?
+            };
+            if !dataprof_json::record::rest_is_white_space(&mut reader)?.0 {
+                return Err(DataProfilerError::json_parsing_error(
+                    "Failed to parse JSON array: trailing characters after the closing ']'",
+                ));
+            }
             Ok(RowCountEstimate {
                 count,
                 exact: true,
@@ -1052,15 +1062,13 @@ fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
 }
 
 /// `reader` past the Unicode White_Space at its start, which the profiler's
-/// JSON scanner skips around a document and serde_json does not (#1146). The
-/// bytes read to find its end are chained back in front of the reader.
+/// JSON scanner skips around a document and serde_json does not (#1146). A
+/// character split across reads that is not white space is chained back.
 fn after_leading_white_space<R: BufRead>(
     mut reader: R,
 ) -> Result<std::io::Chain<std::io::Cursor<Vec<u8>>, R>, DataProfilerError> {
-    let leading = dataprof_json::record::read_leading_white_space(&mut reader)?;
-    let mut head = leading.head;
-    head.drain(..leading.len);
-    Ok(std::io::Cursor::new(head).chain(reader))
+    let leading = dataprof_json::record::skip_leading_white_space(&mut reader)?;
+    Ok(std::io::Cursor::new(leading.pending).chain(reader))
 }
 
 fn analyze_structure_csv(

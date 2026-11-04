@@ -44,7 +44,7 @@ use dataprof_runtime::{
 use record::{
     JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
     malformed_array_error, non_object_record_error, object_record, read_json_record,
-    read_jsonl_line, read_leading_white_space, rest_is_white_space, skip_ascii_whitespace,
+    read_jsonl_line, rest_is_white_space, skip_ascii_whitespace, skip_leading_white_space,
     wide_integer_record_error,
 };
 use serde_json::Value;
@@ -335,12 +335,17 @@ where
     F: FnMut(&JsonObject),
 {
     let mut reader = Utf8BomReader::new(reader).map_err(DataProfilerError::from)?;
-    // The Unicode White_Space before the document, read into memory and
-    // chained back, so detection and the array branch see past it as the
-    // object and JSONL readers' `trim` does (#1146).
-    let leading = read_leading_white_space(&mut reader)?;
-    let (leading_len, first) = (leading.len, leading.first);
-    let mut reader = std::io::Cursor::new(leading.head).chain(reader);
+    // The Unicode White_Space before a document is skipped, so detection
+    // and the array branch see past it as the object and JSONL readers'
+    // `trim` does (#1146). An explicit JSONL source is read from its first
+    // byte, as before, so its line numbers count every line.
+    let leading = match config.format {
+        Some(JsonFormat::Jsonl) => None,
+        _ => Some(skip_leading_white_space(&mut reader)?),
+    };
+    let first = leading.as_ref().and_then(|leading| leading.first);
+    let pending = leading.map(|leading| leading.pending).unwrap_or_default();
+    let mut reader = std::io::Cursor::new(pending).chain(reader);
     let format = match config.format {
         Some(JsonFormat::Json) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
@@ -348,12 +353,7 @@ where
         // JSONL file, so detection can only resolve the array case and has to
         // fall back to JSONL. Callers that know better pass `format`.
         None if first == Some(b'[') => FileFormat::Json,
-        None => {
-            // Detection consumed the leading ASCII whitespace before it read
-            // a JSONL source, and still does.
-            consume_leading_whitespace(&mut reader)?;
-            FileFormat::Jsonl
-        }
+        None => FileFormat::Jsonl,
     };
 
     let mut rows_read = 0;
@@ -432,9 +432,7 @@ where
                 malformed_lines += object_malformed;
                 truncated |= object_truncated;
             } else {
-                // The array loop starts after the opening bracket. The white
-                // space before it is in memory, at the front of the chain.
-                reader.consume(leading_len);
+                // The array loop starts after the opening bracket.
                 consume_peeked(&mut reader)?;
 
                 let mut expect_value = true;

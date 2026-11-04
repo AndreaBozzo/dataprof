@@ -172,6 +172,42 @@ mod async_bytes {
             .map_err(|e| e.to_string())
     }
 
+    /// The stream count parses an array with serde_json, apart from the
+    /// scanner, and must count the same array; it counts arrays only.
+    #[tokio::test]
+    async fn the_stream_row_count_counts_an_array_between_unicode_white_space() {
+        let count = |text: String| async move {
+            let source = BytesSource::new(
+                bytes::Bytes::from(text),
+                AsyncSourceInfo::new("white-space", FileFormat::Json),
+            );
+            Profiler::new()
+                .quick_row_count_stream(source)
+                .await
+                .map(|estimate| estimate.count)
+                .map_err(|e| e.to_string())
+        };
+        let mut wrong = Vec::new();
+        for (name, c) in WHITE_SPACE {
+            for (side, text) in [
+                ("before", format!("{c}[{{\"a\": 1}}, {{\"a\": 2}}]")),
+                ("after", format!("[{{\"a\": 1}}, {{\"a\": 2}}]{c}")),
+            ] {
+                let outcome = count(text).await;
+                if outcome != Ok(2) {
+                    wrong.push(format!("{name} {side}: {outcome:?}"));
+                }
+            }
+        }
+        for (name, c) in NOT_WHITE_SPACE {
+            let outcome = count(format!("[{{\"a\": 1}}]{c}")).await;
+            if outcome.is_ok() {
+                wrong.push(format!("{name} after: counted {outcome:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
     #[tokio::test]
     async fn unicode_white_space_around_a_record_reads_on_async_bytes() {
         let mut wrong = Vec::new();

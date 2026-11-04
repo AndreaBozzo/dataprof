@@ -577,7 +577,7 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
     }
 }
 
-/// Where the Unicode White_Space at the start of a document ends.
+/// What [`skip_leading_white_space`] skipped, and what it held back.
 ///
 /// A record is read with `str::trim`, which removes the Unicode White_Space
 /// set, for a single object and a JSONL line, so an array accepts the same
@@ -585,90 +585,178 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
 /// rest, not only the four JSON whitespace bytes (#1146).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeadingWhiteSpace {
-    /// Every byte read: the white space, then what follows it, up to the end
-    /// of the buffer the first other character was found in. A caller chains
-    /// them back in front of the reader, so nothing is lost.
-    pub head: Vec<u8>,
-    /// Length of the white space at the start of `head`.
-    pub len: usize,
+    /// Bytes of white space consumed.
+    pub skipped: usize,
+    /// The first bytes of a character split across two reads that turned out
+    /// not to be white space: at most three, consumed from the reader, which
+    /// a caller chains back in front of it. Empty otherwise.
+    pub pending: Vec<u8>,
     /// The first byte after the white space, `None` at the end of input.
     pub first: Option<u8>,
 }
 
-/// Read the Unicode White_Space at the reader's position into memory, with the
-/// character after it, as a [`LeadingWhiteSpace`].
+/// Where a run of white space at the start of `bytes` ends.
+enum WhiteSpaceRun {
+    /// Every byte is white space.
+    All,
+    /// White space for this many bytes, then another character.
+    Other(usize),
+    /// White space for this many bytes, then the start of a character the
+    /// slice ends inside.
+    Partial(usize),
+}
+
+/// Bytes in the UTF-8 encoding a lead byte starts, or 0 for a byte that
+/// cannot start one.
+fn utf8_width(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7F => 1,
+        0xC2..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF4 => 4,
+        _ => 0,
+    }
+}
+
+/// Whether `bytes` encode exactly one character that is White_Space.
+fn is_white_space_char(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| text.chars().next())
+        .is_some_and(char::is_whitespace)
+}
+
+/// Scan the white space at the start of `bytes` in place, one character at a
+/// time, without copying or validating what follows it.
+fn white_space_run(bytes: &[u8]) -> WhiteSpaceRun {
+    let mut index = 0;
+    while index < bytes.len() {
+        let width = utf8_width(bytes[index]);
+        if width == 0 {
+            return WhiteSpaceRun::Other(index);
+        }
+        if index + width > bytes.len() {
+            return WhiteSpaceRun::Partial(index);
+        }
+        if !is_white_space_char(&bytes[index..index + width]) {
+            return WhiteSpaceRun::Other(index);
+        }
+        index += width;
+    }
+    WhiteSpaceRun::All
+}
+
+/// Finish a character whose first bytes, `pending`, ended the previous read:
+/// `Some(true)` when it is white space, `Some(false)` when not, `None` when
+/// the next read still does not complete it. Consumes only bytes of that
+/// character, and only when it is white space or still incomplete.
+fn finish_pending<R: BufRead>(
+    reader: &mut R,
+    pending: &mut Vec<u8>,
+) -> Result<Option<bool>, DataProfilerError> {
+    let width = utf8_width(pending[0]);
+    let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+    let take = (width - pending.len()).min(buf.len());
+    let mut character = pending.clone();
+    character.extend_from_slice(&buf[..take]);
+    if character.len() < width {
+        reader.consume(take);
+        *pending = character;
+        return Ok(None);
+    }
+    if is_white_space_char(&character) {
+        reader.consume(take);
+        pending.clear();
+        return Ok(Some(true));
+    }
+    Ok(Some(false))
+}
+
+/// Consume the Unicode White_Space at the reader's position.
 ///
-/// A character can straddle two buffers, so the bytes are decoded from
-/// memory: a white-space character is only skipped once all of its bytes are
-/// read. A byte that is not valid UTF-8 ends the run, and is `first`.
-pub fn read_leading_white_space<R: BufRead>(
+/// Memory stays bounded: white space is consumed as it is read, and only a
+/// character split across two reads is held, at most three bytes, until the
+/// next read decides it. Nothing after the white space is copied.
+pub fn skip_leading_white_space<R: BufRead>(
     reader: &mut R,
 ) -> Result<LeadingWhiteSpace, DataProfilerError> {
-    let mut head = Vec::new();
-    // `head[..len]` is white space; decoding resumes at `len`.
-    let mut len = 0;
+    let mut pending = Vec::new();
+    let mut skipped = 0;
     loop {
+        if !pending.is_empty() {
+            let width = utf8_width(pending[0]);
+            let at_end = reader
+                .fill_buf()
+                .map_err(DataProfilerError::from)?
+                .is_empty();
+            if at_end {
+                let first = pending.first().copied();
+                return Ok(LeadingWhiteSpace {
+                    skipped,
+                    pending,
+                    first,
+                });
+            }
+            match finish_pending(reader, &mut pending)? {
+                None => continue,
+                Some(true) => {
+                    skipped += width;
+                    continue;
+                }
+                Some(false) => {
+                    let first = pending.first().copied();
+                    return Ok(LeadingWhiteSpace {
+                        skipped,
+                        pending,
+                        first,
+                    });
+                }
+            }
+        }
         let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
         if buf.is_empty() {
-            // A partial character left at the end of input is not white space.
-            let first = head.get(len).copied();
-            return Ok(LeadingWhiteSpace { head, len, first });
+            return Ok(LeadingWhiteSpace {
+                skipped,
+                pending,
+                first: None,
+            });
         }
-        let read = buf.len();
-        head.extend_from_slice(buf);
-        reader.consume(read);
-
-        let (text, invalid) = match std::str::from_utf8(&head[len..]) {
-            Ok(text) => (text, false),
-            // The valid prefix is decoded; what follows is either a
-            // character the next buffer completes or a byte that is not UTF-8.
-            Err(error) => (
-                std::str::from_utf8(&head[len..len + error.valid_up_to()])
-                    .expect("valid_up_to bounds a valid prefix"),
-                error.error_len().is_some(),
-            ),
-        };
-        let white = text
-            .char_indices()
-            .find(|(_, character)| !character.is_whitespace())
-            .map_or(text.len(), |(index, _)| index);
-        let found_other = white < text.len() || invalid;
-        len += white;
-        if found_other {
-            let first = head.get(len).copied();
-            return Ok(LeadingWhiteSpace { head, len, first });
+        match white_space_run(buf) {
+            WhiteSpaceRun::Other(len) => {
+                let first = Some(buf[len]);
+                reader.consume(len);
+                skipped += len;
+                return Ok(LeadingWhiteSpace {
+                    skipped,
+                    pending,
+                    first,
+                });
+            }
+            WhiteSpaceRun::Partial(len) => {
+                pending = buf[len..].to_vec();
+                let read = buf.len();
+                reader.consume(read);
+                skipped += len;
+            }
+            WhiteSpaceRun::All => {
+                let read = buf.len();
+                reader.consume(read);
+                skipped += read;
+            }
         }
     }
 }
 
 /// Whether the rest of the input is Unicode White_Space, and how many bytes
-/// were read to decide. Reading stops at the first other character, so a
-/// caller that goes on draining the input counts the rest itself.
+/// were consumed to decide: the white space, and the first bytes of a
+/// character split across two reads when it turned out to be something else.
+/// Reading stops at the first other character, so a caller that goes on
+/// draining the input counts the rest itself. Memory stays bounded as in
+/// [`skip_leading_white_space`].
 pub fn rest_is_white_space<R: BufRead>(reader: &mut R) -> Result<(bool, usize), DataProfilerError> {
-    // Bytes of a character the next buffer completes.
-    let mut carry = Vec::new();
-    let mut consumed = 0;
-    loop {
-        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-        if buf.is_empty() {
-            return Ok((carry.is_empty(), consumed));
-        }
-        let read = buf.len();
-        carry.extend_from_slice(buf);
-        reader.consume(read);
-        consumed += read;
-
-        let valid = match std::str::from_utf8(&carry) {
-            Ok(text) => text.len(),
-            Err(error) if error.error_len().is_some() => return Ok((false, consumed)),
-            Err(error) => error.valid_up_to(),
-        };
-        let text = std::str::from_utf8(&carry[..valid]).expect("valid prefix");
-        if !text.chars().all(char::is_whitespace) {
-            return Ok((false, consumed));
-        }
-        carry.drain(..valid);
-    }
+    let leading = skip_leading_white_space(reader)?;
+    let consumed = leading.skipped + leading.pending.len();
+    Ok((leading.first.is_none(), consumed))
 }
 
 /// Parse one JSONL line as exactly one JSON value.
@@ -698,25 +786,34 @@ mod tests {
     /// white-space character is only skipped once all of its bytes are in.
     #[test]
     fn white_space_helpers_decode_characters_split_across_buffers() {
-        // (case, input, leading white-space length, first byte after it)
-        let leading: [(&str, &str, usize, Option<u8>); 6] = [
+        // (case, input, white-space bytes skipped, first byte after them)
+        let leading: [(&str, &str, usize, Option<u8>); 7] = [
             ("none", "[1]", 0, Some(b'[')),
             ("ascii", " \n[1]", 2, Some(b'[')),
             ("nbsp and ideographic", "\u{A0}\u{3000}[1]", 5, Some(b'[')),
             ("all white space", "\u{2028}\u{85}", 5, None),
             ("not white space", "\u{1C}[1]", 0, Some(0x1C)),
-            ("a non-space character", "\u{E9}[1]", 0, Some(0xC3)),
+            ("a two-byte non-space", "\u{E9}[1]", 0, Some(0xC3)),
+            ("a three-byte non-space", "\u{A0}\u{20AC}[1]", 2, Some(0xE2)),
         ];
         let mut wrong = Vec::new();
-        for (case, input, len, first) in leading {
-            let mut reader = BufReader::with_capacity(1, input.as_bytes());
-            let read = read_leading_white_space(&mut reader).unwrap();
-            let mut rest = Vec::new();
-            reader.read_to_end(&mut rest).unwrap();
-            let mut all = read.head.clone();
-            all.extend(rest);
-            if (read.len, read.first, all.as_slice()) != (len, first, input.as_bytes()) {
-                wrong.push(format!("leading, {case}: {read:?}"));
+        for capacity in [1, 2, 64] {
+            for (case, input, skipped, first) in leading {
+                let mut reader = BufReader::with_capacity(capacity, input.as_bytes());
+                let read = skip_leading_white_space(&mut reader).unwrap();
+                let mut rest = Vec::new();
+                reader.read_to_end(&mut rest).unwrap();
+                // Nothing is lost: what was skipped, what was held back and
+                // what is left make up the input, and at most one split
+                // character is held.
+                let mut all = input.as_bytes()[..read.skipped].to_vec();
+                all.extend(&read.pending);
+                all.extend(rest);
+                if (read.skipped, read.first, all.as_slice()) != (skipped, first, input.as_bytes())
+                    || read.pending.len() > 3
+                {
+                    wrong.push(format!("leading, capacity {capacity}, {case}: {read:?}"));
+                }
             }
         }
         let rest: [(&str, &str, bool); 5] = [
