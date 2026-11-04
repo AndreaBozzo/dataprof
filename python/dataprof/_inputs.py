@@ -533,6 +533,32 @@ _RECORD_WHITESPACE = "".join(
 )
 
 
+#: The whitespace JSON itself allows around a value (RFC 8259).
+_JSON_WHITESPACE = " \t\n\r"
+
+
+def _blank_outer_white_space(text: str) -> str:
+    """Make the Unicode White_Space around a JSON document readable to ``json``.
+
+    The file and async readers read a single object with ``str::trim`` and
+    skip the same characters around an array, so no-break space, NEL, LS and
+    the rest may surround a document (#1146). ``json.loads`` allows only its
+    own four. Each other character of the outer runs becomes a space rather
+    than being cut, so a decode error still points at the line and column of
+    the original text.
+    """
+    body = text.strip(_RECORD_WHITESPACE)
+    if not body:
+        return text
+    start = len(text) - len(text.lstrip(_RECORD_WHITESPACE))
+    end = start + len(body)
+
+    def blank(run: str) -> str:
+        return "".join(c if c in _JSON_WHITESPACE else " " for c in run)
+
+    return blank(text[:start]) + body + blank(text[end:])
+
+
 def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """Scan JSONL text into row objects, honoring the malformed-record policy.
 

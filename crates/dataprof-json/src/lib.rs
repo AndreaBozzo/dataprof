@@ -27,7 +27,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::Path;
 
 pub use dataprof_core::JsonErrorPolicy;
@@ -44,7 +44,8 @@ use dataprof_runtime::{
 use record::{
     JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
     malformed_array_error, non_object_record_error, object_record, read_json_record,
-    read_jsonl_line, skip_ascii_whitespace, wide_integer_record_error,
+    read_jsonl_line, rest_is_white_space, skip_ascii_whitespace, skip_leading_white_space,
+    wide_integer_record_error,
 };
 use serde_json::Value;
 
@@ -334,16 +335,27 @@ where
     F: FnMut(&JsonObject),
 {
     let mut reader = Utf8BomReader::new(reader).map_err(DataProfilerError::from)?;
+    // The Unicode White_Space before a document is skipped, so detection
+    // and the array branch see past it as the object and JSONL readers'
+    // `trim` does (#1146). An explicit JSONL source is read from its first
+    // byte, as before, so its line numbers count every line.
+    let leading = match config.format {
+        Some(JsonFormat::Jsonl) => None,
+        _ => Some(skip_leading_white_space(&mut reader)?),
+    };
+    let first = leading.as_ref().and_then(|leading| leading.first);
+    // decode-audit: no-data — an explicit JSONL source skips nothing, so no
+    // character was held back to chain in front of the reader.
+    let pending = leading.map(|leading| leading.pending).unwrap_or_default();
+    let mut reader = std::io::Cursor::new(pending).chain(reader);
     let format = match config.format {
         Some(JsonFormat::Json) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
         // A leading `{` is the first byte of both a JSON object document and a
         // JSONL file, so detection can only resolve the array case and has to
         // fall back to JSONL. Callers that know better pass `format`.
-        None => match consume_leading_whitespace(&mut reader)? {
-            Some(b'[') => FileFormat::Json,
-            _ => FileFormat::Jsonl,
-        },
+        None if first == Some(b'[') => FileFormat::Json,
+        None => FileFormat::Jsonl,
     };
 
     let mut rows_read = 0;
@@ -408,9 +420,9 @@ where
         }
         FileFormat::Json => {
             // Which of the two record-carrying shapes this document is. The
-            // first non-whitespace byte decides, and is left unconsumed so the
-            // object branch still sees the value it opens.
-            let found_array = consume_leading_whitespace(&mut reader)? == Some(b'[');
+            // first byte after the white space decides, and is left unconsumed
+            // so the object branch still sees the value it opens.
+            let found_array = first == Some(b'[');
 
             if !found_array {
                 // The other shape a standard JSON document takes: a single
@@ -545,9 +557,9 @@ where
                 if drain_remainder {
                     // Something left unread after the fault means the read
                     // stopped short, whatever that input held (#1106).
-                    unread_after_fault = consume_leading_whitespace(&mut reader)?.is_some();
+                    unread_after_fault = !rest_is_white_space(&mut reader)?.0;
                     drain_to_end(&mut reader)?;
-                } else if array_closed && consume_leading_whitespace(&mut reader)?.is_some() {
+                } else if array_closed && !rest_is_white_space(&mut reader)?.0 {
                     if config.error_policy == JsonErrorPolicy::Strict {
                         return Err(malformed_array_error(
                             "non-whitespace content follows the closing ']'",

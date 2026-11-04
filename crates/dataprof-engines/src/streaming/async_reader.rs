@@ -15,7 +15,7 @@ use dataprof_runtime::{
 use dataprof_json::record::{
     JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
     malformed_array_error, non_object_record_error, object_record, read_json_record,
-    read_jsonl_line, wide_integer_record_error,
+    read_jsonl_line, rest_is_white_space, skip_leading_white_space, wide_integer_record_error,
 };
 
 use super::async_source::AsyncDataSource;
@@ -1060,8 +1060,15 @@ impl AsyncStreamingProfiler {
                 // carry records. An array streams element by element; a single
                 // object is one record and is read whole, which is why it may be
                 // pretty-printed across lines.
-                let (opening, whitespace) = peek_non_whitespace(&mut buf_reader)?;
-                bytes_in_chunk += whitespace as u64;
+                // The Unicode White_Space before the document is skipped, so
+                // the array branch sees past it as the object branch's `trim`
+                // does (#1146). A character split across reads that is not
+                // white space is chained back.
+                let leading = skip_leading_white_space(&mut buf_reader)?;
+                bytes_in_chunk += leading.skipped as u64;
+                let opening = leading.first;
+                let mut buf_reader =
+                    std::io::Read::chain(std::io::Cursor::new(leading.pending), buf_reader);
                 if opening != Some(b'[') {
                     use std::io::Read as _;
                     let mut text = String::new();
@@ -1132,6 +1139,14 @@ impl AsyncStreamingProfiler {
                     // guard and the final flush still run.
                     break 'document;
                 }
+                // `Chain::consume` reaches the reader behind the held-back
+                // bytes only after a `fill_buf` has found them used up, so
+                // the bracket is peeked before it is consumed.
+                let bracket = buf_reader
+                    .fill_buf()
+                    .map_err(DataProfilerError::from)?
+                    .first();
+                debug_assert_eq!(bracket, Some(&b'['));
                 buf_reader.consume(1);
                 bytes_in_chunk += 1;
 
@@ -1345,14 +1360,14 @@ impl AsyncStreamingProfiler {
                 if drain_remainder {
                     // Something left unread after the fault means the read
                     // stopped short, whatever that input held (#1106).
-                    let (rest, whitespace) = peek_non_whitespace(&mut buf_reader)?;
-                    bytes_in_chunk += whitespace as u64;
-                    unread_after_fault = rest.is_some();
+                    let (white, read) = rest_is_white_space(&mut buf_reader)?;
+                    bytes_in_chunk += read as u64;
+                    unread_after_fault = !white;
                     bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
                 } else if array_closed {
-                    let (trailing, whitespace) = peek_non_whitespace(&mut buf_reader)?;
-                    bytes_in_chunk += whitespace as u64;
-                    if trailing.is_some() {
+                    let (white, read) = rest_is_white_space(&mut buf_reader)?;
+                    bytes_in_chunk += read as u64;
+                    if !white {
                         let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
                             malformed_array_error("non-whitespace content follows the closing ']'")
                         });
