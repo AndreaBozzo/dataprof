@@ -15,7 +15,7 @@ import pytest
 from test_wheel_feature_single_source import _job_body
 
 ROOT = Path(__file__).resolve().parents[2]
-FILES = sorted((ROOT / ".github").rglob("*.yml"))
+FILES = sorted(p for p in (ROOT / ".github").rglob("*") if p.suffix in {".yml", ".yaml"})
 PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}(?: # \S+)?$")
 
 
@@ -60,6 +60,12 @@ def test_checkouts_do_not_persist_the_token(path):
         assert any(line.strip() == "persist-credentials: false" for line in step), (
             f"{_name(path)}: {step[0].strip()} keeps its token in .git/config"
         )
+
+
+@pytest.mark.parametrize("path", FILES, ids=_name)
+def test_no_job_gets_every_permission(path):
+    """`write-all` grants what the narrower mappings below would never see."""
+    assert not re.search(r"^\s*permissions:\s*write-all\b", _read(path), re.M), _name(path)
 
 
 def test_the_checkout_scan_sees_every_checkout():
