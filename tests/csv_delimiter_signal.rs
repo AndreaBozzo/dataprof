@@ -236,3 +236,46 @@ mod async_routes {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }
+
+/// A configured delimiter byte above 0x7F splits as given. The metadata holds
+/// it as a character, whose UTF-8 encoding starts with another byte, so a
+/// reader configured from the recorded character split on the wrong byte
+/// (#1215 review).
+#[test]
+fn a_configured_delimiter_byte_above_ascii_splits_as_given() {
+    let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    file.write_all(b"a\xffb\n1\xff2\n").unwrap();
+    file.flush().unwrap();
+    let names = |report: ProfileReport| {
+        report
+            .column_profiles
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut wrong = Vec::new();
+    match dataprof::analyze_csv_file(
+        file.path(),
+        &CsvParserConfig::default().with_delimiter(0xff),
+    ) {
+        Ok(report) if names(report.clone()) == ["a", "b"] => {}
+        Ok(report) => wrong.push(format!("analyze_csv_file: {:?}", names(report))),
+        Err(error) => wrong.push(format!("analyze_csv_file: {error}")),
+    }
+    #[cfg(feature = "async-streaming")]
+    {
+        let source = dataprof::BytesSource::new(
+            bytes::Bytes::from_static(b"a\xffb\n1\xff2\n"),
+            dataprof::AsyncSourceInfo::new("high-byte", dataprof::FileFormat::Csv),
+        );
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(Profiler::new().csv_delimiter(0xff).profile_stream(source));
+        match outcome {
+            Ok(report) if names(report.clone()) == ["a", "b"] => {}
+            Ok(report) => wrong.push(format!("async bytes: {:?}", names(report))),
+            Err(error) => wrong.push(format!("async bytes: {error}")),
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

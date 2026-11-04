@@ -118,3 +118,57 @@ def test_a_stored_report_keeps_the_detection_and_the_finding(tmp_path: Path) -> 
         if seen != (report.csv_metadata, report.csv_metadata, wanted[1]):
             wrong.append(f"{dialect}: {seen}")
     assert not wrong, "\n".join(wrong)
+
+
+def test_bytes_record_a_configured_unicode_delimiter() -> None:
+    # Python's csv reader splits CSV bytes on one character, so ``§`` reads,
+    # and the report records it rather than refusing it (#1215 review).
+    report = dp.profile("a§b\n1§2\n".encode(), format="csv", csv_delimiter="§")
+    assert (report.csv_metadata, [c.name for c in report.profiles]) == (
+        {"delimiter": "§"},
+        ["a", "b"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("member", "metadata"),
+    [
+        ("object", None),
+        ("delimiter_detection", {"delimiter": ",", "delimiter_detection": None}),
+        (
+            "runner_up",
+            {
+                "delimiter": ",",
+                "delimiter_detection": {
+                    "delimiter": ",",
+                    "header_fields": 2,
+                    "runner_up": None,
+                    "unlisted_delimiter": None,
+                },
+            },
+        ),
+    ],
+)
+def test_a_summary_reads_an_explicit_null_as_absent(
+    tmp_path: Path, member: str, metadata: Any
+) -> None:
+    # serde reads a null `Option` as absent, so the summary reader does too:
+    # the same document loads in both dialects (#1215 review).
+    path = tmp_path / "source.csv"
+    path.write_bytes(CASES[-1][1])
+    document = dp.profile(path).to_dict()
+    document["csv_metadata"] = metadata
+    loaded = dp.ProfileReport.from_dict(document).csv_metadata
+    wanted = (
+        None
+        if metadata is None
+        else {
+            "delimiter": ",",
+            **(
+                {}
+                if metadata["delimiter_detection"] is None
+                else {"delimiter_detection": {"delimiter": ",", "header_fields": 2}}
+            ),
+        }
+    )
+    assert loaded == wanted, member

@@ -168,6 +168,16 @@ impl CsvSourceMetadata {
         }
     }
 
+    /// A delimiter character the caller set, for a reader that splits on
+    /// characters rather than bytes: Python's `csv` module, which reads
+    /// synchronous CSV bytes, takes any one character, `§` included.
+    pub fn configured_char(delimiter: char) -> Self {
+        Self {
+            delimiter: delimiter.to_string(),
+            delimiter_detection: None,
+        }
+    }
+
     /// A delimiter detection chose.
     pub fn detected(detection: DelimiterDetection) -> Self {
         Self {

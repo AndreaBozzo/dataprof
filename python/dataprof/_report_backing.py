@@ -405,21 +405,23 @@ def _read_csv_metadata(document: dict[str, Any]) -> dict[str, Any] | None:
     """Read `csv_metadata` as the Rust reader reads `CsvSourceMetadata`.
 
     A missing key records nothing: None, a source that is not CSV or a
-    document written before dataprof recorded it. A malformed value is an
-    error; members from a later writer are ignored.
+    document written before dataprof recorded it. An explicit null is read as
+    absent, for the object and for its optional members, as serde reads an
+    `Option` (#1215 review). A malformed value is an error; members from a
+    later writer are ignored.
     """
-    if "csv_metadata" not in document:
+    metadata = document.get("csv_metadata")
+    if metadata is None:
         return None
-    metadata = document["csv_metadata"]
     if not isinstance(metadata, dict) or not isinstance(metadata.get("delimiter"), str):
         raise ValueError(
             "from_dict(): 'csv_metadata' must be a mapping with a string 'delimiter', "
             f"got {metadata!r}."
         )
     read: dict[str, Any] = {"delimiter": metadata["delimiter"]}
-    if "delimiter_detection" not in metadata:
+    detection = metadata.get("delimiter_detection")
+    if detection is None:
         return read
-    detection = metadata["delimiter_detection"]
     if (
         not isinstance(detection, dict)
         or not isinstance(detection.get("delimiter"), str)
@@ -434,7 +436,7 @@ def _read_csv_metadata(document: dict[str, Any]) -> dict[str, Any] | None:
         "header_fields": detection["header_fields"],
     }
     for name in ("runner_up", "unlisted_delimiter"):
-        if name in detection:
+        if detection.get(name) is not None:
             if not isinstance(detection[name], str):
                 raise ValueError(
                     f"from_dict(): 'csv_metadata.delimiter_detection.{name}' must be a "

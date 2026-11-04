@@ -338,12 +338,24 @@ fn csv_source_metadata((delimiter, detection): CsvSourceArg) -> PyResult<CsvSour
             "csv_source delimiter must be one ASCII character, got {text:?}"
         ))),
     };
-    let delimiter = byte(&delimiter)?;
     Ok(match detection {
-        None => CsvSourceMetadata::configured(delimiter),
+        // Python's csv reader splits on one character, not one byte, so a
+        // configured `§` is recorded as itself (#1215 review).
+        None => {
+            let mut chars = delimiter.chars();
+            match (chars.next(), chars.next()) {
+                (Some(character), None) => CsvSourceMetadata::configured_char(character),
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "csv_source delimiter must be one character, got {delimiter:?}"
+                    )));
+                }
+            }
+        }
+        // Detection only chooses an ASCII candidate.
         Some((header_fields, runner_up, unlisted)) => CsvSourceMetadata::detected(
             DelimiterDetection::new(
-                delimiter,
+                byte(&delimiter)?,
                 header_fields,
                 runner_up.as_deref().map(byte).transpose()?,
             )

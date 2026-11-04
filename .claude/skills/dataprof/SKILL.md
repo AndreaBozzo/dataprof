@@ -89,10 +89,10 @@ report.low_sample_warning   # True -> too few rows to trust distributions
 report.error_count          # rows that failed to parse
 report.ragged_row_count     # rows whose field count did not match the header
 report.unterminated_quote   # True: a CSV quote was never closed and swallowed the rows after it
-report.csv_metadata         # the delimiter used; runner_up / unlisted_delimiter -> the split may be wrong
+report.csv_metadata         # the delimiter used; a caveat only if delimiter_detection has runner_up or unlisted_delimiter
 ```
 
-If any of these is set, say so in the same breath as the numbers.
+If any of these signals a problem (for `csv_metadata`, only a `runner_up` or `unlisted_delimiter` in `delimiter_detection`; the delimiter alone is routine), say so in the same breath as the numbers.
 
 ### 5. Summarize
 
