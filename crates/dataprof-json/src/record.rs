@@ -577,6 +577,100 @@ pub fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<usize, DataProfilerErr
     }
 }
 
+/// Where the Unicode White_Space at the start of a document ends.
+///
+/// A record is read with `str::trim`, which removes the Unicode White_Space
+/// set, for a single object and a JSONL line, so an array accepts the same
+/// characters around it: no-break space, NEL, LS, PS, vertical tab and the
+/// rest, not only the four JSON whitespace bytes (#1146).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeadingWhiteSpace {
+    /// Every byte read: the white space, then what follows it, up to the end
+    /// of the buffer the first other character was found in. A caller chains
+    /// them back in front of the reader, so nothing is lost.
+    pub head: Vec<u8>,
+    /// Length of the white space at the start of `head`.
+    pub len: usize,
+    /// The first byte after the white space, `None` at the end of input.
+    pub first: Option<u8>,
+}
+
+/// Read the Unicode White_Space at the reader's position into memory, with the
+/// character after it, as a [`LeadingWhiteSpace`].
+///
+/// A character can straddle two buffers, so the bytes are decoded from
+/// memory: a white-space character is only skipped once all of its bytes are
+/// read. A byte that is not valid UTF-8 ends the run, and is `first`.
+pub fn read_leading_white_space<R: BufRead>(
+    reader: &mut R,
+) -> Result<LeadingWhiteSpace, DataProfilerError> {
+    let mut head = Vec::new();
+    // `head[..len]` is white space; decoding resumes at `len`.
+    let mut len = 0;
+    loop {
+        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+        if buf.is_empty() {
+            // A partial character left at the end of input is not white space.
+            let first = head.get(len).copied();
+            return Ok(LeadingWhiteSpace { head, len, first });
+        }
+        let read = buf.len();
+        head.extend_from_slice(buf);
+        reader.consume(read);
+
+        let (text, invalid) = match std::str::from_utf8(&head[len..]) {
+            Ok(text) => (text, false),
+            // The valid prefix is decoded; what follows is either a
+            // character the next buffer completes or a byte that is not UTF-8.
+            Err(error) => (
+                std::str::from_utf8(&head[len..len + error.valid_up_to()])
+                    .expect("valid_up_to bounds a valid prefix"),
+                error.error_len().is_some(),
+            ),
+        };
+        let white = text
+            .char_indices()
+            .find(|(_, character)| !character.is_whitespace())
+            .map_or(text.len(), |(index, _)| index);
+        let found_other = white < text.len() || invalid;
+        len += white;
+        if found_other {
+            let first = head.get(len).copied();
+            return Ok(LeadingWhiteSpace { head, len, first });
+        }
+    }
+}
+
+/// Whether the rest of the input is Unicode White_Space, and how many bytes
+/// were read to decide. Reading stops at the first other character, so a
+/// caller that goes on draining the input counts the rest itself.
+pub fn rest_is_white_space<R: BufRead>(reader: &mut R) -> Result<(bool, usize), DataProfilerError> {
+    // Bytes of a character the next buffer completes.
+    let mut carry = Vec::new();
+    let mut consumed = 0;
+    loop {
+        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+        if buf.is_empty() {
+            return Ok((carry.is_empty(), consumed));
+        }
+        let read = buf.len();
+        carry.extend_from_slice(buf);
+        reader.consume(read);
+        consumed += read;
+
+        let valid = match std::str::from_utf8(&carry) {
+            Ok(text) => text.len(),
+            Err(error) if error.error_len().is_some() => return Ok((false, consumed)),
+            Err(error) => error.valid_up_to(),
+        };
+        let text = std::str::from_utf8(&carry[..valid]).expect("valid prefix");
+        if !text.chars().all(char::is_whitespace) {
+            return Ok((false, consumed));
+        }
+        carry.drain(..valid);
+    }
+}
+
 /// Parse one JSONL line as exactly one JSON value.
 ///
 /// `serde_json::from_str` requires the value to fill the whole input, so a line
@@ -599,6 +693,55 @@ mod tests {
     use super::*;
     use std::error::Error as _;
     use std::io::{self, BufReader, Cursor, Read};
+
+    /// A one-byte buffer splits every multi-byte character across reads, so a
+    /// white-space character is only skipped once all of its bytes are in.
+    #[test]
+    fn white_space_helpers_decode_characters_split_across_buffers() {
+        // (case, input, leading white-space length, first byte after it)
+        let leading: [(&str, &str, usize, Option<u8>); 6] = [
+            ("none", "[1]", 0, Some(b'[')),
+            ("ascii", " \n[1]", 2, Some(b'[')),
+            ("nbsp and ideographic", "\u{A0}\u{3000}[1]", 5, Some(b'[')),
+            ("all white space", "\u{2028}\u{85}", 5, None),
+            ("not white space", "\u{1C}[1]", 0, Some(0x1C)),
+            ("a non-space character", "\u{E9}[1]", 0, Some(0xC3)),
+        ];
+        let mut wrong = Vec::new();
+        for (case, input, len, first) in leading {
+            let mut reader = BufReader::with_capacity(1, input.as_bytes());
+            let read = read_leading_white_space(&mut reader).unwrap();
+            let mut rest = Vec::new();
+            reader.read_to_end(&mut rest).unwrap();
+            let mut all = read.head.clone();
+            all.extend(rest);
+            if (read.len, read.first, all.as_slice()) != (len, first, input.as_bytes()) {
+                wrong.push(format!("leading, {case}: {read:?}"));
+            }
+        }
+        let rest: [(&str, &str, bool); 5] = [
+            ("empty", "", true),
+            ("ascii", " \r\n", true),
+            ("unicode", "\u{A0}\u{3000}\u{2029}", true),
+            ("content after", "\u{A0}x", false),
+            ("a truncated character", "\u{A0}\u{E2}", false),
+        ];
+        for (case, input, white) in rest {
+            // A truncated character is not valid UTF-8 text, so it is built
+            // from bytes.
+            let bytes: Vec<u8> = if case == "a truncated character" {
+                vec![0xC2, 0xA0, 0xE2, 0x80]
+            } else {
+                input.as_bytes().to_vec()
+            };
+            let mut reader = BufReader::with_capacity(1, bytes.as_slice());
+            let (seen, _) = rest_is_white_space(&mut reader).unwrap();
+            if seen != white {
+                wrong.push(format!("rest, {case}: {seen}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
 
     #[derive(Debug)]
     struct LocalReadFailure;

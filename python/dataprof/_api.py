@@ -29,6 +29,7 @@ from ._dataprof import (
     quick_row_count as _quick_row_count,
 )
 from ._inputs import (
+    _blank_outer_white_space,
     _bytes_buffer,
     _Column,
     _columns_from_csv_bytes,
@@ -540,7 +541,7 @@ def profile(
         elif fmt == "json":
             text = buffer.getvalue().decode("utf-8-sig")
             try:
-                rows = _strict_json_loads(text)
+                rows = _strict_json_loads(_blank_outer_white_space(text))
             except _json.JSONDecodeError as exc:
                 # Surface a dataprof error category, not a bare decoder exception.
                 raise ValueError(
