@@ -344,6 +344,8 @@ where
         _ => Some(skip_leading_white_space(&mut reader)?),
     };
     let first = leading.as_ref().and_then(|leading| leading.first);
+    // decode-audit: no-data — an explicit JSONL source skips nothing, so no
+    // character was held back to chain in front of the reader.
     let pending = leading.map(|leading| leading.pending).unwrap_or_default();
     let mut reader = std::io::Cursor::new(pending).chain(reader);
     let format = match config.format {

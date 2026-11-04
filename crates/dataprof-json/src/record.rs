@@ -619,11 +619,14 @@ fn utf8_width(lead: u8) -> usize {
 }
 
 /// Whether `bytes` encode exactly one character that is White_Space.
+///
+/// Bytes that are not valid UTF-8 are not white space: the skip stops in
+/// front of them, and the reader after it reports the decode error.
 fn is_white_space_char(bytes: &[u8]) -> bool {
-    std::str::from_utf8(bytes)
-        .ok()
-        .and_then(|text| text.chars().next())
-        .is_some_and(char::is_whitespace)
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.chars().next().is_some_and(char::is_whitespace),
+        Err(_) => false,
+    }
 }
 
 /// Scan the white space at the start of `bytes` in place, one character at a
