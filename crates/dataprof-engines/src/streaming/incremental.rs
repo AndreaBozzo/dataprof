@@ -157,6 +157,14 @@ impl IncrementalProfiler {
         let mut headers = None;
         let mut analyzed_rows = 0;
         let mut ragged_rows = 0;
+        // Data records read so far, refused or not, to place a refusal.
+        let mut records_read = 0usize;
+        // The chunk reader leaves `flexible` at the csv crate default, strict,
+        // when no config is set, so the header-width check below does too.
+        let strict = self
+            .csv_config
+            .as_ref()
+            .is_none_or(|config| !config.flexible);
         let mut offset = 0u64;
         // Start of the last chunk read. Chunks start at record boundaries, so
         // the quote check at the end only needs to scan from here.
@@ -253,12 +261,27 @@ impl IncrementalProfiler {
                         break;
                     }
 
+                    records_read += 1;
+
                     // A record whose field count differs from the header is a
                     // structural violation. It is still recovered below (padded
                     // or truncated to header width), but must not vanish from
                     // the report — counted here, before sampling, so the signal
                     // reflects every row read rather than only sampled ones.
                     if record.len() != header_names.len() {
+                        // Strict parsing in the chunk reader compares a record
+                        // with the previous one of the same chunk, so a chunk's
+                        // first record is compared with nothing. The header
+                        // width is the rule on every chunk (#1202). A record
+                        // reached here is inside the row cap.
+                        if strict {
+                            return Err(ragged_record_error(
+                                records_read,
+                                offset + record.position().map_or(0, |pos| pos.byte()),
+                                record.len(),
+                                header_names.len(),
+                            ));
+                        }
                         ragged_rows += 1;
                     }
 
@@ -555,6 +578,25 @@ impl IncrementalProfiler {
     }
 }
 
+/// The refusal of a record whose field count differs from the header's under
+/// strict parsing. `record` counts data records from 1 and `byte` is the
+/// record's offset in the file.
+fn ragged_record_error(
+    record: usize,
+    byte: u64,
+    fields: usize,
+    header_fields: usize,
+) -> DataProfilerError {
+    DataProfilerError::csv_structure(
+        format!(
+            "CSV error: data record {record} (byte {byte}): found record with {fields} fields, \
+             but the header has {header_fields} fields"
+        ),
+        "Set csv_flexible=true to recover ragged rows; every recovered row is reported in \
+         execution.ragged_row_count.",
+    )
+}
+
 impl Default for IncrementalProfiler {
     fn default() -> Self {
         Self::new()
@@ -631,6 +673,45 @@ mod tests {
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
 
+        Ok(())
+    }
+
+    /// A headerless file takes its width from the first record, and a later
+    /// chunk's first record is held to it under strict parsing, with no config
+    /// as with a strict one (#1202).
+    #[test]
+    fn strict_parsing_refuses_a_ragged_record_that_starts_a_chunk() -> Result<()> {
+        let mut headerless = NamedTempFile::new()?;
+        write!(headerless, "1,Alice,Rome\n2,Bob\n3,Carl,Milan\n")?;
+        headerless.flush()?;
+        let mut with_header = NamedTempFile::new()?;
+        write!(with_header, "id,name,city\n1,Alice,Rome\n2,Bob\n")?;
+        with_header.flush()?;
+
+        let routes = [
+            (
+                "headerless, strict config",
+                headerless.path(),
+                Some(CsvParserConfig::strict().has_header(false)),
+            ),
+            ("header, no config", with_header.path(), None),
+        ];
+        let mut wrong = Vec::new();
+        for (route, path, config) in routes {
+            let mut profiler = IncrementalProfiler::new().chunk_size(ChunkSize::Fixed(1));
+            if let Some(config) = config {
+                profiler = profiler.csv_config(config);
+            }
+            match profiler.analyze_file(path) {
+                Err(error) if error.to_string().contains("but the header has 3 fields") => {}
+                Err(error) => wrong.push(format!("{route}: {error}")),
+                Ok(report) => wrong.push(format!(
+                    "{route}: profiled {} rows",
+                    report.execution.rows_processed
+                )),
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
         Ok(())
     }
 
