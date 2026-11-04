@@ -111,6 +111,10 @@ def test_a_stored_report_keeps_the_detection_and_the_finding(tmp_path: Path) -> 
         ("to_json", dp.ProfileReport.from_json(report.to_json())),
     ):
         codes = [f.code for f in stored.findings() if f.code in DELIMITER_CODES]
-        if (stored.csv_metadata, codes) != (report.csv_metadata, wanted[1]):
-            wrong.append(f"{dialect}: {stored.csv_metadata}, {codes}")
+        # A report loaded from the summary exports its own summary again; it
+        # must not drop what it loaded.
+        exported = stored.to_dict().get("csv_metadata")
+        seen = (stored.csv_metadata, exported, codes)
+        if seen != (report.csv_metadata, report.csv_metadata, wanted[1]):
+            wrong.append(f"{dialect}: {seen}")
     assert not wrong, "\n".join(wrong)
