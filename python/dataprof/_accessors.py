@@ -273,6 +273,7 @@ class _ReportView(_View):
     analysis_settings = _Field[dict[str, Any] | None]()
     generator = _Field[dict[str, Any] | None]()
     source_identity = _Field[dict[str, Any] | None]()
+    csv_metadata = _Field[dict[str, Any] | None]()
     quality_score = _Field[float | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
     quality_score_bounds = _Field[dict[str, Any] | None]()

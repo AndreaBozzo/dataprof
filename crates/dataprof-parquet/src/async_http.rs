@@ -522,6 +522,7 @@ pub async fn analyze_parquet_async_http_with_options(
             size_bytes: content_length,
             modified_at: None,
             parquet_metadata,
+            csv_metadata: None,
         },
         execution,
     )

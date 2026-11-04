@@ -184,6 +184,9 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
         "ragged_row_count": _count(report.ragged_row_count),
         "unterminated_quote": bool(report.unterminated_quote),
         "error_count": _count(report.error_count),
+        # A flat summary records no source format, so a missing entry cannot
+        # be told from a source that is not CSV: nothing is listed for it.
+        "delimiter_detection": (report.csv_metadata or {}).get("delimiter_detection"),
         "quality_status": report.quality_status,
         "quality": None
         if quality is None

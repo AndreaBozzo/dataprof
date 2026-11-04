@@ -50,8 +50,8 @@ pub use quality::{
 pub use sampling::{ChunkSize, ReservoirSampler, RowSampler, SamplingStrategy};
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 pub use source::{
-    DataFrameLibrary, DataSource, FileFormat, JsonErrorPolicy, ParquetMetadata, QueryEngine,
-    StreamSourceSystem,
+    CsvSourceMetadata, DataFrameLibrary, DataSource, DelimiterDetection, FileFormat,
+    JsonErrorPolicy, ParquetMetadata, QueryEngine, StreamSourceSystem,
 };
 pub use stop_condition::{
     SchemaStabilityTracker, StopCondition, StopEvaluator, schema_stable_threshold,

@@ -543,6 +543,7 @@ impl IncrementalProfiler {
                 size_bytes: file_size_bytes,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             execution,
         )

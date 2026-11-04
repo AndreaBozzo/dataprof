@@ -1,9 +1,10 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, ExecutionMetadata, KeyColumnSource,
-    KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights,
-    RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
+    AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource, ExecutionMetadata,
+    KeyColumnSource, KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount,
+    QualityScoreWeights, RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator,
+    StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -607,6 +608,9 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "SourceIdentity")]
     source_identity: Option<SourceIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "CsvSourceMetadata")]
+    csv_metadata: Option<CsvSourceMetadata>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -987,6 +991,7 @@ impl PythonProfileReportDocument {
             analysis_settings: report.analysis_settings.clone(),
             generator: report.generator.clone(),
             source_identity: report.source_identity.clone(),
+            csv_metadata: report.data_source.csv_metadata().cloned(),
         })
     }
 }
@@ -1432,6 +1437,7 @@ mod tests {
                 size_bytes: 1024,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             vec![],
             ExecutionMetadata::new(100, 5, 50),
@@ -1667,6 +1673,7 @@ mod tests {
                 size_bytes: 1024,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             vec![],
             ExecutionMetadata::new(100, 5, 50),
@@ -1698,6 +1705,7 @@ mod tests {
                     size_bytes: 1024,
                     modified_at: None,
                     parquet_metadata: None,
+                    csv_metadata: None,
                 },
                 vec![],
                 ExecutionMetadata::new(100, 5, 50),
@@ -1738,6 +1746,7 @@ mod tests {
                 size_bytes: 1024,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             vec![],
             ExecutionMetadata::new(100, 5, 50),
@@ -1760,6 +1769,7 @@ mod tests {
                 size_bytes: 1024,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             vec![],
             ExecutionMetadata::new(100, 5, 50),

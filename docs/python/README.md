@@ -344,6 +344,7 @@ Returned by `profile()` and all analysis functions.
 | `source_exhausted` | `bool` | Whether the entire source was read |
 | `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = no ragged rows). Reported for file, async and columnar CSV inputs |
 | `unterminated_quote` | `bool \| None` | `True` when a CSV source ended inside a quoted field: a quote was never closed, so the last record holds every row after it. `None` for non-CSV input and for a scan stopped before the end of the source. `csv_flexible=False` refuses such a source, and CSV bytes passed to `profile()` always do |
+| `csv_metadata` | `dict \| None` | How a CSV source was split: `delimiter`, and `delimiter_detection` when detection chose it (`header_fields`, plus `runner_up` or `unlisted_delimiter` when the choice was not clear). `None` for other sources and for reports written before 0.14 |
 | `recovery_events` | `list[dict[str, str]] \| None` | Ordered failed attempts and retries; `[]` means no recovery, `None` means history was not recorded |
 | `sampling_applied` | `bool` | Whether sampling was used |
 | `sampling_ratio` | `float \| None` | Fraction of data sampled |
@@ -917,6 +918,8 @@ names; no finding carries a raw cell value.
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
 | `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
 | `unterminated_quote` | warning | A CSV source ended inside a quoted field, so its last record may hold several source rows |
+| `delimiter_ambiguous` | warning | Delimiter detection found another candidate (`runner_up`) that reads the sampled CSV records as well as the one it chose (`delimiter`). Set `csv_delimiter` to choose |
+| `header_not_split` | warning | No candidate delimiter (comma, semicolon, tab, pipe) splits the CSV header, so the source was read as one column, while another character (`unlisted_delimiter`) splits the header and every sampled record alike. A plain one-column file is not reported |
 | `records_skipped` | warning | Errors were counted while reading, e.g. JSONL lines skipped under `jsonl_on_error="skip"` |
 | `constant_column` | info | Every non-null value of a column is the same one, seen more than once |
 | `sensitive_pattern` | info | A column confidently matches a contact or financial pattern, a US SSN, or an Italian codice fiscale |

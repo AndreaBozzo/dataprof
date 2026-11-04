@@ -351,6 +351,30 @@
       ],
       "type": "object"
     },
+    "CsvSourceMetadata": {
+      "description": "How a CSV source was split into fields.",
+      "properties": {
+        "delimiter": {
+          "description": "The delimiter the reader split records on, as one character.",
+          "type": "string"
+        },
+        "delimiter_detection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DelimiterDetection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How detection chose the delimiter. `None` when the delimiter was set\nexplicitly, so detection did not run."
+        }
+      },
+      "required": [
+        "delimiter"
+      ],
+      "type": "object"
+    },
     "DataFrameLibrary": {
       "anyOf": [
         {
@@ -373,6 +397,17 @@
         {
           "description": "File-based data source (CSV, JSON, Parquet, etc.)",
           "properties": {
+            "csv_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CsvSourceMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How a CSV source was split into fields (only present for CSV)"
+            },
             "format": {
               "$ref": "#/$defs/FileFormat",
               "description": "Detected or specified file format"
@@ -504,6 +539,17 @@
         {
           "description": "In-memory byte buffer profiled without a path behind it. The buffer may\nbe text (CSV/JSON/JSONL) or binary (Parquet); `format` says which.\nDistinguished from [`DataSource::DataFrame`]: the caller handed over\nbytes, not a schema-bearing dataframe, so provenance must say so.",
           "properties": {
+            "csv_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CsvSourceMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How a CSV source was split into fields (only present for CSV)"
+            },
             "format": {
               "$ref": "#/$defs/FileFormat",
               "description": "Format the buffer was parsed as"
@@ -544,6 +590,17 @@
                 "string",
                 "null"
               ]
+            },
+            "csv_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CsvSourceMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How a CSV source was split into fields (only present for CSV)"
             },
             "first_record_at": {
               "description": "Timestamp of first record in batch (ISO 8601)",
@@ -711,6 +768,40 @@
         "year_distribution",
         "month_distribution",
         "day_of_week_distribution"
+      ],
+      "type": "object"
+    },
+    "DelimiterDetection": {
+      "description": "What delimiter detection saw when it chose a delimiter.\n\nDetection scores comma, semicolon, tab and pipe over the first records of\nthe source. Some sources read equally well with two of them, and some with\nnone: the record says so, and `findings()` warns about both.",
+      "properties": {
+        "delimiter": {
+          "description": "The delimiter detection chose, as one character.",
+          "type": "string"
+        },
+        "header_fields": {
+          "description": "Fields the chosen delimiter splits the header into: 1 when no\ncandidate splits it, 0 when the sampled source holds no header record.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner_up": {
+          "description": "Another candidate that splits the header and keeps as many sampled\nrecords at the header's width as the chosen one, so that structure\nalone does not tell them apart. `None` when the choice was clear.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unlisted_delimiter": {
+          "description": "When no candidate splits the header, a punctuation character outside\nthe candidates that occurs as often in the header as in every sampled\nrecord, so it likely delimits the source. `None` when a candidate\nsplits the header, and for an ordinary one-column source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "delimiter",
+        "header_fields"
       ],
       "type": "object"
     },
@@ -1949,6 +2040,9 @@
             "$ref": "#/$defs/PythonColumnDocument"
           },
           "type": "array"
+        },
+        "csv_metadata": {
+          "$ref": "#/$defs/CsvSourceMetadata"
         },
         "execution": {
           "$ref": "#/$defs/PythonExecutionDocument"

@@ -1372,6 +1372,35 @@ impl PyProfileReport {
         Ok(Some(dict))
     }
 
+    /// How a CSV source was split into fields, as a dict: ``delimiter``, and
+    /// ``delimiter_detection`` when detection chose it (``delimiter``,
+    /// ``header_fields``, and ``runner_up`` or ``unlisted_delimiter`` when
+    /// the choice was not clear).
+    ///
+    /// None for a source that is not CSV, and for a report written before
+    /// dataprof recorded it.
+    #[getter]
+    fn csv_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(metadata) = self.inner.data_source.csv_metadata() else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        dict.set_item("delimiter", &metadata.delimiter)?;
+        if let Some(detection) = &metadata.delimiter_detection {
+            let detected = PyDict::new(py);
+            detected.set_item("delimiter", &detection.delimiter)?;
+            detected.set_item("header_fields", detection.header_fields)?;
+            if let Some(runner_up) = &detection.runner_up {
+                detected.set_item("runner_up", runner_up)?;
+            }
+            if let Some(unlisted) = &detection.unlisted_delimiter {
+                detected.set_item("unlisted_delimiter", unlisted)?;
+            }
+            dict.set_item("delimiter_detection", detected)?;
+        }
+        Ok(Some(dict))
+    }
+
     /// Record the caller's version of the source on a report just profiled.
     ///
     /// Internal: the Python entry points that take ``source_version=`` call

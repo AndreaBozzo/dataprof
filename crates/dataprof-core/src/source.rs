@@ -145,6 +145,94 @@ pub struct ParquetMetadata {
     pub uncompressed_size_bytes: Option<u64>,
 }
 
+/// How a CSV source was split into fields.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct CsvSourceMetadata {
+    /// The delimiter the reader split records on, as one character.
+    pub delimiter: String,
+    /// How detection chose the delimiter. `None` when the delimiter was set
+    /// explicitly, so detection did not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delimiter_detection: Option<DelimiterDetection>,
+}
+
+impl CsvSourceMetadata {
+    /// A delimiter the caller set explicitly.
+    pub fn configured(delimiter: u8) -> Self {
+        Self {
+            delimiter: char::from(delimiter).to_string(),
+            delimiter_detection: None,
+        }
+    }
+
+    /// A delimiter character the caller set, for a reader that splits on
+    /// characters rather than bytes: Python's `csv` module, which reads
+    /// synchronous CSV bytes, takes any one character, `§` included.
+    pub fn configured_char(delimiter: char) -> Self {
+        Self {
+            delimiter: delimiter.to_string(),
+            delimiter_detection: None,
+        }
+    }
+
+    /// A delimiter detection chose.
+    pub fn detected(detection: DelimiterDetection) -> Self {
+        Self {
+            delimiter: detection.delimiter.clone(),
+            delimiter_detection: Some(detection),
+        }
+    }
+}
+
+/// What delimiter detection saw when it chose a delimiter.
+///
+/// Detection scores comma, semicolon, tab and pipe over the first records of
+/// the source. Some sources read equally well with two of them, and some with
+/// none: the record says so, and `findings()` warns about both.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct DelimiterDetection {
+    /// The delimiter detection chose, as one character.
+    pub delimiter: String,
+    /// Fields the chosen delimiter splits the header into: 1 when no
+    /// candidate splits it, 0 when the sampled source holds no header record.
+    pub header_fields: usize,
+    /// Another candidate that splits the header and keeps as many sampled
+    /// records at the header's width as the chosen one, so that structure
+    /// alone does not tell them apart. `None` when the choice was clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_up: Option<String>,
+    /// When no candidate splits the header, a punctuation character outside
+    /// the candidates that occurs as often in the header as in every sampled
+    /// record, so it likely delimits the source. `None` when a candidate
+    /// splits the header, and for an ordinary one-column source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlisted_delimiter: Option<String>,
+}
+
+impl DelimiterDetection {
+    /// A detection outcome; `runner_up` is the tied candidate, if any.
+    pub fn new(delimiter: u8, header_fields: usize, runner_up: Option<u8>) -> Self {
+        Self {
+            delimiter: char::from(delimiter).to_string(),
+            header_fields,
+            runner_up: runner_up.map(|byte| char::from(byte).to_string()),
+            unlisted_delimiter: None,
+        }
+    }
+
+    /// Record a likely delimiter detection does not try.
+    pub fn with_unlisted_delimiter(mut self, unlisted: Option<u8>) -> Self {
+        self.unlisted_delimiter = unlisted.map(|byte| char::from(byte).to_string());
+        self
+    }
+}
+
 /// Source-agnostic data source metadata.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -163,6 +251,9 @@ pub enum DataSource {
         /// Parquet-specific metadata (only present for Parquet files)
         #[serde(skip_serializing_if = "Option::is_none")]
         parquet_metadata: Option<ParquetMetadata>,
+        /// How a CSV source was split into fields (only present for CSV)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        csv_metadata: Option<CsvSourceMetadata>,
     },
     /// SQL query-based data source
     Query {
@@ -203,6 +294,9 @@ pub enum DataSource {
         format: FileFormat,
         /// Length of the buffer handed over, not of the values decoded from it
         size_bytes: u64,
+        /// How a CSV source was split into fields (only present for CSV)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        csv_metadata: Option<CsvSourceMetadata>,
     },
     /// Streaming data source
     Stream {
@@ -227,6 +321,9 @@ pub enum DataSource {
         /// Timestamp of last record in batch (ISO 8601)
         #[serde(skip_serializing_if = "Option::is_none")]
         last_record_at: Option<String>,
+        /// How a CSV source was split into fields (only present for CSV)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        csv_metadata: Option<CsvSourceMetadata>,
     },
 }
 
@@ -305,6 +402,28 @@ impl DataSource {
         }
     }
 
+    /// How a CSV source was split into fields, when the source records it.
+    pub fn csv_metadata(&self) -> Option<&CsvSourceMetadata> {
+        match self {
+            Self::File { csv_metadata, .. }
+            | Self::Bytes { csv_metadata, .. }
+            | Self::Stream { csv_metadata, .. } => csv_metadata.as_ref(),
+            Self::Query { .. } | Self::DataFrame { .. } => None,
+        }
+    }
+
+    /// Record how a CSV source was split into fields. A query or dataframe
+    /// source has no delimiter, so it is returned unchanged.
+    pub fn with_csv_metadata(mut self, metadata: CsvSourceMetadata) -> Self {
+        match &mut self {
+            Self::File { csv_metadata, .. }
+            | Self::Bytes { csv_metadata, .. }
+            | Self::Stream { csv_metadata, .. } => *csv_metadata = Some(metadata),
+            Self::Query { .. } | Self::DataFrame { .. } => {}
+        }
+        self
+    }
+
     /// Get the stream topic if this is a stream-based source.
     pub fn stream_topic(&self) -> Option<&str> {
         match self {
@@ -334,6 +453,7 @@ mod tests {
             size_bytes: 0,
             modified_at: None,
             parquet_metadata: None,
+            csv_metadata: None,
         };
 
         assert_eq!(ds.identifier(), "/path/to/data.csv");
@@ -349,6 +469,7 @@ mod tests {
             name: "csv_bytes".to_string(),
             format: FileFormat::Csv,
             size_bytes: 42,
+            csv_metadata: None,
         };
 
         assert_eq!(ds.identifier(), "bytes[csv_bytes]");
@@ -370,6 +491,7 @@ mod tests {
             session_id: None,
             first_record_at: None,
             last_record_at: None,
+            csv_metadata: None,
         };
 
         assert_eq!(ds.identifier(), "kafka[events]-batch:b1");
@@ -392,6 +514,7 @@ mod tests {
             session_id: Some("session-1".to_string()),
             first_record_at: Some("2023-01-01T10:00:00Z".to_string()),
             last_record_at: Some("2023-01-01T10:05:00Z".to_string()),
+            csv_metadata: None,
         };
 
         let json = serde_json::to_string(&ds).unwrap();

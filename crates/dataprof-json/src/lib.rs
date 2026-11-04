@@ -966,6 +966,7 @@ pub fn analyze_json_file_with_options(
         size_bytes: metadata.len(),
         modified_at: None,
         parquet_metadata: None,
+        csv_metadata: None,
     };
 
     if rows_read == 0 {

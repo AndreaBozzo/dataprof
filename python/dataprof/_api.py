@@ -459,6 +459,7 @@ def profile(
         source_type: str = "dataframe",
         source_format: str | None = None,
         source_bytes: int | None = None,
+        csv_source: tuple[str, tuple[int, str | None, str | None] | None] | None = None,
     ) -> ProfileReport:
         rust_report = _profile_columns(
             columns,
@@ -470,6 +471,7 @@ def profile(
             source_type,
             source_format,
             source_bytes,
+            csv_source,
         )
         return ProfileReport(rust_report)._record_source_version(source_version)
 
@@ -528,8 +530,9 @@ def profile(
 
         skipped = 0
         row_count: int | None = None
+        csv_source = None
         if fmt == "csv":
-            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter, max_rows)
+            decoded_columns, csv_source = _columns_from_csv_bytes(buffer, csv_delimiter, max_rows)
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
@@ -591,6 +594,7 @@ def profile(
             "bytes",
             fmt,
             len(buffer.getvalue()),
+            csv_source,
         )
 
     # DataFrame detection via module name

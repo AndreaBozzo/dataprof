@@ -943,3 +943,31 @@ The identity is provenance, not a metric: two input paths over the same
 logical data carry different identities, so like `data_source` it stays
 outside the serialized-value parity comparison. Stored v1 reports remain
 valid.
+
+## v1 additive change: `csv_metadata`
+
+A CSV report records how its source was split into fields (#1100). The Rust
+dialect carries it as `data_source.csv_metadata` on a `file`, `bytes` or
+`stream` source; the Python dialect carries the same object as a top-level
+`csv_metadata`.
+
+| field | values | meaning |
+| --- | --- | --- |
+| `delimiter` | one character | the delimiter the reader split records on |
+| `delimiter_detection` | object | present when detection chose the delimiter; absent when the caller set it (`csv_delimiter`) |
+| `delimiter_detection.delimiter` | one character | the delimiter detection chose |
+| `delimiter_detection.header_fields` | integer | fields the chosen delimiter splits the header into: 1 when no candidate splits it, 0 when the sampled source holds no header record |
+| `delimiter_detection.runner_up` | one character | another candidate that splits the header and keeps as many sampled records at the header's width, so structure alone does not tell the two apart; absent when the choice was clear |
+| `delimiter_detection.unlisted_delimiter` | one character | when no candidate splits the header, a punctuation character outside the candidates that occurs as often in the header as in every sampled record; absent for an ordinary one-column source |
+
+Detection tries comma, semicolon, tab and pipe, and these fields do not change
+which one it picks. `findings()` reports `delimiter_ambiguous` when
+`runner_up` is present and `header_not_split` when `unlisted_delimiter` is.
+
+The object is absent for a source that is not CSV, and from every document
+written before 0.14. For a CSV `file` or `bytes` source without it,
+`findings()` lists both rules as not evaluated (`unrecorded`) rather than
+passing them. Like the rest of `data_source`, it is provenance and stays
+outside the serialized-value parity comparison, although every CSV engine and
+input path records the same object for the same source. Stored v1 reports
+remain valid.

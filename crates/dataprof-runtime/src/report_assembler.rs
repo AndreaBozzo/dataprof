@@ -419,6 +419,7 @@ mod tests {
             size_bytes: 1024,
             modified_at: None,
             parquet_metadata: None,
+            csv_metadata: None,
         }
     }
 
