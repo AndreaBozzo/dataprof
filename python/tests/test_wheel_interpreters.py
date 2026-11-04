@@ -166,7 +166,9 @@ def test_workflows_consume_the_declaration_and_gate_uploads(versions):
     assert "persist-credentials: false" in _job_body(ci, "python-interpreters")
     # The release build runs dependency build scripts and pip builds; none of its
     # jobs needs the token after checkout.
-    checkouts = re.findall(r"uses: actions/checkout@\S+\n(?:\s+with:\n\s+(.+)\n)?", dist)
+    checkouts = re.findall(
+        r"uses: actions/checkout@\S+(?: #[^\n]*)?\n(?:\s+with:\n\s+(.+)\n)?", dist
+    )
     assert checkouts and all(option == "persist-credentials: false" for option in checkouts)
     assert "permissions:\n  contents: read" in ci
     for job in ("python-tests", "python-wheel-smoke"):
@@ -179,7 +181,7 @@ def test_workflows_consume_the_declaration_and_gate_uploads(versions):
     assert "needs: python-interpreters\n" in build
     assert "python-version: ${{ needs.python-interpreters.outputs.setup-versions }}" in build
     assert "--interpreter ${{ steps.build-interpreters.outputs.interpreters }}" in build
-    assert "if: runner.os != 'Linux'\n      uses: astral-sh/setup-uv@v7" in build
+    assert "if: runner.os != 'Linux'\n      uses: astral-sh/setup-uv@" in build
     assert "${{ runner.os != 'Linux' && '--resolve-interpreters' || '' }}" in build
     assert build.index("id: build-interpreters") < build.index("args: --release")
     assert "--find-interpreter" not in build
