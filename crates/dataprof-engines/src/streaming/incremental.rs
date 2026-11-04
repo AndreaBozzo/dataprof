@@ -342,7 +342,26 @@ impl IncrementalProfiler {
 
             if !hit_row_limit && let Some(error) = ragged {
                 if row_limit != Some(0) {
-                    return Err(error.into());
+                    // The chunk reader numbers records and bytes from the
+                    // chunk's start and compares with the previous record. The
+                    // loop above already refused any record of this chunk off
+                    // the header width, so the refused one is the next record
+                    // and differs from the header too.
+                    let unequal = error
+                        .downcast_ref::<csv::Error>()
+                        .map(csv::Error::kind)
+                        .zip(headers.as_ref());
+                    return Err(match unequal {
+                        Some((csv::ErrorKind::UnequalLengths { pos, len, .. }, header)) => {
+                            ragged_record_error(
+                                records_read + 1,
+                                offset + pos.as_ref().map_or(0, csv::Position::byte),
+                                *len as usize,
+                                header.len(),
+                            )
+                        }
+                        _ => error.into(),
+                    });
                 }
                 // The refused record was the chunk's first, so the zero-row
                 // check above never ran. A cap of zero is met before it.
@@ -678,7 +697,9 @@ mod tests {
 
     /// A headerless file takes its width from the first record, and a later
     /// chunk's first record is held to it under strict parsing, with no config
-    /// as with a strict one (#1202).
+    /// as with a strict one (#1202). A ragged record after a well-formed one in
+    /// a later chunk, which the chunk reader refuses, is placed in the file the
+    /// same way, not in its chunk.
     #[test]
     fn strict_parsing_refuses_a_ragged_record_that_starts_a_chunk() -> Result<()> {
         let mut headerless = NamedTempFile::new()?;
@@ -687,29 +708,47 @@ mod tests {
         let mut with_header = NamedTempFile::new()?;
         write!(with_header, "id,name,city\n1,Alice,Rome\n2,Bob\n")?;
         with_header.flush()?;
+        // 30-byte chunks: the header and record 1, then records 2 and 3.
+        let mut mid_chunk = NamedTempFile::new()?;
+        write!(
+            mid_chunk,
+            "id,name,city\n1,Alice,Rome\n2,Alice,Rome\n3,Bob\n4,Carl,Rome\n"
+        )?;
+        mid_chunk.flush()?;
 
         let routes = [
             (
                 "headerless, strict config",
                 headerless.path(),
                 Some(CsvParserConfig::strict().has_header(false)),
+                1,
                 "data record 2 (byte 13): found record with 2 fields, but the header has 3",
             ),
             (
                 "header, no config",
                 with_header.path(),
                 None,
+                1,
                 "data record 2 (byte 26): found record with 2 fields, but the header has 3",
+            ),
+            (
+                "ragged record after a well-formed one, later chunk",
+                mid_chunk.path(),
+                Some(CsvParserConfig::strict()),
+                30,
+                "data record 3 (byte 39): found record with 2 fields, but the header has 3",
             ),
         ];
         let mut wrong = Vec::new();
-        for (route, path, config, expected) in routes {
-            let mut profiler = IncrementalProfiler::new().chunk_size(ChunkSize::Fixed(1));
+        for (route, path, config, chunk_size, expected) in routes {
+            let mut profiler = IncrementalProfiler::new().chunk_size(ChunkSize::Fixed(chunk_size));
             if let Some(config) = config {
                 profiler = profiler.csv_config(config);
             }
             match profiler.analyze_file(path) {
-                Err(error) if error.to_string().contains(expected) => {}
+                Err(error)
+                    if error.to_string().contains(expected)
+                        && error.to_string().contains("Set csv_flexible=true") => {}
                 Err(error) => wrong.push(format!("{route}: {error}")),
                 Ok(report) => wrong.push(format!(
                     "{route}: profiled {} rows",
