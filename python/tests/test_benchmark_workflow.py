@@ -71,3 +71,14 @@ def test_workflow_uploads_both_suites_on_failure_and_publishes_only_successes():
     assert "--status success" in pages
     assert "comparison/progress.json" in pages
     assert "benchmark-results/run-status.json" in pages
+
+
+def test_pages_publishes_only_benchmark_runs_of_pushes_to_this_repository():
+    """A fork PR names its branch; only a push here may reach the Pages artifact."""
+    pages = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
+    gate = pages.split("\n    if: ", 1)[1].split("\n    environment:", 1)[0]
+    assert "github.event.workflow_run.event == 'push'" in gate
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in gate
+    lookup = pages.split('run_id="$(gh run list', 1)[1].split(')"', 1)[0]
+    assert "--branch master" in lookup
+    assert "--event push" in lookup

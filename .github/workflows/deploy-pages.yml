@@ -30,7 +30,15 @@ jobs:
   deploy:
     name: Build and deploy site
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # The workflow_run branch filter matches the head branch name, which a fork
+    # PR controls, and a PR run executes the PR's own benchmarks.yml. Publish
+    # only artifacts from pushes to this repository.
+    if: >-
+      ${{ github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      ) }}
 
     environment:
       name: github-pages
@@ -50,11 +58,13 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             run_id="${{ github.event.workflow_run.id }}"
           else
-            # Site-only deploys reuse the newest successful benchmark run on master.
+            # Site-only deploys reuse the newest successful benchmark run of a
+            # push to master; --branch alone also matches a fork PR's branch.
             run_id="$(gh run list \
               --repo "${{ github.repository }}" \
               --workflow benchmarks.yml \
               --branch master \
+              --event push \
               --status success \
               --limit 1 \
               --json databaseId \
