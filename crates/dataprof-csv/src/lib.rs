@@ -953,7 +953,15 @@ mod tests {
     #[test]
     fn detection_records_a_tie_and_an_unlisted_delimiter_only_when_present() {
         // (case, source, delimiter, header fields, runner-up, unlisted)
-        let cases: [(&str, &[u8], &str, usize, Option<&str>, Option<&str>); 9] = [
+        type Case<'a> = (
+            &'a str,
+            &'a [u8],
+            &'a str,
+            usize,
+            Option<&'a str>,
+            Option<&'a str>,
+        );
+        let cases: [Case; 9] = [
             (
                 "tie",
                 b"id;amount,EUR\n1;10,50;\n2;20,75;\n",
