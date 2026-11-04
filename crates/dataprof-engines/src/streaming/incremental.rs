@@ -693,17 +693,23 @@ mod tests {
                 "headerless, strict config",
                 headerless.path(),
                 Some(CsvParserConfig::strict().has_header(false)),
+                "data record 2 (byte 13): found record with 2 fields, but the header has 3",
             ),
-            ("header, no config", with_header.path(), None),
+            (
+                "header, no config",
+                with_header.path(),
+                None,
+                "data record 2 (byte 26): found record with 2 fields, but the header has 3",
+            ),
         ];
         let mut wrong = Vec::new();
-        for (route, path, config) in routes {
+        for (route, path, config, expected) in routes {
             let mut profiler = IncrementalProfiler::new().chunk_size(ChunkSize::Fixed(1));
             if let Some(config) = config {
                 profiler = profiler.csv_config(config);
             }
             match profiler.analyze_file(path) {
-                Err(error) if error.to_string().contains("but the header has 3 fields") => {}
+                Err(error) if error.to_string().contains(expected) => {}
                 Err(error) => wrong.push(format!("{route}: {error}")),
                 Ok(report) => wrong.push(format!(
                     "{route}: profiled {} rows",
