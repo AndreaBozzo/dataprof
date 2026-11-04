@@ -1467,7 +1467,7 @@ jobs:
 ```
 
 This example targets the 0.12 release. Before it is published, build this
-checkout with `uv sync` and `uv run maturin develop`, then invoke the module with
+checkout with `uv sync --no-install-project` and `uv run --no-sync maturin develop`, then invoke the module with
 `uv run --no-sync python -m dataprof.check ...`.
 
 ### `compare()`
@@ -1637,7 +1637,8 @@ pip install dataprof --no-binary dataprof   --config-settings="build-args=--feat
 ### From a checkout
 
 ```bash
-uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+uv sync --no-install-project
+uv run --no-sync maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
 
 ### List every feature you want, not only the extra ones

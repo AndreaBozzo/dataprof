@@ -59,7 +59,8 @@ def _import_dataprof() -> Any:
         sys.exit(
             "dataprof is not installed in this interpreter.\n"
             "Install it with: pip install dataprof\n"
-            "In the dataprof repo itself: uv run maturin develop"
+            "In the dataprof repo itself: uv sync --no-install-project, "
+            "then uv run --no-sync maturin develop"
         )
     return dataprof
 

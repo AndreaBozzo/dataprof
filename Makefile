@@ -7,19 +7,23 @@ RUFF_PATHS := python/ .github/scripts/ .claude/skills/dataprof/scripts/
 # ── Build ────────────────────────────────────────
 
 build:  ## Build the Python extension (release)
-	uv run maturin develop --release
+	uv sync --no-install-project
+	uv run --no-sync maturin develop --release
 
 dev:  ## Build the Python extension (debug, fast)
-	uv run maturin develop
+	uv sync --no-install-project
+	uv run --no-sync maturin develop
 
 # The database targets repeat the shipped feature set on purpose: --features
 # replaces [tool.maturin] features rather than extending it, so a shorter list
 # builds database support while dropping async and remote Parquet.
 build-db:  ## Build the Python extension with database support (release)
-	uv run maturin develop --release --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+	uv sync --no-install-project
+	uv run --no-sync maturin develop --release --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 
 dev-db:  ## Build the Python extension with database support (debug, fast)
-	uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+	uv sync --no-install-project
+	uv run --no-sync maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 
 # ── Test ─────────────────────────────────────────
 
@@ -29,10 +33,10 @@ test-rust:  ## Run Rust tests
 	cargo test
 
 test-python: dev  ## Build and run Python tests
-	uv run pytest
+	uv run --no-sync pytest
 
 test-python-db: dev-db  ## Build with DB features and run Python database tests
-	uv run pytest python/tests/test_database_api.py -v -ra
+	uv run --no-sync pytest python/tests/test_database_api.py -v -ra
 
 test-db:  ## Run Rust database integration tests (SQLite only)
 	cargo test --test database_integration --features "database,sqlite"
@@ -53,7 +57,7 @@ clippy:  ## Run clippy with strict warnings
 	cargo clippy --lib --tests --all-features -- -D warnings
 
 lint-python:  ## Run ruff linter + type check
-	uv run ruff check $(RUFF_PATHS)
+	uv run --no-sync ruff check $(RUFF_PATHS)
 
 # ── Format ───────────────────────────────────────
 
@@ -63,8 +67,8 @@ fmt-rust:  ## Format Rust code
 	cargo fmt
 
 fmt-python:  ## Format Python code
-	uv run ruff format $(RUFF_PATHS)
-	uv run ruff check --fix $(RUFF_PATHS)
+	uv run --no-sync ruff format $(RUFF_PATHS)
+	uv run --no-sync ruff check --fix $(RUFF_PATHS)
 
 # ── Check (CI-like) ─────────────────────────────
 
