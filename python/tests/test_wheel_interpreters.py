@@ -248,6 +248,36 @@ def test_release_and_rehearsal_share_one_build():
     assert "contents: write" not in rehearsal
 
 
+def test_release_limits_token_permissions_and_checkout_credentials():
+    """Only publishers may write, and no checkout may persist its token."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert re.findall(r"^permissions:\n((?:  [^\n]+\n)+)", release, re.M) == ["  contents: read\n"]
+    exceptions = {
+        "create-release": "contents: write",
+        "python-release-assets": "contents: write",
+        "finalize-release": "contents: write",
+        "pypi-publish": "id-token: write",
+    }
+    jobs = re.findall(r"^  ([\w-]+):\n", release, re.M)
+    assert exceptions.keys() <= set(jobs)
+    checkouts = []
+    for job in jobs:
+        body = _job_body(release, job)
+        permissions = re.findall(r"^    permissions:\n((?:      [^\n]+\n)+)", body, re.M)
+        if job in exceptions:
+            assert permissions == [f"      {exceptions[job]}\n"], job
+        else:
+            assert permissions in ([], ["      contents: read\n"]), job
+        for step in re.split(r"^    - ", body, flags=re.M)[1:]:
+            if re.search(r"^\s*uses: actions/checkout@", step, re.M):
+                checkouts.append((job, step))
+    assert checkouts, "expected at least one checkout in release.yml"
+    for job, step in checkouts:
+        options = re.search(r"^      with:\n((?:        [^\n]+\n)+)", step, re.M)
+        assert options is not None, job
+        assert "        persist-credentials: false\n" in options[1], job
+
+
 def test_resolved_paths_survive_spaces_in_maturin_arguments(tmp_path, monkeypatch):
     """Resolve version requests to python.exe paths and preserve spaces in argv."""
     requested = ["3.10", "3.14"]
