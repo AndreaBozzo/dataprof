@@ -61,7 +61,8 @@ cargo test -p dataprof-python
 a first time through the PEP 517 backend, in release mode with full LTO; plain
 `uv run` then rebuilds it whenever `maturin develop` has replaced it. Hence
 `--no-install-project` once and `--no-sync` on every later `uv run`, as CI does
-(`.github/workflows/ci.yml`, "Build Python bindings").
+(`.github/workflows/ci.yml`, "Build Python bindings"). A later `uv sync`
+uninstalls the extension `maturin develop` installed, so rebuild after it.
 
 It does not lint or format. Those are separate, and CI runs them over the same
 paths, so run the ones covering what you changed before you open a PR. CI checks

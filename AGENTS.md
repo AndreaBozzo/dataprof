@@ -54,7 +54,8 @@ uv run --no-sync ty check python/
 
 Plain `uv sync` also builds the extension once in release mode, and plain
 `uv run` rebuilds it after `maturin develop`: keep `--no-install-project` and
-`--no-sync` as above, which is what CI runs.
+`--no-sync` as above, which is what CI runs. A later `uv sync` uninstalls the
+extension again, so run `maturin develop` after it.
 
 Don't run every expensive workspace check for a small docs or Python-only
 change; run what matches the change and list the commands in the PR body.
