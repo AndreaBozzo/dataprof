@@ -38,7 +38,7 @@ runs:
 
     - name: Install Rust toolchain
       id: rust-install
-      uses: dtolnay/rust-toolchain@master
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
         toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.components }}
@@ -68,7 +68,7 @@ runs:
     # them, which evicted master's caches, so every other PR started cold.
     # Caches written on master, tags and schedules are readable by every PR.
     - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         prefix-key: ${{ inputs.cache-prefix }}
         shared-key: "v4"
