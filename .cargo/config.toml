@@ -4,14 +4,21 @@ target-dir = "target"
 [registries.crates-io]
 protocol = "sparse"
 
+# Conservative CPU targeting, so a local build runs on any x86-64 machine like
+# the baseline wheels do. No `-C opt-level` here: rustflags come after the
+# profile's own flags and the last level wins, so one here overrides every
+# profile, and a non-zero level in a dev build also switches debug assertions
+# and overflow checks off. The release wheels set their own RUSTFLAGS
+# (.github/workflows/python-dist.yml), which replace these.
+
 [target.x86_64-pc-windows-msvc]
 
-rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f", "-C", "opt-level=2"]
+rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f"]
 
 [target.x86_64-unknown-linux-gnu]
 
-rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f", "-C", "opt-level=2"]
+rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f"]
 
 [target.x86_64-apple-darwin]
 
-rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f", "-C", "opt-level=2"]
+rustflags = ["-C", "target-cpu=x86-64", "-C", "target-feature=-avx,-avx2,-avx512f"]
