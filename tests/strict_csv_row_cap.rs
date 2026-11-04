@@ -135,11 +135,6 @@ fn strict_parsing_still_rejects_a_ragged_record_inside_the_row_cap() {
     let csv = write_csv(INSIDE_THE_CAP);
     let mut wrong = Vec::new();
     for (route, outcome) in file_routes(csv.path(), 2) {
-        // A chunk's first record is not compared with the header, so strict
-        // parsing misses a ragged record that starts a chunk: #1202.
-        if route == "incremental, one-record chunks" {
-            continue;
-        }
         match outcome {
             Ok(report) => wrong.push(format!(
                 "{route}: profiled {} rows",
