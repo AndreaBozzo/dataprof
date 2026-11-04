@@ -36,7 +36,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{DataType, PatternCategory, TypeHomogeneity};
+use dataprof_core::{
+    DataSource, DataType, DelimiterDetection, FileFormat, PatternCategory, TypeHomogeneity,
+};
 
 use crate::profile_report::ProfileReport;
 use crate::quality_gate::{
@@ -94,10 +96,17 @@ pub enum FindingCode {
     AllNull,
     /// Every non-null value of a column is the same one.
     ConstantColumn,
+    /// Delimiter detection found a second candidate that read the sampled CSV
+    /// records as well as the one it chose.
+    DelimiterAmbiguous,
     /// The source holds exact duplicate rows.
     DuplicateRows,
     /// Date values lie after the time the report was produced.
     FutureDates,
+    /// No delimiter detection tries splits the CSV header, so the source was
+    /// read as one column, while a character outside them splits the header
+    /// and every sampled record alike.
+    HeaderNotSplit,
     /// At least half of a column's text values are numbers written with a
     /// decimal comma or digit-group separators, which no numeric statistic
     /// includes.
@@ -125,8 +134,10 @@ impl FindingCode {
     pub fn severity(self) -> Severity {
         match self {
             Self::AllNull
+            | Self::DelimiterAmbiguous
             | Self::DuplicateRows
             | Self::FutureDates
+            | Self::HeaderNotSplit
             | Self::LocaleNumbers
             | Self::MixedTypes
             | Self::NullHeavy
@@ -146,8 +157,17 @@ impl FindingCode {
         match self {
             Self::AllNull => "every value in this column is null",
             Self::ConstantColumn => "every non-null value in this column is the same",
+            Self::DelimiterAmbiguous => {
+                "another delimiter reads the sampled CSV records as well as the one detection \
+                 chose, so the columns may be split on the wrong one; set csv_delimiter to choose"
+            }
             Self::DuplicateRows => "the source contains exact duplicate rows",
             Self::FutureDates => "some date values lie in the future",
+            Self::HeaderNotSplit => {
+                "no delimiter detection tries (comma, semicolon, tab, pipe) splits the CSV \
+                 header, so the source was read as one column, but another character splits the \
+                 header and every sampled record alike; set csv_delimiter to read it as a table"
+            }
             Self::LocaleNumbers => {
                 "at least half of the text values in this column are numbers written with a \
                  decimal comma or digit grouping, so no numeric statistic includes them"
@@ -177,8 +197,10 @@ impl fmt::Display for FindingCode {
         let name = match self {
             Self::AllNull => "all_null",
             Self::ConstantColumn => "constant_column",
+            Self::DelimiterAmbiguous => "delimiter_ambiguous",
             Self::DuplicateRows => "duplicate_rows",
             Self::FutureDates => "future_dates",
+            Self::HeaderNotSplit => "header_not_split",
             Self::LocaleNumbers => "locale_numbers",
             Self::MixedTypes => "mixed_types",
             Self::NullHeavy => "null_heavy",
@@ -325,6 +347,15 @@ pub struct FindingsInput {
     ragged_row_count: usize,
     unterminated_quote: bool,
     error_count: usize,
+    /// What delimiter detection saw, when the report records that it ran.
+    /// A flat summary records no source metadata, so it reads as absent.
+    #[serde(default)]
+    delimiter_detection: Option<DelimiterDetection>,
+    /// A CSV file or bytes source whose report predates the CSV source
+    /// metadata (#1100), so the delimiter rules cannot tell a clear choice
+    /// from an unrecorded one.
+    #[serde(default)]
+    csv_source_unrecorded: bool,
     /// The report's `quality_status` state, read when `quality` is absent.
     quality_status: String,
     quality: Option<QualityFacts>,
@@ -408,6 +439,11 @@ impl From<&ProfileReport> for FindingsInput {
             ragged_row_count: execution.ragged_row_count,
             unterminated_quote: execution.unterminated_quote == Some(true),
             error_count: execution.error_count,
+            delimiter_detection: report
+                .data_source
+                .csv_metadata()
+                .and_then(|metadata| metadata.delimiter_detection.clone()),
+            csv_source_unrecorded: csv_source_unrecorded(&report.data_source),
             quality_status: quality_status_name(&report.quality_status).to_string(),
             quality: report.quality.as_ref().map(|quality| QualityFacts {
                 uniqueness: quality
@@ -822,6 +858,50 @@ fn scan_findings(input: &FindingsInput, out: &mut Collector) {
             [("error_count", EvidenceValue::Count(input.error_count))],
         );
     }
+    if input.csv_source_unrecorded {
+        out.skip_report(
+            FindingCode::DelimiterAmbiguous,
+            NotEvaluatedReason::Unrecorded,
+        );
+        out.skip_report(FindingCode::HeaderNotSplit, NotEvaluatedReason::Unrecorded);
+    }
+    // A delimiter the caller set records no detection, so neither rule asks
+    // about a choice nobody made.
+    if let Some(detection) = &input.delimiter_detection {
+        if let Some(runner_up) = &detection.runner_up {
+            out.report(
+                FindingCode::DelimiterAmbiguous,
+                [
+                    (
+                        "delimiter",
+                        EvidenceValue::Text(detection.delimiter.clone()),
+                    ),
+                    ("runner_up", EvidenceValue::Text(runner_up.clone())),
+                ],
+            );
+        }
+        // A one-column source is often intended, so an unsplit header alone
+        // is no finding: only a character outside the candidates that splits
+        // the header and every sampled record alike makes the reading doubtful.
+        if let Some(unlisted) = &detection.unlisted_delimiter {
+            out.report(
+                FindingCode::HeaderNotSplit,
+                [("unlisted_delimiter", EvidenceValue::Text(unlisted.clone()))],
+            );
+        }
+    }
+}
+
+/// Whether `source` is a CSV file or bytes source that records no CSV source
+/// metadata: a report written before 0.14 recorded it. A stream records no
+/// format (#1042), so it cannot be told apart.
+fn csv_source_unrecorded(source: &DataSource) -> bool {
+    match source {
+        DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
+            matches!(format, FileFormat::Csv) && source.csv_metadata().is_none()
+        }
+        _ => false,
+    }
 }
 
 fn quality_findings(input: &FindingsInput, out: &mut Collector) {
@@ -1120,8 +1200,8 @@ impl Collector {
 #[cfg(test)]
 mod tests {
     use dataprof_core::{
-        ColumnProfile, ColumnStats, DataSource, ExecutionMetadata, FileFormat, Pattern,
-        TruncationReason, TypeHomogeneity,
+        ColumnProfile, ColumnStats, CsvSourceMetadata, DataSource, ExecutionMetadata, FileFormat,
+        Pattern, TruncationReason, TypeHomogeneity,
     };
     use dataprof_metrics::{
         MetricConfidence, QualityAssessment, QualityMetrics, TimelinessMetrics, UniquenessMetrics,
@@ -1136,6 +1216,7 @@ mod tests {
             size_bytes: 256,
             modified_at: None,
             parquet_metadata: None,
+            csv_metadata: None,
         }
     }
 
@@ -1393,6 +1474,60 @@ mod tests {
 
         let current = report(vec![], ExecutionMetadata::new(5, 0, 10)).findings();
         assert_eq!(skipped(&current, FindingCode::RaggedRows), None);
+    }
+
+    /// A CSV report from before the CSV source metadata cannot say whether
+    /// detection was clear, so both delimiter rules are listed as unrecorded
+    /// rather than passed. A recorded clear detection, a configured delimiter
+    /// and a non-CSV source list neither (#1100).
+    #[test]
+    fn a_csv_report_without_source_metadata_does_not_read_as_a_clear_delimiter() {
+        let rules = [FindingCode::DelimiterAmbiguous, FindingCode::HeaderNotSplit];
+        let with_source = |data_source: DataSource| {
+            ProfileReport::new(data_source, vec![], ExecutionMetadata::new(5, 0, 10), None)
+                .findings()
+        };
+        let mut wrong = Vec::new();
+
+        let legacy = with_source(source());
+        for code in rules {
+            if skipped(&legacy, code) != Some(&NotEvaluatedReason::Unrecorded) {
+                wrong.push(format!("legacy csv: {code} not listed as unrecorded"));
+            }
+        }
+
+        let json = DataSource::File {
+            path: "drop.json".to_string(),
+            format: FileFormat::Json,
+            size_bytes: 256,
+            modified_at: None,
+            parquet_metadata: None,
+            csv_metadata: None,
+        };
+        let recorded = [
+            (
+                "clear detection",
+                source().with_csv_metadata(CsvSourceMetadata::detected(DelimiterDetection::new(
+                    b',', 3, None,
+                ))),
+            ),
+            (
+                "configured",
+                source().with_csv_metadata(CsvSourceMetadata::configured(b';')),
+            ),
+            ("json", json),
+        ];
+        for (case, data_source) in recorded {
+            let result = with_source(data_source);
+            for code in rules {
+                if skipped(&result, code).is_some()
+                    || result.findings.iter().any(|finding| finding.code == code)
+                {
+                    wrong.push(format!("{case}: {code} skipped or reported"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// A classified column of `numeric` numbers and `text` text values,

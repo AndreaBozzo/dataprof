@@ -82,12 +82,24 @@ pub fn profile_parquet_bytes(
 /// Synchronous bytes are decoded in Python. Choosing the delimiter there with
 /// `csv.Sniffer` let the same bytes read differently from a file, and a sample
 /// the sniffer could not resolve silently became comma (#1095).
+///
+/// Returns the delimiter with what detection saw: the header's field count,
+/// a candidate that read the sample as well, and a likely delimiter outside
+/// the candidates when none split the header (#1100).
 #[pyfunction]
 #[pyo3(name = "_detect_csv_delimiter")]
-pub fn detect_csv_delimiter(data: &[u8]) -> PyResult<String> {
-    let delimiter =
-        dataprof_csv::detect_delimiter(data).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(char::from(delimiter).to_string())
+#[allow(clippy::type_complexity)]
+pub fn detect_csv_delimiter(
+    data: &[u8],
+) -> PyResult<(String, usize, Option<String>, Option<String>)> {
+    let detection = dataprof_csv::detect_delimiter_detailed(data)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok((
+        detection.delimiter,
+        detection.header_fields,
+        detection.runner_up,
+        detection.unlisted_delimiter,
+    ))
 }
 
 /// List supported pattern detectors and their metadata.

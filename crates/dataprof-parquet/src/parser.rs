@@ -667,6 +667,7 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
             size_bytes,
             modified_at: None,
             parquet_metadata,
+            csv_metadata: None,
         },
         // A buffer has no path, and `DataSource::File` is where Parquet metadata
         // lives, so the in-memory case reports the byte-buffer shape and drops
@@ -675,6 +676,7 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
             name,
             format: FileFormat::Parquet,
             size_bytes: byte_len,
+            csv_metadata: None,
         },
     };
 

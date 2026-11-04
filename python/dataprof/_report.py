@@ -395,6 +395,29 @@ class ProfileReport:
         identity = self._report.source_identity
         return None if identity is None else dict(identity)
 
+    @property
+    def csv_metadata(self) -> dict[str, _Any] | None:
+        """How a CSV source was split into fields.
+
+        ``delimiter`` is the delimiter the reader used. ``delimiter_detection``
+        is present when detection chose it, not ``csv_delimiter=``: the
+        ``delimiter`` it chose, ``header_fields`` (the header's field count),
+        and, when the choice was not clear, ``runner_up`` (another candidate
+        that read the sample as well) or ``unlisted_delimiter`` (a character
+        outside the candidates that splits the header and every sampled
+        record alike). ``findings()`` warns about both.
+
+        ``None`` for a source that is not CSV, and for a report loaded from a
+        document written before dataprof recorded it.
+        """
+        metadata = self._report.csv_metadata
+        if metadata is None:
+            return None
+        copied = dict(metadata)
+        if "delimiter_detection" in copied:
+            copied["delimiter_detection"] = dict(copied["delimiter_detection"])
+        return copied
+
     def _record_source_version(self, source_version: str | None) -> ProfileReport:
         """Record ``source_version`` on a report this process just profiled."""
         if source_version is not None:
@@ -628,6 +651,9 @@ class ProfileReport:
         identity = self.source_identity
         if identity is not None:
             document["source_identity"] = identity
+        csv_metadata = self.csv_metadata
+        if csv_metadata is not None:
+            document["csv_metadata"] = csv_metadata
         return document
 
     def to_json(self, indent: int = 2) -> str:

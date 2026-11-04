@@ -2921,6 +2921,7 @@ mod tests {
             size_bytes: 256,
             modified_at: None,
             parquet_metadata: None,
+            csv_metadata: None,
         }
     }
 

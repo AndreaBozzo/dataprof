@@ -293,6 +293,7 @@ fn every_data_source_variant_is_schema_valid() {
             session_id: None,
             first_record_at: None,
             last_record_at: None,
+            csv_metadata: None,
         },
     ];
 
@@ -342,6 +343,7 @@ fn reports_saved_before_quality_status_still_validate() {
                 size_bytes: 12,
                 modified_at: None,
                 parquet_metadata: None,
+                csv_metadata: None,
             },
             vec![],
             ExecutionMetadata::new(1, 0, 1),

@@ -371,6 +371,7 @@ pub(crate) fn profile_stream(
             session_id: None,
             first_record_at: None,
             last_record_at: None,
+            csv_metadata: None,
         },
         execution,
     )

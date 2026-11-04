@@ -3,8 +3,8 @@ use std::io::Read;
 use std::path::Path;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    TruncationReason,
+    AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataProfilerError, DataSource,
+    DelimiterDetection, ExecutionMetadata, FileFormat, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -257,14 +257,43 @@ const HEADER_TOO_LONG_HINT: &str = "Set the delimiter explicitly (csv_delimiter 
 pub fn detect_delimiter_with_head<R: Read>(
     reader: &mut R,
 ) -> Result<(u8, Vec<u8>), DataProfilerError> {
+    let (detection, head) = detect_delimiter_detailed_with_head(reader)?;
+    Ok((detection_byte(&detection), head))
+}
+
+/// [`detect_delimiter_with_head`], returning what detection saw with the
+/// delimiter it chose: the header's field count and a candidate that read the
+/// sampled records as well, so a report can say when the choice was not
+/// clear (#1100).
+pub fn detect_delimiter_detailed_with_head<R: Read>(
+    reader: &mut R,
+) -> Result<(DelimiterDetection, Vec<u8>), DataProfilerError> {
     let (head, cut) = read_detection_head(reader)?;
     match score_head(&head, cut) {
-        Some(delimiter) => Ok((delimiter, head)),
+        Some(detection) => Ok((detection, head)),
         None => Err(DataProfilerError::csv_structure(
             HEADER_TOO_LONG,
             HEADER_TOO_LONG_HINT,
         )),
     }
+}
+
+/// [`detect_delimiter`], returning what detection saw with the delimiter it
+/// chose (see [`detect_delimiter_detailed_with_head`]).
+pub fn detect_delimiter_detailed<R: Read>(mut reader: R) -> std::io::Result<DelimiterDetection> {
+    let (head, cut) = read_detection_head(&mut reader)?;
+    score_head(&head, cut).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{HEADER_TOO_LONG} {HEADER_TOO_LONG_HINT}"),
+        )
+    })
+}
+
+/// The delimiter byte of a detection. Detection only ever chooses one of
+/// [`CANDIDATES`], all ASCII.
+fn detection_byte(detection: &DelimiterDetection) -> u8 {
+    detection.delimiter.as_bytes()[0]
 }
 
 /// Detect the most likely CSV delimiter by sampling 4 KB of data, or more
@@ -289,26 +318,27 @@ pub fn detect_delimiter_with_head<R: Read>(
 ///
 /// A source with no complete header record in its first 1 MiB is an
 /// `InvalidData` error.
-pub fn detect_delimiter<R: Read>(mut reader: R) -> std::io::Result<u8> {
-    let (head, cut) = read_detection_head(&mut reader)?;
-    score_head(&head, cut).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("{HEADER_TOO_LONG} {HEADER_TOO_LONG_HINT}"),
-        )
-    })
+pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
+    detect_delimiter_detailed(reader).map(|detection| detection_byte(&detection))
 }
 
 /// Score the candidate delimiters over a detection head, or `None` when the
 /// head was cut before any candidate saw a whole header record.
-fn score_head(head: &[u8], cut: bool) -> Option<u8> {
+///
+/// A runner-up is a candidate that also splits the header and has as many
+/// records agreeing with it. Exact width and header width still pick between
+/// the two, but they do not make the reading clear: `id;amount,EUR` with rows
+/// `1;10,50;` reads at two fields with either comma or semicolon (#1100).
+fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
     let text = head_text(head);
     // (splits the header into >1 field, records agreeing with the header,
     //  records at exactly the header's width, header field count) — compared
     //  lexicographically, first wins ties. Exact width only breaks a tie: a
     //  candidate that reads every record as it stands beats one that needs
     //  trailing empty fields cut to agree.
-    let mut best: Option<((bool, usize, usize, usize), u8)> = None;
+    let mut scores: Vec<((bool, usize, usize, usize), u8)> = Vec::new();
+    // The scored records of each candidate, in the order of `scores`.
+    let mut sampled: Vec<Vec<&str>> = Vec::new();
 
     for delimiter in CANDIDATES {
         let (mut records, last_unterminated) = split_sample_records(&text, delimiter);
@@ -332,7 +362,7 @@ fn score_head(head: &[u8], cut: bool) -> Option<u8> {
             if cut {
                 continue;
             }
-            return Some(b',');
+            return Some(DelimiterDetection::new(b',', 0, None));
         };
 
         let (header_fields, _) = count_fields(header, delimiter as char);
@@ -347,13 +377,67 @@ fn score_head(head: &[u8], cut: bool) -> Option<u8> {
             }
         }
 
-        let score = (header_fields > 1, agreeing, exact, header_fields);
-        if best.is_none_or(|(best_score, _)| score > best_score) {
-            best = Some((score, delimiter));
-        }
+        scores.push((
+            (header_fields > 1, agreeing, exact, header_fields),
+            delimiter,
+        ));
+        sampled.push(scored);
     }
 
-    best.map(|(_, delimiter)| delimiter)
+    // The highest score wins, and the earlier candidate a tie.
+    let pick = |candidates: &mut dyn Iterator<Item = ((bool, usize, usize, usize), u8)>| {
+        candidates.fold(
+            None,
+            |best: Option<((bool, usize, usize, usize), u8)>, entry| match best {
+                Some(held) if entry.0 <= held.0 => Some(held),
+                _ => Some(entry),
+            },
+        )
+    };
+    let (score, delimiter) = pick(&mut scores.iter().copied())?;
+    let (splits, agreeing, _, header_fields) = score;
+    let runner_up = pick(
+        &mut scores.iter().copied().filter(|&(other, other_delimiter)| {
+            splits && other_delimiter != delimiter && other.0 && other.1 == agreeing
+        }),
+    )
+    .map(|(_, other_delimiter)| other_delimiter);
+    let unlisted = if splits {
+        None
+    } else {
+        scores
+            .iter()
+            .position(|&(_, candidate)| candidate == delimiter)
+            .and_then(|index| unlisted_delimiter(&sampled[index]))
+    };
+    Some(
+        DelimiterDetection::new(delimiter, header_fields, runner_up)
+            .with_unlisted_delimiter(unlisted),
+    )
+}
+
+/// Punctuation that can delimit a file detection does not try: ASCII
+/// punctuation except the candidates, the quote, and `.`, `-` and `_`, which
+/// sit inside single values (`first.last`, `2024-01-02`, `event_0`).
+const UNLISTED_DELIMITERS: &[u8] = b"!#$%&'()*+/:<=>?@[\\]^`{}~";
+
+/// A character outside the candidates that reads the sampled records as a
+/// table when no candidate splits the header: it occurs outside quotes in the
+/// header, and as often in every sampled record. `None` without a data record
+/// to compare, and for an ordinary one-column file, where nothing does.
+///
+/// `id^amount` over `1^10` is read as one column; this names `^` so the
+/// finding can say which delimiter to set (#1100).
+fn unlisted_delimiter(records: &[&str]) -> Option<u8> {
+    let (header, rows) = records.split_first()?;
+    if rows.is_empty() {
+        return None;
+    }
+    UNLISTED_DELIMITERS.iter().copied().find(|&byte| {
+        let occurrences = |record: &str| count_fields(record, char::from(byte)).0 - 1;
+        let in_header = occurrences(header);
+        in_header > 0 && rows.iter().all(|row| occurrences(row) == in_header)
+    })
 }
 
 /// Detect the most likely CSV delimiter from a file path.
@@ -402,6 +486,8 @@ struct CsvScan {
     ragged_rows: usize,
     /// Set when `max_rows` stopped the pass with records left in the input.
     truncation: Option<TruncationReason>,
+    /// The delimiter the pass split records on and how it was chosen.
+    csv_metadata: CsvSourceMetadata,
 }
 
 fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, DataProfilerError> {
@@ -412,21 +498,18 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
     if config.trim_whitespace {
         csv_builder.trim(csv::Trim::All);
     }
-    let mut actual_delimiter = config.delimiter;
-
-    let boxed_reader: Box<dyn std::io::Read + '_> = if config.delimiter.is_none() {
-        let mut reader = reader;
-        let (detected, head) = detect_delimiter_with_head(&mut reader)?;
-        actual_delimiter = Some(detected);
-
-        Box::new(std::io::Cursor::new(head).chain(reader))
-    } else {
-        Box::new(reader)
+    let (boxed_reader, csv_metadata): (Box<dyn std::io::Read + '_>, _) = match config.delimiter {
+        Some(delimiter) => (Box::new(reader), CsvSourceMetadata::configured(delimiter)),
+        None => {
+            let mut reader = reader;
+            let (detection, head) = detect_delimiter_detailed_with_head(&mut reader)?;
+            (
+                Box::new(std::io::Cursor::new(head).chain(reader)),
+                CsvSourceMetadata::detected(detection),
+            )
+        }
     };
-
-    if let Some(delimiter) = actual_delimiter {
-        csv_builder.delimiter(delimiter);
-    }
+    csv_builder.delimiter(csv_metadata.delimiter.as_bytes()[0]);
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
@@ -484,6 +567,7 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
         rows_read,
         ragged_rows,
         truncation,
+        csv_metadata,
     })
 }
 
@@ -515,6 +599,7 @@ pub fn analyze_csv_file(
         size_bytes: metadata.len(),
         modified_at: None,
         parquet_metadata: None,
+        csv_metadata: Some(scan.csv_metadata.clone()),
     };
 
     let sample_columns = profile_builder::quality_check_samples(column_stats);
@@ -860,6 +945,67 @@ mod tests {
         assert_eq!(age.null_count, 4);
         assert_eq!(age.total_count, 10);
         assert!(report.quality_score().unwrap() >= 0.0);
+    }
+
+    /// What detection records beside the delimiter it picks (#1100): a
+    /// runner-up only on a structural tie, and an unlisted delimiter only when
+    /// it splits the header and every sampled record alike.
+    #[test]
+    fn detection_records_a_tie_and_an_unlisted_delimiter_only_when_present() {
+        // (case, source, delimiter, header fields, runner-up, unlisted)
+        let cases: [(&str, &[u8], &str, usize, Option<&str>, Option<&str>); 9] = [
+            (
+                "tie",
+                b"id;amount,EUR\n1;10,50;\n2;20,75;\n",
+                ",",
+                2,
+                Some(";"),
+                None,
+            ),
+            ("clear comma", b"a,b,c\n1,2,3\n4,5,6\n", ",", 3, None, None),
+            (
+                "clear semicolon",
+                b"a;b\n1,5;2\n3,5;4\n",
+                ";",
+                2,
+                None,
+                None,
+            ),
+            (
+                "unlisted caret",
+                b"id^amount\n1^10\n2^20\n",
+                ",",
+                1,
+                None,
+                Some("^"),
+            ),
+            ("one column", b"value\n1\n2\n", ",", 1, None, None),
+            (
+                "dot inside values",
+                b"name.first\njohn.doe\njane.roe\n",
+                ",",
+                1,
+                None,
+                None,
+            ),
+            ("header lacks it", b"ratio\n1/2\n3/4\n", ",", 1, None, None),
+            ("a record lacks it", b"a:b\n1:2\n3\n", ",", 1, None, None),
+            ("header only", b"a^b\n", ",", 1, None, None),
+        ];
+        let mut wrong = Vec::new();
+        for (case, data, delimiter, header_fields, runner_up, unlisted) in cases {
+            let detection = detect_delimiter_detailed(Cursor::new(data)).unwrap();
+            let seen = (
+                detection.delimiter.as_str(),
+                detection.header_fields,
+                detection.runner_up.as_deref(),
+                detection.unlisted_delimiter.as_deref(),
+            );
+            if seen != (delimiter, header_fields, runner_up, unlisted) {
+                wrong.push(format!("{case}: {seen:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

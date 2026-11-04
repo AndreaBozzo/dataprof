@@ -375,10 +375,18 @@ def _unclosed_quote_at(text: str, delimiter: str, quote: str = '"') -> int | Non
 _NOT_A_LINE_END = _re.compile(r"[^\r\n]")
 
 
+#: How CSV bytes were split: the delimiter, with ``(header_fields, runner_up,
+#: unlisted_delimiter)`` from detection when the caller did not set it (#1100).
+_CsvSource = tuple[str, tuple[int, str | None, str | None] | None]
+
+
 def _columns_from_csv_bytes(
     buffer: _io.BytesIO, delimiter: str | None, max_rows: int | None = None
-) -> list[_Column]:
+) -> tuple[list[_Column], _CsvSource]:
     """Parse CSV bytes into columns, treating an empty field as null.
+
+    Returns the columns with the delimiter they were split on, and what
+    detection saw when it chose it.
 
     This follows the file-based CSV engine, where an empty field is missing data
     rather than an empty string.
@@ -391,11 +399,15 @@ def _columns_from_csv_bytes(
     # of the first column's name.
     raw = buffer.getvalue()
     text = raw.decode("utf-8-sig")
+    source: _CsvSource
     if delimiter is None:
         # The detector every file and async route uses, so the same bytes read
         # the same way. csv.Sniffer silently became comma on a sample it could
         # not resolve, which hid a column and passed a gate (#1095).
-        delimiter = _detect_csv_delimiter(raw)
+        delimiter, header_fields, runner_up, unlisted = _detect_csv_delimiter(raw)
+        source = (delimiter, (header_fields, runner_up, unlisted))
+    else:
+        source = (delimiter, None)
 
     def refuse_an_unclosed_quote() -> None:
         # This reader has no flexible mode to record the problem in, so it
@@ -420,7 +432,7 @@ def _columns_from_csv_bytes(
         # before the header. A quoted empty field is still a real record.
         header = next(row for row in reader if row)
     except StopIteration:
-        return []
+        return [], source
 
     # Reject duplicate headers before profiling: name-keyed mapping access would
     # otherwise shadow one column and silently drop its profile. Single pass,
@@ -476,7 +488,7 @@ def _columns_from_csv_bytes(
         else:
             for column in cells:
                 column.append(None)
-    return [(str(name), cells[i], []) for i, name in enumerate(header)]
+    return [(str(name), cells[i], []) for i, name in enumerate(header)], source
 
 
 def _json_kind(value: object) -> str:

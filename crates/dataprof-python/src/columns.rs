@@ -11,8 +11,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use dataprof::{
-    DataFrameLibrary, DataSource, ExecutionMetadata, FileFormat, MetricPack, TruncationReason,
-    infer_type, is_null_like_token,
+    CsvSourceMetadata, DataFrameLibrary, DataSource, DelimiterDetection, ExecutionMetadata,
+    FileFormat, MetricPack, TruncationReason, infer_type, is_null_like_token,
 };
 use dataprof_runtime::{
     ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowSignature,
@@ -60,7 +60,7 @@ pub type PyColumn = (String, Vec<Option<String>>, Vec<usize>);
 // `#[derive(FromPyObject)]`. Same reasoning as `PyProfilerConfig::new`.
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None, source_bytes = None))]
+#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None, source_bytes = None, csv_source = None))]
 pub fn profile_columns(
     py: Python<'_>,
     mut columns: Vec<PyColumn>,
@@ -72,6 +72,7 @@ pub fn profile_columns(
     source_type: String,
     source_format: Option<String>,
     source_bytes: Option<u64>,
+    csv_source: Option<CsvSourceArg>,
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -296,6 +297,7 @@ pub fn profile_columns(
             name,
             format,
             size_bytes,
+            csv_metadata: csv_source.map(csv_source_metadata).transpose()?,
         }
     } else {
         DataSource::DataFrame {
@@ -321,4 +323,31 @@ pub fn profile_columns(
     super::errors::validate_report_hints(&report, &semantic_hints, include_quality)?;
 
     Ok(PyProfileReport::new(report))
+}
+
+/// How Python-decoded CSV bytes were split: the delimiter, with
+/// `(header_fields, runner_up, unlisted_delimiter)` from detection when the
+/// delimiter was not set explicitly.
+type CsvSourceArg = (String, Option<(usize, Option<String>, Option<String>)>);
+
+/// The CSV source metadata of Python-decoded CSV bytes.
+fn csv_source_metadata((delimiter, detection): CsvSourceArg) -> PyResult<CsvSourceMetadata> {
+    let byte = |text: &str| match text.as_bytes() {
+        [byte] => Ok(*byte),
+        _ => Err(PyValueError::new_err(format!(
+            "csv_source delimiter must be one ASCII character, got {text:?}"
+        ))),
+    };
+    let delimiter = byte(&delimiter)?;
+    Ok(match detection {
+        None => CsvSourceMetadata::configured(delimiter),
+        Some((header_fields, runner_up, unlisted)) => CsvSourceMetadata::detected(
+            DelimiterDetection::new(
+                delimiter,
+                header_fields,
+                runner_up.as_deref().map(byte).transpose()?,
+            )
+            .with_unlisted_delimiter(unlisted.as_deref().map(byte).transpose()?),
+        ),
+    })
 }

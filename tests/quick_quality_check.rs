@@ -48,6 +48,7 @@ fn file_source(path: &Path, format: FileFormat) -> DataSource {
         size_bytes: std::fs::metadata(path).expect("metadata").len(),
         modified_at: None,
         parquet_metadata: None,
+        csv_metadata: None,
     }
 }
 

@@ -3,10 +3,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use dataprof_core::{
-    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler,
-    SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
-    StreamSourceSystem, TruncationReason,
+    AnalysisOptions, ChunkSize, CsvSourceMetadata, DataProfilerError, DataSource,
+    ExecutionMetadata, FileFormat, JsonErrorPolicy, Locale, MetricPack, ProgressSink,
+    QualityDimension, RowSampler, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
+    StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -150,6 +150,9 @@ struct ReaderOutcome {
     /// The JSON array scanner stopped at an element it could not read past and
     /// left input after it unread, so the source was not exhausted (#1106).
     unread_after_fault: bool,
+    /// The delimiter a CSV source was split on and how it was chosen; `None`
+    /// for JSON.
+    csv_metadata: Option<CsvSourceMetadata>,
 }
 
 /// Fold one row into the statistics, the way the sync JSON scanner does.
@@ -554,6 +557,7 @@ impl AsyncStreamingProfiler {
             session_id: None,
             first_record_at: None,
             last_record_at: None,
+            csv_metadata: reader_outcome.csv_metadata.clone(),
         };
 
         // A scan that ran to the end of a source of known length consumed
@@ -644,17 +648,24 @@ impl AsyncStreamingProfiler {
         // A stream cannot be rewound, so detection reads the head into memory
         // and chains it back in front of the rest — the parser still sees the
         // whole source, byte for byte.
-        let (source, delimiter): (Box<dyn Read>, u8) = match delimiter {
-            Some(delimiter) => (Box::new(sync_reader), delimiter),
+        let (source, csv_metadata): (Box<dyn Read>, CsvSourceMetadata) = match delimiter {
+            Some(delimiter) => (
+                Box::new(sync_reader),
+                CsvSourceMetadata::configured(delimiter),
+            ),
             None => {
                 let mut sync_reader = sync_reader;
-                let (detected, head) = dataprof_csv::detect_delimiter_with_head(&mut sync_reader)?;
+                let (detection, head) =
+                    dataprof_csv::detect_delimiter_detailed_with_head(&mut sync_reader)?;
                 (
                     Box::new(std::io::Cursor::new(head).chain(sync_reader)),
-                    detected,
+                    CsvSourceMetadata::detected(detection),
                 )
             }
         };
+        // Detection only chooses an ASCII candidate, and a configured
+        // delimiter is one byte.
+        let delimiter = csv_metadata.delimiter.as_bytes()[0];
         builder.delimiter(delimiter);
         let source = dataprof_csv::QuoteTrackingReader::new(source, delimiter, b'"');
         let quote_outcome = source.outcome();
@@ -681,7 +692,10 @@ impl AsyncStreamingProfiler {
             containers: Vec::new(),
             bytes_read: byte_offset,
         };
-        let mut outcome = ReaderOutcome::default();
+        let mut outcome = ReaderOutcome {
+            csv_metadata: Some(csv_metadata),
+            ..ReaderOutcome::default()
+        };
         if tx.blocking_send(header_chunk).is_err() {
             return Ok(outcome);
         }

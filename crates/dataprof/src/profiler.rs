@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof_core::{
-    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, FileFormat, Locale, MetricPack,
-    ProgressEvent, ProgressSink, QualityDimension, RowCountEstimate, SamplingStrategy,
-    SchemaResult, SemanticHints, StopCondition, StructureReport,
+    AnalysisOptions, ChunkSize, CsvSourceMetadata, DataProfilerError, DataSource, FileFormat,
+    Locale, MetricPack, ProgressEvent, ProgressSink, QualityDimension, RowCountEstimate,
+    SamplingStrategy, SchemaResult, SemanticHints, StopCondition, StructureReport,
 };
 #[cfg(feature = "database")]
 use dataprof_db::DatabaseConfig;
@@ -710,20 +710,28 @@ impl Profiler {
     /// A file that cannot be opened keeps the config as it is: the engine that
     /// opens it reports why. A header too long to detect is an error here, as
     /// on every other CSV route (#1098).
+    ///
+    /// Also returns the CSV source metadata the report records: the delimiter
+    /// and, when it was detected, what detection saw (#1100). `None` only for
+    /// a file that cannot be opened, which never yields a report.
     fn csv_config_for_file(
         &self,
         file_path: &Path,
-    ) -> Result<dataprof_csv::CsvParserConfig, DataProfilerError> {
+    ) -> Result<(dataprof_csv::CsvParserConfig, Option<CsvSourceMetadata>), DataProfilerError> {
         let config = self.csv_parser_config();
-        if self.config.csv_delimiter.is_some() {
-            return Ok(config);
+        if let Some(delimiter) = self.config.csv_delimiter {
+            return Ok((config, Some(CsvSourceMetadata::configured(delimiter))));
         }
         let Ok(file) = std::fs::File::open(file_path) else {
-            return Ok(config);
+            return Ok((config, None));
         };
-        let (detected, _) =
-            dataprof_csv::detect_delimiter_with_head(&mut std::io::BufReader::new(file))?;
-        Ok(config.with_delimiter(detected))
+        let (detection, _) =
+            dataprof_csv::detect_delimiter_detailed_with_head(&mut std::io::BufReader::new(file))?;
+        let delimiter = detection.delimiter.as_bytes()[0];
+        Ok((
+            config.with_delimiter(delimiter),
+            Some(CsvSourceMetadata::detected(detection)),
+        ))
     }
 
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON/Parquet.
@@ -800,11 +808,13 @@ impl Profiler {
                         profiler = profiler.columns(columns.clone());
                     }
                     profiler = profiler.semantic_hints(options.semantic_hints().clone());
-                    let csv_config = self.csv_config_for_file(file_path)?;
+                    let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
                     profiler = profiler.csv_config(csv_config);
                     // Format already resolved here; skip the engine's extension-based
                     // Parquet redetection so explicit `.format()` overrides win.
-                    profiler.analyze_csv_file(file_path)
+                    profiler
+                        .analyze_csv_file(file_path)
+                        .map(|report| with_csv_metadata(report, csv_metadata))
                 }
             }
         }
@@ -870,10 +880,12 @@ impl Profiler {
             profiler = profiler.columns(columns.clone());
         }
         profiler = profiler.semantic_hints(options.semantic_hints().clone());
-        let csv_config = self.csv_config_for_file(file_path)?;
+        let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
         profiler = profiler.csv_config(csv_config);
 
-        profiler.analyze_file(file_path)
+        profiler
+            .analyze_file(file_path)
+            .map(|report| with_csv_metadata(report, csv_metadata))
     }
 
     /// Dispatch to ArrowProfiler for CSV, or fall back to native parsers for other formats
@@ -933,11 +945,11 @@ impl Profiler {
             profiler = profiler.semantic_hints(options.semantic_hints().clone());
             // ArrowProfiler reads the row cap off the CSV config; the incremental
             // engine evaluates the stop condition itself, so only set it here.
-            let csv_config = self
-                .csv_config_for_file(file_path)?
-                .max_rows(self.stop_max_rows());
-            profiler = profiler.csv_config(csv_config);
-            profiler.analyze_csv_file(file_path)
+            let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
+            profiler = profiler.csv_config(csv_config.max_rows(self.stop_max_rows()));
+            profiler
+                .analyze_csv_file(file_path)
+                .map(|report| with_csv_metadata(report, csv_metadata))
         }
         #[cfg(not(feature = "arrow"))]
         {
@@ -947,6 +959,19 @@ impl Profiler {
             })
         }
     }
+}
+
+/// Record how a CSV source was split into fields on the report an engine
+/// returned. The engines read with the delimiter they were handed and do not
+/// know whether it was detected.
+fn with_csv_metadata(
+    mut report: ProfileReport,
+    metadata: Option<CsvSourceMetadata>,
+) -> ProfileReport {
+    if let Some(metadata) = metadata {
+        report.data_source = report.data_source.with_csv_metadata(metadata);
+    }
+    report
 }
 
 impl Default for Profiler {

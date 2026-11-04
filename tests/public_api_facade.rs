@@ -31,6 +31,7 @@ fn stable_facade_builder_surface_compiles() {
         size_bytes: 42,
         modified_at: None,
         parquet_metadata: None,
+        csv_metadata: None,
     };
 
     assert!(source.is_file());
