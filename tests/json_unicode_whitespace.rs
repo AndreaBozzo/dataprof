@@ -7,6 +7,8 @@
 //! branch skipped only ASCII whitespace before `[` and allowed only JSON's four
 //! after `]`, so the same characters around an array were refused. Characters
 //! outside the set (U+001C to U+001F) stay refused around every shape.
+//! `quick_row_count` parsed the document with serde_json, which allows only
+//! JSON's four, so it refused both a single object and an array.
 //!
 //! `python/tests/test_json_unicode_whitespace.py` is the Python twin.
 
@@ -92,7 +94,16 @@ fn sync_routes(extension: &str, text: &str) -> Vec<(&'static str, Result<usize, 
     )
     .map(|summary| summary.rows_read)
     .map_err(|e| e.to_string());
-    vec![("file", file_route), ("reader, format detected", detected)]
+    // The partial-analysis count parses the document with serde_json, apart
+    // from the scanner, and must count the same document.
+    let counted = dataprof::quick_row_count(file.path())
+        .map(|estimate| estimate.count as usize)
+        .map_err(|e| e.to_string());
+    vec![
+        ("file", file_route),
+        ("reader, format detected", detected),
+        ("quick_row_count", counted),
+    ]
 }
 
 #[test]

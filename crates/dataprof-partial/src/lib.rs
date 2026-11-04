@@ -1004,14 +1004,25 @@ fn count_json(
 
             // JSON array — streaming count. We deserialize each element as
             // IgnoredAny which skips the value without allocating, keeping
-            // memory usage constant regardless of array size.
-            let reader = BufReader::new(file);
-            let arr: Vec<serde::de::IgnoredAny> = serde_json::from_reader(reader).map_err(|e| {
+            // memory usage constant regardless of array size. The Unicode
+            // White_Space around the array is skipped as the profiler's
+            // scanner skips it, so both count the same document (#1146).
+            let mut reader = after_leading_white_space(BufReader::new(file))?;
+            let array_error = |e: serde_json::Error| {
                 DataProfilerError::json_parsing_with_source(
                     format!("Failed to parse JSON array: {}", e),
                     e,
                 )
-            })?;
+            };
+            let arr = {
+                let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
+                Vec::<serde::de::IgnoredAny>::deserialize(&mut deserializer).map_err(array_error)?
+            };
+            if !dataprof_json::record::rest_is_white_space(&mut reader)?.0 {
+                return Err(DataProfilerError::json_parsing_error(
+                    "Failed to parse JSON array: trailing characters after the closing ']'",
+                ));
+            }
 
             Ok(RowCountEstimate {
                 count: arr.len() as u64,
@@ -1026,44 +1037,30 @@ fn count_json(
 
 fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
     let file = fs::File::open(path).map_err(|error| map_io_error(path, error))?;
-    let mut reader = BufReader::new(file);
-
-    let first_non_whitespace = consume_leading_whitespace(&mut reader)?;
-
-    if first_non_whitespace != Some(b'{') {
+    let mut reader = after_leading_white_space(BufReader::new(file))?;
+    if reader.fill_buf().map_err(DataProfilerError::from)?.first() != Some(&b'{') {
         return Ok(false);
     }
 
-    let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    match serde::de::IgnoredAny::deserialize(&mut deserializer) {
-        Ok(_) => Ok(deserializer.end().is_ok()),
-        Err(_) => Ok(false),
-    }
+    // serde_json reads its input a byte at a time and stops at the closing
+    // brace, so the reader is left right after the object.
+    let parsed = {
+        let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
+        serde::de::IgnoredAny::deserialize(&mut deserializer).is_ok()
+    };
+    Ok(parsed && dataprof_json::record::rest_is_white_space(&mut reader)?.0)
 }
 
-fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, DataProfilerError> {
-    loop {
-        let mut bytes_to_consume = 0;
-        let first_non_whitespace = {
-            let buf = reader.fill_buf().map_err(DataProfilerError::io_error)?;
-
-            if buf.is_empty() {
-                return Ok(None);
-            }
-
-            let first_non_whitespace = buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied();
-            if first_non_whitespace.is_none() {
-                bytes_to_consume = buf.len();
-            }
-            first_non_whitespace
-        };
-
-        if first_non_whitespace.is_some() {
-            return Ok(first_non_whitespace);
-        }
-
-        reader.consume(bytes_to_consume);
-    }
+/// `reader` past the Unicode White_Space at its start, which the profiler's
+/// JSON scanner skips around a document and serde_json does not (#1146). The
+/// bytes read to find its end are chained back in front of the reader.
+fn after_leading_white_space<R: BufRead>(
+    mut reader: R,
+) -> Result<std::io::Chain<std::io::Cursor<Vec<u8>>, R>, DataProfilerError> {
+    let leading = dataprof_json::record::read_leading_white_space(&mut reader)?;
+    let mut head = leading.head;
+    head.drain(..leading.len);
+    Ok(std::io::Cursor::new(head).chain(reader))
 }
 
 fn analyze_structure_csv(

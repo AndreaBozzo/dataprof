@@ -5,6 +5,8 @@ the file and async routes. The array branch skipped only ASCII whitespace
 before ``[`` and allowed only JSON's four after ``]``, and synchronous bytes
 used ``json.loads``, which allows only those four around a document. Characters
 outside the White_Space set (U+001C to U+001F) stay refused around a document.
+``quick_row_count`` parsed the document with serde_json and refused the
+same characters around a single object and an array.
 
 ``tests/json_unicode_whitespace.rs`` is the Rust twin.
 """
@@ -14,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
@@ -54,10 +57,23 @@ def _shapes(c: str) -> list[tuple[str, str, str, str, int]]:
     ]
 
 
-def _routes(path: Path, data: bytes, fmt: str) -> dict[str, Callable[[], dp.ProfileReport]]:
-    routes: dict[str, Callable[[], dp.ProfileReport]] = {
+class _HasRows(Protocol):
+    @property
+    def rows(self) -> int: ...
+
+
+class _Counted:
+    """A row count in the shape the report routes are read in."""
+
+    def __init__(self, rows: int) -> None:
+        self.rows = rows
+
+
+def _routes(path: Path, data: bytes, fmt: str) -> dict[str, Callable[[], _HasRows]]:
+    routes: dict[str, Callable[[], _HasRows]] = {
         "file": lambda: dp.profile(path, jsonl_on_error="strict"),
         "bytes": lambda: dp.profile(data, format=fmt, jsonl_on_error="strict"),
+        "quick_row_count": lambda: _Counted(dp.quick_row_count(path).count),
     }
     if dp.capabilities().async_streaming:
         routes["async file"] = lambda: asyncio.run(profile_file(path, jsonl_on_error="strict"))
