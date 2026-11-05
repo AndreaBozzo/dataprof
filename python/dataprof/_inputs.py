@@ -9,7 +9,7 @@ import math as _math
 import re as _re
 from typing import Any as _Any
 
-from ._dataprof import _detect_csv_delimiter
+from ._dataprof import _detect_csv_delimiter, _jsonl_line_error
 
 
 def _is_list_of_dicts(source: object) -> bool:
@@ -559,93 +559,6 @@ def _blank_outer_white_space(text: str) -> str:
     return blank(text[:start]) + body + blank(text[end:])
 
 
-#: Why a JSONL record falls outside the one-value-per-line rule; the file and
-#: async readers add the same text for the same faults.
-_JSONL_BOUNDARY_RULE = "a JSONL record must be one complete JSON value on one line"
-
-
-#: A literal the line break cut short, as the record's last text: a prefix of
-#: ``true``, ``false`` or ``null``, or a number that ends at a sign, a decimal
-#: point or an exponent marker. serde reads each as the end of the input.
-_CUT_SHORT_LITERAL = _re.compile(
-    r"t(?:ru?)?|f(?:a(?:ls?)?)?|n(?:ul?)?|-|-?(?:0|[1-9][0-9]*)(?:\.|(?:\.[0-9]+)?[eE][-+]?)"
-)
-
-#: A ``\u`` escape the line break cut short, as the record's last text.
-_CUT_SHORT_ESCAPE = _re.compile(r"\\u[0-9a-fA-F]{0,3}")
-
-#: The characters a JSON number is spelled with.
-_NUMBER_CHARS = frozenset("+-.0123456789eE")
-
-
-def _jsonl_ends_early(record: str, exc: _json.JSONDecodeError) -> bool:
-    """Whether the line break cut the record's value short, as serde's end of
-    input category has it for the file and async readers (#1143).
-
-    ``json`` places most such faults at the end of the text, but an
-    unterminated string at its opening quote, and a cut literal or escape at
-    its start, or past the part it could read (``1`` of ``1e``).
-    """
-    if exc.pos >= len(record) or exc.msg.startswith("Unterminated string"):
-        return True
-    start = exc.pos
-    while start > 0 and record[start - 1] in _NUMBER_CHARS:
-        start -= 1
-    # "Extra data" at a token's own start is data after a complete value
-    # (`{"a":1} 1e`), however it ends; only a number json read part of (`1e`)
-    # is cut short.
-    if exc.msg == "Extra data" and start == exc.pos:
-        return False
-    if _CUT_SHORT_LITERAL.fullmatch(record, start):
-        return True
-    escape = record.rfind("\\", 0, exc.pos + 1)
-    return exc.msg.startswith("Invalid \\u") and bool(
-        escape >= 0 and _CUT_SHORT_ESCAPE.fullmatch(record, escape)
-    )
-
-
-def _jsonl_trails_its_value(record: str, exc: _json.JSONDecodeError) -> bool:
-    """Whether ``json``'s "Extra data" is data after a complete value.
-
-    ``json`` reads ``01`` as ``0`` with ``1`` after it, where serde refuses
-    a number with a leading zero, so that case is not about the boundary.
-    """
-    if exc.msg != "Extra data":
-        return False
-    start = exc.pos
-    while start > 0 and record[start - 1] in _NUMBER_CHARS:
-        start -= 1
-    # ASCII digits only: serde reads `0²` as `0` with data after it.
-    leading_zero = record[start : exc.pos] in ("0", "-0") and record[exc.pos] in "0123456789"
-    return not leading_zero
-
-
-def _jsonl_fault_column(line: str, record: str, exc: _json.JSONDecodeError) -> int:
-    """The 1-based character column of a decode fault in the source line.
-
-    A record that ends early is located just past its last character, as the
-    file and async readers locate it (#1143).
-    """
-    leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
-    if _jsonl_ends_early(record, exc):
-        return leading + len(record) + 1
-    return leading + exc.colno
-
-
-def _jsonl_fault_reason(record: str, exc: _json.JSONDecodeError) -> str:
-    """The decoder's reason for a fault, with the boundary rule for the faults
-    it describes: data after a complete value and a value cut short (#1143).
-
-    ``exc.msg`` names a category, never the record's text. A message that
-    introduces the position ``json`` would append ("... starting at") loses
-    the dangling preposition, since the column is given separately.
-    """
-    reason = exc.msg.removesuffix(" starting at").removesuffix(" at")
-    if _jsonl_trails_its_value(record, exc) or _jsonl_ends_early(record, exc):
-        return f"{reason}; {_JSONL_BOUNDARY_RULE}"
-    return reason
-
-
 #: A JSON number as ``json``'s scanner reads it, which hands the match to its
 #: ``parse_int`` or ``parse_float`` hook before reading on (json.scanner).
 _JSON_NUMBER = _re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
@@ -729,15 +642,20 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             value = _strict_json_loads(record)
         except _json.JSONDecodeError as exc:
             if on_error == "strict":
-                # ``lineno`` is the record's position in the input; the column
-                # counts characters of the line, its trimmed prefix included.
-                # The record text is never included.
-                column = _jsonl_fault_column(line, record, exc)
-                reason = _jsonl_fault_reason(record, exc)
-                raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
-                    f"({reason})."
-                ) from None
+                # The file readers' message for the line: one reason, column
+                # and boundary rule on every route (#1143). ``json`` places
+                # most faults elsewhere and cannot tell a record cut short.
+                # For a line serde reads although ``json`` refused it,
+                # ``json``'s own position and reason stand. The record text is
+                # never included.
+                message = _jsonl_line_error(line, lineno)
+                if message is None:
+                    leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+                    message = (
+                        f"malformed JSON record on line {lineno}, "
+                        f"column {leading + exc.colno}: {exc.msg}"
+                    )
+                raise ValueError(f"jsonl bytes: {message}.") from None
             skipped += 1
             continue
         except _NonStandardJsonConstant as exc:

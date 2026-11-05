@@ -414,13 +414,36 @@ const JSONL_BOUNDARY_RULE: &str = "a JSONL record must be one complete JSON valu
 /// line break cuts short (#1143). The column counts characters of the line as
 /// the source has it, the white space [`read_jsonl_line`] trims included, where
 /// serde counts bytes of the trimmed text; a record that ends early is located
-/// just past its last character. The Python bytes reader applies the same rule.
-/// The record's text is never included.
+/// just past its last character. The Python bytes reader takes the same
+/// message through [`jsonl_line_error_message`]. The record's text is never
+/// included.
 pub fn malformed_jsonl_record_error(
     line_number: usize,
     line: &str,
     err: serde_json::Error,
 ) -> DataProfilerError {
+    let message = malformed_jsonl_record_message(line_number, line, &err);
+    DataProfilerError::json_parsing_with_source(message, err)
+}
+
+/// The message of [`malformed_jsonl_record_error`] for a JSONL `line`, or
+/// `None` when [`read_jsonl_line`] does not refuse it as malformed.
+///
+/// The Python bytes reader decodes with `json` and asks for this message when
+/// `json` refuses a line, so all three routes report one reason, one column
+/// and one boundary rule for the same fault (#1143).
+pub fn jsonl_line_error_message(line_number: usize, line: &str) -> Option<String> {
+    match read_jsonl_line(line) {
+        JsonRecord::Malformed(err) => Some(malformed_jsonl_record_message(line_number, line, &err)),
+        _ => None,
+    }
+}
+
+fn malformed_jsonl_record_message(
+    line_number: usize,
+    line: &str,
+    err: &serde_json::Error,
+) -> String {
     let record = line.trim();
     let leading = line[..line.len() - line.trim_start().len()].chars().count();
     let rendered = err.to_string();
@@ -438,14 +461,13 @@ pub fn malformed_jsonl_record_error(
                 .take_while(|(start, _)| *start < err.column())
                 .count()
     };
-    let message = if ends_early || reason == "trailing characters" {
+    if ends_early || reason == "trailing characters" {
         format!(
             "malformed JSON record on line {line_number}, column {column}: {reason}; {JSONL_BOUNDARY_RULE}"
         )
     } else {
         format!("malformed JSON record on line {line_number}, column {column}: {reason}")
-    };
-    DataProfilerError::json_parsing_with_source(message, err)
+    }
 }
 
 /// Read the bytes that can spell a JSON number, stopping at the first byte that
