@@ -403,7 +403,11 @@ where
                     }
                     JsonRecord::Malformed(err) => {
                         if config.error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_jsonl_record_error(line_number, err));
+                            return Err(record::malformed_jsonl_record_error(
+                                line_number,
+                                &line,
+                                err,
+                            ));
                         }
                         malformed_lines += 1;
                     }
@@ -685,21 +689,6 @@ fn consume_peeked<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
 /// surface directly.
 fn malformed_record_error(err: serde_json::Error) -> DataProfilerError {
     let message = format!("malformed JSON record: {err}");
-    DataProfilerError::json_parsing_with_source(message, err)
-}
-
-/// Build a strict-mode parse error for a JSONL record, located by its physical
-/// line.
-///
-/// Each line is parsed on its own, so the decoder's own line number is always 1
-/// and would be misleading; the column it reports is within the line and so is
-/// also the column in the file. The record's text is never included. Matches the
-/// phrasing the Python bytes reader uses for the same failure.
-fn malformed_jsonl_record_error(line: usize, err: serde_json::Error) -> DataProfilerError {
-    let message = format!(
-        "malformed JSON record on line {line}, column {}: a JSONL record must be one complete JSON value on one line",
-        err.column()
-    );
     DataProfilerError::json_parsing_with_source(message, err)
 }
 

@@ -197,7 +197,7 @@ def test_a_malformed_record_after_leading_whitespace_names_its_physical_column()
     # back to the decoder's column.
     line = '   {"x":1 "y":2}'
     column = line.index('"y"') + 1
-    with pytest.raises(ValueError, match=rf"line 2, column {column}\."):
+    with pytest.raises(ValueError, match=rf"line 2, column {column}:"):
         dp.profile(('{"x":0}\n' + line + "\n").encode(), format="jsonl", jsonl_on_error="strict")
 
 

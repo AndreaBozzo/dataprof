@@ -102,6 +102,19 @@ pub fn detect_csv_delimiter(
     ))
 }
 
+/// The strict-mode message the file and async readers give a malformed JSONL
+/// line, or `None` when serde reads it as one JSON value.
+///
+/// Synchronous bytes are decoded with `json` in Python, which places most
+/// faults at a different character and has no end-of-input category. Copying
+/// serde's rules in Python kept missing cases, so the bytes route asks for the
+/// file readers' message when `json` refuses a line (#1143).
+#[pyfunction]
+#[pyo3(name = "_jsonl_line_error")]
+pub fn jsonl_line_error(line: &str, line_number: usize) -> Option<String> {
+    dataprof_json::record::jsonl_line_error_message(line_number, line)
+}
+
 /// List supported pattern detectors and their metadata.
 #[pyfunction]
 #[pyo3(signature = (locale=None))]

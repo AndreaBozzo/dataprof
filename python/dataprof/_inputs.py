@@ -9,7 +9,7 @@ import math as _math
 import re as _re
 from typing import Any as _Any
 
-from ._dataprof import _detect_csv_delimiter
+from ._dataprof import _detect_csv_delimiter, _jsonl_line_error
 
 
 def _is_list_of_dicts(source: object) -> bool:
@@ -559,6 +559,65 @@ def _blank_outer_white_space(text: str) -> str:
     return blank(text[:start]) + body + blank(text[end:])
 
 
+#: A JSON number as ``json``'s scanner reads it, which hands the match to its
+#: ``parse_int`` or ``parse_float`` hook before reading on (json.scanner).
+_JSON_NUMBER = _re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
+
+#: The bare words ``json`` hands to its ``parse_constant`` hook.
+_JSON_CONSTANTS = ("NaN", "Infinity", "-Infinity")
+
+
+def _refused_token_start(record: str, token: str) -> int | None:
+    """Where in ``record`` the token a ``json.loads`` hook refused begins.
+
+    The hooks get the token without its position. A literal is found as the
+    first literal outside strings that spells it, read as ``json`` reads one,
+    so ``1e400`` of ``1e400foo`` counts: ``json`` decodes in order and an
+    earlier one would have been refused first, while the same text inside a
+    string is not a token at all (#1143). A lone surrogate escape is found as
+    the first escape inside a string that no adjacent escape pairs. ``None``
+    when neither is found, so the caller reports the line without a column
+    rather than a wrong one.
+    """
+    surrogate = token.startswith("\\u")
+    i = 0
+    while i < len(record):
+        char = record[i]
+        if char == '"':
+            i += 1
+            # Where the last high surrogate escape that a low one joined ended,
+            # so a low escape knows it was taken.
+            joined_at = -1
+            while i < len(record) and record[i] != '"':
+                if record[i] != "\\":
+                    i += 1
+                    continue
+                if surrogate and _SURROGATE_ESCAPE.match(record, i):
+                    # `\uD8xx`-`\uDBxx` is a high surrogate, `\uDCxx`-`\uDFxx`
+                    # a low one; json joins a high escape directly followed by
+                    # a low one.
+                    if record[i + 3] in "89abAB":
+                        low = _SURROGATE_ESCAPE.match(record, i + 6)
+                        if low is None or record[i + 9] not in "cdefCDEF":
+                            return i
+                        joined_at = i + 6
+                    elif i != joined_at:
+                        return i
+                i += 6 if record.startswith("\\u", i) else 2
+            i += 1
+            continue
+        constant = next((c for c in _JSON_CONSTANTS if record.startswith(c, i)), None)
+        number = None if constant else _JSON_NUMBER.match(record, i)
+        literal = constant or (number.group() if number else None)
+        if literal is None:
+            i += 1
+            continue
+        if not surrogate and literal == token:
+            return i
+        i += len(literal)
+    return None
+
+
 def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """Scan JSONL text into row objects, honoring the malformed-record policy.
 
@@ -583,20 +642,29 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             value = _strict_json_loads(record)
         except _json.JSONDecodeError as exc:
             if on_error == "strict":
-                # ``lineno`` is the record's position in the input; ``exc.colno``
-                # locates the fault within the trimmed record, so the trimmed
-                # prefix is added back. The record text is never included.
-                column = exc.colno + len(line) - len(line.lstrip(_RECORD_WHITESPACE))
-                raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column}."
-                ) from None
+                # The file readers' message for the line: one reason, column
+                # and boundary rule on every route (#1143). ``json`` places
+                # most faults elsewhere and cannot tell a record cut short.
+                # For a line serde reads although ``json`` refused it,
+                # ``json``'s own position and reason stand. The record text is
+                # never included.
+                message = _jsonl_line_error(line, lineno)
+                if message is None:
+                    leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+                    message = (
+                        f"malformed JSON record on line {lineno}, "
+                        f"column {leading + exc.colno}: {exc.msg}"
+                    )
+                raise ValueError(f"jsonl bytes: {message}.") from None
             skipped += 1
             continue
         except _NonStandardJsonConstant as exc:
             if on_error == "strict":
-                column = line.find(exc.value) + 1
+                leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+                start = _refused_token_start(record, exc.value)
+                where = "" if start is None else f", column {leading + start + 1}"
                 raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
+                    f"jsonl bytes: malformed JSON record on line {lineno}{where} "
                     f"({exc.description})."
                 ) from None
             skipped += 1
