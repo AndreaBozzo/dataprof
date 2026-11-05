@@ -55,6 +55,11 @@ CASES = [
      f"column 3 (Extra data; {BOUNDARY})."),
     ("cut-short escape", b'{"v":"\\u12', f"column 11: EOF while parsing a string; {BOUNDARY}",
      f"column 11 (Invalid \\uXXXX escape; {BOUNDARY})."),
+    # Trailing data that is itself a cut-short literal is still trailing data.
+    ("trailing cut-short number", b'{"a":1} 1e', f"column 9: trailing characters; {BOUNDARY}",
+     f"column 9 (Extra data; {BOUNDARY})."),
+    ("trailing cut-short literal", b'{"a":1}tru', f"column 8: trailing characters; {BOUNDARY}",
+     f"column 8 (Extra data; {BOUNDARY})."),
     # json reads 0 and then data after it; serde refuses the number.
     ("leading zero", b"01", "column 2: invalid number", "column 2 (Extra data)."),
     ("zero, then a non-ASCII digit", "0²".encode(), f"column 2: trailing characters; {BOUNDARY}",

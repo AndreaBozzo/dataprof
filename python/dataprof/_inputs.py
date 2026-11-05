@@ -591,6 +591,11 @@ def _jsonl_ends_early(record: str, exc: _json.JSONDecodeError) -> bool:
     start = exc.pos
     while start > 0 and record[start - 1] in _NUMBER_CHARS:
         start -= 1
+    # "Extra data" at a token's own start is data after a complete value
+    # (`{"a":1} 1e`), however it ends; only a number json read part of (`1e`)
+    # is cut short.
+    if exc.msg == "Extra data" and start == exc.pos:
+        return False
     if _CUT_SHORT_LITERAL.fullmatch(record, start):
         return True
     escape = record.rfind("\\", 0, exc.pos + 1)
