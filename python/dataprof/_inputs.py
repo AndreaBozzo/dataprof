@@ -559,6 +559,147 @@ def _blank_outer_white_space(text: str) -> str:
     return blank(text[:start]) + body + blank(text[end:])
 
 
+#: Why a JSONL record falls outside the one-value-per-line rule; the file and
+#: async readers add the same text for the same faults.
+_JSONL_BOUNDARY_RULE = "a JSONL record must be one complete JSON value on one line"
+
+
+#: A literal the line break cut short, as the record's last text: a prefix of
+#: ``true``, ``false`` or ``null``, or a number that ends at a sign, a decimal
+#: point or an exponent marker. serde reads each as the end of the input.
+_CUT_SHORT_LITERAL = _re.compile(
+    r"t(?:ru?)?|f(?:a(?:ls?)?)?|n(?:ul?)?|-|-?(?:0|[1-9][0-9]*)(?:\.|(?:\.[0-9]+)?[eE][-+]?)"
+)
+
+#: A ``\u`` escape the line break cut short, as the record's last text.
+_CUT_SHORT_ESCAPE = _re.compile(r"\\u[0-9a-fA-F]{0,3}")
+
+#: The characters a JSON number is spelled with.
+_NUMBER_CHARS = frozenset("+-.0123456789eE")
+
+
+def _jsonl_ends_early(record: str, exc: _json.JSONDecodeError) -> bool:
+    """Whether the line break cut the record's value short, as serde's end of
+    input category has it for the file and async readers (#1143).
+
+    ``json`` places most such faults at the end of the text, but an
+    unterminated string at its opening quote, and a cut literal or escape at
+    its start, or past the part it could read (``1`` of ``1e``).
+    """
+    if exc.pos >= len(record) or exc.msg.startswith("Unterminated string"):
+        return True
+    start = exc.pos
+    while start > 0 and record[start - 1] in _NUMBER_CHARS:
+        start -= 1
+    if _CUT_SHORT_LITERAL.fullmatch(record, start):
+        return True
+    escape = record.rfind("\\", 0, exc.pos + 1)
+    return exc.msg.startswith("Invalid \\u") and bool(
+        escape >= 0 and _CUT_SHORT_ESCAPE.fullmatch(record, escape)
+    )
+
+
+def _jsonl_trails_its_value(record: str, exc: _json.JSONDecodeError) -> bool:
+    """Whether ``json``'s "Extra data" is data after a complete value.
+
+    ``json`` reads ``01`` as ``0`` with ``1`` after it, where serde refuses
+    a number with a leading zero, so that case is not about the boundary.
+    """
+    if exc.msg != "Extra data":
+        return False
+    start = exc.pos
+    while start > 0 and record[start - 1] in _NUMBER_CHARS:
+        start -= 1
+    # ASCII digits only: serde reads `0²` as `0` with data after it.
+    leading_zero = record[start : exc.pos] in ("0", "-0") and record[exc.pos] in "0123456789"
+    return not leading_zero
+
+
+def _jsonl_fault_column(line: str, record: str, exc: _json.JSONDecodeError) -> int:
+    """The 1-based character column of a decode fault in the source line.
+
+    A record that ends early is located just past its last character, as the
+    file and async readers locate it (#1143).
+    """
+    leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+    if _jsonl_ends_early(record, exc):
+        return leading + len(record) + 1
+    return leading + exc.colno
+
+
+def _jsonl_fault_reason(record: str, exc: _json.JSONDecodeError) -> str:
+    """The decoder's reason for a fault, with the boundary rule for the faults
+    it describes: data after a complete value and a value cut short (#1143).
+
+    ``exc.msg`` names a category, never the record's text. A message that
+    introduces the position ``json`` would append ("... starting at") loses
+    the dangling preposition, since the column is given separately.
+    """
+    reason = exc.msg.removesuffix(" starting at").removesuffix(" at")
+    if _jsonl_trails_its_value(record, exc) or _jsonl_ends_early(record, exc):
+        return f"{reason}; {_JSONL_BOUNDARY_RULE}"
+    return reason
+
+
+#: A JSON number as ``json``'s scanner reads it, which hands the match to its
+#: ``parse_int`` or ``parse_float`` hook before reading on (json.scanner).
+_JSON_NUMBER = _re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?")
+
+#: The bare words ``json`` hands to its ``parse_constant`` hook.
+_JSON_CONSTANTS = ("NaN", "Infinity", "-Infinity")
+
+
+def _refused_token_start(record: str, token: str) -> int | None:
+    """Where in ``record`` the token a ``json.loads`` hook refused begins.
+
+    The hooks get the token without its position. A literal is found as the
+    first literal outside strings that spells it, read as ``json`` reads one,
+    so ``1e400`` of ``1e400foo`` counts: ``json`` decodes in order and an
+    earlier one would have been refused first, while the same text inside a
+    string is not a token at all (#1143). A lone surrogate escape is found as
+    the first escape inside a string that no adjacent escape pairs. ``None``
+    when neither is found, so the caller reports the line without a column
+    rather than a wrong one.
+    """
+    surrogate = token.startswith("\\u")
+    i = 0
+    while i < len(record):
+        char = record[i]
+        if char == '"':
+            i += 1
+            # Where the last high surrogate escape that a low one joined ended,
+            # so a low escape knows it was taken.
+            joined_at = -1
+            while i < len(record) and record[i] != '"':
+                if record[i] != "\\":
+                    i += 1
+                    continue
+                if surrogate and _SURROGATE_ESCAPE.match(record, i):
+                    # `\uD8xx`-`\uDBxx` is a high surrogate, `\uDCxx`-`\uDFxx`
+                    # a low one; json joins a high escape directly followed by
+                    # a low one.
+                    if record[i + 3] in "89abAB":
+                        low = _SURROGATE_ESCAPE.match(record, i + 6)
+                        if low is None or record[i + 9] not in "cdefCDEF":
+                            return i
+                        joined_at = i + 6
+                    elif i != joined_at:
+                        return i
+                i += 6 if record.startswith("\\u", i) else 2
+            i += 1
+            continue
+        constant = next((c for c in _JSON_CONSTANTS if record.startswith(c, i)), None)
+        number = None if constant else _JSON_NUMBER.match(record, i)
+        literal = constant or (number.group() if number else None)
+        if literal is None:
+            i += 1
+            continue
+        if not surrogate and literal == token:
+            return i
+        i += len(literal)
+    return None
+
+
 def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """Scan JSONL text into row objects, honoring the malformed-record policy.
 
@@ -583,20 +724,24 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             value = _strict_json_loads(record)
         except _json.JSONDecodeError as exc:
             if on_error == "strict":
-                # ``lineno`` is the record's position in the input; ``exc.colno``
-                # locates the fault within the trimmed record, so the trimmed
-                # prefix is added back. The record text is never included.
-                column = exc.colno + len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+                # ``lineno`` is the record's position in the input; the column
+                # counts characters of the line, its trimmed prefix included.
+                # The record text is never included.
+                column = _jsonl_fault_column(line, record, exc)
+                reason = _jsonl_fault_reason(record, exc)
                 raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column}."
+                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
+                    f"({reason})."
                 ) from None
             skipped += 1
             continue
         except _NonStandardJsonConstant as exc:
             if on_error == "strict":
-                column = line.find(exc.value) + 1
+                leading = len(line) - len(line.lstrip(_RECORD_WHITESPACE))
+                start = _refused_token_start(record, exc.value)
+                where = "" if start is None else f", column {leading + start + 1}"
                 raise ValueError(
-                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
+                    f"jsonl bytes: malformed JSON record on line {lineno}{where} "
                     f"({exc.description})."
                 ) from None
             skipped += 1

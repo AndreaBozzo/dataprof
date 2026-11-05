@@ -401,6 +401,53 @@ pub fn wide_integer_record_error(location: &str) -> DataProfilerError {
     ))
 }
 
+/// Why a JSONL record falls outside the one-value-per-line rule, appended to
+/// the decoder's reason for the faults it describes.
+const JSONL_BOUNDARY_RULE: &str = "a JSONL record must be one complete JSON value on one line";
+
+/// Build the strict-mode error for a JSONL `line` that [`read_jsonl_line`]
+/// refused as malformed, located by its physical `line_number`.
+///
+/// The reason is serde's own, without the position it appends: each line is
+/// decoded alone, so serde's line is always 1. The boundary rule is added only
+/// for the faults it describes, data after a complete value and a value the
+/// line break cuts short (#1143). The column counts characters of the line as
+/// the source has it, the white space [`read_jsonl_line`] trims included, where
+/// serde counts bytes of the trimmed text; a record that ends early is located
+/// just past its last character. The Python bytes reader applies the same rule.
+/// The record's text is never included.
+pub fn malformed_jsonl_record_error(
+    line_number: usize,
+    line: &str,
+    err: serde_json::Error,
+) -> DataProfilerError {
+    let record = line.trim();
+    let leading = line[..line.len() - line.trim_start().len()].chars().count();
+    let rendered = err.to_string();
+    let position = format!(" at line {} column {}", err.line(), err.column());
+    let reason = rendered.strip_suffix(&position).unwrap_or(&rendered);
+    let ends_early = err.classify() == serde_json::error::Category::Eof;
+    let column = if ends_early {
+        leading + record.chars().count() + 1
+    } else {
+        // serde's column is the 1-based byte of the fault, so the characters
+        // that start before it end with the faulting one.
+        leading
+            + record
+                .char_indices()
+                .take_while(|(start, _)| *start < err.column())
+                .count()
+    };
+    let message = if ends_early || reason == "trailing characters" {
+        format!(
+            "malformed JSON record on line {line_number}, column {column}: {reason}; {JSONL_BOUNDARY_RULE}"
+        )
+    } else {
+        format!("malformed JSON record on line {line_number}, column {column}: {reason}")
+    };
+    DataProfilerError::json_parsing_with_source(message, err)
+}
+
 /// Read the bytes that can spell a JSON number, stopping at the first byte that
 /// cannot. The token is returned unvalidated — the caller decides whether it
 /// actually parses, so `1.2.3` stays a malformed record rather than a number.

@@ -14,8 +14,9 @@ use dataprof_runtime::{
 
 use dataprof_json::record::{
     JsonRecord, drain_to_end, json_document_error, json_value_kind, json_value_text,
-    malformed_array_error, non_object_record_error, object_record, read_json_record,
-    read_jsonl_line, rest_is_white_space, skip_leading_white_space, wide_integer_record_error,
+    malformed_array_error, malformed_jsonl_record_error, non_object_record_error, object_record,
+    read_json_record, read_jsonl_line, rest_is_white_space, skip_leading_white_space,
+    wide_integer_record_error,
 };
 
 use super::async_source::AsyncDataSource;
@@ -1121,20 +1122,14 @@ impl AsyncStreamingProfiler {
                         }
                         JsonRecord::Malformed(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
-                                // Each line is parsed on its own, so the
-                                // decoder's own line number is always 1 and
-                                // would mislead; its column is within the line
-                                // and so is also the column in the source.
-                                let message = format!(
-                                    "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
-                                    e.column()
-                                );
                                 current_faults.push(ReadFault {
                                     position: current_chunk.len(),
                                     kind: FaultKind::Record,
                                     count: 1,
-                                    refusal: Some(DataProfilerError::json_parsing_with_source(
-                                        message, e,
+                                    refusal: Some(malformed_jsonl_record_error(
+                                        line_number,
+                                        &line,
+                                        e,
                                     )),
                                 });
                                 break;
