@@ -289,7 +289,7 @@ fn every_data_source_variant_is_schema_valid() {
             batch_id: "batch-1".to_string(),
             partition: Some(0),
             consumer_group: None,
-            source_system: StreamSourceSystem::Kafka,
+            source_system: Some(StreamSourceSystem::Kafka),
             session_id: None,
             first_record_at: None,
             last_record_at: None,

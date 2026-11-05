@@ -6,7 +6,7 @@ use dataprof_core::{
     AnalysisOptions, ChunkSize, CsvSourceMetadata, DataProfilerError, DataSource,
     ExecutionMetadata, FileFormat, JsonErrorPolicy, Locale, MetricPack, ProgressSink,
     QualityDimension, RowSampler, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
-    StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
+    StopCondition, StopEvaluator, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -366,6 +366,7 @@ impl AsyncStreamingProfiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         let source_info = source.source_info();
         let format = source_info.format.clone();
+        let buffer_len = source.buffer_len();
 
         match format {
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {}
@@ -546,18 +547,28 @@ impl AsyncStreamingProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        let data_source = DataSource::Stream {
-            topic: source_info.label,
-            batch_id: uuid::Uuid::new_v4().to_string(),
-            partition: None,
-            consumer_group: None,
-            source_system: source_info
-                .source_system
-                .unwrap_or(StreamSourceSystem::Http),
-            session_id: None,
-            first_record_at: None,
-            last_record_at: None,
-            csv_metadata: reader_outcome.csv_metadata.clone(),
+        // A buffer already in memory is the bytes source the synchronous route
+        // records, unless the caller named the system it came from. A stream
+        // whose caller named none records none: it is not known to be HTTP
+        // (#1219).
+        let data_source = match (source_info.source_system, buffer_len) {
+            (None, Some(size_bytes)) => DataSource::Bytes {
+                name: source_info.label,
+                format: format.clone(),
+                size_bytes,
+                csv_metadata: reader_outcome.csv_metadata.clone(),
+            },
+            (source_system, _) => DataSource::Stream {
+                topic: source_info.label,
+                batch_id: uuid::Uuid::new_v4().to_string(),
+                partition: None,
+                consumer_group: None,
+                source_system,
+                session_id: None,
+                first_record_at: None,
+                last_record_at: None,
+                csv_metadata: reader_outcome.csv_metadata.clone(),
+            },
         };
 
         // A scan that ran to the end of a source of known length consumed

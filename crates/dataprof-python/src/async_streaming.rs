@@ -35,11 +35,14 @@ fn build_profiler(config: Option<&PyProfilerConfig>) -> Profiler {
     }
 }
 
+/// The buffer, named as `dataprof.profile` names bytes of the same format, so
+/// both routes record the same `bytes` source (#1219).
 fn python_bytes_source(data: Vec<u8>, format: FileFormat) -> BytesSource {
     let size = data.len() as u64;
+    let name = format!("{format}_bytes");
     BytesSource::new(
         bytes::Bytes::from(data),
-        AsyncSourceInfo::new("python-bytes", format).size_hint(Some(size)),
+        AsyncSourceInfo::new(name, format).size_hint(Some(size)),
     )
 }
 

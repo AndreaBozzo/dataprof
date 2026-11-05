@@ -367,7 +367,7 @@ pub(crate) fn profile_stream(
             batch_id: "0".to_string(),
             partition: None,
             consumer_group: None,
-            source_system: StreamSourceSystem::Custom("arrow_c_stream".to_string()),
+            source_system: Some(StreamSourceSystem::Custom("arrow_c_stream".to_string())),
             session_id: None,
             first_record_at: None,
             last_record_at: None,
