@@ -971,3 +971,21 @@ passing them. Like the rest of `data_source`, it is provenance and stays
 outside the serialized-value parity comparison, although every CSV engine and
 input path records the same object for the same source. Stored v1 reports
 remain valid.
+
+## v1 widening: optional stream `source_system`
+
+`data_source.source_system` on a `stream` source is no longer required (#1219).
+It is present when the caller declared the system the stream came from (`file`
+for `profile_file`, `http` for `profile_url`, `arrow_c_stream` for an Arrow
+stream) and absent when it declared none. Report assembly used to write `http`
+for every undeclared source, so a report claimed a network read for data that
+never crossed one.
+
+In the same change, an async source that is a buffer already in memory and
+declares no system records a `bytes` source, with the buffer's length as
+`size_bytes`, as the synchronous bytes route does. `dataprof.asyncio.profile_bytes`
+now records the same `bytes` source as `dataprof.profile` for the same input.
+
+This is a widening: stored v1 reports remain valid, and a stored `http` value
+reads back unchanged. A consumer that read `source_system` as always present
+must treat it as optional; absent means "not recorded", never `http`.

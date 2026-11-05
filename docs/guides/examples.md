@@ -673,12 +673,7 @@ match quick_quality_check("data.csv")? {
 use dataprof::{Profiler, BytesSource, AsyncSourceInfo, FileFormat};
 
 let csv_bytes: bytes::Bytes = download_from_somewhere().await;
-let source = BytesSource::new(csv_bytes, AsyncSourceInfo {
-    label: "upload.csv".into(),
-    format: FileFormat::Csv,
-    size_hint: None,
-    source_system: None,
-});
+let source = BytesSource::new(csv_bytes, AsyncSourceInfo::new("upload.csv", FileFormat::Csv));
 
 let report = Profiler::new().profile_stream(source).await?;
 ```

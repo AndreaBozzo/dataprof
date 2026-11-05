@@ -310,8 +310,11 @@ pub enum DataSource {
         /// Consumer group for Kafka-style coordination (optional)
         #[serde(skip_serializing_if = "Option::is_none")]
         consumer_group: Option<String>,
-        /// Source system identifier (kafka, kinesis, pulsar, http, etc.)
-        source_system: StreamSourceSystem,
+        /// Source system identifier (kafka, kinesis, pulsar, http, etc.), as
+        /// the caller declared it. Absent when the caller declared none: the
+        /// report does not guess a transport (#1219).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_system: Option<StreamSourceSystem>,
         /// Session ID for multi-tenant scenarios
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
@@ -355,7 +358,10 @@ impl DataSource {
                 topic,
                 batch_id,
                 ..
-            } => format!("{}[{}]-batch:{}", source_system, topic, batch_id),
+            } => match source_system {
+                Some(system) => format!("{system}[{topic}]-batch:{batch_id}"),
+                None => format!("stream[{topic}]-batch:{batch_id}"),
+            },
         }
     }
 
@@ -487,7 +493,7 @@ mod tests {
             batch_id: "b1".to_string(),
             partition: Some(0),
             consumer_group: None,
-            source_system: StreamSourceSystem::Kafka,
+            source_system: Some(StreamSourceSystem::Kafka),
             session_id: None,
             first_record_at: None,
             last_record_at: None,
@@ -504,13 +510,34 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_without_a_declared_system_records_none() {
+        let ds = DataSource::Stream {
+            topic: "events".to_string(),
+            batch_id: "b1".to_string(),
+            partition: None,
+            consumer_group: None,
+            source_system: None,
+            session_id: None,
+            first_record_at: None,
+            last_record_at: None,
+            csv_metadata: None,
+        };
+
+        assert_eq!(ds.identifier(), "stream[events]-batch:b1");
+        let json = serde_json::to_value(&ds).unwrap();
+        assert!(json.get("source_system").is_none(), "{json}");
+        let reloaded: DataSource = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&reloaded).unwrap(), json);
+    }
+
+    #[test]
     fn test_stream_json_serialization() {
         let ds = DataSource::Stream {
             topic: "sensor-data".to_string(),
             batch_id: "batch-789".to_string(),
             partition: Some(2),
             consumer_group: Some("processing-group".to_string()),
-            source_system: StreamSourceSystem::Kinesis,
+            source_system: Some(StreamSourceSystem::Kinesis),
             session_id: Some("session-1".to_string()),
             first_record_at: Some("2023-01-01T10:00:00Z".to_string()),
             last_record_at: Some("2023-01-01T10:05:00Z".to_string()),

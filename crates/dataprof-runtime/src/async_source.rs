@@ -19,7 +19,9 @@ pub struct AsyncSourceInfo {
     /// Optional total size in bytes — enables progress percentage calculation
     pub size_hint: Option<u64>,
     /// Optional source system for the report's `DataSource::Stream` variant.
-    /// Defaults to `StreamSourceSystem::Http` when `None`.
+    /// `None` records no system: a [`BytesSource`] is then reported as a
+    /// `DataSource::Bytes` source, and any other source as a stream without
+    /// `source_system`.
     pub source_system: Option<StreamSourceSystem>,
     /// Whether the first row of a CSV contains column headers.
     /// `None` (default) assumes headers are present. Ignored for non-CSV formats.
@@ -101,6 +103,16 @@ pub trait AsyncDataSource: Send {
 
     /// Metadata about this source (label, format, optional size).
     fn source_info(&self) -> AsyncSourceInfo;
+
+    /// The length of the source's bytes when they are already in memory.
+    ///
+    /// A report records such a source as `DataSource::Bytes` with this length,
+    /// as the synchronous bytes route does, unless the caller declared a
+    /// [`source_system`](AsyncSourceInfo::source_system). Defaults to `None`:
+    /// most sources are true streams.
+    fn buffer_len(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// An in-memory byte buffer that implements `AsyncDataSource`.
@@ -134,6 +146,10 @@ impl AsyncDataSource for BytesSource {
 
     fn source_info(&self) -> AsyncSourceInfo {
         self.info.clone()
+    }
+
+    fn buffer_len(&self) -> Option<u64> {
+        Some(self.data.len() as u64)
     }
 }
 
