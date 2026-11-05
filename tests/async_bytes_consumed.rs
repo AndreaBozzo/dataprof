@@ -172,6 +172,29 @@ async fn a_capped_jsonl_scan_counts_no_line_past_the_cap() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The JSON array twin of the test above: the count ends after the last
+/// element profiled, before the comma and the element past the cap.
+#[tokio::test]
+async fn a_capped_json_array_scan_counts_through_the_last_row() {
+    let data: &'static [u8] = b"[{\"a\":1},{\"a\":2}]";
+    let mut wrong = Vec::new();
+    for (chunks, chunk_size) in CHUNK_SIZES {
+        let report = Profiler::new()
+            .chunk_size(chunk_size)
+            .stop_when(StopCondition::MaxRows(1))
+            .profile_stream(buffer(data, FileFormat::Json, false))
+            .await
+            .unwrap();
+        if report.execution.bytes_consumed != Some(8) || report.execution.source_exhausted {
+            wrong.push(format!(
+                "{chunks}: bytes_consumed {:?}, source_exhausted {}, expected Some(8) and false",
+                report.execution.bytes_consumed, report.execution.source_exhausted
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// A row cap that leaves a row unread is a truncated scan, with or without a
 /// size hint, and counts no more than the source holds. Counting the bytes
 /// after the last row must not put a chunk of bytes alone ahead of the reader's
@@ -206,6 +229,118 @@ async fn a_cap_that_leaves_a_row_unread_is_a_truncation() {
                         Err(error) => wrong.push(format!("{route}: {error}")),
                     }
                 }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// Stop conditions met at the end of the source, found in review of #1226. A
+/// stop whose look one chunk past it finds no row left is not a truncation,
+/// on every format, and progress counts the bytes the report counts. A
+/// progress sink makes async CSV count its rows before the scan, and that
+/// count would answer for it, so CSV runs without one; CSV also leaves the
+/// header out of progress, which predates #1223.
+#[tokio::test]
+async fn a_stop_at_the_end_of_the_source_is_a_complete_scan() {
+    use std::sync::{Arc, Mutex};
+
+    use dataprof::ProgressEvent;
+
+    let cases: [(&str, &'static [u8], FileFormat, ChunkSize, StopCondition); 7] = [
+        (
+            "JSON array, one-byte chunks, a cap met at the end",
+            b"[ {\"a\":1} , {\"a\":2} ]\n",
+            FileFormat::Json,
+            ChunkSize::Fixed(1),
+            StopCondition::MaxRows(2),
+        ),
+        (
+            "empty JSON array, a cap of zero",
+            b"[]",
+            FileFormat::Json,
+            ChunkSize::Adaptive,
+            StopCondition::MaxRows(0),
+        ),
+        (
+            "JSON array, one-byte chunks, a byte budget met before the bracket",
+            b"[{\"a\":1}]",
+            FileFormat::Json,
+            ChunkSize::Fixed(1),
+            StopCondition::MaxBytes(8),
+        ),
+        (
+            "CSV, trailing blank lines, a cap of zero",
+            b"a,b\n\n\n",
+            FileFormat::Csv,
+            ChunkSize::Adaptive,
+            StopCondition::MaxRows(0),
+        ),
+        (
+            "CSV, one-byte chunks, a byte budget met by the trailing blank lines",
+            b"a,b\n1,2\n\n\n",
+            FileFormat::Csv,
+            ChunkSize::Fixed(1),
+            StopCondition::MaxBytes(10),
+        ),
+        (
+            "CSV, a byte budget met by the last chunk",
+            b"a,b\n1,2\n\n\n",
+            FileFormat::Csv,
+            ChunkSize::Adaptive,
+            StopCondition::MaxBytes(9),
+        ),
+        (
+            "JSONL, a byte budget met by the last chunk",
+            b"{\"a\":1}\n\n\n",
+            FileFormat::Jsonl,
+            ChunkSize::Adaptive,
+            StopCondition::MaxBytes(9),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (case, data, format, chunk_size, stop) in cases {
+        for hinted in [true, false] {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&events);
+            let route = format!("{case}, hinted {hinted}");
+            let profiler = Profiler::new()
+                .chunk_size(chunk_size.clone())
+                .stop_when(stop.clone());
+            let profiler = if format == FileFormat::Csv {
+                profiler
+            } else {
+                profiler.on_progress(move |event| sink.lock().unwrap().push(event))
+            };
+            let report = match profiler
+                .profile_stream(buffer(data, format.clone(), hinted))
+                .await
+            {
+                Ok(report) => report,
+                Err(error) => {
+                    wrong.push(format!("{route}: {error}"));
+                    continue;
+                }
+            };
+            let finished = events
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    ProgressEvent::Finished { total_bytes, .. } => Some(*total_bytes),
+                    _ => None,
+                });
+            let execution = &report.execution;
+            let progress_agrees = format == FileFormat::Csv || finished == execution.bytes_consumed;
+            if execution.bytes_consumed != Some(data.len() as u64)
+                || !execution.source_exhausted
+                || !progress_agrees
+            {
+                wrong.push(format!(
+                    "{route}: bytes_consumed {:?}, source_exhausted {}, progress total {finished:?}",
+                    execution.bytes_consumed, execution.source_exhausted
+                ));
             }
         }
     }

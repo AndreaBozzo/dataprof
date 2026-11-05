@@ -41,6 +41,10 @@ struct ParsedChunk {
     /// The JSON reader stopped at the row cap with a record left unread, which
     /// it did not decode. Such a chunk is the last one and holds no records.
     past_cap: bool,
+    /// The reader read its source to the end before sending this chunk, which
+    /// is the last one. A stop condition met on it leaves nothing unread, so
+    /// it is not a truncation, with or without a size hint (#1223).
+    at_end: bool,
     /// Records the reader could not turn into rows, and faults in a JSON
     /// document's grammar, each at its place among `records`. The processor
     /// judges one only if the row cap has not stopped it first: a record past
@@ -86,11 +90,13 @@ impl FaultBuffer {
 /// past them are not.
 ///
 /// A chunk that holds no row is the rest of the source, so its bytes are added
-/// to `total_bytes`: they were read, and a complete scan counts them (#1223).
+/// to `total_bytes` and to progress: they were read, and a complete scan counts
+/// them (#1223).
 fn judge_lookahead(
     next: ParsedChunk,
     malformed_records: &mut usize,
     total_bytes: &mut u64,
+    progress_tracker: &mut ProgressTracker,
 ) -> Result<bool, DataProfilerError> {
     for fault in next.faults {
         if fault.position > 0 || fault.kind == FaultKind::Record {
@@ -104,6 +110,7 @@ fn judge_lookahead(
     let holds_row = !next.records.is_empty() || next.past_cap;
     if !holds_row {
         *total_bytes += next.bytes_read;
+        progress_tracker.emit_chunk(0, next.bytes_read, None);
     }
     Ok(holds_row)
 }
@@ -757,6 +764,7 @@ impl AsyncStreamingProfiler {
         let header_chunk = ParsedChunk {
             new_columns: Vec::new(),
             past_cap: false,
+            at_end: false,
             faults: Vec::new(),
             records: vec![header_fields],
             containers: Vec::new(),
@@ -793,6 +801,7 @@ impl AsyncStreamingProfiler {
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
         let mut faults = Vec::new();
+        let mut read_to_end = false;
 
         loop {
             match csv_reader.read_record(&mut record) {
@@ -801,6 +810,7 @@ impl AsyncStreamingProfiler {
                     // Blank lines after the last record are source bytes
                     // read, as the file engine counts them (#1223).
                     bytes_in_chunk += csv_reader.position().byte().saturating_sub(byte_offset);
+                    read_to_end = true;
                     break;
                 }
                 // Handed to the processor with the rows before it, which
@@ -827,6 +837,7 @@ impl AsyncStreamingProfiler {
                 let chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    at_end: false,
                     faults: Vec::new(),
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
@@ -847,6 +858,7 @@ impl AsyncStreamingProfiler {
             let chunk = ParsedChunk {
                 new_columns: Vec::new(),
                 past_cap: false,
+                at_end: read_to_end,
                 faults,
                 records: current_chunk,
                 containers: Vec::new(),
@@ -967,12 +979,14 @@ impl AsyncStreamingProfiler {
                           headers_sent: &mut bool,
                           sent_columns: &mut usize,
                           tx: &mpsc::Sender<ParsedChunk>,
-                          final_flush: bool|
+                          final_flush: bool,
+                          at_end: bool|
          -> Result<bool, DataProfilerError> {
             if !*headers_sent && (!cols.is_empty() || final_flush) {
                 let header_chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    at_end: false,
                     faults: Vec::new(),
                     records: vec![cols.to_vec()],
                     containers: Vec::new(),
@@ -990,6 +1004,7 @@ impl AsyncStreamingProfiler {
                 let data_chunk = ParsedChunk {
                     new_columns: cols[*sent_columns..].to_vec(),
                     past_cap: false,
+                    at_end,
                     faults: faults.take(),
                     records,
                     containers,
@@ -1056,6 +1071,7 @@ impl AsyncStreamingProfiler {
                                     &mut headers_sent,
                                     &mut sent_columns,
                                     &tx,
+                                    false,
                                     false,
                                 )?
                             {
@@ -1324,6 +1340,7 @@ impl AsyncStreamingProfiler {
                                         &mut sent_columns,
                                         &tx,
                                         false,
+                                        false,
                                     )?
                                 {
                                     return Ok(unread_after_fault);
@@ -1487,6 +1504,9 @@ impl AsyncStreamingProfiler {
                 &mut sent_columns,
                 &tx,
                 true,
+                // Short of the cap, the reader read on to the end of the
+                // source: a strict refusal stops it earlier, but fails the scan.
+                !past_cap,
             );
         }
         if past_cap {
@@ -1496,6 +1516,7 @@ impl AsyncStreamingProfiler {
                 bytes_read: 0,
                 new_columns: Vec::new(),
                 past_cap: true,
+                at_end: false,
                 faults: Vec::new(),
             });
         }
@@ -1620,6 +1641,9 @@ impl AsyncStreamingProfiler {
             total_bytes += chunk.bytes_read;
             let chunk_rows = chunk.records.len();
             let chunk_bytes = chunk.bytes_read;
+            // The reader's marker for a record it left unread past the cap.
+            let marks_cap = chunk.past_cap;
+            let at_end = chunk.at_end;
             let mut rows_consumed = chunk_rows;
             let mut hit_row_limit = false;
             headers.extend(chunk.new_columns);
@@ -1722,9 +1746,12 @@ impl AsyncStreamingProfiler {
                 } else {
                     match rx.recv().await {
                         None => false,
-                        Some(next) => {
-                            judge_lookahead(next, &mut malformed_records, &mut total_bytes)?
-                        }
+                        Some(next) => judge_lookahead(
+                            next,
+                            &mut malformed_records,
+                            &mut total_bytes,
+                            &mut progress_tracker,
+                        )?,
                     }
                 };
 
@@ -1758,7 +1785,8 @@ impl AsyncStreamingProfiler {
             } else {
                 0.0
             };
-            let reached_eof = exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
+            let reached_eof = at_end
+                || exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
                 || size_hint.is_some_and(|size| total_bytes >= size);
 
             if exact_total_rows.is_none()
@@ -1798,11 +1826,25 @@ impl AsyncStreamingProfiler {
                 // A JSON document's grammar faults after the last row read can
                 // arrive in a chunk of their own; they are reached all the
                 // same, as the cap's lookahead above reaches them. JSONL and
-                // CSV have no grammar faults, so they do not wait for a chunk.
-                if format == FileFormat::Json
-                    && let Some(next) = rx.recv().await
-                {
-                    judge_lookahead(next, &mut malformed_records, &mut total_bytes)?;
+                // CSV have no grammar faults, so they do not wait for a chunk:
+                // on a live stream the next one may be long in coming.
+                if format == FileFormat::Json {
+                    let row_remains = match rx.recv().await {
+                        None => false,
+                        Some(next) => judge_lookahead(
+                            next,
+                            &mut malformed_records,
+                            &mut total_bytes,
+                            &mut progress_tracker,
+                        )?,
+                    };
+                    // The look past the stop shows whether a row remained;
+                    // none means the scan read the whole source, which a size
+                    // hint would have shown (#1223). A stop on the cap's
+                    // marker has a record left by definition.
+                    if !row_remains && !marks_cap {
+                        truncation_reason = None;
+                    }
                 }
                 drop(rx); // signal reader task to stop
                 break;
