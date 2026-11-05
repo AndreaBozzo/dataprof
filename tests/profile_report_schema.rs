@@ -295,6 +295,19 @@ fn every_data_source_variant_is_schema_valid() {
             last_record_at: None,
             csv_metadata: None,
         },
+        // A caller that declares no system records none, and the field is
+        // omitted (#1219).
+        DataSource::Stream {
+            topic: "events".to_string(),
+            batch_id: "batch-1".to_string(),
+            partition: None,
+            consumer_group: None,
+            source_system: None,
+            session_id: None,
+            first_record_at: None,
+            last_record_at: None,
+            csv_metadata: None,
+        },
     ];
 
     for source in sources {

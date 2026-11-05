@@ -23,12 +23,15 @@ import pytest
 
 try:
     import dataprof as dp
-    from dataprof.asyncio import _HAS_URL, profile_bytes, profile_file, profile_url
+    from dataprof.asyncio import _HAS_ASYNC, _HAS_URL, profile_bytes, profile_file, profile_url
 except ImportError:
     pytest.skip(
         "dataprof native extension not built. Run: maturin develop",
         allow_module_level=True,
     )
+
+# The wrappers import on any build and raise only when called.
+pytestmark = pytest.mark.skipif(not _HAS_ASYNC, reason="async support not compiled")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PARQUET = (REPO_ROOT / "examples" / "test_data" / "simple.parquet").read_bytes()
