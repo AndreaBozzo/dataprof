@@ -29,7 +29,9 @@ struct ParsedChunk {
     /// object or array (#637). Empty for a header chunk and for CSV, which has
     /// no containers; otherwise one entry per row.
     containers: Vec<Vec<usize>>,
-    /// Number of raw bytes consumed to produce this chunk (for progress).
+    /// Source bytes read since the previous chunk, up to the end of this one's
+    /// last record or past it to the end of the source. The chunks sum to
+    /// `bytes_consumed` and feed progress and the byte budget.
     bytes_read: u64,
     /// Columns the reader registered since the previous chunk, appended to
     /// the header's in order. A JSON key can first appear in any record, so
@@ -39,6 +41,10 @@ struct ParsedChunk {
     /// The JSON reader stopped at the row cap with a record left unread, which
     /// it did not decode. Such a chunk is the last one and holds no records.
     past_cap: bool,
+    /// The reader read its source to the end before sending this chunk, which
+    /// is the last one. A stop condition met on it leaves nothing unread, so
+    /// it is not a truncation, with or without a size hint (#1223).
+    at_end: bool,
     /// Records the reader could not turn into rows, and faults in a JSON
     /// document's grammar, each at its place among `records`. The processor
     /// judges one only if the row cap has not stopped it first: a record past
@@ -82,9 +88,15 @@ impl FaultBuffer {
 /// row, judging on the way the grammar faults ahead of its first row: they
 /// follow the last row read, so they are reached, as within a chunk. Faults
 /// past them are not.
+///
+/// A chunk that holds no row is the rest of the source, so its bytes are added
+/// to `total_bytes` and to progress: they were read, and a complete scan counts
+/// them (#1223).
 fn judge_lookahead(
     next: ParsedChunk,
     malformed_records: &mut usize,
+    total_bytes: &mut u64,
+    progress_tracker: &mut ProgressTracker,
 ) -> Result<bool, DataProfilerError> {
     for fault in next.faults {
         if fault.position > 0 || fault.kind == FaultKind::Record {
@@ -95,7 +107,12 @@ fn judge_lookahead(
             None => *malformed_records += fault.count,
         }
     }
-    Ok(!next.records.is_empty() || next.past_cap)
+    let holds_row = !next.records.is_empty() || next.past_cap;
+    if !holds_row {
+        *total_bytes += next.bytes_read;
+        progress_tracker.emit_chunk(0, next.bytes_read, None);
+    }
+    Ok(holds_row)
 }
 
 /// A record that yields no row, or a fault in a JSON document's grammar.
@@ -190,6 +207,51 @@ fn fold_row(
 fn count_containers(headers: &[String], positions: &[usize], counts: &mut HashMap<String, usize>) {
     for &position in positions {
         *counts.entry(headers[position].clone()).or_default() += 1;
+    }
+}
+
+/// Counts the bytes a parser takes from the reader it wraps, by `read` or by
+/// `consume`, so a chunk's byte count is the source bytes read up to its last
+/// record rather than an estimate from what the record held (#1223).
+///
+/// The count is shared, so it stays readable once the reader is moved into a
+/// chain or a decoder.
+struct ConsumedBytes<R> {
+    inner: R,
+    consumed: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+impl<R> ConsumedBytes<R> {
+    fn new(inner: R) -> (Self, std::rc::Rc<std::cell::Cell<u64>>) {
+        let consumed = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reader = Self {
+            inner,
+            consumed: std::rc::Rc::clone(&consumed),
+        };
+        (reader, consumed)
+    }
+
+    fn add(&self, bytes: usize) {
+        self.consumed.set(self.consumed.get() + bytes as u64);
+    }
+}
+
+impl<R: std::io::Read> std::io::Read for ConsumedBytes<R> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(output)?;
+        self.add(read);
+        Ok(read)
+    }
+}
+
+impl<R: std::io::BufRead> std::io::BufRead for ConsumedBytes<R> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.inner.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.add(amount);
+        self.inner.consume(amount);
     }
 }
 
@@ -572,10 +634,10 @@ impl AsyncStreamingProfiler {
         };
 
         // A scan that ran to the end of a source of known length consumed
-        // exactly that many bytes. The per-chunk tally is the best available
-        // answer for a bounded scan, but it is derived from parsed records and
-        // would otherwise leave a complete scan reporting fewer bytes than the
-        // source holds.
+        // exactly that many bytes. Otherwise the chunks' tally answers: each
+        // reader counts the source bytes it read up to the end of a chunk, so
+        // a complete scan without a size hint sums to the source's length too
+        // (#1223).
         let bytes_consumed = match (truncation_reason.is_none(), source_info.size_hint) {
             (true, Some(total)) => total,
             _ => total_bytes,
@@ -702,6 +764,7 @@ impl AsyncStreamingProfiler {
         let header_chunk = ParsedChunk {
             new_columns: Vec::new(),
             past_cap: false,
+            at_end: false,
             faults: Vec::new(),
             records: vec![header_fields],
             containers: Vec::new(),
@@ -738,11 +801,18 @@ impl AsyncStreamingProfiler {
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
         let mut faults = Vec::new();
+        let mut read_to_end = false;
 
         loop {
             match csv_reader.read_record(&mut record) {
                 Ok(true) => {}
-                Ok(false) => break,
+                Ok(false) => {
+                    // Blank lines after the last record are source bytes
+                    // read, as the file engine counts them (#1223).
+                    bytes_in_chunk += csv_reader.position().byte().saturating_sub(byte_offset);
+                    read_to_end = true;
+                    break;
+                }
                 // Handed to the processor with the rows before it, which
                 // judges it only if the row cap does not stop it first.
                 Err(e) if matches!(e.kind(), csv::ErrorKind::UnequalLengths { .. }) => {
@@ -767,6 +837,7 @@ impl AsyncStreamingProfiler {
                 let chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    at_end: false,
                     faults: Vec::new(),
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
@@ -781,11 +852,13 @@ impl AsyncStreamingProfiler {
             }
         }
 
-        // Send remaining records
-        if !current_chunk.is_empty() || !faults.is_empty() {
+        // Send remaining records, and the bytes read past the last chunk sent
+        // even when they held no record.
+        if !current_chunk.is_empty() || !faults.is_empty() || bytes_in_chunk > 0 {
             let chunk = ParsedChunk {
                 new_columns: Vec::new(),
                 past_cap: false,
+                at_end: read_to_end,
                 faults,
                 records: current_chunk,
                 containers: Vec::new(),
@@ -819,17 +892,28 @@ impl AsyncStreamingProfiler {
         use std::io::BufRead;
 
         let buf_reader = std::io::BufReader::new(sync_reader);
-        let mut buf_reader =
+        let buf_reader =
             dataprof_core::Utf8BomReader::new(buf_reader).map_err(DataProfilerError::from)?;
+        // The BOM is part of the source and therefore of progress/byte
+        // accounting, even though it is not passed to the JSON decoder.
+        let bom_len = buf_reader.stripped_len() as u64;
+        let (mut buf_reader, consumed) = ConsumedBytes::new(buf_reader);
+        // Source bytes read so far. A chunk carries what was read since the
+        // chunk before it, so the chunks sum to the bytes read, blank lines,
+        // separators and brackets included (#1223).
+        let position = || bom_len + consumed.get();
+        let mut sent_position: u64 = 0;
+        // The end of the last record read, where a scan the row cap stopped
+        // ends: the separators and the record read past the cap are not
+        // counted, and no chunk of bytes alone precedes the cap's marker,
+        // which the processor would take for the end of the source.
+        let mut record_end: u64;
         let mut known_columns: Vec<String> = Vec::new();
         // Each row with the positions of its container fields; see
         // `ParsedChunk::containers`.
         let mut current_chunk: Vec<(Vec<String>, Vec<usize>)> = Vec::new();
         let mut known_columns_set: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        // The BOM is part of the source and therefore of progress/byte
-        // accounting, even though it is not passed to the JSON decoder.
-        let mut bytes_in_chunk = buf_reader.stripped_len() as u64;
         let mut headers_sent = false;
         // How many of `known_columns` the receiver has been sent.
         let mut sent_columns: usize = 0;
@@ -889,17 +973,20 @@ impl AsyncStreamingProfiler {
         // headers, where the receiver would read them *as* the headers.
         let send_chunk = |chunk: &mut Vec<(Vec<String>, Vec<usize>)>,
                           faults: &mut FaultBuffer,
-                          bytes: &mut u64,
+                          position: u64,
+                          sent: &mut u64,
                           cols: &[String],
                           headers_sent: &mut bool,
                           sent_columns: &mut usize,
                           tx: &mpsc::Sender<ParsedChunk>,
-                          final_flush: bool|
+                          final_flush: bool,
+                          at_end: bool|
          -> Result<bool, DataProfilerError> {
             if !*headers_sent && (!cols.is_empty() || final_flush) {
                 let header_chunk = ParsedChunk {
                     new_columns: Vec::new(),
                     past_cap: false,
+                    at_end: false,
                     faults: Vec::new(),
                     records: vec![cols.to_vec()],
                     containers: Vec::new(),
@@ -912,17 +999,18 @@ impl AsyncStreamingProfiler {
                 *sent_columns = cols.len();
             }
 
-            if *headers_sent && (!chunk.is_empty() || !faults.is_empty()) {
+            if *headers_sent && (!chunk.is_empty() || !faults.is_empty() || position > *sent) {
                 let (records, containers) = std::mem::take(chunk).into_iter().unzip();
                 let data_chunk = ParsedChunk {
                     new_columns: cols[*sent_columns..].to_vec(),
                     past_cap: false,
+                    at_end,
                     faults: faults.take(),
                     records,
                     containers,
-                    bytes_read: *bytes,
+                    bytes_read: position.saturating_sub(*sent),
                 };
-                *bytes = 0;
+                *sent = position;
                 *sent_columns = cols.len();
                 if tx.blocking_send(data_chunk).is_err() {
                     return Ok(false);
@@ -943,6 +1031,7 @@ impl AsyncStreamingProfiler {
                 // diagnostic points at the line the user would open.
                 let mut line_number = 0usize;
                 loop {
+                    record_end = position();
                     // Blank lines are separators, not records.
                     let found = loop {
                         line.clear();
@@ -964,25 +1053,25 @@ impl AsyncStreamingProfiler {
                         past_cap = true;
                         break;
                     }
-                    bytes_in_chunk += line.len() as u64;
 
                     match read_jsonl_line(&line) {
                         JsonRecord::Object(obj) => {
                             let row =
                                 process_object(&obj, &mut known_columns, &mut known_columns_set);
-                            bytes_in_chunk += row.0.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                             current_chunk.push(row);
                             emitted_records += 1;
 
-                            if bytes_in_chunk as usize >= bytes_per_chunk
+                            if position() - sent_position >= bytes_per_chunk as u64
                                 && !send_chunk(
                                     &mut current_chunk,
                                     &mut current_faults,
-                                    &mut bytes_in_chunk,
+                                    position(),
+                                    &mut sent_position,
                                     &known_columns,
                                     &mut headers_sent,
                                     &mut sent_columns,
                                     &tx,
+                                    false,
                                     false,
                                 )?
                             {
@@ -1009,8 +1098,6 @@ impl AsyncStreamingProfiler {
                                 refusal: None,
                             });
                             malformed_records += 1;
-                            // Approximate progress for a record that yields no row.
-                            bytes_in_chunk += 10;
                         }
                         JsonRecord::WideInteger => {
                             if error_policy == JsonErrorPolicy::Strict {
@@ -1031,7 +1118,6 @@ impl AsyncStreamingProfiler {
                                 refusal: None,
                             });
                             malformed_records += 1;
-                            bytes_in_chunk += 10;
                         }
                         JsonRecord::Malformed(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
@@ -1076,17 +1162,16 @@ impl AsyncStreamingProfiler {
                 // does (#1146). A character split across reads that is not
                 // white space is chained back.
                 let leading = skip_leading_white_space(&mut buf_reader)?;
-                bytes_in_chunk += leading.skipped as u64;
                 let opening = leading.first;
                 let mut buf_reader =
                     std::io::Read::chain(std::io::Cursor::new(leading.pending), buf_reader);
                 if opening != Some(b'[') {
                     use std::io::Read as _;
+                    record_end = position();
                     let mut text = String::new();
                     buf_reader
                         .read_to_string(&mut text)
                         .map_err(DataProfilerError::from)?;
-                    bytes_in_chunk += text.len() as u64;
 
                     if !text.trim().is_empty() && cap_reached(0) {
                         // A cap of zero rows leaves the document's one record
@@ -1159,7 +1244,7 @@ impl AsyncStreamingProfiler {
                     .first();
                 debug_assert_eq!(bracket, Some(&b'['));
                 buf_reader.consume(1);
-                bytes_in_chunk += 1;
+                record_end = position();
 
                 let mut expect_value = true;
                 let mut allow_end = true;
@@ -1167,8 +1252,7 @@ impl AsyncStreamingProfiler {
                 let mut drain_remainder = false;
 
                 loop {
-                    let (next, whitespace) = peek_non_whitespace(&mut buf_reader)?;
-                    bytes_in_chunk += whitespace as u64;
+                    let (next, _) = peek_non_whitespace(&mut buf_reader)?;
                     let Some(next) = next else {
                         let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
                             malformed_array_error("unexpected end of input before closing ']'")
@@ -1204,7 +1288,6 @@ impl AsyncStreamingProfiler {
                                 break;
                             }
                             buf_reader.consume(1);
-                            bytes_in_chunk += 1;
                             array_closed = true;
                             break;
                         }
@@ -1234,27 +1317,29 @@ impl AsyncStreamingProfiler {
                             break;
                         }
 
-                        match read_json_record(&mut buf_reader, next)? {
+                        let record = read_json_record(&mut buf_reader, next)?;
+                        record_end = position();
+                        match record {
                             JsonRecord::Object(obj) => {
                                 let row = process_object(
                                     &obj,
                                     &mut known_columns,
                                     &mut known_columns_set,
                                 );
-                                bytes_in_chunk +=
-                                    row.0.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                                 current_chunk.push(row);
                                 emitted_records += 1;
 
-                                if bytes_in_chunk as usize >= bytes_per_chunk
+                                if position() - sent_position >= bytes_per_chunk as u64
                                     && !send_chunk(
                                         &mut current_chunk,
                                         &mut current_faults,
-                                        &mut bytes_in_chunk,
+                                        position(),
+                                        &mut sent_position,
                                         &known_columns,
                                         &mut headers_sent,
                                         &mut sent_columns,
                                         &tx,
+                                        false,
                                         false,
                                     )?
                                 {
@@ -1283,8 +1368,6 @@ impl AsyncStreamingProfiler {
                                 if refused {
                                     break;
                                 }
-                                // Approximate progress for a record that yields no row.
-                                bytes_in_chunk += 10;
                             }
                             JsonRecord::WideInteger => {
                                 // Read in full: the array grammar is intact.
@@ -1306,7 +1389,6 @@ impl AsyncStreamingProfiler {
                                 if refused {
                                     break;
                                 }
-                                bytes_in_chunk += 10;
                             }
                             JsonRecord::Malformed(e) => {
                                 // A corrupt element leaves the array parser unable
@@ -1336,13 +1418,11 @@ impl AsyncStreamingProfiler {
                         match next {
                             b',' => {
                                 buf_reader.consume(1);
-                                bytes_in_chunk += 1;
                                 expect_value = true;
                                 allow_end = false;
                             }
                             b']' => {
                                 buf_reader.consume(1);
-                                bytes_in_chunk += 1;
                                 array_closed = true;
                                 break;
                             }
@@ -1371,13 +1451,11 @@ impl AsyncStreamingProfiler {
                 if drain_remainder {
                     // Something left unread after the fault means the read
                     // stopped short, whatever that input held (#1106).
-                    let (white, read) = rest_is_white_space(&mut buf_reader)?;
-                    bytes_in_chunk += read as u64;
+                    let (white, _) = rest_is_white_space(&mut buf_reader)?;
                     unread_after_fault = !white;
-                    bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
+                    drain_to_end(&mut buf_reader)?;
                 } else if array_closed {
-                    let (white, read) = rest_is_white_space(&mut buf_reader)?;
-                    bytes_in_chunk += read as u64;
+                    let (white, _) = rest_is_white_space(&mut buf_reader)?;
                     if !white {
                         let refusal = (error_policy == JsonErrorPolicy::Strict).then(|| {
                             malformed_array_error("non-whitespace content follows the closing ']'")
@@ -1391,7 +1469,7 @@ impl AsyncStreamingProfiler {
                             refusal,
                         });
                         if !refused {
-                            bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
+                            drain_to_end(&mut buf_reader)?;
                         }
                     }
                 }
@@ -1409,17 +1487,26 @@ impl AsyncStreamingProfiler {
             ));
         }
 
-        // Flush remaining
-        if !current_chunk.is_empty() || !current_faults.is_empty() || !headers_sent {
+        // Flush remaining, with the bytes read past the last chunk sent.
+        let end = if past_cap { record_end } else { position() };
+        if !current_chunk.is_empty()
+            || !current_faults.is_empty()
+            || !headers_sent
+            || end > sent_position
+        {
             let _ = send_chunk(
                 &mut current_chunk,
                 &mut current_faults,
-                &mut bytes_in_chunk,
+                end,
+                &mut sent_position,
                 &known_columns,
                 &mut headers_sent,
                 &mut sent_columns,
                 &tx,
                 true,
+                // Short of the cap, the reader read on to the end of the
+                // source: a strict refusal stops it earlier, but fails the scan.
+                !past_cap,
             );
         }
         if past_cap {
@@ -1429,6 +1516,7 @@ impl AsyncStreamingProfiler {
                 bytes_read: 0,
                 new_columns: Vec::new(),
                 past_cap: true,
+                at_end: false,
                 faults: Vec::new(),
             });
         }
@@ -1553,6 +1641,9 @@ impl AsyncStreamingProfiler {
             total_bytes += chunk.bytes_read;
             let chunk_rows = chunk.records.len();
             let chunk_bytes = chunk.bytes_read;
+            // The reader's marker for a record it left unread past the cap.
+            let marks_cap = chunk.past_cap;
+            let at_end = chunk.at_end;
             let mut rows_consumed = chunk_rows;
             let mut hit_row_limit = false;
             headers.extend(chunk.new_columns);
@@ -1655,7 +1746,12 @@ impl AsyncStreamingProfiler {
                 } else {
                     match rx.recv().await {
                         None => false,
-                        Some(next) => judge_lookahead(next, &mut malformed_records)?,
+                        Some(next) => judge_lookahead(
+                            next,
+                            &mut malformed_records,
+                            &mut total_bytes,
+                            &mut progress_tracker,
+                        )?,
                     }
                 };
 
@@ -1689,7 +1785,8 @@ impl AsyncStreamingProfiler {
             } else {
                 0.0
             };
-            let reached_eof = exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
+            let reached_eof = at_end
+                || exact_total_rows.is_some_and(|rows| total_rows as u64 >= rows)
                 || size_hint.is_some_and(|size| total_bytes >= size);
 
             if exact_total_rows.is_none()
@@ -1729,11 +1826,25 @@ impl AsyncStreamingProfiler {
                 // A JSON document's grammar faults after the last row read can
                 // arrive in a chunk of their own; they are reached all the
                 // same, as the cap's lookahead above reaches them. JSONL and
-                // CSV have no grammar faults, so they do not wait for a chunk.
-                if format == FileFormat::Json
-                    && let Some(next) = rx.recv().await
-                {
-                    judge_lookahead(next, &mut malformed_records)?;
+                // CSV have no grammar faults, so they do not wait for a chunk:
+                // on a live stream the next one may be long in coming.
+                if format == FileFormat::Json {
+                    let row_remains = match rx.recv().await {
+                        None => false,
+                        Some(next) => judge_lookahead(
+                            next,
+                            &mut malformed_records,
+                            &mut total_bytes,
+                            &mut progress_tracker,
+                        )?,
+                    };
+                    // The look past the stop shows whether a row remained;
+                    // none means the scan read the whole source, which a size
+                    // hint would have shown (#1223). A stop on the cap's
+                    // marker has a record left by definition.
+                    if !row_remains && !marks_cap {
+                        truncation_reason = None;
+                    }
                 }
                 drop(rx); // signal reader task to stop
                 break;
