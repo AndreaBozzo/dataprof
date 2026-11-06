@@ -10,7 +10,8 @@
 use std::io::Write;
 
 use dataprof::{
-    CheckCode, DataSource, FileFormat, ProfileReport, Profiler, QualityPolicy, StopCondition,
+    CheckCode, DataProfilerError, DataSource, FileFormat, ProfileReport, Profiler, QualityPolicy,
+    StopCondition,
 };
 use dataprof_core::StreamSourceSystem;
 
@@ -105,19 +106,43 @@ fn the_arrow_format_is_stored_as_arrow() {
     );
 }
 
+/// `None` when `result` is an error whose message contains `expected`,
+/// otherwise what the route returned instead.
+fn refusal<T>(result: Result<T, DataProfilerError>, expected: &str) -> Option<String> {
+    match result {
+        Ok(_) => Some("accepted".to_string()),
+        Err(error) if error.to_string().contains(expected) => None,
+        Err(error) => Some(error.to_string()),
+    }
+}
+
+const PARTIAL_REFUSAL: &str = "Unsupported file format: arrow";
+
 #[test]
 fn no_file_route_reads_an_arrow_override() {
     let csv = file(".csv", NO_NOTE_CSV);
     let profiler = Profiler::new().format(FileFormat::Arrow);
     let mut wrong = Vec::new();
-    if profiler.infer_schema(csv.path()).is_ok() {
-        wrong.push("infer_schema");
-    }
-    if profiler.quick_row_count(csv.path()).is_ok() {
-        wrong.push("quick_row_count");
-    }
-    if profiler.analyze_structure(csv.path(), None).is_ok() {
-        wrong.push("analyze_structure");
+    for (route, outcome) in [
+        (
+            "infer_schema",
+            refusal(profiler.infer_schema(csv.path()), PARTIAL_REFUSAL),
+        ),
+        (
+            "quick_row_count",
+            refusal(profiler.quick_row_count(csv.path()), PARTIAL_REFUSAL),
+        ),
+        (
+            "analyze_structure",
+            refusal(
+                profiler.analyze_structure(csv.path(), None),
+                PARTIAL_REFUSAL,
+            ),
+        ),
+    ] {
+        if let Some(outcome) = outcome {
+            wrong.push(format!("{route}: {outcome}"));
+        }
     }
     // The synchronous file route reads an unknown override as CSV (#891); it
     // must never record the file as an Arrow stream.
@@ -130,9 +155,12 @@ fn no_file_route_reads_an_arrow_override() {
             }
         )
     {
-        wrong.push("analyze_file recorded arrow");
+        wrong.push("analyze_file recorded arrow".to_string());
     }
-    assert!(wrong.is_empty(), "routes that accepted arrow: {wrong:?}");
+    assert!(
+        wrong.is_empty(),
+        "routes that did not refuse arrow: {wrong:#?}"
+    );
 }
 
 #[cfg(feature = "async-streaming")]
@@ -153,30 +181,51 @@ fn no_async_route_reads_an_arrow_override() {
         )
     };
     let mut wrong = Vec::new();
-    if rt.block_on(profiler.profile_file(csv.path())).is_ok() {
-        wrong.push("profile_file");
+    for (route, outcome) in [
+        (
+            "profile_file",
+            refusal(
+                rt.block_on(profiler.profile_file(csv.path())),
+                "The arrow format has no file reader",
+            ),
+        ),
+        // Refused before any request is sent: a connection error to this
+        // closed port would not name the format.
+        (
+            "profile_url",
+            refusal(
+                rt.block_on(profiler.profile_url("http://127.0.0.1:9/data.csv")),
+                "The arrow format has no URL reader",
+            ),
+        ),
+        (
+            "profile_stream",
+            refusal(
+                rt.block_on(Profiler::new().profile_stream(bytes())),
+                "does not support Arrow format",
+            ),
+        ),
+        (
+            "infer_schema_stream",
+            refusal(
+                rt.block_on(Profiler::new().infer_schema_stream(bytes())),
+                PARTIAL_REFUSAL,
+            ),
+        ),
+        (
+            "quick_row_count_stream",
+            refusal(
+                rt.block_on(Profiler::new().quick_row_count_stream(bytes())),
+                PARTIAL_REFUSAL,
+            ),
+        ),
+    ] {
+        if let Some(outcome) = outcome {
+            wrong.push(format!("{route}: {outcome}"));
+        }
     }
-    // Refused before any request is sent.
-    if rt
-        .block_on(profiler.profile_url("http://127.0.0.1:9/data.csv"))
-        .is_ok()
-    {
-        wrong.push("profile_url");
-    }
-    if rt.block_on(Profiler::new().profile_stream(bytes())).is_ok() {
-        wrong.push("profile_stream");
-    }
-    if rt
-        .block_on(Profiler::new().infer_schema_stream(bytes()))
-        .is_ok()
-    {
-        wrong.push("infer_schema_stream");
-    }
-    if rt
-        .block_on(Profiler::new().quick_row_count_stream(bytes()))
-        .is_ok()
-    {
-        wrong.push("quick_row_count_stream");
-    }
-    assert!(wrong.is_empty(), "routes that accepted arrow: {wrong:?}");
+    assert!(
+        wrong.is_empty(),
+        "routes that did not refuse arrow: {wrong:#?}"
+    );
 }
