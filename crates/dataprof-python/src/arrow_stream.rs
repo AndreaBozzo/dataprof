@@ -25,7 +25,7 @@ use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatchOptions;
 use dataprof::{DataSource, EngineType, ExecutionMetadata, MetricPack, TruncationReason};
-use dataprof_core::StreamSourceSystem;
+use dataprof_core::{FileFormat, StreamSourceSystem};
 use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_runtime::ReportAssembler;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -368,7 +368,9 @@ pub(crate) fn profile_stream(
             partition: None,
             consumer_group: None,
             source_system: Some(StreamSourceSystem::Custom("arrow_c_stream".to_string())),
-            format: None,
+            // The stream's schema lists every column before the first batch,
+            // so a capped read still declares them (#1230).
+            format: Some(FileFormat::Arrow),
             session_id: None,
             first_record_at: None,
             last_record_at: None,

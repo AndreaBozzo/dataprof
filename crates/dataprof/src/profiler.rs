@@ -1263,6 +1263,13 @@ impl Profiler {
                     "Unknown file format '.{ext}'. Use .format() to override detection."
                 ),
             }),
+            // `Arrow` names an Arrow C stream, which a file path never is.
+            other => Err(DataProfilerError::UnsupportedDataSource {
+                message: format!(
+                    "The {other} format has no file reader. \
+                     Use .format() with csv, json, jsonl or parquet."
+                ),
+            }),
         }
     }
 
@@ -1390,6 +1397,13 @@ impl Profiler {
             FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedDataSource {
                 message: format!(
                     "Unknown format '.{ext}' in URL. Use .format() to specify the data format."
+                ),
+            }),
+            // `Arrow` names an Arrow C stream, which a URL body never is.
+            other => Err(DataProfilerError::UnsupportedDataSource {
+                message: format!(
+                    "The {other} format has no URL reader. \
+                     Use .format() with csv, json, jsonl or parquet."
                 ),
             }),
         }

@@ -994,13 +994,17 @@ must treat it as optional; absent means "not recorded", never `http`.
 
 A `stream` source records the format it was parsed as in
 `data_source.format` (#1042): `csv`, `json` or `jsonl` for the async routes
-(`profile_file`, `profile_url`, `profile_stream`). It is absent for an Arrow
-stream, which has no file format, and in every document written before 0.14.
+(`profile_file`, `profile_url`, `profile_stream`), and `arrow` for an Arrow C
+stream (#1230). It is absent in every document written before 0.14. `arrow` is
+a new `FileFormat` value: no file, bytes or URL route records it, and a reader
+built before 0.14 reads it as an unknown format.
 
 The baseline gate reads a CSV stream as declaring its columns, as it reads a
 CSV `file` or `bytes` source: its header lists every column however few rows
 were read, so a capped async CSV run can fail a missing required column or an
-added one rather than leaving it `evidence_incomplete`. A stream without
-`format`, and a JSON or JSONL one, covers only the records read, as before.
+added one rather than leaving it `evidence_incomplete`. It reads an Arrow
+stream the same way, since the stream's schema lists every column before the
+first batch. A stream without `format`, and a JSON or JSONL one, covers only
+the records read, as before.
 Like the rest of `data_source`, it is provenance and stays outside the
 serialized-value parity comparison. Stored v1 reports remain valid.

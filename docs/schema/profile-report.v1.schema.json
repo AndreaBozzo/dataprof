@@ -1018,6 +1018,11 @@
           "type": "string"
         },
         {
+          "const": "arrow",
+          "description": "An Arrow C stream, whose schema lists every column before the first\nbatch. Only the Arrow stream route records it: no file, bytes or URL\nroute detects or reads this format.",
+          "type": "string"
+        },
+        {
           "type": "string"
         }
       ],

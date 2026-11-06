@@ -3,11 +3,16 @@
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum FileFormat {
     Csv,
     Json,
     Jsonl,
     Parquet,
+    /// An Arrow C stream, whose schema lists every column before the first
+    /// batch. Only the Arrow stream route records it: no file, bytes or URL
+    /// route detects or reads this format.
+    Arrow,
     #[serde(untagged)]
     Unknown(String),
 }
@@ -19,6 +24,7 @@ impl std::fmt::Display for FileFormat {
             Self::Json => write!(f, "json"),
             Self::Jsonl => write!(f, "jsonl"),
             Self::Parquet => write!(f, "parquet"),
+            Self::Arrow => write!(f, "arrow"),
             Self::Unknown(s) => write!(f, "{}", s),
         }
     }
@@ -315,9 +321,8 @@ pub enum DataSource {
         /// report does not guess a transport (#1219).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_system: Option<StreamSourceSystem>,
-        /// Format the stream was parsed as. Absent when the stream carries
-        /// no file format (an Arrow stream), and in reports written before
-        /// 0.14 (#1042).
+        /// Format the stream was parsed as: `arrow` for an Arrow C stream
+        /// (#1230). Absent in reports written before 0.14 (#1042).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         format: Option<FileFormat>,
         /// Session ID for multi-tenant scenarios

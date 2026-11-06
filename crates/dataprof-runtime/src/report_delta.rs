@@ -855,9 +855,11 @@ enum SummarySourceType {
     Other,
 }
 
-/// Whether a source declares its columns up front. A JSON or JSONL source has
-/// the keys of the records read, and a format this build does not know, or a
-/// stream that records none, declares nothing it can rely on.
+/// Whether a source declares its columns up front: a CSV header, a Parquet
+/// footer or an Arrow stream schema lists every column before the first row. A
+/// JSON or JSONL source has the keys of the records read, and a format this
+/// build does not know, or a stream that records none, declares nothing it can
+/// rely on.
 fn declares_schema(source: &DataSource) -> bool {
     match source {
         DataSource::File { format, .. }
@@ -865,7 +867,10 @@ fn declares_schema(source: &DataSource) -> bool {
         | DataSource::Stream {
             format: Some(format),
             ..
-        } => matches!(format, FileFormat::Csv | FileFormat::Parquet),
+        } => matches!(
+            format,
+            FileFormat::Csv | FileFormat::Parquet | FileFormat::Arrow
+        ),
         DataSource::DataFrame { .. } | DataSource::Query { .. } => true,
         DataSource::Stream { format: None, .. } => false,
     }

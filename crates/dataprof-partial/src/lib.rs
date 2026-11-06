@@ -173,8 +173,9 @@ pub fn infer_schema_with_format(
         }
         FileFormat::Csv => infer_schema_csv(path, start),
         FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, &format, start),
-        FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
-            format: ext.clone(),
+        // `Arrow` and any later variant have no reader on these paths.
+        _ => Err(DataProfilerError::UnsupportedFormat {
+            format: format.to_string(),
         }),
     }
 }
@@ -201,8 +202,9 @@ pub fn quick_row_count_with_format(
         }
         FileFormat::Csv => count_csv(path, start),
         FileFormat::Json | FileFormat::Jsonl => count_json(path, format, start),
-        FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
-            format: ext.clone(),
+        // `Arrow` and any later variant have no reader on these paths.
+        _ => Err(DataProfilerError::UnsupportedFormat {
+            format: format.to_string(),
         }),
     }
 }
@@ -223,8 +225,9 @@ pub fn analyze_structure_with_format(
         FileFormat::Csv => analyze_structure_csv(path, limit),
         FileFormat::Json | FileFormat::Jsonl => analyze_structure_json(path, format, limit),
         FileFormat::Parquet => analyze_structure_parquet(path, limit),
-        FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
-            format: ext.clone(),
+        // `Arrow` and any later variant have no reader on these paths.
+        _ => Err(DataProfilerError::UnsupportedFormat {
+            format: format.to_string(),
         }),
     }
 }
@@ -654,8 +657,9 @@ fn infer_schema_from_reader<R: Read>(
             "Parquet schema inference requires random access",
             "Use infer_schema() with a file path instead",
         )),
-        FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
-            format: ext.clone(),
+        // `Arrow` and any later variant have no reader on these paths.
+        _ => Err(DataProfilerError::UnsupportedFormat {
+            format: format.to_string(),
         }),
     }
 }
@@ -761,8 +765,9 @@ fn count_from_reader<R: Read>(
             "Parquet row counting requires random access",
             "Use quick_row_count() with a file path instead",
         )),
-        FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
-            format: ext.clone(),
+        // `Arrow` and any later variant have no reader on these paths.
+        _ => Err(DataProfilerError::UnsupportedFormat {
+            format: format.to_string(),
         }),
     }
 }
