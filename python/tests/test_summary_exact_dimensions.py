@@ -114,3 +114,13 @@ def test_a_malformed_exact_list_is_refused(value):
     summary["quality"]["exact_dimensions"] = value
     with pytest.raises(ValueError, match="quality.exact_dimensions"):
         dp.ProfileReport.from_dict(summary)
+
+
+def test_findings_refuse_a_summary_quality_rust_cannot_read():
+    # The loader does not check the uniqueness block's types; the rule reads
+    # key_column, so a malformed one is refused rather than read as no key.
+    summary = dp.profile({"id": [1, 2, 3]}).to_dict()
+    summary["quality"]["uniqueness"]["key_column"] = 5
+    report = dp.ProfileReport.from_dict(summary)
+    with pytest.raises(ValueError, match="the summary's quality cannot be read"):
+        report.findings()
