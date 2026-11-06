@@ -18,6 +18,7 @@ use dataprof_core::StreamSourceSystem;
 
 const NO_NOTE_CSV: &str = "id,amount\n1,10\n2,20\n3,30\n";
 const LATE_NOTE_JSONL: &str = "{\"id\": 1}\n{\"id\": 2}\n{\"id\": 3, \"note\": \"a\"}\n";
+const LATE_NOTE_JSON: &str = "[{\"id\": 1}, {\"id\": 2}, {\"id\": 3, \"note\": \"a\"}]";
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -98,9 +99,17 @@ fn format_of(report: &ProfileReport) -> serde_json::Value {
 fn a_capped_async_csv_stream_declares_its_columns() {
     let csv = file(".csv", NO_NOTE_CSV);
     let jsonl = file(".jsonl", LATE_NOTE_JSONL);
+    let json = file(".json", LATE_NOTE_JSON);
     let mut wrong = Vec::new();
     for (format, path, contents, expected_format, expected_outcome) in [
         (FileFormat::Csv, csv.path(), NO_NOTE_CSV, "csv", "failed"),
+        (
+            FileFormat::Json,
+            json.path(),
+            LATE_NOTE_JSON,
+            "json",
+            "evidence_incomplete:truncated",
+        ),
         (
             FileFormat::Jsonl,
             jsonl.path(),

@@ -40,6 +40,10 @@ CASES = {
         b'{"id": 1}\n{"id": 2}\n{"id": 3, "note": "a"}\n',
         "evidence_incomplete:truncated",
     ),
+    "json": (
+        b'[{"id": 1}, {"id": 2}, {"id": 3, "note": "a"}]',
+        "evidence_incomplete:truncated",
+    ),
 }
 
 
