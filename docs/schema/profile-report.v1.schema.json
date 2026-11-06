@@ -618,7 +618,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Format the stream was parsed as. Absent when the stream carries\nno file format (an Arrow stream), and in reports written before\n0.14 (#1042)."
+              "description": "Format the stream was parsed as: `arrow` for an Arrow C stream\n(#1230). Absent in reports written before 0.14 (#1042)."
             },
             "last_record_at": {
               "description": "Timestamp of last record in batch (ISO 8601)",
@@ -1015,6 +1015,11 @@
             "jsonl",
             "parquet"
           ],
+          "type": "string"
+        },
+        {
+          "const": "arrow",
+          "description": "An Arrow C stream, whose schema lists every column before the first\nbatch. Only the Arrow stream route records it: no file, bytes or URL\nroute detects or reads this format.",
           "type": "string"
         },
         {
