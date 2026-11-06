@@ -315,6 +315,11 @@ pub enum DataSource {
         /// report does not guess a transport (#1219).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source_system: Option<StreamSourceSystem>,
+        /// Format the stream was parsed as. Absent when the stream carries
+        /// no file format (an Arrow stream), and in reports written before
+        /// 0.14 (#1042).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<FileFormat>,
         /// Session ID for multi-tenant scenarios
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
@@ -494,6 +499,7 @@ mod tests {
             partition: Some(0),
             consumer_group: None,
             source_system: Some(StreamSourceSystem::Kafka),
+            format: None,
             session_id: None,
             first_record_at: None,
             last_record_at: None,
@@ -517,6 +523,7 @@ mod tests {
             partition: None,
             consumer_group: None,
             source_system: None,
+            format: None,
             session_id: None,
             first_record_at: None,
             last_record_at: None,
@@ -538,6 +545,7 @@ mod tests {
             partition: Some(2),
             consumer_group: Some("processing-group".to_string()),
             source_system: Some(StreamSourceSystem::Kinesis),
+            format: None,
             session_id: Some("session-1".to_string()),
             first_record_at: Some("2023-01-01T10:00:00Z".to_string()),
             last_record_at: Some("2023-01-01T10:05:00Z".to_string()),

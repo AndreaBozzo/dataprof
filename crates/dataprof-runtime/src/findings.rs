@@ -892,14 +892,17 @@ fn scan_findings(input: &FindingsInput, out: &mut Collector) {
     }
 }
 
-/// Whether `source` is a CSV file or bytes source that records no CSV source
-/// metadata: a report written before 0.14 recorded it. A stream records no
-/// format (#1042), so it cannot be told apart.
+/// Whether `source` is a CSV source that records no CSV source metadata: a
+/// report written before 0.14 recorded it. A stream written before 0.14
+/// records no format either (#1042), so it cannot be told apart.
 fn csv_source_unrecorded(source: &DataSource) -> bool {
     match source {
-        DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
-            matches!(format, FileFormat::Csv) && source.csv_metadata().is_none()
-        }
+        DataSource::File { format, .. }
+        | DataSource::Bytes { format, .. }
+        | DataSource::Stream {
+            format: Some(format),
+            ..
+        } => matches!(format, FileFormat::Csv) && source.csv_metadata().is_none(),
         _ => false,
     }
 }
