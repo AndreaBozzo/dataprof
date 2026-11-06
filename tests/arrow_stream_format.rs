@@ -90,6 +90,22 @@ fn a_capped_arrow_stream_declares_its_columns() {
     assert!(wrong.is_empty(), "wrong outcomes: {wrong:#?}");
 }
 
+/// Only the Arrow C stream route records `arrow`; a file or bytes source that
+/// claims it declares nothing the gate can rely on.
+#[test]
+fn a_file_source_claiming_arrow_stays_conservative() {
+    let mut report = capped_stream_report(None);
+    report.data_source = DataSource::File {
+        path: "data.arrow".to_string(),
+        format: FileFormat::Arrow,
+        size_bytes: 0,
+        modified_at: None,
+        parquet_metadata: None,
+        csv_metadata: None,
+    };
+    assert_eq!(note_outcome(&report), "evidence_incomplete:truncated");
+}
+
 #[test]
 fn the_arrow_format_is_stored_as_arrow() {
     assert_eq!(
@@ -100,9 +116,9 @@ fn the_arrow_format_is_stored_as_arrow() {
     assert_eq!(read, FileFormat::Arrow);
     assert_eq!(FileFormat::Arrow.to_string(), "arrow");
     // No file is detected as an Arrow stream, whatever its extension.
-    assert_ne!(
+    assert_eq!(
         Profiler::detect_format(std::path::Path::new("data.arrow")),
-        FileFormat::Arrow
+        FileFormat::Unknown("arrow".to_string())
     );
 }
 
@@ -144,18 +160,25 @@ fn no_file_route_reads_an_arrow_override() {
             wrong.push(format!("{route}: {outcome}"));
         }
     }
-    // The synchronous file route reads an unknown override as CSV (#891); it
-    // must never record the file as an Arrow stream.
-    if let Ok(report) = profiler.analyze_file(csv.path())
-        && matches!(
-            report.data_source,
-            DataSource::File {
-                format: FileFormat::Arrow,
-                ..
+    // The synchronous file route reads an override it has no reader for as
+    // CSV, as it does an unknown one, and records `csv`, never `arrow`. #891
+    // may turn this into a refusal; until then the fallback is pinned here.
+    match profiler.analyze_file(csv.path()) {
+        Ok(report) => {
+            if !matches!(
+                report.data_source,
+                DataSource::File {
+                    format: FileFormat::Csv,
+                    ..
+                }
+            ) {
+                wrong.push(format!(
+                    "analyze_file recorded {:?}",
+                    serde_json::to_value(&report.data_source).unwrap()["format"]
+                ));
             }
-        )
-    {
-        wrong.push("analyze_file recorded arrow".to_string());
+        }
+        Err(error) => wrong.push(format!("analyze_file: {error}")),
     }
     assert!(
         wrong.is_empty(),

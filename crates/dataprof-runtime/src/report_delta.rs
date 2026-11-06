@@ -862,9 +862,12 @@ enum SummarySourceType {
 /// rely on.
 fn declares_schema(source: &DataSource) -> bool {
     match source {
-        DataSource::File { format, .. }
-        | DataSource::Bytes { format, .. }
-        | DataSource::Stream {
+        DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
+            matches!(format, FileFormat::Csv | FileFormat::Parquet)
+        }
+        // Only the Arrow C stream route records `Arrow`, so a file or bytes
+        // source claiming it stays conservative.
+        DataSource::Stream {
             format: Some(format),
             ..
         } => matches!(
