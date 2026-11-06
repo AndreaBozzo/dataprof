@@ -30,7 +30,7 @@ pub struct CsvParserConfig {
     pub flexible: bool,
     /// Custom delimiter (None = comma).
     pub delimiter: Option<u8>,
-    /// Quote character.
+    /// Quote character, used for delimiter detection and parsing.
     pub quote_char: u8,
     /// Trim whitespace from fields.
     pub trim_whitespace: bool,
@@ -94,30 +94,30 @@ impl CsvParserConfig {
 /// A quote opens a quoted section only at the start of a field, as in the
 /// readers and [`split_sample_records`]. Opening one at any quote hid every
 /// delimiter after `id"x`, and a `id"x;value` header was read as one column.
-fn count_fields(line: &str, delimiter: char) -> (usize, usize) {
-    let decodes_empty = |field: &str| field.is_empty() || field == "\"\"";
+fn count_fields(line: &[u8], delimiter: u8, quote: u8) -> (usize, usize) {
+    let decodes_empty = |field: &[u8]| field.is_empty() || field == [quote, quote];
     let mut fields = 1;
     let mut trailing_empty = 0;
     let mut field_start = 0;
     let mut in_quotes = false;
-    let mut chars = line.char_indices().peekable();
-    while let Some((index, ch)) = chars.next() {
-        if ch == '"' && in_quotes {
-            if chars.peek().map(|&(_, next)| next) == Some('"') {
-                chars.next();
+    let mut bytes = line.iter().copied().enumerate().peekable();
+    while let Some((index, byte)) = bytes.next() {
+        if byte == quote && in_quotes {
+            if bytes.peek().map(|&(_, next)| next) == Some(quote) {
+                bytes.next();
             } else {
                 in_quotes = false;
             }
-        } else if ch == '"' && index == field_start {
+        } else if byte == quote && index == field_start {
             in_quotes = true;
-        } else if ch == delimiter && !in_quotes {
+        } else if byte == delimiter && !in_quotes {
             trailing_empty = if decodes_empty(&line[field_start..index]) {
                 trailing_empty + 1
             } else {
                 0
             };
             fields += 1;
-            field_start = index + ch.len_utf8();
+            field_start = index + 1;
         }
     }
     trailing_empty = if decodes_empty(&line[field_start..]) {
@@ -152,42 +152,52 @@ fn agrees_with_header(fields: usize, trailing_empty: usize, header_fields: usize
 /// newline outside quotes — i.e. the text ends mid-record (or exactly at a
 /// record's end with no trailing newline, which a caller sampling a fixed
 /// byte budget cannot distinguish from a cut).
-fn split_sample_records(text: &str, delimiter: u8) -> (Vec<&str>, bool) {
-    let bytes = text.as_bytes();
+fn split_sample_records(bytes: &[u8], delimiter: u8, quote: u8) -> (Vec<&[u8]>, bool) {
     let mut records = Vec::new();
     let mut in_quotes = false;
     let mut start = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
         match bytes[i] {
-            b'"' if in_quotes => {
-                if bytes.get(i + 1) == Some(&b'"') {
+            byte if byte == quote && in_quotes => {
+                if bytes.get(i + 1) == Some(&quote) {
                     i += 1; // escaped quote inside a quoted section
                 } else {
                     in_quotes = false;
                 }
             }
-            b'"' if i == start || bytes[i - 1] == delimiter => in_quotes = true,
+            // The reader skips leading record terminators before opening a
+            // field, even if the configured quote is itself CR or LF.
+            byte if byte == quote
+                && (i == start || bytes[i - 1] == delimiter)
+                && !(i == start && matches!(byte, b'\r' | b'\n')) =>
+            {
+                in_quotes = true;
+            }
             b'\n' if !in_quotes => {
                 let end = if i > start && bytes[i - 1] == b'\r' {
                     i - 1
                 } else {
                     i
                 };
-                records.push(&text[start..end]);
+                records.push(&bytes[start..end]);
                 start = i + 1;
             }
             b'\r' if !in_quotes && bytes.get(i + 1) != Some(&b'\n') => {
-                records.push(&text[start..i]);
+                records.push(&bytes[start..i]);
                 start = i + 1;
             }
             _ => {}
         }
         i += 1;
     }
-    let last_unterminated = start < text.len();
+    let last_unterminated = start < bytes.len();
     if last_unterminated {
-        records.push(text[start..].trim_end_matches('\r'));
+        let mut end = bytes.len();
+        while end > start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        records.push(&bytes[start..end]);
     }
     (records, last_unterminated)
 }
@@ -201,23 +211,30 @@ const DETECTION_SAMPLE_BYTES: usize = 4096;
 /// Most bytes delimiter detection reads to see the whole header record.
 const MAX_HEADER_SAMPLE_BYTES: usize = 1 << 20;
 
-/// The text of a detection head. A UTF-8 BOM marks the encoding, as in the
+/// The bytes of a detection head. A UTF-8 BOM marks the encoding, as in the
 /// readers, and is no part of the first record: left in, a BOM followed by a
 /// blank line was scored as a one-field header and outvoted the real one.
-fn head_text(head: &[u8]) -> std::borrow::Cow<'_, str> {
-    String::from_utf8_lossy(head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head))
+/// Keep quote bytes intact: a configured non-ASCII byte may delimit fields
+/// whose decoded contents are valid UTF-8.
+fn head_bytes(head: &[u8]) -> &[u8] {
+    head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head)
+}
+
+/// Preserve detection's whitespace rule without decoding its CSV syntax.
+fn record_is_blank(record: &[u8]) -> bool {
+    String::from_utf8_lossy(record).trim().is_empty()
 }
 
 /// Whether `head`, the start of a source, holds its header record up to the
 /// newline that ends it, as every candidate splits it. The readers take the
 /// first non-blank record as the header.
-fn header_is_complete(head: &[u8]) -> bool {
-    let text = head_text(head);
+fn header_is_complete(head: &[u8], quote: u8) -> bool {
+    let head = head_bytes(head);
     CANDIDATES.iter().all(|&delimiter| {
-        let (records, last_unterminated) = split_sample_records(&text, delimiter);
+        let (records, last_unterminated) = split_sample_records(head, delimiter, quote);
         records
             .iter()
-            .position(|record| !record.trim().is_empty())
+            .position(|record| !record_is_blank(record))
             .is_some_and(|index| index + 1 < records.len() || !last_unterminated)
     })
 }
@@ -230,14 +247,14 @@ fn header_is_complete(head: &[u8]) -> bool {
 /// A fixed 4 KB window scored the start of a longer header as the whole of
 /// it; no candidate split the fragment, and the file was read as one column
 /// with no error (#1098).
-fn read_detection_head<R: Read>(reader: &mut R) -> std::io::Result<(Vec<u8>, bool)> {
+fn read_detection_head<R: Read>(reader: &mut R, quote: u8) -> std::io::Result<(Vec<u8>, bool)> {
     let mut head = Vec::new();
     let mut target = DETECTION_SAMPLE_BYTES;
     loop {
         let wanted = (target + 1 - head.len()) as u64;
         reader.by_ref().take(wanted).read_to_end(&mut head)?;
         let cut = head.len() > target;
-        if !cut || target == MAX_HEADER_SAMPLE_BYTES || header_is_complete(&head) {
+        if !cut || target == MAX_HEADER_SAMPLE_BYTES || header_is_complete(&head, quote) {
             return Ok((head, cut));
         }
         target = (target * 2).min(MAX_HEADER_SAMPLE_BYTES);
@@ -253,7 +270,7 @@ const HEADER_TOO_LONG_HINT: &str = "Set the delimiter explicitly (csv_delimiter 
 ///
 /// Detection reads 4 KB, or up to 1 MiB when the header record is longer. A
 /// source with no complete header in its first 1 MiB is an error, never a
-/// guess.
+/// guess. Quoted fields use the default double-quote character.
 pub fn detect_delimiter_with_head<R: Read>(
     reader: &mut R,
 ) -> Result<(u8, Vec<u8>), DataProfilerError> {
@@ -268,8 +285,16 @@ pub fn detect_delimiter_with_head<R: Read>(
 pub fn detect_delimiter_detailed_with_head<R: Read>(
     reader: &mut R,
 ) -> Result<(DelimiterDetection, Vec<u8>), DataProfilerError> {
-    let (head, cut) = read_detection_head(reader)?;
-    match score_head(&head, cut) {
+    detect_delimiter_with_quote(reader, b'"')
+}
+
+/// Use the reader's quote grammar throughout sampling and scoring.
+fn detect_delimiter_with_quote<R: Read>(
+    reader: &mut R,
+    quote: u8,
+) -> Result<(DelimiterDetection, Vec<u8>), DataProfilerError> {
+    let (head, cut) = read_detection_head(reader, quote)?;
+    match score_head(&head, cut, quote) {
         Some(detection) => Ok((detection, head)),
         None => Err(DataProfilerError::csv_structure(
             HEADER_TOO_LONG,
@@ -281,8 +306,8 @@ pub fn detect_delimiter_detailed_with_head<R: Read>(
 /// [`detect_delimiter`], returning what detection saw with the delimiter it
 /// chose (see [`detect_delimiter_detailed_with_head`]).
 pub fn detect_delimiter_detailed<R: Read>(mut reader: R) -> std::io::Result<DelimiterDetection> {
-    let (head, cut) = read_detection_head(&mut reader)?;
-    score_head(&head, cut).ok_or_else(|| {
+    let (head, cut) = read_detection_head(&mut reader, b'"')?;
+    score_head(&head, cut, b'"').ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("{HEADER_TOO_LONG} {HEADER_TOO_LONG_HINT}"),
@@ -299,7 +324,7 @@ pub fn detection_byte(detection: &DelimiterDetection) -> u8 {
 /// Detect the most likely CSV delimiter by sampling 4 KB of data, or more
 /// when the header record is longer (see [`detect_delimiter_with_head`]).
 ///
-/// The sample is split into logical records with quote handling, so quoted
+/// The sample is split into logical records with double-quote handling, so quoted
 /// fields containing embedded newlines or delimiter characters do not skew
 /// detection. Tests comma, semicolon, tab, and pipe over the first 5 non-blank
 /// records, measured against the first one, the header: it sets the column
@@ -329,8 +354,8 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
 /// records agreeing with it. Exact width and header width still pick between
 /// the two, but they do not make the reading clear: `id;amount,EUR` with rows
 /// `1;10,50;` reads at two fields with either comma or semicolon (#1100).
-fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
-    let text = head_text(head);
+fn score_head(head: &[u8], cut: bool, quote: u8) -> Option<DelimiterDetection> {
+    let head = head_bytes(head);
     // (splits the header into >1 field, records agreeing with the header,
     //  records at exactly the header's width, header field count) — compared
     //  lexicographically, first wins ties. Exact width only breaks a tie: a
@@ -338,10 +363,10 @@ fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
     //  trailing empty fields cut to agree.
     let mut scores: Vec<((bool, usize, usize, usize), u8)> = Vec::new();
     // The scored records of each candidate, in the order of `scores`.
-    let mut sampled: Vec<Vec<&str>> = Vec::new();
+    let mut sampled: Vec<Vec<&[u8]>> = Vec::new();
 
     for delimiter in CANDIDATES {
-        let (mut records, last_unterminated) = split_sample_records(&text, delimiter);
+        let (mut records, last_unterminated) = split_sample_records(head, delimiter, quote);
         // A head cut mid-record ends in a fragment; never score it. A head
         // ending on a clean newline keeps all its records.
         if cut && last_unterminated {
@@ -350,9 +375,9 @@ fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
         // Blank records carry no delimiter signal: a header followed by
         // trailing blank lines must not outvote the true delimiter with
         // single-field "records" (gh #559).
-        let scored: Vec<&str> = records
+        let scored: Vec<&[u8]> = records
             .into_iter()
-            .filter(|record| !record.trim().is_empty())
+            .filter(|record| !record_is_blank(record))
             .take(5)
             .collect();
         let Some((header, rows)) = scored.split_first() else {
@@ -365,10 +390,10 @@ fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
             return Some(DelimiterDetection::new(b',', 0, None));
         };
 
-        let (header_fields, _) = count_fields(header, delimiter as char);
+        let (header_fields, _) = count_fields(header, delimiter, quote);
         let (mut agreeing, mut exact) = (1, 1);
         for record in rows {
-            let (fields, trailing_empty) = count_fields(record, delimiter as char);
+            let (fields, trailing_empty) = count_fields(record, delimiter, quote);
             if agrees_with_header(fields, trailing_empty, header_fields) {
                 agreeing += 1;
             }
@@ -408,7 +433,7 @@ fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
         scores
             .iter()
             .position(|&(_, candidate)| candidate == delimiter)
-            .and_then(|index| unlisted_delimiter(&sampled[index]))
+            .and_then(|index| unlisted_delimiter(&sampled[index], quote))
     };
     Some(
         DelimiterDetection::new(delimiter, header_fields, runner_up)
@@ -417,9 +442,10 @@ fn score_head(head: &[u8], cut: bool) -> Option<DelimiterDetection> {
 }
 
 /// Punctuation that can delimit a file detection does not try: ASCII
-/// punctuation except the candidates, the quote, and `.`, `-` and `_`, which
+/// punctuation except the candidates and `.`, `-` and `_`, which
 /// sit inside single values (`first.last`, `2024-01-02`, `event_0`).
-const UNLISTED_DELIMITERS: &[u8] = b"!#$%&'()*+/:<=>?@[\\]^`{}~";
+/// The active quote character is excluded when scoring these bytes.
+const UNLISTED_DELIMITERS: &[u8] = b"!\"#$%&'()*+/:<=>?@[\\]^`{}~";
 
 /// A character outside the candidates that reads the sampled records as a
 /// table when no candidate splits the header: it occurs outside quotes in the
@@ -428,13 +454,16 @@ const UNLISTED_DELIMITERS: &[u8] = b"!#$%&'()*+/:<=>?@[\\]^`{}~";
 ///
 /// `id^amount` over `1^10` is read as one column; this names `^` so the
 /// finding can say which delimiter to set (#1100).
-fn unlisted_delimiter(records: &[&str]) -> Option<u8> {
+fn unlisted_delimiter(records: &[&[u8]], quote: u8) -> Option<u8> {
     let (header, rows) = records.split_first()?;
     if rows.is_empty() {
         return None;
     }
     UNLISTED_DELIMITERS.iter().copied().find(|&byte| {
-        let occurrences = |record: &str| count_fields(record, char::from(byte)).0 - 1;
+        if byte == quote {
+            return false;
+        }
+        let occurrences = |record: &[u8]| count_fields(record, byte, quote).0 - 1;
         let in_header = occurrences(header);
         in_header > 0 && rows.iter().all(|row| occurrences(row) == in_header)
     })
@@ -500,24 +529,25 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
     }
     // The byte is kept as it was given: the metadata holds it as a character,
     // and a configured byte above 0x7F would not read back as itself.
-    let (boxed_reader, csv_metadata, delimiter): (Box<dyn std::io::Read + '_>, _, _) =
-        match config.delimiter {
-            Some(delimiter) => (
-                Box::new(reader),
-                CsvSourceMetadata::configured(delimiter),
+    let (boxed_reader, csv_metadata, delimiter): (Box<dyn std::io::Read + '_>, _, _) = match config
+        .delimiter
+    {
+        Some(delimiter) => (
+            Box::new(reader),
+            CsvSourceMetadata::configured(delimiter),
+            delimiter,
+        ),
+        None => {
+            let mut reader = reader;
+            let (detection, head) = detect_delimiter_with_quote(&mut reader, config.quote_char)?;
+            let delimiter = detection_byte(&detection);
+            (
+                Box::new(std::io::Cursor::new(head).chain(reader)),
+                CsvSourceMetadata::detected(detection),
                 delimiter,
-            ),
-            None => {
-                let mut reader = reader;
-                let (detection, head) = detect_delimiter_detailed_with_head(&mut reader)?;
-                let delimiter = detection_byte(&detection);
-                (
-                    Box::new(std::io::Cursor::new(head).chain(reader)),
-                    CsvSourceMetadata::detected(detection),
-                    delimiter,
-                )
-            }
-        };
+            )
+        }
+    };
     csv_builder.delimiter(delimiter);
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
@@ -1178,31 +1208,34 @@ mod tests {
 
     #[test]
     fn test_count_fields_reports_trailing_empty_fields() {
-        assert_eq!(count_fields("1;10,50;", ';'), (3, 1));
-        assert_eq!(count_fields("a;;", ';'), (3, 2));
-        assert_eq!(count_fields("a;\"\"", ';'), (2, 1));
-        assert_eq!(count_fields("a;\"\"\"\"", ';'), (2, 0));
-        assert_eq!(count_fields("a; ", ';'), (2, 0));
-        assert_eq!(count_fields("a;b", ';'), (2, 0));
-        assert_eq!(count_fields("\"x;y\";", ';'), (2, 1));
+        assert_eq!(count_fields(b"1;10,50;", b';', b'"'), (3, 1));
+        assert_eq!(count_fields(b"a;;", b';', b'"'), (3, 2));
+        assert_eq!(count_fields(b"a;\"\"", b';', b'"'), (2, 1));
+        assert_eq!(count_fields(b"a;\"\"\"\"", b';', b'"'), (2, 0));
+        assert_eq!(count_fields(b"a; ", b';', b'"'), (2, 0));
+        assert_eq!(count_fields(b"a;b", b';', b'"'), (2, 0));
+        assert_eq!(count_fields(b"\"x;y\";", b';', b'"'), (2, 1));
     }
 
     #[test]
     fn test_split_sample_records_quote_aware() {
-        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n", b',');
-        assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
+        let (records, last_unterminated) =
+            split_sample_records(b"a,b\r\n1,\"x\ny\"\n2,z\n", b',', b'"');
+        assert_eq!(records, ["a,b", "1,\"x\ny\"", "2,z"].map(str::as_bytes));
         assert!(!last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie", b',');
-        assert_eq!(records, vec!["a,b", "1,\"cut mid-fie"]);
+        let (records, last_unterminated) =
+            split_sample_records(b"a,b\n1,\"cut mid-fie", b',', b'"');
+        assert_eq!(records, ["a,b", "1,\"cut mid-fie"].map(str::as_bytes));
         assert!(last_unterminated);
 
-        let (records, last_unterminated) = split_sample_records("a,b\r1,\"x\ry\"\r2,z\r", b',');
-        assert_eq!(records, vec!["a,b", "1,\"x\ry\"", "2,z"]);
+        let (records, last_unterminated) =
+            split_sample_records(b"a,b\r1,\"x\ry\"\r2,z\r", b',', b'"');
+        assert_eq!(records, ["a,b", "1,\"x\ry\"", "2,z"].map(str::as_bytes));
         assert!(!last_unterminated);
 
-        let (records, _) = split_sample_records("a\rb\r\nc\n", b',');
-        assert_eq!(records, vec!["a", "b", "c"]);
+        let (records, _) = split_sample_records(b"a\rb\r\nc\n", b',', b'"');
+        assert_eq!(records, ["a", "b", "c"].map(str::as_bytes));
     }
 
     #[test]
@@ -1324,14 +1357,15 @@ mod tests {
             b';'
         );
 
-        let (records, last_unterminated) = split_sample_records("a;b\"c;d\n1;\"x\ny\";2\n", b';');
-        assert_eq!(records, vec!["a;b\"c;d", "1;\"x\ny\";2"]);
+        let (records, last_unterminated) =
+            split_sample_records(b"a;b\"c;d\n1;\"x\ny\";2\n", b';', b'"');
+        assert_eq!(records, ["a;b\"c;d", "1;\"x\ny\";2"].map(str::as_bytes));
         assert!(!last_unterminated);
 
         // Field counting follows the same rule: the readers split `id"x;value`
         // into two fields, and a header no candidate split fell back to comma.
-        assert_eq!(count_fields("id\"x;value", ';'), (2, 0));
-        assert_eq!(count_fields("\"a;\"\"b\";c", ';'), (2, 0));
+        assert_eq!(count_fields(b"id\"x;value", b';', b'"'), (2, 0));
+        assert_eq!(count_fields(b"\"a;\"\"b\";c", b';', b'"'), (2, 0));
         assert_eq!(
             detect_delimiter(Cursor::new(&b"id\"x;value\n1;2\n3;4\n"[..])).unwrap(),
             b';'
