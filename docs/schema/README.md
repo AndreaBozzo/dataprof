@@ -965,7 +965,7 @@ which one it picks. `findings()` reports `delimiter_ambiguous` when
 `runner_up` is present and `header_not_split` when `unlisted_delimiter` is.
 
 The object is absent for a source that is not CSV, and from every document
-written before 0.14. For a CSV `file` or `bytes` source without it,
+written before 0.14. For a CSV `file`, `bytes` or `stream` source without it,
 `findings()` lists both rules as not evaluated (`unrecorded`) rather than
 passing them. Like the rest of `data_source`, it is provenance and stays
 outside the serialized-value parity comparison, although every CSV engine and
@@ -989,3 +989,18 @@ now records the same `bytes` source as `dataprof.profile` for the same input.
 This is a widening: stored v1 reports remain valid, and a stored `http` value
 reads back unchanged. A consumer that read `source_system` as always present
 must treat it as optional; absent means "not recorded", never `http`.
+
+## v1 additive change: stream `format`
+
+A `stream` source records the format it was parsed as in
+`data_source.format` (#1042): `csv`, `json` or `jsonl` for the async routes
+(`profile_file`, `profile_url`, `profile_stream`). It is absent for an Arrow
+stream, which has no file format, and in every document written before 0.14.
+
+The baseline gate reads a CSV stream as declaring its columns, as it reads a
+CSV `file` or `bytes` source: its header lists every column however few rows
+were read, so a capped async CSV run can fail a missing required column or an
+added one rather than leaving it `evidence_incomplete`. A stream without
+`format`, and a JSON or JSONL one, covers only the records read, as before.
+Like the rest of `data_source`, it is provenance and stays outside the
+serialized-value parity comparison. Stored v1 reports remain valid.

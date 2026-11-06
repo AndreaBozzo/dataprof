@@ -617,7 +617,7 @@ impl AsyncStreamingProfiler {
         let data_source = match (source_info.source_system, buffer_len) {
             (None, Some(size_bytes)) => DataSource::Bytes {
                 name: source_info.label,
-                format: format.clone(),
+                format,
                 size_bytes,
                 csv_metadata: reader_outcome.csv_metadata.clone(),
             },
@@ -627,6 +627,7 @@ impl AsyncStreamingProfiler {
                 partition: None,
                 consumer_group: None,
                 source_system,
+                format: Some(format),
                 session_id: None,
                 first_record_at: None,
                 last_record_at: None,

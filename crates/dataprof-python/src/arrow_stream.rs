@@ -368,6 +368,7 @@ pub(crate) fn profile_stream(
             partition: None,
             consumer_group: None,
             source_system: Some(StreamSourceSystem::Custom("arrow_c_stream".to_string())),
+            format: None,
             session_id: None,
             first_record_at: None,
             last_record_at: None,

@@ -85,7 +85,7 @@ fn every_async_source_records_what_it_read() {
                 .unwrap(),
             ),
             json!({"type": "stream", "topic": "orders", "batch_id": "<uuid>",
-                   "source_system": "kafka", "csv_metadata": "<recorded>"}),
+                   "source_system": "kafka", "format": "csv", "csv_metadata": "<recorded>"}),
         ),
         (
             "stream from an undeclared system",
@@ -98,14 +98,14 @@ fn every_async_source_records_what_it_read() {
                 })
                 .unwrap(),
             ),
-            json!({"type": "stream", "topic": "pipe", "batch_id": "<uuid>",
+            json!({"type": "stream", "topic": "pipe", "batch_id": "<uuid>", "format": "csv",
                    "csv_metadata": "<recorded>"}),
         ),
         (
             "profile_file",
             source_of(&rt.block_on(profiler.profile_file(file.path())).unwrap()),
             json!({"type": "stream", "topic": path, "batch_id": "<uuid>",
-                   "source_system": "file", "csv_metadata": "<recorded>"}),
+                   "source_system": "file", "format": "csv", "csv_metadata": "<recorded>"}),
         ),
     ];
 
