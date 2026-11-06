@@ -243,9 +243,9 @@ fn removed_and_added_columns_fail_against_a_baseline_that_shows_the_change() {
 }
 
 #[test]
-fn a_flat_summary_baseline_covers_its_source_only_with_a_complete_scan() {
-    // A summary records the kind of source but not a file's format, so a
-    // truncated CSV baseline can no longer show its header was complete.
+fn a_flat_summary_baseline_declares_its_columns_only_where_it_records_its_format() {
+    // A summary records a file's format (#1028), so a truncated CSV baseline
+    // shows its header was complete; one written before it cannot.
     let orders = file(".csv", ORDERS);
     let no_note = file(".csv", NO_NOTE);
     let policy = QualityPolicy::new().forbid_added_columns();
@@ -273,6 +273,14 @@ fn a_flat_summary_baseline_covers_its_source_only_with_a_complete_scan() {
     let summarized = outcomes(&policy.evaluate_against(&report, &flat(&truncated)).unwrap());
     assert_eq!(
         summarized[2],
+        outcome(CheckCode::ForbidAddedColumn, "note", "failed")
+    );
+    let mut legacy: serde_json::Value =
+        serde_json::from_str(&truncated.summary_json().unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("source_format");
+    let legacy = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+    assert_eq!(
+        outcomes(&policy.evaluate_against(&report, &legacy).unwrap())[2],
         outcome(
             CheckCode::ForbidAddedColumn,
             "note",

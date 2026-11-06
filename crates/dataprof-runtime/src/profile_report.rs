@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource, ExecutionMetadata,
+    AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource, ExecutionMetadata, FileFormat,
     KeyColumnSource, KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount,
     QualityScoreWeights, RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator,
     StatisticRounding, TextLengthUnit,
@@ -590,6 +590,12 @@ struct PythonProfileReportDocument {
     schema_version: u32,
     source: String,
     source_type: PythonSourceType,
+    /// The format a file, bytes or stream source was parsed as (#1028).
+    /// Absent for a query or dataframe source, for a stream that recorded
+    /// none, and in summaries written before 0.14.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "FileFormat")]
+    source_format: Option<FileFormat>,
     execution: PythonExecutionDocument,
     columns: Vec<PythonColumnDocument>,
     quality: Option<PythonQualityDocument>,
@@ -982,6 +988,7 @@ impl PythonProfileReportDocument {
                 DataSource::Stream { .. } => PythonSourceType::Stream,
                 DataSource::Bytes { .. } => PythonSourceType::Bytes,
             },
+            source_format: report.data_source.format().cloned(),
             execution: serde_json::from_value(execution)?,
             columns,
             quality,

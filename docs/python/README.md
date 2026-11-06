@@ -323,6 +323,7 @@ Returned by `profile()` and all analysis functions.
 | `timestamp` | `str \| None` | The report's creation timestamp, as `compare()` and `check()` record it; `None` for a report loaded from a flat `to_dict()` summary, which does not record one |
 | `source` | `str` | Source identifier (file path, table name, etc.) |
 | `source_type` | `str` | `"file"`, `"bytes"`, `"query"`, `"dataframe"`, `"stream"` |
+| `source_format` | `str \| None` | The format a file, bytes or stream source was parsed as: `"csv"`, `"json"`, `"jsonl"`, `"parquet"`, or `"arrow"` for an Arrow C stream. `None` for query and dataframe sources, for a stream that recorded none, and for summaries written before 0.14 |
 | `engine` | `str \| None` | Engine or parser that produced the report |
 | `rows` | `int` | Number of rows processed |
 | `columns` | `int` | Number of columns detected |

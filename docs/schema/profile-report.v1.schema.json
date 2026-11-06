@@ -2102,6 +2102,10 @@
         "source": {
           "type": "string"
         },
+        "source_format": {
+          "$ref": "#/$defs/FileFormat",
+          "description": "The format a file, bytes or stream source was parsed as (#1028).\nAbsent for a query or dataframe source, for a stream that recorded\nnone, and in summaries written before 0.14."
+        },
         "source_identity": {
           "$ref": "#/$defs/SourceIdentity"
         },
