@@ -139,6 +139,15 @@ def test_bytes_restore_the_csv_field_limit() -> None:
     assert csv.field_size_limit() == before
 
 
+def test_bytes_restore_the_csv_field_limit_after_a_refusal() -> None:
+    # A refused parse must not leave the process at the raised limit either.
+    # The input has to pass 131,072 bytes, or the limit is never raised.
+    before = csv.field_size_limit()
+    with pytest.raises(ValueError, match="duplicate column"):
+        dp.profile(("a;a\n1;" + "x" * 200_000 + "\n").encode(), format="csv")
+    assert csv.field_size_limit() == before
+
+
 def test_long_header_gate_sees_every_column(tmp_path: Path) -> None:
     path = tmp_path / "probe.csv"
     path.write_bytes(('"' + "x" * 4094 + '";value\n1;10\n2;20\n').encode())
