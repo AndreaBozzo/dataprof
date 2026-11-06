@@ -1131,8 +1131,10 @@ does not know: that dimension's weight is in the stored score, so
 while each known dimension keeps its own coverage. A component the report
 computed but lists neither as exact nor as sampled has no recorded coverage
 either: `check()`, `compare()` and `findings()` read it, and any score that
-weighs it, as `coverage_unrecorded`. No release writes such a report; a
-flat `to_dict()` summary records no exact list, so it keeps reading a
+weighs it, as `coverage_unrecorded`. No release writes such a report. A
+flat `to_dict()` summary records the exact list from 0.14 on, and
+`compare()`, a summary baseline and `findings()` apply the same rule to it; a
+summary written before 0.14 has no exact list, so it keeps reading a
 component that is not sampled as exact.
 
 **Rules about change (0.13+).** With `baseline=`, a gate also judges how far

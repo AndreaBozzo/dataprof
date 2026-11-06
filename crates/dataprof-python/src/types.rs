@@ -1161,6 +1161,17 @@ impl PyProfileReport {
             .and_then(QualityAssessment::sampled_dimensions)
     }
 
+    /// Metric components computed from every scanned row, in the labels of
+    /// ``quality_sampled_dimensions``. ``None`` when there is no assessment
+    /// or its coverage is not recorded. The flat summary writes it (#1027).
+    #[getter]
+    fn quality_exact_dimensions(&self) -> Option<Vec<String>> {
+        self.inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::exact_dimensions)
+    }
+
     /// Where the whole-source quality scores lie, when some were computed
     /// over a retained sample of the scanned rows.
     ///
@@ -1627,6 +1638,18 @@ pub fn findings_from_input_json(
         .null_heavy_percentage(null_heavy_percentage)
         .mixed_types_percentage(mixed_types_percentage);
     findings_document(policy.evaluate_input(&input))
+}
+
+/// The components carrying signal that neither coverage list of a flat
+/// summary's `quality` object names, read by the rule `compare()` applies to
+/// the summary (#1027). Empty for a summary that records no exact list.
+#[pyfunction]
+pub fn summary_unlisted_components(quality: &str) -> PyResult<Vec<String>> {
+    dataprof::ReportSide::summary_quality_unlisted_components(quality).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "findings(): the summary's quality cannot be read: {e}"
+        ))
+    })
 }
 
 fn findings_document(

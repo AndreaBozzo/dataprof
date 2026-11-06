@@ -79,8 +79,9 @@ def test_a_component_listed_nowhere_reads_unrecorded_in_every_reader():
     assert not wrong, wrong
 
 
-def test_a_flat_summary_keeps_reading_not_sampled_as_exact():
-    # The summary records no exact list, so nothing can be missing from both.
+def test_a_flat_summary_keeps_the_findings_of_its_report():
+    # The summary records both lists (#1027) and every computed component is
+    # in one of them, so its findings are the report's.
     report = dp.profile(DATED)
     flat = dp.ProfileReport.from_dict(report.to_dict())
 

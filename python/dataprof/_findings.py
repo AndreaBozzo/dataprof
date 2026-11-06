@@ -21,7 +21,10 @@ from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any, NoReturn as _NoReturn
 
 from ._columns import _homogeneity_counts
-from ._dataprof import findings_from_input_json as _findings_from_input_json
+from ._dataprof import (
+    findings_from_input_json as _findings_from_input_json,
+    summary_unlisted_components as _summary_unlisted_components,
+)
 from ._gate import _real_number
 from ._render import _MIXED_TYPE_PCT, _NULL_HEAVY_PCT
 from ._rounding import _r2
@@ -206,9 +209,11 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
                 ),
             ),
             "sampled_dimensions": report.quality_sampled_dimensions,
-            # A summary records no exact list, so no component can be found
-            # missing from both.
-            "unlisted_components": [],
+            # Read by the rule compare() applies to the summary: empty when
+            # the summary records no exact list (#1027).
+            "unlisted_components": _summary_unlisted_components(
+                _json.dumps(report._legacy_summary()["quality"])
+            ),
         },
         "columns": [_column_facts(column) for column in report.profiles],
     }

@@ -2227,6 +2227,16 @@
           },
           "type": "object"
         },
+        "exact_dimensions": {
+          "description": "Metric components computed from every scanned row, in the labels of\n`sampled_dimensions`. With both lists recorded, a component carrying\nsignal that neither names has unrecorded coverage, as on the full\ndocument (#1027). Absent in summaries written before 0.14, which read\nas before: a component not listed as sampled is exact.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "low_sample_warning": {
           "type": "boolean"
         },

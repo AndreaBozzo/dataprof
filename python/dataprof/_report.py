@@ -595,6 +595,11 @@ class ProfileReport:
                 },
                 "low_sample_warning": bool(q.low_sample_warning),
             }
+            # Absent before 0.14; kept absent so the summary reader keeps
+            # reading "not sampled" as exact there (#1027).
+            exact = self._report.quality_exact_dimensions
+            if exact is not None:
+                quality_dict["exact_dimensions"] = list(exact)
             # Absence is preserved: a document from a release that did not
             # record this must not round-trip as "nothing was sampled".
             sampled = self.quality_sampled_dimensions
