@@ -1008,3 +1008,20 @@ first batch. A stream without `format`, and a JSON or JSONL one, covers only
 the records read, as before.
 Like the rest of `data_source`, it is provenance and stays outside the
 serialized-value parity comparison. Stored v1 reports remain valid.
+
+## v1 additive change: summary `source_format`
+
+The Python dialect, the flat `to_dict()` summary, records the format of a
+`file`, `bytes` or `stream` source as a top-level `source_format` (#1028): the
+value the Rust dialect carries in `data_source.format`. It is absent for a
+`query` or `dataframe` source, for a stream that recorded no format, and in
+every summary written before 0.14.
+
+The baseline gate reads a summary's column set with the rule it applies to the
+Rust dialect: a CSV or Parquet `file` or `bytes` source, and a CSV, Parquet or
+Arrow `stream`, declare every column however few rows were read. A capped CSV
+run kept as a summary baseline can then fail a removed or added column rather
+than leave it `evidence_incomplete`. A summary without `source_format` covers
+only the rows read, as before. Like `data_source`, it is provenance and stays
+outside the serialized-value parity comparison. Stored v1 reports remain
+valid.

@@ -915,6 +915,14 @@ impl PyProfileReport {
         }
     }
 
+    /// The format a file, bytes or stream source was parsed as, such as
+    /// "csv", "jsonl", "parquet" or "arrow". None for a query or dataframe
+    /// source, and for a stream that recorded none.
+    #[getter]
+    fn source_format(&self) -> Option<String> {
+        self.inner.data_source.format().map(ToString::to_string)
+    }
+
     /// Source library for DataFrame sources (e.g. "pandas", "polars")
     #[getter]
     fn source_library(&self) -> Option<String> {

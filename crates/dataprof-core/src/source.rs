@@ -418,6 +418,16 @@ impl DataSource {
         }
     }
 
+    /// The format a file, bytes or stream source was parsed as. `None` for a
+    /// query or dataframe source, and for a stream that recorded none.
+    pub fn format(&self) -> Option<&FileFormat> {
+        match self {
+            Self::File { format, .. } | Self::Bytes { format, .. } => Some(format),
+            Self::Stream { format, .. } => format.as_ref(),
+            Self::Query { .. } | Self::DataFrame { .. } => None,
+        }
+    }
+
     /// How a CSV source was split into fields, when the source records it.
     pub fn csv_metadata(&self) -> Option<&CsvSourceMetadata> {
         match self {

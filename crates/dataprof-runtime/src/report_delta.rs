@@ -771,12 +771,22 @@ impl ReportSide {
                 .as_ref()
                 .map(|settings| settings.pattern_locale),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
-            // A summary records the kind of source but not a file's format,
-            // so only the kinds that always declare their columns count.
-            schema_declared: matches!(
-                summary.source_type,
-                Some(SummarySourceType::Dataframe | SummarySourceType::Query)
-            ),
+            // The rule the canonical reader applies, over the kind and the
+            // format the summary recorded. A summary written before 0.14 has
+            // no format, so only the kinds that always declare their columns
+            // count there (#1028).
+            schema_declared: match summary.source_type {
+                Some(SummarySourceType::Dataframe | SummarySourceType::Query) => true,
+                Some(SummarySourceType::File | SummarySourceType::Bytes) => summary
+                    .source_format
+                    .as_ref()
+                    .is_some_and(file_format_declares_schema),
+                Some(SummarySourceType::Stream) => summary
+                    .source_format
+                    .as_ref()
+                    .is_some_and(stream_format_declares_schema),
+                Some(SummarySourceType::Other) | None => false,
+            },
         })
     }
 }
@@ -828,6 +838,10 @@ struct Summary {
     /// Absent from a summary that did not record it, which declares nothing.
     #[serde(default)]
     source_type: Option<SummarySourceType>,
+    /// Absent before 0.14, and for a source that records no format. A format
+    /// this build does not know reads as `Unknown`, which declares nothing.
+    #[serde(default)]
+    source_format: Option<FileFormat>,
     execution: SummaryExecution,
     columns: Vec<SummaryColumn>,
     quality: Option<SummaryQuality>,
@@ -849,6 +863,9 @@ struct Summary {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum SummarySourceType {
+    File,
+    Bytes,
+    Stream,
     Dataframe,
     Query,
     #[serde(other)]
@@ -863,20 +880,30 @@ enum SummarySourceType {
 fn declares_schema(source: &DataSource) -> bool {
     match source {
         DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
-            matches!(format, FileFormat::Csv | FileFormat::Parquet)
+            file_format_declares_schema(format)
         }
-        // Only the Arrow C stream route records `Arrow`, so a file or bytes
-        // source claiming it stays conservative.
         DataSource::Stream {
             format: Some(format),
             ..
-        } => matches!(
-            format,
-            FileFormat::Csv | FileFormat::Parquet | FileFormat::Arrow
-        ),
+        } => stream_format_declares_schema(format),
         DataSource::DataFrame { .. } | DataSource::Query { .. } => true,
         DataSource::Stream { format: None, .. } => false,
     }
+}
+
+/// Whether a file or bytes source in this format lists every column up front.
+/// Only the Arrow C stream route records `Arrow`, so a file or bytes source
+/// claiming it stays conservative.
+fn file_format_declares_schema(format: &FileFormat) -> bool {
+    matches!(format, FileFormat::Csv | FileFormat::Parquet)
+}
+
+/// Whether a stream in this format lists every column up front.
+fn stream_format_declares_schema(format: &FileFormat) -> bool {
+    matches!(
+        format,
+        FileFormat::Csv | FileFormat::Parquet | FileFormat::Arrow
+    )
 }
 
 #[derive(serde::Deserialize)]

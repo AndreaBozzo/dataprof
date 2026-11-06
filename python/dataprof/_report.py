@@ -172,6 +172,16 @@ class ProfileReport:
         return self._report.source_type
 
     @property
+    def source_format(self) -> str | None:
+        """The format a file, bytes or stream source was parsed as.
+
+        ``"csv"``, ``"json"``, ``"jsonl"``, ``"parquet"``, or ``"arrow"`` for
+        an Arrow C stream. ``None`` for a query or dataframe source, for a
+        stream that recorded none, and for a summary written before 0.14.
+        """
+        return self._report.source_format
+
+    @property
     def engine(self) -> str | None:
         return self._report.engine
 
@@ -607,6 +617,11 @@ class ProfileReport:
             "schema_version": REPORT_SCHEMA_VERSION,
             "source": self._report.source,
             "source_type": self._report.source_type,
+            **(
+                {"source_format": self._report.source_format}
+                if self._report.source_format is not None
+                else {}
+            ),
             "execution": {
                 "engine": self._report.engine,
                 "rows_processed": self._report.rows_processed,

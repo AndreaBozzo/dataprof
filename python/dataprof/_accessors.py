@@ -251,6 +251,7 @@ class _ReportView(_View):
     timestamp = _Field[str | None]()
     source = _Field[str]()
     source_type = _Field[str]()
+    source_format = _Field[str | None]()
     engine = _Field[str | None]()
     rows_processed = _Field[int]()
     columns_detected = _Field[int]()

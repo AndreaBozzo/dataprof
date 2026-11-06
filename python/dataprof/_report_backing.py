@@ -401,6 +401,22 @@ def _read_source_identity(document: dict[str, Any]) -> dict[str, Any] | None:
     return read
 
 
+def _read_source_format(document: dict[str, Any]) -> str | None:
+    """Read `source_format` as the Rust reader reads `Option<FileFormat>`.
+
+    A missing key or an explicit null records nothing: a query or dataframe
+    source, a stream that recorded no format, or a summary written before
+    0.14. A format this build does not name is kept as written, as Rust keeps
+    it; anything but a string is an error.
+    """
+    value = document.get("source_format")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"from_dict(): 'source_format' must be a string, got {value!r}.")
+    return value
+
+
 def _read_csv_metadata(document: dict[str, Any]) -> dict[str, Any] | None:
     """Read `csv_metadata` as the Rust reader reads `CsvSourceMetadata`.
 
@@ -482,6 +498,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["timestamp"] = None
     values["source"] = document.get("source")
     values["source_type"] = document.get("source_type")
+    values["source_format"] = _read_source_format(document)
     # Only these additive fields have legacy defaults. Unknown measurements
     # stay absent; in particular an unknown history is not an empty history.
     values["ragged_row_count"] = _read_field(
