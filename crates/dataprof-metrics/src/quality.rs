@@ -1070,13 +1070,30 @@ impl QualityAssessment {
             } => Some(sampled_dimensions.clone()),
             // One sample produced everything, so every component carrying
             // signal came out of it.
-            MetricConfidence::Approximate { .. } => Some(
-                QualityDimension::all()
-                    .into_iter()
-                    .filter(|dimension| self.metrics.supports_dimension(*dimension))
-                    .flat_map(|dimension| self.component_labels(dimension))
-                    .collect(),
-            ),
+            MetricConfidence::Approximate { .. } => Some(self.metrics.signal_components()),
+            MetricConfidence::Unrecorded => None,
+        }
+    }
+
+    /// Labels of the metric components computed from every scanned row: the
+    /// counterpart of [`Self::sampled_dimensions`], in the same labels.
+    ///
+    /// For [`MetricConfidence::Mixed`] it is the recorded list. An exact or
+    /// not-assessed assessment lists every component carrying signal in a
+    /// dimension that assessed something, which is what its document keeps,
+    /// and an approximate one none. `None` when the assessment does not
+    /// record its coverage. The flat summary writes it beside the sampled
+    /// list, so a reader of the summary can apply
+    /// [`Self::unlisted_components`] (#1027).
+    pub fn exact_dimensions(&self) -> Option<Vec<String>> {
+        match &self.confidence {
+            MetricConfidence::Exact | MetricConfidence::NotAssessed => {
+                Some(self.metrics.recorded_signal_components())
+            }
+            MetricConfidence::Mixed {
+                exact_dimensions, ..
+            } => Some(exact_dimensions.clone()),
+            MetricConfidence::Approximate { .. } => Some(Vec::new()),
             MetricConfidence::Unrecorded => None,
         }
     }
@@ -1086,7 +1103,7 @@ impl QualityAssessment {
     ///
     /// Every release that records these lists (0.6 onward) names each such
     /// component in one of the two; this one does so by the same test
-    /// [`Self::component_labels`] applies, and earlier ones listed both
+    /// [`QualityMetrics::signal_components`] applies, and earlier ones listed both
     /// uniqueness components unconditionally. So a report this build or an
     /// earlier one wrote returns an empty list. A non-empty list
     /// comes from a document written another way, by a later release or by
@@ -1102,13 +1119,53 @@ impl QualityAssessment {
         else {
             return Vec::new();
         };
+        self.metrics
+            .unlisted_components(exact_dimensions, sampled_dimensions)
+    }
+}
+
+impl QualityMetrics {
+    /// The component labels these metrics carry signal for: one per
+    /// dimension present, with uniqueness split into `key_uniqueness` (when
+    /// a key was measured) and `duplicate_rows` (when rows were checked).
+    ///
+    /// Reads only which dimensions are present and those two uniqueness
+    /// facts, so a reader holding just those can apply the same rule.
+    pub fn signal_components(&self) -> Vec<String> {
         QualityDimension::all()
             .into_iter()
-            .filter(|dimension| self.metrics.supports_dimension(*dimension))
+            .filter(|dimension| self.supports_dimension(*dimension))
             .flat_map(|dimension| self.component_labels(dimension))
-            .filter(|label| {
-                !exact_dimensions.contains(label) && !sampled_dimensions.contains(label)
+            .collect()
+    }
+
+    /// [`Self::signal_components`] over the dimensions a document keeps:
+    /// those that assessed something, since serialization drops the rest.
+    /// A report and the same report read back from its document give the
+    /// same list.
+    fn recorded_signal_components(&self) -> Vec<String> {
+        QualityDimension::all()
+            .into_iter()
+            .filter(|dimension| match dimension {
+                QualityDimension::Completeness => !is_unassessed(&self.completeness),
+                QualityDimension::Consistency => !is_unassessed(&self.consistency),
+                QualityDimension::Uniqueness => !is_unassessed(&self.uniqueness),
+                QualityDimension::Accuracy => !is_unassessed(&self.accuracy),
+                QualityDimension::Timeliness => !is_unassessed(&self.timeliness),
+                QualityDimension::Validity => !is_unassessed(&self.validity),
+                QualityDimension::Precision => !is_unassessed(&self.precision),
             })
+            .flat_map(|dimension| self.component_labels(dimension))
+            .collect()
+    }
+
+    /// The components carrying signal that neither recorded list names: the
+    /// rule [`QualityAssessment::unlisted_components`] applies to a full
+    /// document, for any reader that has the two lists (#749, #1027).
+    pub fn unlisted_components(&self, exact: &[String], sampled: &[String]) -> Vec<String> {
+        self.signal_components()
+            .into_iter()
+            .filter(|label| !exact.contains(label) && !sampled.contains(label))
             .collect()
     }
 
@@ -1119,7 +1176,7 @@ impl QualityAssessment {
             return vec![dimension.to_string()];
         };
         let mut labels = Vec::new();
-        if let Some(uniqueness) = &self.metrics.uniqueness {
+        if let Some(uniqueness) = &self.uniqueness {
             if uniqueness.key_measured() {
                 labels.push("key_uniqueness".to_string());
             }

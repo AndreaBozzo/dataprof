@@ -1025,3 +1025,20 @@ than leave it `evidence_incomplete`. A summary without `source_format` covers
 only the rows read, as before. Like `data_source`, it is provenance and stays
 outside the serialized-value parity comparison. Stored v1 reports remain
 valid.
+
+## v1 additive change: summary `exact_dimensions`
+
+The Python dialect, the flat `to_dict()` summary, records
+`quality.exact_dimensions` beside `quality.sampled_dimensions` (#1027): the
+components computed from every scanned row, in the same labels. For a `Mixed`
+confidence it is the Rust dialect's `exact_dimensions`; an exact assessment
+lists every component carrying signal, and an approximate one none. It is
+absent when the coverage is not recorded, and in every summary written before
+0.14.
+
+With both lists recorded, a summary's readers (`compare()`, a summary
+baseline in the gate, and findings) apply the rule the Rust dialect already
+follows: a component carrying signal that neither list names has
+`coverage_unrecorded` coverage, and so has any score that weighs it. A summary
+without `exact_dimensions` keeps reading a component that is not listed as
+sampled as exact. Stored v1 reports remain valid.

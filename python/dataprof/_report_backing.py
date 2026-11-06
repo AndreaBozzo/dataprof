@@ -115,6 +115,12 @@ def _is_bool(value: Any) -> bool:
     return isinstance(value, bool)
 
 
+def _is_optional_list_of_strings(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, list) and all(isinstance(item, str) for item in value)
+    )
+
+
 def _is_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -546,6 +552,18 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["quality"] = _quality_accessor(quality) if quality is not None else None
     values["quality_score"] = (
         values["quality"].get("overall_quality_score") if values["quality"] is not None else None
+    )
+    values["quality_exact_dimensions"] = (
+        _read_field(
+            quality,
+            "exact_dimensions",
+            "quality.exact_dimensions",
+            "a list of strings or null",
+            _is_optional_list_of_strings,
+            None,
+        )
+        if quality is not None
+        else None
     )
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if quality is not None else None

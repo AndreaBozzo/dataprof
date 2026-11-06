@@ -370,7 +370,7 @@ struct QualityFacts {
     /// them.
     sampled_dimensions: Option<Vec<String>>,
     /// Components with signal that neither recorded list names. Empty for a
-    /// flat summary, which records no exact list.
+    /// flat summary written before 0.14, which records no exact list (#1027).
     unlisted_components: Vec<String>,
 }
 

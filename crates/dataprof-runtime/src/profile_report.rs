@@ -787,6 +787,13 @@ struct PythonQualityDocument {
     assessed_dimensions: Vec<PythonQualityDimension>,
     dimension_scores: std::collections::BTreeMap<PythonQualityDimension, Option<f64>>,
     low_sample_warning: bool,
+    /// Metric components computed from every scanned row, in the labels of
+    /// `sampled_dimensions`. With both lists recorded, a component carrying
+    /// signal that neither names has unrecorded coverage, as on the full
+    /// document (#1027). Absent in summaries written before 0.14, which read
+    /// as before: a component not listed as sampled is exact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exact_dimensions: Option<Vec<String>>,
     /// Metric components computed from a retained quality sample rather than
     /// from every scanned row. Additive field: a document written before it
     /// existed omits it, and its absence is preserved on reload because
@@ -958,6 +965,9 @@ impl PythonProfileReportDocument {
                     serde_json::to_value(metrics.assessed_dimensions())?;
                 document["low_sample_warning"] =
                     serde_json::Value::Bool(metrics.low_sample_warning);
+                if let Some(exact) = assessment.exact_dimensions() {
+                    document["exact_dimensions"] = serde_json::to_value(exact)?;
+                }
                 if let Some(sampled) = assessment.sampled_dimensions() {
                     document["sampled_dimensions"] = serde_json::to_value(sampled)?;
                 }

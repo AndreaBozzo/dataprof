@@ -65,6 +65,10 @@ use dataprof_core::{
     DataSource, DataType, FileFormat, QualityDimension, QualityScoreWeights, SemanticHintBinding,
     SemanticHintKind,
 };
+use dataprof_metrics::{
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
+    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+};
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
@@ -469,6 +473,10 @@ pub struct ReportSide {
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
+    /// Components carrying signal that neither recorded coverage list names,
+    /// so their coverage is unrecorded (#749). Empty for a flat summary that
+    /// records no exact list (#1027).
+    unlisted_components: Vec<String>,
 }
 
 /// The identifier hint's columns in binding order, the order they were given.
@@ -615,7 +623,25 @@ impl ReportSide {
                 .as_ref()
                 .map(|settings| settings.columns.clone()),
             schema_declared: declares_schema(&report.data_source),
+            unlisted_components: unlisted,
         }
+    }
+
+    /// Components carrying signal that neither of the side's recorded
+    /// coverage lists names. Their coverage, and that of any score weighing
+    /// them, is unrecorded. Empty for a flat summary written before 0.14,
+    /// which records no exact list.
+    pub fn unlisted_components(&self) -> &[String] {
+        &self.unlisted_components
+    }
+
+    /// [`Self::unlisted_components`] for the `quality` object of a flat
+    /// summary alone, for a reader that has no whole summary to read, such
+    /// as findings over a loaded one. Fails when the object holds a field of
+    /// the wrong type.
+    pub fn summary_quality_unlisted_components(quality: &str) -> serde_json::Result<Vec<String>> {
+        let quality: SummaryQuality = serde_json::from_str(quality)?;
+        Ok(quality.unlisted_components())
     }
 
     /// The identifier hint in the order it was given, or `None` when the side
@@ -689,6 +715,9 @@ impl ReportSide {
                 .collect();
             (!(parsed.is_empty() && quality.overall_score.is_some())).then_some(parsed)
         });
+        let unlisted = quality
+            .map(SummaryQuality::unlisted_components)
+            .unwrap_or_default();
         let evidence = |provenance| {
             let Some(quality) = quality else {
                 return scan;
@@ -697,18 +726,17 @@ impl ReportSide {
             let coverage = match (provenance, &assessed) {
                 // Without the weights, a sampled component may or may not
                 // reach the overall score; only "nothing was sampled" settles it.
-                (Provenance::Overall, None) if sampled.is_some_and(|s| s.is_empty()) => {
+                (Provenance::Overall, None)
+                    if sampled.is_some_and(|s| s.is_empty()) && unlisted.is_empty() =>
+                {
                     Evidence::Complete
                 }
                 (Provenance::Overall, None) => Evidence::Incomplete {
                     reason: EvidenceGap::CoverageUnrecorded,
                 },
-                // A flat summary records no exact list, so no component can
-                // be found missing from both: "not sampled" reads as exact
-                // until the summary records one.
                 (_, assessed) => sampled_component_evidence(
                     sampled,
-                    &[],
+                    &unlisted,
                     assessed.as_deref().unwrap_or_default(),
                     provenance,
                 ),
@@ -787,6 +815,7 @@ impl ReportSide {
                     .is_some_and(stream_format_declares_schema),
                 Some(SummarySourceType::Other) | None => false,
             },
+            unlisted_components: unlisted.clone(),
         })
     }
 }
@@ -934,14 +963,95 @@ struct SummaryQuality {
     dimension_scores: BTreeMap<String, Option<f64>>,
     #[serde(default)]
     assessed_dimensions: Vec<String>,
+    /// Absent in a summary written before 0.14, which reads as before: a
+    /// component not listed as sampled is exact (#1027).
+    #[serde(default)]
+    exact_dimensions: Option<Vec<String>>,
     /// Absent in a summary written before dataprof recorded it, which reads
     /// as unrecorded coverage, never as "nothing was sampled".
     sampled_dimensions: Option<Vec<String>>,
+    // Which dimensions carry signal, read as the full document reads them:
+    // a dimension's block is present, and the uniqueness facts that decide
+    // its two components. The values themselves are not read here.
+    #[serde(default)]
+    completeness: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    consistency: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    uniqueness: Option<SummaryUniqueness>,
+    #[serde(default)]
+    accuracy: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    timeliness: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    validity: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    precision: Option<serde::de::IgnoredAny>,
     /// Written whatever the weights since 0.13; a 0.12 summary omitted only
     /// the defaults, and earlier ones did not record them. Explicit null is
     /// malformed, as in Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
+}
+
+/// The uniqueness facts that decide which of its components carry signal,
+/// typed as [`UniquenessMetrics`] types them.
+#[derive(serde::Deserialize)]
+struct SummaryUniqueness {
+    #[serde(default)]
+    rows_checked: usize,
+    #[serde(default)]
+    key_column: Option<String>,
+    #[serde(default)]
+    key_values_checked: Option<usize>,
+}
+
+impl SummaryQuality {
+    /// The full document's rule, once the summary records both lists: a
+    /// component carrying signal that neither names is unrecorded. A summary
+    /// written before 0.14 has no exact list, so nothing is unlisted and "not
+    /// sampled" still reads as exact there (#1027).
+    fn unlisted_components(&self) -> Vec<String> {
+        match (&self.exact_dimensions, &self.sampled_dimensions) {
+            (Some(exact), Some(sampled)) => {
+                self.signal_metrics().unlisted_components(exact, sampled)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Metrics holding only what [`QualityMetrics::signal_components`] reads:
+    /// which dimensions are present and the uniqueness facts. The values are
+    /// defaults and must not be read for anything else.
+    fn signal_metrics(&self) -> QualityMetrics {
+        QualityMetrics {
+            completeness: self
+                .completeness
+                .as_ref()
+                .map(|_| CompletenessMetrics::default()),
+            consistency: self
+                .consistency
+                .as_ref()
+                .map(|_| ConsistencyMetrics::default()),
+            uniqueness: self
+                .uniqueness
+                .as_ref()
+                .map(|uniqueness| UniquenessMetrics {
+                    rows_checked: uniqueness.rows_checked,
+                    key_column: uniqueness.key_column.clone(),
+                    key_values_checked: uniqueness.key_values_checked,
+                    ..UniquenessMetrics::default()
+                }),
+            accuracy: self.accuracy.as_ref().map(|_| AccuracyMetrics::default()),
+            timeliness: self
+                .timeliness
+                .as_ref()
+                .map(|_| TimelinessMetrics::default()),
+            validity: self.validity.as_ref().map(|_| ValidityMetrics::default()),
+            precision: self.precision.as_ref().map(|_| PrecisionMetrics::default()),
+            ..QualityMetrics::default()
+        }
+    }
 }
 
 #[cfg(test)]
