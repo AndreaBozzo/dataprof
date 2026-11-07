@@ -526,6 +526,9 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
         _is_bool,
         False,
     )
+    # The accessor keeps its False default, but the summary the gate reads
+    # must not state it: unknown sampling is not "not sampled" (#1236).
+    values["sampling_applied_recorded"] = "sampling_applied" in execution
     values["semantic_hint_bindings"] = list(
         _read_field(
             document,
