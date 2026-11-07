@@ -1186,7 +1186,7 @@
         },
         "json_number_reading": {
           "$ref": "#/$defs/JsonNumberReading",
-          "description": "How a JSON number whose value its nearest `f64` does not hold is read.\n\nAbsent means not recorded: through 0.13 such a number was read as its\nnearest `f64`, which moved the precision, uniqueness, accuracy and\noverall scores of the same bytes."
+          "description": "How a JSON number whose value its nearest `f64` does not hold is read.\n\nAbsent means not recorded: through 0.13 such a number was read as its\nnearest `f64`, which moved the consistency, precision, uniqueness,\naccuracy and overall scores of the same bytes."
         },
         "key_column_source": {
           "$ref": "#/$defs/KeyColumnSource",
