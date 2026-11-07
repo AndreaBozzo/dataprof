@@ -639,7 +639,14 @@ class ProfileReport:
                 "memory_peak_mb": _r2(self._report.memory_peak_mb),
                 "error_count": self._report.error_count,
                 "ragged_row_count": self._report.ragged_row_count,
-                "sampling_applied": self._report.sampling_applied,
+                # Omitted when the loaded document did not record it, so the
+                # gate reads the coverage as unrecorded, never as unsampled
+                # (#1236).
+                **(
+                    {"sampling_applied": self._report.sampling_applied}
+                    if self._report._accessor.get("sampling_applied_recorded")
+                    else {}
+                ),
                 "sampling_ratio": _r4(self._report.sampling_ratio),
             },
             "columns": cols,
