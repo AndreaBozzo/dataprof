@@ -7,6 +7,7 @@ import io as _io
 import json as _json
 import math as _math
 import re as _re
+import threading as _threading
 from typing import Any as _Any
 
 from ._dataprof import _detect_csv_delimiter, _jsonl_line_error
@@ -374,6 +375,10 @@ def _unclosed_quote_at(text: str, delimiter: str, quote: str = '"') -> int | Non
 
 _NOT_A_LINE_END = _re.compile(r"[^\r\n]")
 
+#: ``csv.field_size_limit`` is process-wide, so the raise and the restore around
+#: one parse must not interleave with another thread's.
+_FIELD_LIMIT_LOCK = _threading.Lock()
+
 
 #: How CSV bytes were split: the delimiter, with ``(header_fields, runner_up,
 #: unlisted_delimiter)`` from detection when the caller did not set it (#1100).
@@ -381,6 +386,26 @@ _CsvSource = tuple[str, tuple[int, str | None, str | None] | None]
 
 
 def _columns_from_csv_bytes(
+    buffer: _io.BytesIO, delimiter: str | None, max_rows: int | None = None
+) -> tuple[list[_Column], _CsvSource]:
+    """Parse CSV bytes with no field-size limit below the input's own length.
+
+    The Rust CSV readers have no per-field limit, while ``csv.reader`` refuses a
+    field over 131,072 characters by default (#1173). No field is longer than
+    the input, so its byte length is limit enough; it stays within a C long,
+    which is what the setting takes on every platform.
+    """
+    limit = min(buffer.getbuffer().nbytes, 2**31 - 1)
+    with _FIELD_LIMIT_LOCK:
+        previous = _csv.field_size_limit()
+        _csv.field_size_limit(max(previous, limit))
+        try:
+            return _parse_csv_bytes(buffer, delimiter, max_rows)
+        finally:
+            _csv.field_size_limit(previous)
+
+
+def _parse_csv_bytes(
     buffer: _io.BytesIO, delimiter: str | None, max_rows: int | None = None
 ) -> tuple[list[_Column], _CsvSource]:
     """Parse CSV bytes into columns, treating an empty field as null.

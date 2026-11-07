@@ -18,6 +18,7 @@ of the header, up to 1 MiB, and refuses a longer one.
 from __future__ import annotations
 
 import asyncio
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,17 @@ CASES: dict[str, tuple[bytes, list[tuple[str, int]], int]] = {
         [("a" * 10_000, 0), ("value", 1)],
         0,
     ),
+    # Past csv.reader's default field_size_limit of 131,072 (#1173).
+    "value past the csv module's field limit": (
+        ("id;note\n1;" + "x" * 200_000 + "\n").encode(),
+        [("id", 0), ("note", 0)],
+        0,
+    ),
+    "header past the csv module's field limit": (
+        ("h" * 200_000 + ";value\n1;2\n").encode(),
+        [("h" * 200_000, 0), ("value", 0)],
+        0,
+    ),
 }
 
 #: Synchronous bytes refuse a ragged row rather than cut it, on every release.
@@ -118,6 +130,22 @@ def test_detected_delimiter_keeps_every_value(tmp_path: Path) -> None:
 def test_bytes_gate_sees_the_null_a_file_sees() -> None:
     data = ("payload;amount\n" + "x" * 8192 + ";\n").encode()
     assert dp.profile(data, format="csv").check(max_null_percentage=0).verdict == "fail"
+
+
+def test_bytes_restore_the_csv_field_limit() -> None:
+    # The limit is process-wide: raised for the parse, then put back.
+    before = csv.field_size_limit()
+    dp.profile(("id;note\n1;" + "x" * 200_000 + "\n").encode(), format="csv")
+    assert csv.field_size_limit() == before
+
+
+def test_bytes_restore_the_csv_field_limit_after_a_refusal() -> None:
+    # A refused parse must not leave the process at the raised limit either.
+    # The input has to pass 131,072 bytes, or the limit is never raised.
+    before = csv.field_size_limit()
+    with pytest.raises(ValueError, match="duplicate column"):
+        dp.profile(("a;a\n1;" + "x" * 200_000 + "\n").encode(), format="csv")
+    assert csv.field_size_limit() == before
 
 
 def test_long_header_gate_sees_every_column(tmp_path: Path) -> None:
