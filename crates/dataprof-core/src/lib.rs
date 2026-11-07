@@ -45,8 +45,8 @@ pub use profile::{
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{
-    AccuracyComparison, KeyColumnSource, KeyUniquenessUnits, MetricPack, OutlierUnits,
-    QualityDimension, RangeRuleCount,
+    AccuracyComparison, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, MetricPack,
+    OutlierUnits, QualityDimension, RangeRuleCount,
 };
 pub use sampling::{ChunkSize, ReservoirSampler, RowSampler, SamplingStrategy};
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};

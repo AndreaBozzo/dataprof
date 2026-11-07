@@ -335,7 +335,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
 | `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
 | `execution_time_ms` | `int` | Total processing time |
@@ -1171,9 +1171,10 @@ unevaluated, with one of these reasons:
   overall score, `key_uniqueness_units` also for uniqueness and the overall
   score, `outlier_units` also for accuracy and the overall score,
   `key_column_source` also for uniqueness and the overall score,
-  `accuracy_comparison` also for accuracy and the overall score), when the
-  two reports do not both record it
-  identically. A baseline saved before 0.13 records neither;
+  `accuracy_comparison` also for accuracy and the overall score,
+  `json_number_reading` also for precision, uniqueness, accuracy and the
+  overall score), when the two reports do not both record it identically. A
+  baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
   the score weights for the overall score, `identifier_columns` (in the order

@@ -19,6 +19,7 @@ CURRENT = {
     "outlier_units": "tested_values",
     "key_column_source": "declared",
     "accuracy_comparison": "exact_values",
+    "json_number_reading": "literal_digits",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -163,6 +164,8 @@ def _through_both_readers(value):
         {"key_column_source": None},
         {"accuracy_comparison": "nearest_f64"},
         {"accuracy_comparison": None},
+        {"json_number_reading": "nearest_f64"},
+        {"json_number_reading": None},
     ],
     ids=[
         "null",
@@ -186,6 +189,8 @@ def _through_both_readers(value):
         "null-key-column-source",
         "unknown-accuracy-comparison",
         "null-accuracy-comparison",
+        "unknown-json-number-reading",
+        "null-json-number-reading",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -223,6 +228,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"outlier_units": None},
         {"key_column_source": None},
         {"accuracy_comparison": None},
+        {"json_number_reading": None},
     ],
     ids=[
         "null",
@@ -235,6 +241,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         "null-outlier-units",
         "null-key-column-source",
         "null-accuracy-comparison",
+        "null-json-number-reading",
     ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):

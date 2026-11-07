@@ -939,6 +939,34 @@ to have those rules decided again. The field is additive and not `required`,
 so stored v1 reports remain valid; an explicit `null` for
 `accuracy_comparison` is malformed, as for `text_length_unit`.
 
+## v1 additive change: `metric_semantics.json_number_reading`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `json_number_reading` | `"literal_digits"` | how a JSON number whose value its nearest `f64` does not hold is read |
+
+A JSON number with more digits than an `f64` holds, like
+`1000000000000000.01`, or one below its range, like `1e-400`, is now read from
+its literal digits, as a CSV cell with the same text is (#1166). That covers a
+field of a JSON or JSONL record on every route and a database JSON cell
+(#1168); a number nested in an array or object keeps its `f64`. Through 0.13
+such a number was read as its nearest `f64`, so distinct literals could count
+as one value and duplicate rows, and lost their decimal places. The same bytes
+can therefore score differently on precision, uniqueness, accuracy and overall
+than they did.
+
+A report that records no `json_number_reading` reads back with it unknown, and
+a quality gate leaves the precision, uniqueness, accuracy and overall score
+rules over it `definition_not_comparable` (#1243), so a baseline saved by 0.13
+does not fail the gate on unchanged data. The definition is recorded for every
+source format, so this applies to a 0.13 baseline of any format. Regenerate
+the baseline with the current release to have those rules decided again. The
+field is additive and not `required`, so stored v1 reports remain valid; an
+explicit `null` for `json_number_reading` is malformed, as for
+`text_length_unit`.
+
 ## v1 additive change: `generator`
 
 Both dialects gain a top-level `generator` object naming the dataprof build

@@ -1061,6 +1061,16 @@
       ],
       "type": "object"
     },
+    "JsonNumberReading": {
+      "description": "How a JSON number whose value its nearest `f64` does not hold is read, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 such a number, like\n`1000000000000000.01` or `1e-400`, was read as its nearest `f64`, so\ndistinct literals could count as one value and lose their decimal places;\nthose releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "literal_digits",
+          "description": "Its literal digits, as a CSV cell with the same text is read. Covers a\nfield of a JSON or JSONL record on every route and a database JSON\ncell; a number nested in an array or object keeps its `f64`.",
+          "type": "string"
+        }
+      ]
+    },
     "KeyColumnSource": {
       "description": "Which column `key_uniqueness` may measure, as recorded in a report's\nmetric semantics.\n\nOnly the current definition has a value. Through 0.12, with no column\ndeclared, the first column whose name had an `id`, `key` or `pk` word was\nthe key, so a foreign key listed first was scored as the table key and\ncolumn order moved the score; those releases recorded no definition.",
       "oneOf": [
@@ -1173,6 +1183,10 @@
         "accuracy_comparison": {
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
+        },
+        "json_number_reading": {
+          "$ref": "#/$defs/JsonNumberReading",
+          "description": "How a JSON number whose value its nearest `f64` does not hold is read.\n\nAbsent means not recorded: through 0.13 such a number was read as its\nnearest `f64`, which moved the precision, uniqueness, accuracy and\noverall scores of the same bytes."
         },
         "key_column_source": {
           "$ref": "#/$defs/KeyColumnSource",

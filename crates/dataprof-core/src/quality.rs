@@ -142,6 +142,24 @@ pub enum AccuracyComparison {
     ExactValues,
 }
 
+/// How a JSON number whose value its nearest `f64` does not hold is read, as
+/// recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 such a number, like
+/// `1000000000000000.01` or `1e-400`, was read as its nearest `f64`, so
+/// distinct literals could count as one value and lose their decimal places;
+/// those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonNumberReading {
+    /// Its literal digits, as a CSV cell with the same text is read. Covers a
+    /// field of a JSON or JSONL record on every route and a database JSON
+    /// cell; a number nested in an array or object keeps its `f64`.
+    LiteralDigits,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
