@@ -179,6 +179,24 @@ stands well above the rounding of its nearest `f64` (2^-32 of the magnitude);
 below that, a constant column of such values included, the spread statistics
 are `null`.
 
+### Numeric domain
+
+Exact handling covers the values profiling meets in real data: integers up to
+the 64-bit range, decimals of any width a source declares, float literals with
+more digits than `f64` keeps, and finite `f64` values whose arithmetic stays
+inside `f64`'s range. Inside this domain every route serializes the same
+values, and a difference is a parity defect.
+
+Values near the limits of `f64` form an approximate domain: magnitudes within a
+few orders of `f64::MAX` (about 1.8e308), where a fence, a difference or a sum
+can overflow, and magnitudes below about 1e-300, including literals such as
+`1e-400` that underflow. The guarantees above still hold there: `mean` is
+finite, and a spread `f64` cannot represent is `null`. Other results that
+depend on arithmetic at those magnitudes may differ from exact arithmetic and
+between routes, such as `outlier_count` and the accuracy outlier ratio when a
+Tukey fence would overflow (#1238). A difference confined to this domain is
+documented behaviour, and it is not fixed case by case.
+
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
 `to_json()`, and JSON `save()` output. JSON persistence now uses the same document
@@ -217,9 +235,10 @@ the 4dp value; above it the digits where the drift lives are dropped, and the
 rounded value is the float nearest its decimal form. Data values are read, not
 accumulated, and keep 4 decimal places at any magnitude.
 Rounding alone cannot mathematically guarantee equality for every possible
-floating-point input, especially near rounding boundaries. A difference that
-survives serialization remains a parity defect to investigate, rather than an
-allowed raw-precision difference. The known
+floating-point input, especially near rounding boundaries. Inside the
+[numeric domain](#numeric-domain), a difference that survives serialization
+remains a parity defect to investigate, rather than an allowed raw-precision
+difference. The known
 nested JSON/Arrow representation mismatch (#637) is one such defect.
 
 Text frequencies are unassessed in newly computed profiles (#709):

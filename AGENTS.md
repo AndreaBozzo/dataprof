@@ -81,7 +81,8 @@ change; run what matches the change and list the commands in the PR body.
   Native raw floats retain full precision and may differ with accumulation
   order. Parity tests compare serialized values exactly; raw diagnostics use
   explicit tolerances (relative `1e-9`, absolute `1e-12`). Preserve absence as
-  well as numbers. See [the numeric contract](docs/schema/README.md#numeric-equality-contract).
+  well as numbers. Values near `f64`'s limits are an approximate domain
+  where these results may differ; the contract defines its bounds. See [the numeric contract](docs/schema/README.md#numeric-equality-contract).
   If you touch an engine or parser, check the other paths for parity.
 - **PR descriptions**: derive behaviour from the code the issue names, not
   from the issue text alone. Every sentence of the description must be true of
