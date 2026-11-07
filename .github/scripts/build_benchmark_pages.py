@@ -48,72 +48,53 @@ PAGE_SHELL = """<!DOCTYPE html>
   <meta name="description"
         content="Benchmark suites for dataprof, from the latest successful CI run.">
   <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/favicon-64.png">
+  <link rel="canonical" href="https://andreabozzo.github.io/dataprof/benchmarks/">
+  <meta name="theme-color" content="#f8f9fc" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#101923" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="dataprof benchmarks">
+  <meta property="og:description"
+        content="Profiling timings, variation and workload details from CI artifacts.">
+  <meta property="og:url" content="https://andreabozzo.github.io/dataprof/benchmarks/">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://andreabozzo.github.io/dataprof/assets/og-image.jpg">
+  <meta property="og:image:alt" content="dataprof: data profiling and quality assessment">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="dataprof benchmarks">
+  <meta name="twitter:description"
+        content="Profiling timings, variation and workload details from CI artifacts.">
+  <meta name="twitter:image" content="https://andreabozzo.github.io/dataprof/assets/og-image.jpg">
+  <meta name="twitter:image:alt" content="dataprof: data profiling and quality assessment">
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="../benchmarks.css">
   <script src="../benchmarks.js" defer></script>
-  <style>
-    .page-head {{ padding: 56px 0 8px; }}
-    .page-head h1 {{
-      font-size: clamp(1.9rem, 3.6vw, 2.7rem); margin: 12px 0 14px; font-weight: 800;
-    }}
-    .page-head p {{ color: var(--muted); font-size: 1.06rem; max-width: 72ch; margin: 0 0 20px; }}
-    .page-actions {{ display: flex; flex-wrap: wrap; gap: 12px; }}
-    .stats {{
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 14px; margin-top: 34px;
-    }}
-    .stat-card {{ padding: 18px 18px 20px; }}
-    .stat-label {{ color: var(--muted); font-size: 0.86rem; font-weight: 600; }}
-    .stat-value {{ margin-top: 6px; font-size: 1.7rem; font-weight: 780; letter-spacing: -0.02em; }}
-    .stat-subtle {{ color: var(--muted); font-size: 0.88rem; margin-top: 5px; }}
-    .insights {{ margin-top: 26px; padding: 22px 26px; }}
-    .insights h2 {{ margin: 0 0 10px; font-size: 1.15rem; }}
-    .insights ul {{ margin: 0; padding-left: 1.2rem; color: var(--muted); line-height: 1.7; }}
-    .groups {{ display: grid; gap: 18px; margin-top: 30px; }}
-    .group-card {{ padding: 24px 26px; }}
-    .group-header {{
-      display: flex; justify-content: space-between; gap: 14px; align-items: start;
-    }}
-    .group-card h2 {{ margin: 8px 0; font-size: 1.4rem; }}
-    .group-card h2 a {{ color: inherit; text-decoration: none; }}
-    .group-card h2 a:hover {{ color: var(--accent-ink); }}
-    .group-card > .group-header p {{ margin: 0; color: var(--muted); }}
-    .group-preview {{
-      margin-top: 16px; border-radius: 12px; overflow: hidden;
-      border: 1px solid var(--line); background: #fff;
-    }}
-    .group-preview img {{ display: block; width: 100%; height: auto; }}
-    .bench-table {{ overflow-x: auto; margin-top: 14px; }}
-    .bench-table table {{ min-width: 480px; }}
-    .empty-card {{ margin-top: 36px; padding: 40px; text-align: center; }}
-    .empty-card p {{ color: var(--muted); max-width: 56ch; margin: 10px auto 0; }}
-    @media (max-width: 700px) {{ .group-header {{ flex-direction: column; }} }}
-  </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="../">
-      <img src="../assets/logo-mark.png" alt="" width="30" height="30">
+      <img src="../assets/logo-mark.png" alt="" width="32" height="32">
       dataprof
     </a>
-    <nav class="site-nav" aria-label="Site">
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="../#install">Install</a>
       <a href="../#quickstart">Quickstart</a>
-      <a href="../#quality">Quality model</a>
+      <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md">Docs</a>
       <a href="./" aria-current="page">Benchmarks</a>
       <a class="nav-cta" href="https://github.com/AndreaBozzo/dataprof">GitHub&nbsp;&rarr;</a>
     </nav>
   </div>
 </header>
 
-<main class="wrap">
+<main id="main" class="wrap">
 {body}
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <span>dataprof &mdash; dual-licensed MIT or Apache-2.0</span>
+    <span>dataprof · MIT or Apache-2.0</span>
     <span class="spacer"></span>
     <a href="../">Home</a>
     <a href="https://github.com/AndreaBozzo/dataprof">GitHub</a>
@@ -130,7 +111,7 @@ PLACEHOLDER_BODY = """
   <section class="page-head">
     <span class="eyebrow">Continuous benchmarks</span>
     <h1>Benchmark reports</h1>
-    <p>No benchmark data is published right now &mdash; the most recent CI artifact has expired.
+    <p>No benchmark data is published right now. A CI artifact may be unavailable or expired.
       Reports will reappear automatically after the next benchmark run on <code>master</code>.</p>
   </section>
   <div class="card empty-card">
@@ -401,7 +382,7 @@ def render_timing_chart(document: dict, mode: str) -> str:
         else "A fresh process per sample. Startup, imports, operation and exit included."
     )
     return f"""<div class="timing-panel" id="timing-{mode}" role="tabpanel"
-      aria-labelledby="tab-{mode}">
+      aria-labelledby="tab-{mode}" tabindex="0">
       <h3>{"Warm operations" if mode == "warm" else "Fresh-process operations"}</h3>
       <p>{description}</p>{"".join(rows)}
       <div class="chart-legend"><span>● Median &nbsp; ▰ Middle 50% of samples (IQR)</span>
@@ -490,7 +471,8 @@ def render_comparison(document: dict | None) -> str:
     </details>
     {render_ordered_samples(document)}
     <details class="evidence-details"><summary>Exact workloads and timing table</summary>
-    <div class="bench-table"><table><caption>Seconds: median [IQR]</caption>
+    <div class="bench-table" tabindex="0" role="region" aria-label="Scrollable benchmark table">
+    <table><caption>Seconds: median [IQR]</caption>
       <thead><tr><th>Tool</th><th>Cold median [IQR]</th><th>Warm median [IQR]</th>
         <th>Workload</th></tr></thead>
       <tbody>{"".join(rows)}</tbody>
@@ -560,7 +542,8 @@ def render_ordered_samples(document: dict) -> str:
       <p>First adapter import after environment preparation (preflight): {html.escape(preflight)}.
         Earlier installs or workflow preflights may have warmed library pages;
         this is not disk-cold.</p>
-      <div class="bench-table"><table><caption>Ordered worker observations (seconds)</caption>
+      <div class="bench-table" tabindex="0" role="region" aria-label="Scrollable benchmark table">
+      <table><caption>Ordered worker observations (seconds)</caption>
         <thead><tr><th>Order</th><th>Block</th><th>Tool</th><th>Mode</th><th>Invocation</th>
           <th>Process</th><th>Import/setup</th><th>First operation</th><th>Measured operations</th>
         </tr></thead><tbody>{"".join(rows)}</tbody></table></div>
@@ -667,7 +650,8 @@ def render_boundaries(document: dict | None) -> str:
       Arrow pool observations are partial allocator evidence, not profiler-only memory.</p>
       </details>
       <details class="evidence-details"><summary>Stage times: median [IQR], seconds</summary>
-      <div class="bench-table"><table><thead><tr><th>Producer / rows / chunk / offset</th>
+      <div class="bench-table" tabindex="0" role="region" aria-label="Scrollable benchmark table">
+      <table><thead><tr><th>Producer / rows / chunk / offset</th>
       <th>Condition</th><th>Prepare</th><th>Import + profile</th><th>Dict</th><th>JSON</th>
       <th>End-to-end</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div></details>
       <div class="download-links"><a href="boundaries/results.json">Raw samples, memory and
@@ -727,7 +711,8 @@ def render_index(
                 </div>
                 <span class="pill">{count} benchmark{"s" if count != 1 else ""}</span>
               </div>
-              <div class="bench-table">
+              <div class="bench-table" tabindex="0" role="region"
+                aria-label="Scrollable benchmark table">
                 <table>
                   <thead><tr><th>Benchmark</th><th>Mean</th>
                     <th>Confidence interval</th><th>Throughput</th></tr></thead>
@@ -828,7 +813,7 @@ def render_index(
       <h2>From checkout to evidence.</h2>
       <p>Use the repository's Rust toolchain and uv. The comparison environment is locked
         and separate from the dependency-free Python wheel.</p>
-      <pre><code># Existing Rust scenarios
+      <pre tabindex="0" aria-label="Benchmark reproduction commands"><code># Existing Rust scenarios
 cargo bench --bench benchmarks
 
 # Four-tool comparison (from repository root)
