@@ -23,9 +23,9 @@ pub use profiler::{
 };
 
 pub use dataprof_core::{
-    AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
-    CountMethod, CsvSourceMetadata, DataFrameLibrary, DataProfilerError, DataSource, DataType,
-    DateTimeStats, DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat,
+    AccuracyComparison, AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema,
+    ColumnStats, CountMethod, CsvSourceMetadata, DataFrameLibrary, DataProfilerError, DataSource,
+    DataType, DateTimeStats, DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat,
     FrequencyItem, IsoQualityConfig, KeyColumnSource, KeyUniquenessUnits, LexicalClass, Locale,
     MetricPack, NULL_MARKERS, NullTokenSet, NumericStats, OutlierUnits, ParquetMetadata, Pattern,
     PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink, QualityDimension,

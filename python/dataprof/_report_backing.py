@@ -309,6 +309,7 @@ _METRIC_SEMANTICS = {
     "key_uniqueness_units": ("non_null_values",),
     "outlier_units": ("tested_values",),
     "key_column_source": ("declared",),
+    "accuracy_comparison": ("exact_values",),
 }
 
 

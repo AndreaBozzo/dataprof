@@ -3,11 +3,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, KeyColumnSource, KeyUniquenessUnits, NullTokenSet,
-    OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
-    QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
-    RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator, SourceIdentity,
-    StatisticRounding, TextLengthUnit, TruncationReason,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, KeyColumnSource,
+    KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount, ProfileReport,
+    QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
+    QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
+    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1310,6 +1310,14 @@ impl PyProfileReport {
                 "key_column_source",
                 match source {
                     KeyColumnSource::Declared => "declared",
+                },
+            )?;
+        }
+        if let Some(comparison) = semantics.accuracy_comparison {
+            dict.set_item(
+                "accuracy_comparison",
+                match comparison {
+                    AccuracyComparison::ExactValues => "exact_values",
                 },
             )?;
         }

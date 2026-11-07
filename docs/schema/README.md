@@ -896,6 +896,30 @@ engine and input path records the same value. The field is additive and not
 `required`, so stored v1 reports remain valid; an explicit `null` is malformed,
 as for `text_length_unit`.
 
+## v1 additive change: `metric_semantics.accuracy_comparison`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `accuracy_comparison` | `"exact_values"` | how the accuracy score compares a value with its outlier fences and its range and sign bounds |
+
+The accuracy score now compares each value as written (#1199): outliers are
+counted with the exact Tukey fences a column's `outlier_count` uses, and a
+value whose nearest `f64` equals a range or sign bound is compared with it by
+its digits. Through 0.13 both comparisons went through the value's nearest
+`f64`, so `100.000000000000000001` in a percentage column broke no rule, and a
+64-bit integer past 2^53 could land on the wrong side of a fence. The same
+bytes can therefore score lower on accuracy, and overall, than they did.
+
+A report that records no `accuracy_comparison` reads back with it unknown, and
+a quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable` (#1237), so a baseline saved by 0.13 does not fail
+the gate on unchanged data. Regenerate the baseline with the current release
+to have those rules decided again. The field is additive and not `required`,
+so stored v1 reports remain valid; an explicit `null` for
+`accuracy_comparison` is malformed, as for `text_length_unit`.
+
 ## v1 additive change: `generator`
 
 Both dialects gain a top-level `generator` object naming the dataprof build

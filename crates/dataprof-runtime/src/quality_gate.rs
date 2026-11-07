@@ -2342,6 +2342,9 @@ enum Definition {
     OutlierUnits,
     /// Which column key uniqueness may measure, behind the uniqueness score.
     KeyColumnSource,
+    /// How values meet outlier fences and rule bounds, behind the accuracy
+    /// score.
+    AccuracyComparison,
 }
 
 impl Definition {
@@ -2353,6 +2356,7 @@ impl Definition {
             Self::KeyUniquenessUnits => "key_uniqueness_units",
             Self::OutlierUnits => "outlier_units",
             Self::KeyColumnSource => "key_column_source",
+            Self::AccuracyComparison => "accuracy_comparison",
         }
     }
 
@@ -2368,6 +2372,7 @@ impl Definition {
             Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
             Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
+            Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
         }
     }
 }
@@ -2383,6 +2388,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyUniquenessUnits,
             Definition::OutlierUnits,
             Definition::KeyColumnSource,
+            Definition::AccuracyComparison,
         ],
         Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
@@ -2391,6 +2397,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::NullTokens,
             Definition::RangeRuleCount,
             Definition::OutlierUnits,
+            Definition::AccuracyComparison,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,

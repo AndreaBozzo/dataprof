@@ -332,9 +332,10 @@ class ProfileReport:
     def metric_semantics(self) -> dict[str, str] | None:
         """How this report's measurements were defined.
 
-        A dict of named definitions, currently
+        A dict of named definitions, such as
         ``{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers",
-        "pattern_match_count": "validated", "shape_moments": "adjusted_sample"}``.
+        "accuracy_comparison": "exact_values"}``; the Python API reference
+        lists every key.
         ``schema_version`` says whether a document validates, not whether two
         reports measured the same way: text lengths counted UTF-8 bytes through
         0.11; through 0.12 only empty, ``null`` and ``nan`` were nulls, pattern
