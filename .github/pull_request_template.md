@@ -13,6 +13,19 @@
 
 - [ ] Criterion: met in `path/to/file` / left for a follow-up because ...
 
+## Class of defect
+
+<!-- For a fix: the class the reported case belongs to, and how much of it
+     this PR covers. List the neighbouring values (other extremes, zero,
+     empty, null), the input routes (sync and async, file and bytes, each
+     engine, Python in-memory) and the report forms (the Rust document and the
+     flat summary) the same code serves. Mark each one covered, with its test,
+     or left out, with the reason. Name the earlier fix on the same lines, if
+     any. Delete this section for a feature or a docs change. -->
+
+- Covered: ...
+- Left out: ...
+
 ## How it was verified
 
 <!-- Replace the example below with the commands you actually ran and what they

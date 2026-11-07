@@ -407,6 +407,10 @@ understand it:
   to agree with.
 - Be able to explain every line of the diff and answer review questions
   yourself.
+- For a fix, cover the class of the defect: the reported case with the
+  neighbouring values, input routes and report forms the same code serves.
+  The template's "Class of defect" section lists what is covered and what is
+  left out. A fix scoped to one case tends to come back as the next one.
 - Make every sentence of the PR description true of the diff. A claim such as
   "covers every input path" is something a reviewer will check.
 
