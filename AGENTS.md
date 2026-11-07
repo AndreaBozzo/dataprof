@@ -86,7 +86,8 @@ change; run what matches the change and list the commands in the PR body.
 - **PR descriptions**: derive behaviour from the code the issue names, not
   from the issue text alone. Every sentence of the description must be true of
   the diff, and each acceptance criterion of the issue is either met (say
-  where) or stated as left out. See
+  where) or stated as left out. A fix lists its class of defect (values,
+  routes, report forms) as covered or left out, in the template's section. See
   [Understanding Your Change](docs/CONTRIBUTING.md#understanding-your-change).
 
 ## Project board rules
