@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use dataprof_core::{
     AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
-    ExecutionMetadata, FileFormat, KeyColumnSource, KeyUniquenessUnits, Locale, NullTokenSet,
-    OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount, SemanticHintBinding,
-    ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
+    ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, Locale,
+    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
+    SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -194,6 +194,18 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "AccuracyComparison")]
     pub accuracy_comparison: Option<AccuracyComparison>,
+    /// How a JSON number whose value its nearest `f64` does not hold is read.
+    ///
+    /// Absent means not recorded: through 0.13 such a number was read as its
+    /// nearest `f64`, which moved the consistency, precision, uniqueness,
+    /// accuracy and overall scores of the same bytes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "JsonNumberReading")]
+    pub json_number_reading: Option<JsonNumberReading>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -220,6 +232,7 @@ impl MetricSemantics {
             outlier_units: Some(OutlierUnits::TestedValues),
             key_column_source: Some(KeyColumnSource::Declared),
             accuracy_comparison: Some(AccuracyComparison::ExactValues),
+            json_number_reading: Some(JsonNumberReading::LiteralDigits),
         }
     }
 
@@ -239,6 +252,7 @@ impl MetricSemantics {
             outlier_units,
             key_column_source,
             accuracy_comparison,
+            json_number_reading,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -250,6 +264,7 @@ impl MetricSemantics {
             && outlier_units.is_some()
             && key_column_source.is_some()
             && accuracy_comparison.is_some()
+            && json_number_reading.is_some()
     }
 }
 
@@ -1583,6 +1598,7 @@ mod tests {
             "outlier_units": "tested_values",
             "key_column_source": "declared",
             "accuracy_comparison": "exact_values",
+            "json_number_reading": "literal_digits",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1622,6 +1638,8 @@ mod tests {
             json!({"key_column_source": null}),
             json!({"accuracy_comparison": "nearest_f64"}),
             json!({"accuracy_comparison": null}),
+            json!({"json_number_reading": "nearest_f64"}),
+            json!({"json_number_reading": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

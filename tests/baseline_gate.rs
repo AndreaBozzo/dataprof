@@ -430,6 +430,9 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
         ("outlier_units", "accuracy", "uniqueness"),
         ("key_column_source", "uniqueness", "accuracy"),
         ("accuracy_comparison", "accuracy", "uniqueness"),
+        ("json_number_reading", "uniqueness", "completeness"),
+        ("json_number_reading", "accuracy", "completeness"),
+        ("json_number_reading", "consistency", "completeness"),
     ] {
         let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         summary["metric_semantics"]
@@ -440,7 +443,10 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
         let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
         let dimension = |name: &str| match name {
             "accuracy" => QualityDimension::Accuracy,
-            _ => QualityDimension::Uniqueness,
+            "consistency" => QualityDimension::Consistency,
+            "completeness" => QualityDimension::Completeness,
+            "uniqueness" => QualityDimension::Uniqueness,
+            other => panic!("no dimension {other}"),
         };
         let result = QualityPolicy::new()
             .max_quality_score_drop(0.0)

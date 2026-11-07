@@ -2345,6 +2345,9 @@ enum Definition {
     /// How values meet outlier fences and rule bounds, behind the accuracy
     /// score.
     AccuracyComparison,
+    /// How a JSON number its `f64` does not hold is read, behind the
+    /// consistency, precision, uniqueness and accuracy scores.
+    JsonNumberReading,
 }
 
 impl Definition {
@@ -2357,6 +2360,7 @@ impl Definition {
             Self::OutlierUnits => "outlier_units",
             Self::KeyColumnSource => "key_column_source",
             Self::AccuracyComparison => "accuracy_comparison",
+            Self::JsonNumberReading => "json_number_reading",
         }
     }
 
@@ -2373,6 +2377,7 @@ impl Definition {
             Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
             Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
+            Self::JsonNumberReading => agree(&a.json_number_reading, &b.json_number_reading),
         }
     }
 }
@@ -2389,6 +2394,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::OutlierUnits,
             Definition::KeyColumnSource,
             Definition::AccuracyComparison,
+            Definition::JsonNumberReading,
         ],
         Some(QualityDimension::Validity) => {
             &[Definition::NullTokens, Definition::PatternMatchCount]
@@ -2398,12 +2404,17 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::RangeRuleCount,
             Definition::OutlierUnits,
             Definition::AccuracyComparison,
+            Definition::JsonNumberReading,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,
             Definition::KeyUniquenessUnits,
             Definition::KeyColumnSource,
+            Definition::JsonNumberReading,
         ],
+        Some(QualityDimension::Consistency | QualityDimension::Precision) => {
+            &[Definition::NullTokens, Definition::JsonNumberReading]
+        }
         Some(_) => &[Definition::NullTokens],
     }
 }

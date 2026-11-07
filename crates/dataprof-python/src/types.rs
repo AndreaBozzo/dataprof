@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, KeyColumnSource,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, JsonNumberReading, KeyColumnSource,
     KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount, ProfileReport,
     QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
     QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
@@ -1318,6 +1318,14 @@ impl PyProfileReport {
                 "accuracy_comparison",
                 match comparison {
                     AccuracyComparison::ExactValues => "exact_values",
+                },
+            )?;
+        }
+        if let Some(reading) = semantics.json_number_reading {
+            dict.set_item(
+                "json_number_reading",
+                match reading {
+                    JsonNumberReading::LiteralDigits => "literal_digits",
                 },
             )?;
         }

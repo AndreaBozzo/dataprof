@@ -226,6 +226,9 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
         ("outlier_units", "accuracy", "uniqueness"),
         ("key_column_source", "uniqueness", "accuracy"),
         ("accuracy_comparison", "accuracy", "uniqueness"),
+        ("json_number_reading", "uniqueness", "completeness"),
+        ("json_number_reading", "accuracy", "completeness"),
+        ("json_number_reading", "consistency", "completeness"),
     ],
 )
 def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(

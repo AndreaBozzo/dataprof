@@ -1,0 +1,218 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "amount",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 66.67,
+          "is_approximate": false,
+          "kurtosis": 4.0,
+          "max": 1000000000000000.0,
+          "mean": 750000000000001.8,
+          "median": 1000000000000000.0,
+          "min": 7.0,
+          "mode": 1000000000000000.0,
+          "outlier_count": 1,
+          "quartiles": {
+            "iqr": 249999999999998.25,
+            "q1": 750000000000001.8,
+            "q2": 1000000000000000.0,
+            "q3": 1000000000000000.0
+          },
+          "skewness": -2.0,
+          "std_dev": 499999999999996.5,
+          "variance": 2.4999999999999652e+29
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 4,
+        "text": 0
+      },
+      "unique_count": 2,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "n",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 40.0,
+          "is_approximate": false,
+          "kurtosis": 4.0,
+          "max": 2.0,
+          "mean": 1.25,
+          "median": 1.0,
+          "min": 1.0,
+          "mode": 1.0,
+          "outlier_count": 1,
+          "quartiles": {
+            "iqr": 0.25,
+            "q1": 1.0,
+            "q2": 1.0,
+            "q3": 1.25
+          },
+          "skewness": 2.0,
+          "std_dev": 0.5,
+          "variance": 0.25
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 4,
+        "text": 0
+      },
+      "unique_count": 2,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 1,
+      "name": "w",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.2,
+          "match_count": 3,
+          "match_percentage": 75.0,
+          "name": "Scientific Notation",
+          "regex": "^[-+]?\\d+(\\.\\d+)?[eE][-+]?\\d+$"
+        }
+      ],
+      "stats": {
+        "Text": {
+          "avg_length": 4.5,
+          "max_length": 5,
+          "min_length": 3
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 3,
+        "text": 1
+      },
+      "unique_count": 2,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "jsonl",
+    "path": "batch.jsonl",
+    "size_bytes": 233,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 3,
+    "engine": "json",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 4,
+    "sampling_applied": false,
+    "scan_time_ms": 35,
+    "source_exhausted": true,
+    "throughput_rows_sec": 114.28571428571428
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "72d91ee5-51e6-47fa-b50f-04242f56a713",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 11,
+        "outlier_ratio": 25.0,
+        "outlier_values_checked": 8,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 12
+      },
+      "consistency": {
+        "data_type_consistency": 91.67,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 12
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 100.0,
+        "inconsistent_precision_values": 0,
+        "numeric_values_checked": 4
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 2,
+        "high_cardinality_warning": false,
+        "key_uniqueness": 100.0,
+        "rows_checked": 4
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 75.0,
+        "completeness": 100.0,
+        "consistency": 91.67,
+        "precision": 100.0,
+        "timeliness": null,
+        "uniqueness": 50.0,
+        "validity": null
+      },
+      "overall_score": 83.85
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-07T12:43:55.658207+00:00"
+}

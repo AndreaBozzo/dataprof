@@ -310,6 +310,7 @@ _METRIC_SEMANTICS = {
     "outlier_units": ("tested_values",),
     "key_column_source": ("declared",),
     "accuracy_comparison": ("exact_values",),
+    "json_number_reading": ("literal_digits",),
 }
 
 
