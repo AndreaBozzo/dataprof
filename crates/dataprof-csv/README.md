@@ -11,6 +11,9 @@ The main entry points are `CsvParserConfig`, `detect_delimiter`,
 `analyze_csv_from_reader`, `analyze_csv_file`, and
 `MemoryMappedCsvReader`.
 
+CSV analysis uses `CsvParserConfig.quote_char` for both delimiter detection and
+parsing. The standalone delimiter-detection functions use double quotes.
+
 ## Features
 
 This crate has no feature flags.
