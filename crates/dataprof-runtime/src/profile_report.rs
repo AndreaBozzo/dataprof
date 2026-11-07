@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource, ExecutionMetadata, FileFormat,
-    KeyColumnSource, KeyUniquenessUnits, Locale, NullTokenSet, OutlierUnits, PatternMatchCount,
-    QualityScoreWeights, RangeRuleCount, SemanticHintBinding, ShapeMomentEstimator,
-    StatisticRounding, TextLengthUnit,
+    AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
+    ExecutionMetadata, FileFormat, KeyColumnSource, KeyUniquenessUnits, Locale, NullTokenSet,
+    OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount, SemanticHintBinding,
+    ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -182,6 +182,18 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "KeyColumnSource")]
     pub key_column_source: Option<KeyColumnSource>,
+    /// How the accuracy score compares a value with its outlier fences and
+    /// its range and sign bounds.
+    ///
+    /// Absent means not recorded: through 0.13 both comparisons went through
+    /// the value's nearest `f64`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "AccuracyComparison")]
+    pub accuracy_comparison: Option<AccuracyComparison>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -207,6 +219,7 @@ impl MetricSemantics {
             key_uniqueness_units: Some(KeyUniquenessUnits::NonNullValues),
             outlier_units: Some(OutlierUnits::TestedValues),
             key_column_source: Some(KeyColumnSource::Declared),
+            accuracy_comparison: Some(AccuracyComparison::ExactValues),
         }
     }
 
@@ -225,6 +238,7 @@ impl MetricSemantics {
             key_uniqueness_units,
             outlier_units,
             key_column_source,
+            accuracy_comparison,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -235,6 +249,7 @@ impl MetricSemantics {
             && key_uniqueness_units.is_some()
             && outlier_units.is_some()
             && key_column_source.is_some()
+            && accuracy_comparison.is_some()
     }
 }
 
@@ -1567,6 +1582,7 @@ mod tests {
             "key_uniqueness_units": "non_null_values",
             "outlier_units": "tested_values",
             "key_column_source": "declared",
+            "accuracy_comparison": "exact_values",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1604,6 +1620,8 @@ mod tests {
             json!({"outlier_units": null}),
             json!({"key_column_source": "name_heuristic"}),
             json!({"key_column_source": null}),
+            json!({"accuracy_comparison": "nearest_f64"}),
+            json!({"accuracy_comparison": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

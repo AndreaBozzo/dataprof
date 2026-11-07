@@ -124,6 +124,24 @@ pub enum KeyColumnSource {
     Declared,
 }
 
+/// How the accuracy score compares a value with its outlier fences and its
+/// range and sign bounds, as recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 both comparisons
+/// went through the value's nearest `f64`, so a 64-bit integer past 2^53, a
+/// decimal held exactly, or a literal one digit past a bound could land on
+/// the other side of a fence or bound; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AccuracyComparison {
+    /// Each value as written: exact Tukey fences, and bounds compared by the
+    /// value's digits where its nearest `f64` equals the bound. A literal
+    /// that overflows `f64` is a numeric value past every bound.
+    ExactValues,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

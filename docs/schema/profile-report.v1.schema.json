@@ -1,5 +1,15 @@
 {
   "$defs": {
+    "AccuracyComparison": {
+      "description": "How the accuracy score compares a value with its outlier fences and its\nrange and sign bounds, as recorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 both comparisons\nwent through the value's nearest `f64`, so a 64-bit integer past 2^53, a\ndecimal held exactly, or a literal one digit past a bound could land on\nthe other side of a fence or bound; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "exact_values",
+          "description": "Each value as written: exact Tukey fences, and bounds compared by the\nvalue's digits where its nearest `f64` equals the bound. A literal\nthat overflows `f64` is a numeric value past every bound.",
+          "type": "string"
+        }
+      ]
+    },
     "AccuracyMetrics": {
       "description": "Accuracy metrics (ISO 25012).",
       "properties": {
@@ -1160,6 +1170,10 @@
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
+        "accuracy_comparison": {
+          "$ref": "#/$defs/AccuracyComparison",
+          "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
+        },
         "key_column_source": {
           "$ref": "#/$defs/KeyColumnSource",
           "description": "Which column `key_uniqueness` may measure.\n\nAbsent means not recorded: through 0.12 the first column with an\nid-like name was the key when none was declared."

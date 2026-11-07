@@ -295,6 +295,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "key_uniqueness_units": "non_null_values",
         "outlier_units": "tested_values",
         "key_column_source": "declared",
+        "accuracy_comparison": "exact_values",
     }
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected

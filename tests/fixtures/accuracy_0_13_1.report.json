@@ -1,0 +1,150 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "discount_percent",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 76.59,
+          "is_approximate": false,
+          "kurtosis": -1.2893,
+          "max": 100.0,
+          "mean": 62.5,
+          "median": 75.0,
+          "min": 0.0,
+          "mode": 100.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 62.5,
+            "q1": 37.5,
+            "q2": 75.0,
+            "q3": 100.0
+          },
+          "skewness": -0.8546,
+          "std_dev": 47.8714,
+          "variance": 2291.6667
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 4,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "csv",
+    "path": "batch.csv",
+    "size_bytes": 49,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 49,
+    "columns_detected": 1,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 21.875,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 4,
+    "sampling_applied": false,
+    "scan_time_ms": 39,
+    "source_exhausted": true,
+    "throughput_rows_sec": 102.56410256410257,
+    "unterminated_quote": false
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "0c9860dd-299f-48f2-a970-f9d283f91ddb",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 4,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 4,
+        "range_violations": 0,
+        "rule_values_checked": 4,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 4
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 4
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 75.0,
+        "inconsistent_precision_values": 1,
+        "numeric_values_checked": 4
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 4
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 100.0,
+        "precision": 75.0,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 98.44
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-07T11:06:11.733238300+00:00"
+}
