@@ -1,8 +1,46 @@
+/* Generated benchmark page layout. */
+    .page-head { padding: 56px 0 8px; }
+    .page-head h1 {
+      font-size: clamp(1.9rem, 3.6vw, 2.7rem); margin: 12px 0 14px; font-weight: 800;
+    }
+    .page-head p { color: var(--muted); font-size: 1.06rem; max-width: 72ch; margin: 0 0 20px; }
+    .page-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 14px; margin-top: 34px;
+    }
+    .stat-card { padding: 18px 18px 20px; }
+    .stat-label { color: var(--muted); font-size: 0.86rem; font-weight: 600; }
+    .stat-value { margin-top: 6px; font-size: 1.7rem; font-weight: 780; letter-spacing: -0.02em; }
+    .stat-subtle { color: var(--muted); font-size: 0.88rem; margin-top: 5px; }
+    .insights { margin-top: 26px; padding: 22px 26px; }
+    .insights h2 { margin: 0 0 10px; font-size: 1.15rem; }
+    .insights ul { margin: 0; padding-left: 1.2rem; color: var(--muted); line-height: 1.7; }
+    .groups { display: grid; gap: 18px; margin-top: 30px; }
+    .group-card { padding: 24px 26px; }
+    .group-header {
+      display: flex; justify-content: space-between; gap: 14px; align-items: start;
+    }
+    .group-card h2 { margin: 8px 0; font-size: 1.4rem; }
+    .group-card h2 a { color: inherit; text-decoration: none; }
+    .group-card h2 a:hover { color: var(--accent-ink); }
+    .group-card > .group-header p { margin: 0; color: var(--muted); }
+    .group-preview {
+      margin-top: 16px; border-radius: 12px; overflow: hidden;
+      border: 1px solid var(--line); background: #fff;
+    }
+    .group-preview img { display: block; width: 100%; height: auto; }
+    .bench-table { overflow-x: auto; margin-top: 14px; }
+    .bench-table table { min-width: 480px; }
+    .empty-card { margin-top: 36px; padding: 40px; text-align: center; }
+    .empty-card p { color: var(--muted); max-width: 56ch; margin: 10px auto 0; }
+    @media (max-width: 700px) { .group-header { flex-direction: column; } }
+
 /* Benchmark evidence shares the site's tokens; it works without JavaScript. */
 .bench-hero { display: grid; grid-template-columns: 1.45fr 1fr; gap: 48px; padding: 64px 0 38px; align-items: center; }
 .bench-hero h1 { font-size: clamp(2.6rem, 5vw, 4.25rem); max-width: 13ch; letter-spacing: -.045em; margin: 20px 0; }
 .bench-hero .lede { color: var(--muted); max-width: 58ch; font-size: 1.1rem; }
-.bench-hero .btn-primary { color: var(--bg-raised); }
+.bench-hero .btn-primary { color: var(--accent-button-ink); }
 .evidence-card { padding: 26px; background: var(--terminal-bg); color: var(--terminal-ink); border-radius: 16px; overflow: hidden; }
 .evidence-card .eyebrow { color: #e5a27d; }
 .evidence-card h2 { margin: 14px 0 22px; font-size: 1.25rem; }
@@ -21,7 +59,7 @@
 .mode-switch { display: none; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 4px; }
 .js .mode-switch { display: flex; }
 .mode-switch button { border: 0; background: none; color: var(--muted); padding: 9px 14px; border-radius: 7px; font: inherit; font-size: .88rem; cursor: pointer; }
-.mode-switch button[aria-selected="true"] { background: var(--accent); color: var(--bg-raised); }
+.mode-switch button[aria-selected="true"] { background: var(--accent); color: var(--accent-button-ink); }
 .chart-unit { color: var(--muted); font-size: .85rem; }
 .timing-panel h3 { font-size: 1rem; margin-bottom: 8px; }
 .timing-panel > p { color: var(--muted); font-size: .9rem; margin: 0 0 22px; }
@@ -29,7 +67,7 @@
 .js .timing-panel + .timing-panel { margin-top: 0; }
 .timing-row { display: grid; grid-template-columns: 145px minmax(0, 1fr) 145px; align-items: center; gap: 16px; min-height: 56px; border-bottom: 1px solid var(--line); }
 .timing-name { font-size: .91rem; font-weight: 600; }
-.timing-row.is-dataprof .timing-name { color: var(--rust); }
+.timing-row.is-dataprof .timing-name { color: var(--rust-ink); }
 .timing-value { font-size: .86rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .timing-track { height: 24px; position: relative; background: repeating-linear-gradient(to right, transparent, transparent calc(25% - 1px), var(--line) calc(25% - 1px), var(--line) 25%); }
 .timing-track::before { content: ""; height: 1px; background: var(--line); position: absolute; top: 11px; width: 100%; }
@@ -64,9 +102,15 @@ summary { cursor: pointer; font-weight: 600; color: var(--accent-ink); }
 .repro-section pre { padding: 18px; border-radius: 9px; background: var(--terminal-bg); color: var(--terminal-ink); overflow-x: auto; font-size: .79rem; line-height: 1.8; }
 .protocol-list { padding-left: 20px; color: var(--muted); font-size: .91rem; }
 .protocol-list li { margin: 10px 0; }
-:is(section, article)[id] { scroll-margin-top: 85px; }
-:focus-visible { outline: 3px solid var(--rust); outline-offset: 4px; }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.bench-table:focus-visible { outline-offset: 2px; }
+.bench-table { overscroll-behavior-inline: contain; }
+.bench-table table { font-variant-numeric: tabular-nums; }
+.bench-table th { white-space: nowrap; }
+.bench-hero > *, .section-head > *, .comparison-card, .timing-panel { min-width: 0; }
+.section-head { max-width: none; }
+.mode-switch { flex-wrap: wrap; }
+.timing-panel { scroll-margin-top: 24px; }
+.filter-control input { border-color: var(--muted); }
 @media (max-width: 760px) {
   .bench-hero { grid-template-columns: 1fr; gap: 20px; padding-top: 36px; }
   .bench-hero h1 { max-width: 16ch; }
@@ -78,5 +122,19 @@ summary { cursor: pointer; font-weight: 600; color: var(--accent-ink); }
   .evidence-details dl { grid-template-columns: 1fr; gap: 4px; }
   .evidence-details dd { margin-bottom: 12px; }
   .suite-nav { gap: 14px 20px; }
+}
+@media (max-width: 480px) {
+  .bench-hero h1 { font-size: 2.4rem; }
+  .evidence-card { padding: 22px 18px; }
+  .evidence-card dl { grid-template-columns: 1fr; gap: 2px; }
+  .evidence-card dd { margin-bottom: 12px; }
+  .group-card, .repro-section article { padding: 22px 18px; }
+  .timing-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding-block: 12px; }
+  .timing-name, .timing-value { font-size: .88rem; }
+  .timing-value { grid-column: 2; grid-row: 1; }
+  .timing-track { grid-column: 1 / -1; grid-row: 2; }
+  .mode-switch { width: 100%; }
+  .mode-switch button { flex: 1; padding-inline: 10px; }
+  .comparison-card { padding: 20px 16px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
