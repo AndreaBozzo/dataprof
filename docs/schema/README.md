@@ -953,13 +953,15 @@ its literal digits, as a CSV cell with the same text is (#1166). That covers a
 field of a JSON or JSONL record on every route and a database JSON cell
 (#1168); a number nested in an array or object keeps its `f64`. Through 0.13
 such a number was read as its nearest `f64`, so distinct literals could count
-as one value and duplicate rows, and lost their decimal places. The same bytes
-can therefore score differently on precision, uniqueness, accuracy and overall
+as one value and duplicate rows, and lost their decimal places; a literal
+written as `1e+20` now keeps its decimal point, which a column of
+comma-decimal text counts as a mixed separator. The same bytes can therefore
+score differently on consistency, precision, uniqueness, accuracy and overall
 than they did.
 
 A report that records no `json_number_reading` reads back with it unknown, and
-a quality gate leaves the precision, uniqueness, accuracy and overall score
-rules over it `definition_not_comparable` (#1243), so a baseline saved by 0.13
+a quality gate leaves the consistency, precision, uniqueness, accuracy and
+overall score rules over it `definition_not_comparable` (#1243), so a baseline saved by 0.13
 does not fail the gate on unchanged data. The definition is recorded for every
 source format, so this applies to a 0.13 baseline of any format. Regenerate
 the baseline with the current release to have those rules decided again. The

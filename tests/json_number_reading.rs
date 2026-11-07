@@ -13,18 +13,21 @@ use dataprof::{
 /// The bytes `tests/fixtures/json_number_reading_0_13_1.report.json` was
 /// profiled from with the published 0.13.1 wheel. 0.13.1 read the three long
 /// amounts as one `f64` with no decimals, so it scored precision 100 and found
-/// two duplicate rows; their digits score precision 75 and no duplicates.
+/// two duplicate rows; their digits score precision 75 and no duplicates. It
+/// read `w` as `1e+20`, where its digits carry a decimal point beside the
+/// comma of `1,2`, a mixed-separator violation: consistency 91.67, then 83.33.
 const BATCH: &str = concat!(
-    "{\"amount\":1000000000000000.01,\"n\":1}\n",
-    "{\"amount\":1000000000000000.02,\"n\":1}\n",
-    "{\"amount\":1000000000000000.03,\"n\":1}\n",
-    "{\"amount\":7,\"n\":2}\n",
+    "{\"amount\":1000000000000000.01,\"n\":1,\"w\":100000000000000000000.0001}\n",
+    "{\"amount\":1000000000000000.02,\"n\":1,\"w\":100000000000000000000.0001}\n",
+    "{\"amount\":1000000000000000.03,\"n\":1,\"w\":100000000000000000000.0001}\n",
+    "{\"amount\":7,\"n\":2,\"w\":\"1,2\"}\n",
 );
-const READING: [QualityDimension; 2] = [QualityDimension::Precision, QualityDimension::Uniqueness];
-const DECIDED: [QualityDimension; 2] = [
-    QualityDimension::Completeness,
+const READING: [QualityDimension; 3] = [
     QualityDimension::Consistency,
+    QualityDimension::Precision,
+    QualityDimension::Uniqueness,
 ];
+const DECIDED: [QualityDimension; 1] = [QualityDimension::Completeness];
 
 fn profile() -> ProfileReport {
     let mut file = tempfile::Builder::new()
@@ -75,13 +78,17 @@ fn a_0_13_1_baseline_leaves_the_rules_reading_json_numbers_not_comparable() {
     .unwrap();
     let report = profile();
     // The fixture is what the issue describes: the same bytes, scored
-    // differently on precision and uniqueness.
+    // differently on consistency, precision and uniqueness. Compared as
+    // serialized, at two decimals: the baseline was read from its document.
     let score = |report: &ProfileReport, dimension: QualityDimension| {
         report
             .quality
             .as_ref()
             .and_then(|quality| quality.scores().dimension_scores[&dimension.to_string()])
+            .map(|score| (score * 100.0).round() / 100.0)
     };
+    assert_eq!(score(&baseline, QualityDimension::Consistency), Some(91.67));
+    assert_eq!(score(&report, QualityDimension::Consistency), Some(83.33));
     assert_eq!(score(&baseline, QualityDimension::Precision), Some(100.0));
     assert_eq!(score(&report, QualityDimension::Precision), Some(75.0));
     assert_eq!(score(&baseline, QualityDimension::Uniqueness), Some(50.0));

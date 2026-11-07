@@ -197,8 +197,8 @@ pub struct MetricSemantics {
     /// How a JSON number whose value its nearest `f64` does not hold is read.
     ///
     /// Absent means not recorded: through 0.13 such a number was read as its
-    /// nearest `f64`, which moved the precision, uniqueness, accuracy and
-    /// overall scores of the same bytes.
+    /// nearest `f64`, which moved the consistency, precision, uniqueness,
+    /// accuracy and overall scores of the same bytes.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

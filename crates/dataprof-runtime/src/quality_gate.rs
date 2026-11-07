@@ -2346,7 +2346,7 @@ enum Definition {
     /// score.
     AccuracyComparison,
     /// How a JSON number its `f64` does not hold is read, behind the
-    /// precision, uniqueness and accuracy scores.
+    /// consistency, precision, uniqueness and accuracy scores.
     JsonNumberReading,
 }
 
@@ -2412,7 +2412,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::JsonNumberReading,
         ],
-        Some(QualityDimension::Precision) => {
+        Some(QualityDimension::Consistency | QualityDimension::Precision) => {
             &[Definition::NullTokens, Definition::JsonNumberReading]
         }
         Some(_) => &[Definition::NullTokens],

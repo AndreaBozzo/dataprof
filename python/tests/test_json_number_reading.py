@@ -15,15 +15,17 @@ FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
 # The bytes json_number_reading_0_13_1.report.json was profiled from with the
 # published 0.13.1 wheel. 0.13.1 read the three long amounts as one f64 with no
 # decimals, so it scored precision 100 and found two duplicate rows; their
-# digits score precision 75 and no duplicates.
+# digits score precision 75 and no duplicates. It read w as 1e+20, where its
+# digits carry a decimal point beside the comma of "1,2", a mixed-separator
+# violation: consistency 91.67, then 83.33.
 BATCH = (
-    '{"amount":1000000000000000.01,"n":1}\n'
-    '{"amount":1000000000000000.02,"n":1}\n'
-    '{"amount":1000000000000000.03,"n":1}\n'
-    '{"amount":7,"n":2}\n'
+    '{"amount":1000000000000000.01,"n":1,"w":100000000000000000000.0001}\n'
+    '{"amount":1000000000000000.02,"n":1,"w":100000000000000000000.0001}\n'
+    '{"amount":1000000000000000.03,"n":1,"w":100000000000000000000.0001}\n'
+    '{"amount":7,"n":2,"w":"1,2"}\n'
 )
-READING = ("precision", "uniqueness")
-DECIDED = ("completeness", "consistency")
+READING = ("consistency", "precision", "uniqueness")
+DECIDED = ("completeness",)
 POLICY: dict[str, Any] = {
     "max_quality_score_drop": 0,
     "max_dimension_score_drops": dict.fromkeys((*READING, *DECIDED, "accuracy"), 0),
@@ -49,9 +51,9 @@ def test_a_0_13_1_baseline_leaves_the_rules_reading_json_numbers_not_comparable(
     baseline = dp.ProfileReport.load(FIXTURES / "json_number_reading_0_13_1.report.json")
     report = _profile(tmp_path)
     # The fixture is what the issue describes: the same bytes, scored
-    # differently on precision and uniqueness.
+    # differently on consistency, precision and uniqueness.
     scores = [r.to_dict()["quality"]["dimension_scores"] for r in (baseline, report)]
-    assert [(s["precision"], s["uniqueness"]) for s in scores] == [(100, 50), (75, 100)]
+    assert [tuple(s[d] for d in READING) for s in scores] == [(91.67, 100, 50), (83.33, 75, 100)]
 
     result = report.check(baseline=baseline, **POLICY)
     wrong = [

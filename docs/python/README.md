@@ -1172,8 +1172,8 @@ unevaluated, with one of these reasons:
   score, `outlier_units` also for accuracy and the overall score,
   `key_column_source` also for uniqueness and the overall score,
   `accuracy_comparison` also for accuracy and the overall score,
-  `json_number_reading` also for precision, uniqueness, accuracy and the
-  overall score), when the two reports do not both record it identically. A
+  `json_number_reading` also for consistency, precision, uniqueness, accuracy
+  and the overall score), when the two reports do not both record it identically. A
   baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
