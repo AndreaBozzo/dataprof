@@ -428,6 +428,7 @@ def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path)
         "max_null_count": {"*": 0, "amount": 1},
         "max_duplicate_rows": 0,
         "require_metrics": ["quality", "completeness"],
+        "forbid_findings": ["records_skipped"],
         "scope": "observed",
     }
     path = tmp_path / "policy.json"
@@ -560,6 +561,9 @@ def test_repeated_policy_flags_match_library(source: Path):
         '{"max_null_percentage_increase": [5]}',
         '{"max_null_percentage_increase": "5"}',
         '{"forbid_added_columns": "yes"}',
+        '{"forbid_findings": "locale_numbers"}',
+        '{"forbid_findings": ["nope"]}',
+        '{"forbid_findings": [1]}',
     ],
 )
 def test_invalid_policy_is_a_policy_error(source: Path, tmp_path: Path, policy: str):

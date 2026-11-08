@@ -1018,6 +1018,7 @@ if not result.passed:
 | `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
 | `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
+| `forbid_findings` | `list[str]` | `findings()` codes the report must not hold, such as `"locale_numbers"`; needs no baseline (0.14+) |
 | `timeliness_clock` | `str` | `"fixed"` (default) or `"rolling"`: how the timeliness reference dates of the baseline and this report may differ (0.14+) |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
@@ -1320,6 +1321,37 @@ that types the same data differently is not recorded, so it is not named.
  "message": "this column holds values on both sides, and its inferred type differs"}
 ```
 
+**Forbidden findings (0.14+).** `forbid_findings` turns a
+`findings()` code into a rule. A 1% defect moves the quality
+score half a point, so a score floor lets it through; the finding names it:
+
+```python
+result = dp.profile("payments.csv").check(
+    forbid_findings=["locale_numbers", "records_skipped", "key_duplicates"],
+)
+```
+
+Each code gets one `forbid_finding` check, in code order, with `"finding"`
+naming the code, `expected` `{"comparison": "at_most", "value": 0}`, and
+`observed` the number of findings. A failed check lists them under
+`findings`, each with its column and evidence, as `findings()` returns them.
+The findings use the `findings()` default thresholds. An unknown code is a
+`ValueError`.
+
+Under `scope="full_source"`, how far a partial scan answers the rule depends
+on what the finding is about:
+
+| Finding | On a truncated or sampled scan |
+| --- | --- |
+| How the source was read: `partial_scan`, `delimiter_ambiguous`, `header_not_split` | Decided either way |
+| Something rows witness: `duplicate_rows`, `key_duplicates`, `future_dates`, `temporal_order_violations`, `ragged_rows`, `records_skipped`, `unterminated_quote` | A finding fails; no finding is `evidence_incomplete` |
+| A share of a column's values: `null_heavy`, `all_null`, `constant_column`, `mixed_types`, `locale_numbers`, `sensitive_pattern` | `evidence_incomplete` either way |
+
+`scope="observed"` decides every one on the rows read. A rule `findings()`
+lists in `not_evaluated`, such as `duplicate_rows` without a quality
+assessment, leaves the check `finding_not_evaluated` when it found nothing,
+with that rule's entries under `rules`.
+
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:
 
@@ -1412,8 +1444,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--max-null-count COLUMN=COUNT` (0.14+), `--min-dimension NAME=PERCENT`, `--require-metric NAME`, or `--require-column NAME`
-to supply multiple entries; the last occurrence of a repeated mapping key wins.
+`--max-null-count COLUMN=COUNT` (0.14+), `--min-dimension NAME=PERCENT`, `--require-metric NAME`, `--require-column NAME`,
+or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).

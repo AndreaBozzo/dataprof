@@ -33,6 +33,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage_increase": None,
     "forbid_removed_columns": False,
     "forbid_added_columns": False,
+    "forbid_findings": None,
     "timeliness_clock": "fixed",
 }
 
@@ -280,6 +281,13 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="require a column to be profiled; fails when the source lacks it; repeatable",
     )
     parser.add_argument(
+        "--forbid-finding",
+        dest="forbid_findings",
+        action="append",
+        metavar="CODE",
+        help="fail when findings() reports this code, such as locale_numbers; repeatable",
+    )
+    parser.add_argument(
         "--scope",
         choices=("full_source", "observed"),
         help="require evidence about the full source (default) or the observed population",
@@ -431,13 +439,12 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
         raise ValueError(
             f"policy file {args.policy}: require_metrics must be a JSON array of names"
         )
-    columns = policy["require_columns"]
-    if columns is not None and (
-        not isinstance(columns, list) or not all(isinstance(name, str) for name in columns)
-    ):
-        raise ValueError(
-            f"policy file {args.policy}: require_columns must be a JSON array of names"
-        )
+    for key in ("require_columns", "forbid_findings"):
+        names = policy[key]
+        if names is not None and (
+            not isinstance(names, list) or not all(isinstance(name, str) for name in names)
+        ):
+            raise ValueError(f"policy file {args.policy}: {key} must be a JSON array of names")
     _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
     return policy
 
@@ -582,7 +589,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  baseline: {args.baseline}", file=sys.stderr)
     for check in result.checks:
         if check.status != "passed":
-            subject = check.column if check.column is not None else check.dimension
+            subject = next(
+                (s for s in (check.column, check.dimension, check.finding) if s is not None),
+                None,
+            )
             label = f" [{subject}]" if subject is not None else ""
             print(f"  {check.status}: {check.code}{label}: {check.message}", file=sys.stderr)
     # Schema changes from the baseline never move the verdict, so a pass can

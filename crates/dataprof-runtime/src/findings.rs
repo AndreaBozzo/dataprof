@@ -133,6 +133,28 @@ pub enum FindingCode {
 }
 
 impl FindingCode {
+    /// Every code, in declared order. A new code is added here too: parsing
+    /// a code name, and so `QualityPolicy::forbid_findings` from a binding,
+    /// reads this list.
+    pub const ALL: [Self; 16] = [
+        Self::AllNull,
+        Self::ConstantColumn,
+        Self::DelimiterAmbiguous,
+        Self::DuplicateRows,
+        Self::FutureDates,
+        Self::HeaderNotSplit,
+        Self::KeyDuplicates,
+        Self::LocaleNumbers,
+        Self::MixedTypes,
+        Self::NullHeavy,
+        Self::PartialScan,
+        Self::RaggedRows,
+        Self::RecordsSkipped,
+        Self::SensitivePattern,
+        Self::TemporalOrderViolations,
+        Self::UnterminatedQuote,
+    ];
+
     /// The severity every finding with this code carries.
     pub fn severity(self) -> Severity {
         match self {
@@ -220,6 +242,24 @@ impl fmt::Display for FindingCode {
             Self::UnterminatedQuote => "unterminated_quote",
         };
         write!(f, "{name}")
+    }
+}
+
+impl std::str::FromStr for FindingCode {
+    type Err = String;
+
+    /// Parse a code from its serialized name, such as `locale_numbers`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|code| code.to_string() == s)
+            .ok_or_else(|| {
+                let valid: Vec<String> = Self::ALL.iter().map(ToString::to_string).collect();
+                format!(
+                    "Unknown finding code: {s}. Valid codes: {}",
+                    valid.join(", ")
+                )
+            })
     }
 }
 
@@ -446,6 +486,34 @@ impl FindingsInput {
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
         serde_json::from_str(text)
     }
+
+    /// Whether the rule for `code` read some column's retained value sample
+    /// rather than all of its values.
+    ///
+    /// `mixed_types`, `locale_numbers` and `sensitive_pattern` read a
+    /// column's lexical forms, locale numbers and patterns, which the
+    /// profiler takes from the same retained sample. A classified count short
+    /// of the column's non-null count says the sample did not hold every
+    /// value, even on a scan that read the whole source. Columns a rule
+    /// exempts (identifiers, for the first two) are not counted. Every other
+    /// code reads exact counters, or records its sampling itself.
+    pub(crate) fn reads_a_partial_sample(&self, code: FindingCode) -> bool {
+        let exempts_identifiers = match code {
+            FindingCode::MixedTypes | FindingCode::LocaleNumbers => true,
+            FindingCode::SensitivePattern => false,
+            _ => return false,
+        };
+        self.columns
+            .iter()
+            .filter(|column| !(exempts_identifiers && column.identifier))
+            .any(|column| {
+                let non_null = column.total_count.saturating_sub(column.null_count);
+                column
+                    .type_homogeneity
+                    .as_ref()
+                    .is_some_and(|forms| forms.classified_count() < non_null)
+            })
+    }
 }
 
 impl From<&ProfileReport> for FindingsInput {
@@ -637,7 +705,7 @@ impl FindingPolicy {
         rounded_2(self.mixed_types_percentage)
     }
 
-    fn collect(&self, input: &FindingsInput) -> FindingsResult {
+    pub(crate) fn collect(&self, input: &FindingsInput) -> FindingsResult {
         let mut collector = Collector::default();
         scan_findings(input, &mut collector);
         quality_findings(input, &mut collector);

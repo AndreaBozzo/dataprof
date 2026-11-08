@@ -33,8 +33,8 @@ pub use progress::PyProgressEvent;
 pub use sampling::PySamplingStrategy;
 pub use stop_condition::PyStopCondition;
 pub use types::{
-    PyColumnProfile, PyDataQualityMetrics, PyProfileReport, findings_from_input_json,
-    report_delta_json, summary_unlisted_components,
+    PyColumnProfile, PyDataQualityMetrics, PyProfileReport, finding_codes,
+    findings_from_input_json, report_delta_json, summary_unlisted_components,
 };
 
 use pyo3::prelude::*;
@@ -121,6 +121,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analysis::jsonl_line_error, m)?)?;
     m.add_function(wrap_pyfunction!(report_delta_json, m)?)?;
     m.add_function(wrap_pyfunction!(findings_from_input_json, m)?)?;
+    m.add_function(wrap_pyfunction!(finding_codes, m)?)?;
     m.add_function(wrap_pyfunction!(summary_unlisted_components, m)?)?;
 
     // DataFrame/Arrow profiling

@@ -17,6 +17,7 @@ from collections.abc import Iterator as _Iterator, Mapping as _Mapping, Sequence
 from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any
 
+from ._dataprof import finding_codes as _finding_codes
 from ._report_schema import _QUALITY_DIMENSIONS
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
@@ -80,6 +81,14 @@ class QualityCheck:
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
     #: baseline's in points. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
+    #: The findings code a ``forbid_finding`` check concerns. ``None`` on
+    #: every other rule.
+    finding: str | None = None
+    #: The findings a ``forbid_finding`` check found, as
+    #: :meth:`ProfileReport.findings` documents them: ``code``,
+    #: ``severity``, ``column`` when there is one, ``evidence`` and
+    #: ``summary``. Empty when there are none and on every other rule.
+    findings: tuple[dict[str, _Any], ...] = ()
 
     @property
     def is_violation(self) -> bool:
@@ -93,6 +102,8 @@ class QualityCheck:
             document["column"] = self.column
         if self.dimension is not None:
             document["dimension"] = self.dimension
+        if self.finding is not None:
+            document["finding"] = self.finding
         document["expected"] = dict(self.expected)
         if self.observed is not None:
             document["observed"] = self.observed
@@ -102,6 +113,8 @@ class QualityCheck:
             document["bounds"] = dict(self.bounds)
         if self.baseline is not None:
             document["baseline"] = dict(self.baseline)
+        if self.findings:
+            document["findings"] = [dict(finding) for finding in self.findings]
         document["status"] = self.status
         if self.reason is not None:
             document.update(self.reason)
@@ -273,6 +286,7 @@ class _Policy:
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
+        forbid_findings: _Sequence[str] | None = None,
         timeliness_clock: str = "fixed",
     ) -> None:
         if scope not in _SCOPES:
@@ -394,6 +408,24 @@ class _Policy:
         self.forbid_removed_columns = forbid_removed_columns
         self.forbid_added_columns = forbid_added_columns
 
+        if forbid_findings is not None and (
+            not isinstance(forbid_findings, _Sequence)
+            or isinstance(forbid_findings, (str, bytes))
+            or not all(isinstance(code, str) for code in forbid_findings)
+        ):
+            raise _PolicyFieldError(
+                "forbid_findings",
+                f"forbid_findings must be a list of findings codes, got {forbid_findings!r}",
+            )
+        known = _finding_codes()
+        unknown = sorted(set(forbid_findings or ()) - set(known))
+        if unknown:
+            raise _PolicyFieldError(
+                "forbid_findings",
+                f"forbid_findings: unknown findings code {unknown[0]!r}. Valid: {', '.join(known)}",
+            )
+        self.forbid_findings = sorted(set(forbid_findings or ()), key=known.index)
+
         self.baseline = baseline
         if baseline is None and self._has_change_rules():
             raise _PolicyFieldError(
@@ -423,6 +455,7 @@ class _Policy:
             or self.require_quality
             or self.require_dimensions
             or self.require_columns
+            or self.forbid_findings
             or self._has_change_rules()
         ):
             raise ValueError("check() states no requirement; a gate must check something")
@@ -473,6 +506,7 @@ class _Policy:
                 require_columns=self.require_columns,
                 forbid_removed_columns=self.forbid_removed_columns,
                 forbid_added_columns=self.forbid_added_columns,
+                forbid_findings=self.forbid_findings,
                 timeliness_clock=self.timeliness_clock,
             )
         )
@@ -491,6 +525,8 @@ _CHECK_FIELDS = (
     "evidence",
     "bounds",
     "baseline",
+    "finding",
+    "findings",
     "status",
     "message",
 )
@@ -508,6 +544,8 @@ def _check_from_document(document: dict[str, _Any]) -> QualityCheck:
         evidence=document["evidence"],
         bounds=document.get("bounds"),
         baseline=document.get("baseline"),
+        finding=document.get("finding"),
+        findings=tuple(document.get("findings", ())),
         status=document["status"],
         reason=reason or None,
         message=document["message"],
