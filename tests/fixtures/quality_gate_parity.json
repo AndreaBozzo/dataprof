@@ -1381,6 +1381,135 @@
           }
         ]
       }
+    },
+    {
+      "name": "a_sampled_column_leaves_share_findings_undecided_on_a_full_scan",
+      "why": "Every row was read, but lexical forms and patterns come from each column's retained sample, so mixed_types and sensitive_pattern decide nothing about the values outside it.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "forbid_findings": [
+          "mixed_types",
+          "null_heavy",
+          "sensitive_pattern"
+        ]
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "mixed_types",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "quality_sampled",
+            "message": "the finding's rule found nothing in the retained sample of values, and the values outside it may hold it"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "null_heavy",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "sensitive_pattern",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "quality_sampled",
+            "message": "the finding's rule found nothing in the retained sample of values, and the values outside it may hold it"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_sampled_column_decides_share_findings_in_the_observed_scope",
+      "why": "Under observed scope the retained sample is what was measured, so it decides.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "forbid_findings": [
+          "mixed_types",
+          "sensitive_pattern"
+        ],
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "mixed_types",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "sensitive_pattern",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          }
+        ]
+      }
     }
   ]
 }

@@ -486,6 +486,34 @@ impl FindingsInput {
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
         serde_json::from_str(text)
     }
+
+    /// Whether the rule for `code` read some column's retained value sample
+    /// rather than all of its values.
+    ///
+    /// `mixed_types`, `locale_numbers` and `sensitive_pattern` read a
+    /// column's lexical forms, locale numbers and patterns, which the
+    /// profiler takes from the same retained sample. A classified count short
+    /// of the column's non-null count says the sample did not hold every
+    /// value, even on a scan that read the whole source. Columns a rule
+    /// exempts (identifiers, for the first two) are not counted. Every other
+    /// code reads exact counters, or records its sampling itself.
+    pub(crate) fn reads_a_partial_sample(&self, code: FindingCode) -> bool {
+        let exempts_identifiers = match code {
+            FindingCode::MixedTypes | FindingCode::LocaleNumbers => true,
+            FindingCode::SensitivePattern => false,
+            _ => return false,
+        };
+        self.columns
+            .iter()
+            .filter(|column| !(exempts_identifiers && column.identifier))
+            .any(|column| {
+                let non_null = column.total_count.saturating_sub(column.null_count);
+                column
+                    .type_homogeneity
+                    .as_ref()
+                    .is_some_and(|forms| forms.classified_count() < non_null)
+            })
+    }
 }
 
 impl From<&ProfileReport> for FindingsInput {
@@ -677,7 +705,7 @@ impl FindingPolicy {
         rounded_2(self.mixed_types_percentage)
     }
 
-    fn collect(&self, input: &FindingsInput) -> FindingsResult {
+    pub(crate) fn collect(&self, input: &FindingsInput) -> FindingsResult {
         let mut collector = Collector::default();
         scan_findings(input, &mut collector);
         quality_findings(input, &mut collector);

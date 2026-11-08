@@ -93,6 +93,9 @@
 //! - a share of a column's values (`null_heavy`, `all_null`,
 //!   `constant_column`, `mixed_types`, `locale_numbers`, `sensitive_pattern`):
 //!   decided only on a scan that covered the source, as with the score rules.
+//!   `mixed_types`, `locale_numbers` and `sensitive_pattern` read each
+//!   column's retained value sample, so on a source larger than the sample
+//!   they stay `quality_sampled` even when every row was read.
 //!
 //! A findings rule that could not look at all of the report and found nothing
 //! leaves the check [`NotEvaluated::FindingNotEvaluated`], carrying the
@@ -130,7 +133,9 @@ use dataprof_metrics::{
 };
 use serde::Serialize;
 
-use crate::findings::{Finding, FindingCode, FindingsResult, UnevaluatedRule};
+use crate::findings::{
+    Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, UnevaluatedRule,
+};
 use crate::profile_report::{
     ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
 };
@@ -1317,9 +1322,17 @@ impl QualityPolicy {
             checks.push(self.duplicate_rows_check(report, scan, max));
         }
         if !self.forbid_findings.is_empty() {
-            let findings = report.findings();
+            let input = FindingsInput::from(report);
+            let findings = FindingPolicy::default().collect(&input);
             for &code in &self.forbid_findings {
-                checks.push(self.forbid_finding_check(&findings, scan, code));
+                let sample = if input.reads_a_partial_sample(code) {
+                    Evidence::Incomplete {
+                        reason: EvidenceGap::QualitySampled,
+                    }
+                } else {
+                    Evidence::Complete
+                };
+                checks.push(self.forbid_finding_check(&findings, scan.and(sample), code));
             }
         }
         checks
@@ -1362,6 +1375,13 @@ impl QualityPolicy {
             PolicyScope::Observed => None,
         };
         let (status, message) = match (found.is_empty(), gap) {
+            (false, Some(EvidenceGap::QualitySampled)) if reach == FindingReach::Share => (
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
+                    gap: EvidenceGap::QualitySampled,
+                }),
+                "the finding holds for the retained sample of values, and the values outside \
+                 it may change it",
+            ),
             (false, Some(gap)) if reach == FindingReach::Share => (
                 CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
                 "the finding holds for the rows read, and the rows that were not read may \
@@ -1374,6 +1394,13 @@ impl QualityPolicy {
             (true, _) if !skipped.is_empty() => (
                 CheckStatus::NotEvaluated(NotEvaluated::FindingNotEvaluated { rules: skipped }),
                 FINDING_NOT_EVALUATED,
+            ),
+            (true, Some(EvidenceGap::QualitySampled)) => (
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
+                    gap: EvidenceGap::QualitySampled,
+                }),
+                "the finding's rule found nothing in the retained sample of values, and the \
+                 values outside it may hold it",
             ),
             (true, Some(gap)) => (
                 CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
