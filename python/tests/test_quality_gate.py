@@ -309,6 +309,7 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "require_columns": [],
             "forbid_removed_columns": False,
             "forbid_added_columns": False,
+            "forbid_findings": [],
             "timeliness_clock": "fixed",
         }
     ]

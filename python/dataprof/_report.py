@@ -801,6 +801,7 @@ class ProfileReport:
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
+        forbid_findings: _Sequence[str] | None = None,
         timeliness_clock: str = "fixed",
     ) -> _QualityGateResult:
         """Evaluate a quality policy against this report.
@@ -874,6 +875,24 @@ class ProfileReport:
                 to be profiled still. One check per baseline column.
             forbid_added_columns: Allow no column the baseline did not profile:
                 a closed schema. One check per column of this report.
+            forbid_findings: Codes of :meth:`findings`, such as
+                ``"locale_numbers"``: the report must hold no finding with
+                one, derived at the :meth:`findings` default thresholds.
+                One ``forbid_finding`` check per code, in code order,
+                carrying the findings it found. Under ``"full_source"``, a
+                finding about how the source was read (``partial_scan``,
+                ``delimiter_ambiguous``, ``header_not_split``) is decided on
+                any scan; one rows witness (``duplicate_rows``,
+                ``key_duplicates``, ``future_dates``,
+                ``temporal_order_violations``, ``ragged_rows``,
+                ``records_skipped``, ``unterminated_quote``) fails a partial
+                scan but passes only a complete one; one about a share of
+                a column's values (``null_heavy``, ``all_null``,
+                ``constant_column``, ``mixed_types``, ``locale_numbers``,
+                ``sensitive_pattern``) is decided only on a complete scan.
+                A rule :meth:`findings` lists in ``not_evaluated`` that
+                found nothing leaves the check ``finding_not_evaluated``,
+                with its entries under ``rules``. Needs no baseline.
             timeliness_clock: How the timeliness clocks of the baseline and
                 this report may differ, for the overall and timeliness score
                 drop rules. ``"fixed"`` (the default) needs the same
@@ -914,7 +933,8 @@ class ProfileReport:
                 without a baseline, or no requirement at all. A misconfigured
                 gate is not a failing dataset. Also raised for a report loaded
                 from a flat ``to_dict()`` summary, which the Rust gate cannot
-                read; the baseline may be one.
+                read; the baseline may be one. An unknown findings code in
+                ``forbid_findings``.
             TypeError: ``baseline`` is not a :class:`ProfileReport`.
         """
         if baseline is not None and not isinstance(baseline, ProfileReport):
@@ -937,6 +957,7 @@ class ProfileReport:
             require_columns=require_columns,
             forbid_removed_columns=forbid_removed_columns,
             forbid_added_columns=forbid_added_columns,
+            forbid_findings=forbid_findings,
             timeliness_clock=timeliness_clock,
         ).evaluate(self._native_report)
 

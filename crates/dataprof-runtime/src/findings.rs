@@ -133,6 +133,28 @@ pub enum FindingCode {
 }
 
 impl FindingCode {
+    /// Every code, in declared order. A new code is added here too: parsing
+    /// a code name, and so `QualityPolicy::forbid_findings` from a binding,
+    /// reads this list.
+    pub const ALL: [Self; 16] = [
+        Self::AllNull,
+        Self::ConstantColumn,
+        Self::DelimiterAmbiguous,
+        Self::DuplicateRows,
+        Self::FutureDates,
+        Self::HeaderNotSplit,
+        Self::KeyDuplicates,
+        Self::LocaleNumbers,
+        Self::MixedTypes,
+        Self::NullHeavy,
+        Self::PartialScan,
+        Self::RaggedRows,
+        Self::RecordsSkipped,
+        Self::SensitivePattern,
+        Self::TemporalOrderViolations,
+        Self::UnterminatedQuote,
+    ];
+
     /// The severity every finding with this code carries.
     pub fn severity(self) -> Severity {
         match self {
@@ -220,6 +242,24 @@ impl fmt::Display for FindingCode {
             Self::UnterminatedQuote => "unterminated_quote",
         };
         write!(f, "{name}")
+    }
+}
+
+impl std::str::FromStr for FindingCode {
+    type Err = String;
+
+    /// Parse a code from its serialized name, such as `locale_numbers`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|code| code.to_string() == s)
+            .ok_or_else(|| {
+                let valid: Vec<String> = Self::ALL.iter().map(ToString::to_string).collect();
+                format!(
+                    "Unknown finding code: {s}. Valid codes: {}",
+                    valid.join(", ")
+                )
+            })
     }
 }
 

@@ -1004,6 +1004,383 @@
           }
         ]
       }
+    },
+    {
+      "name": "a_forbidden_finding_fails_with_its_evidence",
+      "why": "A complete scan with a forbidden finding fails, carrying the finding; a forbidden code with no finding passes.",
+      "options": {},
+      "policy": {
+        "forbid_findings": [
+          "duplicate_rows",
+          "null_heavy",
+          "partial_scan"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "duplicate_rows",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "findings": [
+              {
+                "code": "duplicate_rows",
+                "severity": "warning",
+                "evidence": {
+                  "duplicate_rows": 1,
+                  "rows_checked": 6
+                },
+                "summary": "the source contains exact duplicate rows"
+              }
+            ],
+            "status": "failed",
+            "message": "the report holds a finding the policy forbids"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "null_heavy",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "partial_scan",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_witnessed_finding_fails_a_capped_scan",
+      "why": "Rows already read stay duplicates, so a capped scan fails duplicate_rows, while no skipped record in the rows read rules nothing out for the rest.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "forbid_findings": [
+          "duplicate_rows",
+          "records_skipped"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "duplicate_rows",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "findings": [
+              {
+                "code": "duplicate_rows",
+                "severity": "warning",
+                "evidence": {
+                  "duplicate_rows": 1,
+                  "rows_checked": 4
+                },
+                "summary": "the source contains exact duplicate rows"
+              }
+            ],
+            "status": "failed",
+            "message": "the report holds a finding the policy forbids"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "records_skipped",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the finding's rule found nothing in the rows read, and the rows that were not read may hold it"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_leaves_share_findings_undecided",
+      "why": "A null share over part of the source bounds nothing about the rest, in either direction, so a capped scan decides no share finding under full_source.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "forbid_findings": [
+          "mixed_types",
+          "null_heavy"
+        ]
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "mixed_types",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the finding's rule found nothing in the rows read, and the rows that were not read may hold it"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "null_heavy",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "findings": [
+              {
+                "code": "null_heavy",
+                "severity": "warning",
+                "column": "customer_id",
+                "evidence": {
+                  "null_percentage": 25.0,
+                  "threshold": 20.0
+                },
+                "summary": "this column's null share is at or above the threshold"
+              }
+            ],
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the finding holds for the rows read, and the rows that were not read may change it"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_finding_about_the_read_is_decided_on_a_capped_scan",
+      "why": "partial_scan is about the scan itself, so a capped scan decides it.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "forbid_findings": [
+          "partial_scan"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "partial_scan",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "findings": [
+              {
+                "code": "partial_scan",
+                "severity": "info",
+                "evidence": {
+                  "reason": "truncated",
+                  "rows_processed": 4
+                },
+                "summary": "only part of the source was read; findings describe the rows that were"
+              }
+            ],
+            "status": "failed",
+            "message": "the report holds a finding the policy forbids"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_decides_findings_in_the_observed_scope",
+      "why": "Under observed scope the findings of the rows read decide, both ways.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "forbid_findings": [
+          "null_heavy",
+          "records_skipped"
+        ],
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "null_heavy",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "findings": [
+              {
+                "code": "null_heavy",
+                "severity": "warning",
+                "column": "customer_id",
+                "evidence": {
+                  "null_percentage": 25.0,
+                  "threshold": 20.0
+                },
+                "summary": "this column's null share is at or above the threshold"
+              }
+            ],
+            "status": "failed",
+            "message": "the report holds a finding the policy forbids"
+          },
+          {
+            "code": "forbid_finding",
+            "finding": "records_skipped",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_findings_rule_that_could_not_look_is_not_evaluated",
+      "why": "Without a quality assessment the duplicate_rows rule cannot look, so the check is unevaluated with the rule's own reason.",
+      "options": {
+        "metrics": [
+          "schema"
+        ]
+      },
+      "policy": {
+        "forbid_findings": [
+          "duplicate_rows"
+        ]
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "forbid_finding",
+            "finding": "duplicate_rows",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "finding_not_evaluated",
+            "rules": [
+              {
+                "code": "duplicate_rows",
+                "reason": "quality_unavailable",
+                "quality_status": "not_requested"
+              }
+            ],
+            "message": "the finding's rule could not look at the whole report, and found no finding"
+          }
+        ]
+      }
     }
   ]
 }

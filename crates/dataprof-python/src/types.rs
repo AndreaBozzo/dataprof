@@ -1519,6 +1519,7 @@ impl PyProfileReport {
         require_columns = Vec::new(),
         forbid_removed_columns = false,
         forbid_added_columns = false,
+        forbid_findings = Vec::new(),
         timeliness_clock = "fixed",
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -1543,6 +1544,7 @@ impl PyProfileReport {
         require_columns: Vec<String>,
         forbid_removed_columns: bool,
         forbid_added_columns: bool,
+        forbid_findings: Vec<String>,
         timeliness_clock: &str,
     ) -> PyResult<String> {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
@@ -1600,6 +1602,15 @@ impl PyProfileReport {
         }
         if forbid_added_columns {
             policy = policy.forbid_added_columns();
+        }
+        if !forbid_findings.is_empty() {
+            policy = policy.forbid_findings(
+                forbid_findings
+                    .iter()
+                    .map(|code| code.parse::<dataprof::FindingCode>())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(value_error)?,
+            );
         }
         let result = match baseline {
             Some(baseline) => policy.evaluate_against(&self.inner, &baseline.side("check()")?),
@@ -1661,6 +1672,16 @@ pub fn findings_from_input_json(
         .null_heavy_percentage(null_heavy_percentage)
         .mixed_types_percentage(mixed_types_percentage);
     findings_document(policy.evaluate_input(&input))
+}
+
+/// Every findings code, in the order findings of equal severity sort in.
+/// `check(forbid_findings=...)` validates the names against it.
+#[pyfunction]
+pub fn finding_codes() -> Vec<String> {
+    dataprof::FindingCode::ALL
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// The components carrying signal that neither coverage list of a flat

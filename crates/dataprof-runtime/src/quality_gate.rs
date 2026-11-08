@@ -76,6 +76,28 @@
 //! the setting `columns`, [`NotEvaluated::ColumnNotProfiled`] for a required
 //! column the run did not select, or [`NotEvaluated::EvidenceIncomplete`].
 //!
+//! # Forbidden findings
+//!
+//! [`QualityPolicy::forbid_findings`] turns a findings code into a rule: the
+//! report must hold no finding with it (#1066). The findings are derived as
+//! [`ProfileReport::findings`] derives them, and a failed check carries them,
+//! column and evidence included. How far a partial scan answers the rule
+//! under [`PolicyScope::FullSource`] depends on what the finding is about:
+//!
+//! - how the source was read (`partial_scan`, `delimiter_ambiguous`,
+//!   `header_not_split`): decided whatever the scan covered;
+//! - something rows witness (`duplicate_rows`, `key_duplicates`,
+//!   `future_dates`, `temporal_order_violations`, `ragged_rows`,
+//!   `records_skipped`, `unterminated_quote`): a finding fails, and no finding
+//!   passes only a scan that covered the source, as with `max_duplicate_rows`;
+//! - a share of a column's values (`null_heavy`, `all_null`,
+//!   `constant_column`, `mixed_types`, `locale_numbers`, `sensitive_pattern`):
+//!   decided only on a scan that covered the source, as with the score rules.
+//!
+//! A findings rule that could not look at all of the report and found nothing
+//! leaves the check [`NotEvaluated::FindingNotEvaluated`], carrying the
+//! rule's own reasons.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -108,6 +130,7 @@ use dataprof_metrics::{
 };
 use serde::Serialize;
 
+use crate::findings::{Finding, FindingCode, FindingsResult, UnevaluatedRule};
 use crate::profile_report::{
     ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
 };
@@ -383,6 +406,8 @@ pub enum CheckCode {
     ForbidRemovedColumn,
     /// A column the report profiled must be one the baseline profiled.
     ForbidAddedColumn,
+    /// The report must hold no finding with the named code.
+    ForbidFinding,
 }
 
 impl fmt::Display for CheckCode {
@@ -401,6 +426,7 @@ impl fmt::Display for CheckCode {
             Self::RequireColumn => write!(f, "require_column"),
             Self::ForbidRemovedColumn => write!(f, "forbid_removed_column"),
             Self::ForbidAddedColumn => write!(f, "forbid_added_column"),
+            Self::ForbidFinding => write!(f, "forbid_finding"),
         }
     }
 }
@@ -549,6 +575,14 @@ pub enum NotEvaluated {
         /// The configuration field that is unrecorded.
         setting: String,
     },
+    /// The findings rule a `forbid_finding` check reads could not look at
+    /// all of the report, and found nothing where it did look.
+    #[non_exhaustive]
+    FindingNotEvaluated {
+        /// The rule's entries in [`FindingsResult::not_evaluated`], each with
+        /// its own reason and the columns it covers.
+        rules: Vec<UnevaluatedRule>,
+    },
 }
 
 /// What happened to one requirement.
@@ -576,6 +610,10 @@ pub struct Check {
     /// The quality dimension it concerns, when it concerns one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimension: Option<QualityDimension>,
+    /// The findings code a `forbid_finding` check concerns. Absent on every
+    /// other rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finding: Option<FindingCode>,
     /// The constraint applied.
     pub expected: Expectation,
     /// The value read from the report. Absent when nothing was read: every
@@ -597,6 +635,11 @@ pub struct Check {
     /// rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<BaselineReading>,
+    /// The findings a `forbid_finding` check found, each with its column and
+    /// evidence, in the order [`FindingsResult::findings`] lists them. Empty,
+    /// and not serialized, when there are none and on every other rule.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
     /// Passed, failed, or not evaluated.
     #[serde(flatten)]
     pub status: CheckStatus,
@@ -873,6 +916,7 @@ pub struct QualityPolicy {
     require_columns: BTreeSet<String>,
     forbid_removed_columns: bool,
     forbid_added_columns: bool,
+    forbid_findings: BTreeSet<FindingCode>,
     timeliness_clock: TimelinessClockRule,
     scope: PolicyScope,
 }
@@ -1030,6 +1074,19 @@ impl QualityPolicy {
         self
     }
 
+    /// Fail when the report holds a finding with one of these codes (#1066),
+    /// derived with the default [`FindingPolicy`](crate::FindingPolicy) thresholds, as
+    /// [`ProfileReport::findings`] derives them. One check per code, in code
+    /// order. See the [module docs](self) for when a partial scan decides
+    /// one.
+    pub fn forbid_findings<I>(mut self, codes: I) -> Self
+    where
+        I: IntoIterator<Item = FindingCode>,
+    {
+        self.forbid_findings.extend(codes);
+        self
+    }
+
     /// Declare how the timeliness clocks of the baseline and the report may
     /// differ, for the rules about change that read the timeliness score: the
     /// overall score drop, when both sides assessed timeliness, and the
@@ -1107,6 +1164,7 @@ impl QualityPolicy {
             && self.max_duplicate_rows.is_none()
             && self.require_metrics.is_empty()
             && self.require_columns.is_empty()
+            && self.forbid_findings.is_empty()
             && !self.has_change_rules()
     }
 
@@ -1258,7 +1316,98 @@ impl QualityPolicy {
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
         }
+        if !self.forbid_findings.is_empty() {
+            let findings = report.findings();
+            for &code in &self.forbid_findings {
+                checks.push(self.forbid_finding_check(&findings, scan, code));
+            }
+        }
         checks
+    }
+
+    /// Decide one forbidden findings code.
+    ///
+    /// A finding present fails the check, except a finding about a share of
+    /// the values ([`FindingReach::Share`]) under [`PolicyScope::FullSource`]
+    /// on a scan that does not cover the source: a share over part of a
+    /// source bounds nothing about the rest. No finding passes only when the
+    /// rule looked at all of the report and, unless it is about how the
+    /// source was read ([`FindingReach::Read`]), the scan covers the source
+    /// or the scope is [`PolicyScope::Observed`].
+    fn forbid_finding_check(
+        &self,
+        result: &FindingsResult,
+        scan: Evidence,
+        code: FindingCode,
+    ) -> Check {
+        let found: Vec<Finding> = result
+            .findings
+            .iter()
+            .filter(|finding| finding.code == code)
+            .cloned()
+            .collect();
+        let skipped: Vec<UnevaluatedRule> = result
+            .not_evaluated
+            .iter()
+            .filter(|rule| rule.code == code)
+            .cloned()
+            .collect();
+        let reach = FindingReach::of(code);
+        let evidence = match reach {
+            FindingReach::Read => Evidence::Complete,
+            FindingReach::Witness | FindingReach::Share => scan,
+        };
+        let gap = match self.scope {
+            PolicyScope::FullSource => evidence.gap(),
+            PolicyScope::Observed => None,
+        };
+        let (status, message) = match (found.is_empty(), gap) {
+            (false, Some(gap)) if reach == FindingReach::Share => (
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
+                "the finding holds for the rows read, and the rows that were not read may \
+                 change it",
+            ),
+            (false, _) => (
+                CheckStatus::Failed,
+                "the report holds a finding the policy forbids",
+            ),
+            (true, _) if !skipped.is_empty() => (
+                CheckStatus::NotEvaluated(NotEvaluated::FindingNotEvaluated { rules: skipped }),
+                FINDING_NOT_EVALUATED,
+            ),
+            (true, Some(gap)) => (
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
+                "the finding's rule found nothing in the rows read, and the rows that were not \
+                 read may hold it",
+            ),
+            (true, None) => (
+                CheckStatus::Passed,
+                "the finding's rule looked and found nothing",
+            ),
+        };
+        // Where the rule could not look, the zero it found elsewhere is not a
+        // count of the report's findings.
+        let observed = match status {
+            CheckStatus::NotEvaluated(NotEvaluated::FindingNotEvaluated { .. }) => None,
+            _ => Some(MetricValue::Count(found.len())),
+        };
+        Check {
+            code: CheckCode::ForbidFinding,
+            column: None,
+            dimension: None,
+            finding: Some(code),
+            expected: Expectation::AtMost {
+                value: MetricValue::Count(0),
+            },
+            observed,
+            scope: self.scope,
+            evidence,
+            bounds: None,
+            baseline: None,
+            findings: found,
+            status,
+            message: message.to_string(),
+        }
     }
 
     /// Decide a comparison whose observed value is an average or a ratio.
@@ -1303,6 +1452,8 @@ impl QualityPolicy {
             code: CheckCode::RequireMetric,
             column: None,
             dimension,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::Analyzed,
             observed: None,
             scope: self.scope,
@@ -1345,6 +1496,8 @@ impl QualityPolicy {
             code: CheckCode::MinRows,
             column: None,
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtLeast {
                 value: MetricValue::Count(min),
             },
@@ -1363,6 +1516,8 @@ impl QualityPolicy {
             code: CheckCode::MinQualityScore,
             column: None,
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtLeast {
                 value: MetricValue::Percentage(min),
             },
@@ -1406,6 +1561,8 @@ impl QualityPolicy {
             code: CheckCode::MinDimensionScore,
             column: None,
             dimension: Some(dimension),
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtLeast {
                 value: MetricValue::Percentage(min),
             },
@@ -1533,6 +1690,8 @@ impl QualityPolicy {
             code: CheckCode::MaxNullPercentage,
             column: Some(column.to_string()),
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtMost {
                 value: MetricValue::Percentage(max),
             },
@@ -1610,6 +1769,8 @@ impl QualityPolicy {
             code: CheckCode::MaxNullCount,
             column: Some(column.to_string()),
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtMost {
                 value: MetricValue::Count(max),
             },
@@ -1659,6 +1820,8 @@ impl QualityPolicy {
             code: CheckCode::MaxDuplicateRows,
             column: None,
             dimension: Some(QualityDimension::Uniqueness),
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::AtMost {
                 value: MetricValue::Count(max),
             },
@@ -1752,6 +1915,8 @@ impl QualityPolicy {
             code,
             column: None,
             dimension,
+            finding: None,
+            findings: Vec::new(),
             // `0.0 - points`, not `-points`: a permitted drop of zero
             // serializes as 0.0 rather than -0.0.
             expected: Expectation::ChangeAtLeast {
@@ -1872,6 +2037,8 @@ impl QualityPolicy {
             code: CheckCode::MaxNullPercentageIncrease,
             column: Some(column.to_string()),
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected: Expectation::ChangeAtMost {
                 value: MetricValue::Percentage(points),
             },
@@ -2123,6 +2290,8 @@ impl QualityPolicy {
             code,
             column: Some(column.to_string()),
             dimension: None,
+            finding: None,
+            findings: Vec::new(),
             expected,
             observed: None,
             scope: self.scope,
@@ -2324,6 +2493,51 @@ impl<'a> ColumnIndex<'a> {
     }
 }
 
+/// The message of a `forbid_finding` check whose rule could not look.
+const FINDING_NOT_EVALUATED: &str =
+    "the finding's rule could not look at the whole report, and found no finding";
+
+/// What a finding is about, which decides how far a partial scan answers a
+/// `forbid_finding` check under [`PolicyScope::FullSource`].
+///
+/// Exhaustive on purpose: a new findings code has to say which it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FindingReach {
+    /// How the source was read: the scan itself, or the delimiter detection
+    /// over its first records. Decided whatever part of the source was read.
+    Read,
+    /// Something rows witness, which more rows cannot retract: duplicates, a
+    /// repeated key, a future date, a skipped or ragged record. A finding
+    /// fails a partial scan; its absence passes only a complete one.
+    Witness,
+    /// A share of a column's values, which more rows can move either way.
+    /// Decided only on a complete scan.
+    Share,
+}
+
+impl FindingReach {
+    fn of(code: FindingCode) -> Self {
+        match code {
+            FindingCode::PartialScan
+            | FindingCode::DelimiterAmbiguous
+            | FindingCode::HeaderNotSplit => Self::Read,
+            FindingCode::DuplicateRows
+            | FindingCode::FutureDates
+            | FindingCode::KeyDuplicates
+            | FindingCode::RaggedRows
+            | FindingCode::RecordsSkipped
+            | FindingCode::TemporalOrderViolations
+            | FindingCode::UnterminatedQuote => Self::Witness,
+            FindingCode::AllNull
+            | FindingCode::ConstantColumn
+            | FindingCode::LocaleNumbers
+            | FindingCode::MixedTypes
+            | FindingCode::NullHeavy
+            | FindingCode::SensitivePattern => Self::Share,
+        }
+    }
+}
+
 /// Why a side's profiled columns may not be all of its source's columns, or
 /// `None` when they are: every column was selected and the column set covers
 /// the source. The selection is named ahead of the coverage, since a
@@ -2390,6 +2604,9 @@ fn not_evaluated_change(mut check: Check, reason: NotEvaluated, subject: &str) -
             "the report carries no quality assessment".to_string()
         }
         NotEvaluated::EvidenceIncomplete { .. } => evidence_message(subject),
+        // Only a `forbid_finding` check, which is not a rule about change,
+        // carries this reason.
+        NotEvaluated::FindingNotEvaluated { .. } => FINDING_NOT_EVALUATED.to_string(),
     };
     check.status = CheckStatus::NotEvaluated(reason);
     check

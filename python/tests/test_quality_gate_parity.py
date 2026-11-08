@@ -95,7 +95,26 @@ def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):
         "not_assessed",
         "column_not_profiled",
         "evidence_incomplete",
+        "finding_not_evaluated",
     }
+
+    # A forbidden finding (#1066) decided each way a scan's reach allows:
+    # failed and passed on a complete scan, a witnessed finding failing a
+    # capped one, a share finding left undecided by it, and a finding about
+    # the read decided on it.
+    forbidden = {
+        (check["finding"], check["status"], case["options"].get("max_rows") is not None)
+        for case in cases
+        for check in case["expected"]["checks"]
+        if check["code"] == "forbid_finding" and case["expected"]["scope"] == "full_source"
+    }
+    assert {
+        ("duplicate_rows", "failed", False),
+        ("null_heavy", "passed", False),
+        ("duplicate_rows", "failed", True),
+        ("null_heavy", "not_evaluated", True),
+        ("partial_scan", "failed", True),
+    } <= forbidden
 
     # A violation witnessed under incomplete coverage: the one case where a
     # partial scan still decides a full-source requirement.

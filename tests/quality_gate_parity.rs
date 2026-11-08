@@ -21,7 +21,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use dataprof::{
-    MetricPack, ProfileReport, Profiler, QualityDimension, QualityPolicy, StopCondition,
+    FindingCode, MetricPack, ProfileReport, Profiler, QualityDimension, QualityPolicy,
+    StopCondition,
 };
 use serde_json::Value;
 
@@ -136,6 +137,14 @@ fn policy_from(spec: &Value) -> QualityPolicy {
             "quality" => policy.require_quality(),
             dimension => policy.require_dimension(dimension.parse().expect("known dimension")),
         };
+    }
+    let forbidden = strings(spec.get("forbid_findings"));
+    if !forbidden.is_empty() {
+        policy = policy.forbid_findings(
+            forbidden
+                .iter()
+                .map(|code| code.parse::<FindingCode>().expect("known findings code")),
+        );
     }
     if let Some(scope) = spec.get("scope").and_then(Value::as_str) {
         policy = policy.scope(scope.parse().expect("known scope"));

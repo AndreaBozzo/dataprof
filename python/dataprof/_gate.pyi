@@ -20,6 +20,8 @@ class QualityCheck:
     reason: dict[str, Any] | None
     bounds: dict[str, Any] | None
     baseline: dict[str, Any] | None
+    finding: str | None
+    findings: tuple[dict[str, Any], ...]
 
     def __init__(
         self,
@@ -35,6 +37,8 @@ class QualityCheck:
         reason: dict[str, Any] | None = ...,
         bounds: dict[str, Any] | None = ...,
         baseline: dict[str, Any] | None = ...,
+        finding: str | None = ...,
+        findings: tuple[dict[str, Any], ...] = ...,
     ) -> None: ...
     @property
     def is_violation(self) -> bool: ...
@@ -94,6 +98,7 @@ class _Policy:
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,
+        forbid_findings: Sequence[str] | None = ...,
         timeliness_clock: str = ...,
     ) -> None: ...
     # Takes the report's runtime object, or `None` for a report restored
