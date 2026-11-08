@@ -8,6 +8,7 @@ wraps the module-level functions with Python-friendly APIs.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any, NoReturn
 
 __version__: str
@@ -42,6 +43,7 @@ class ProfilerConfig:
         temporal_columns: list[str] | None = None,
         columns: list[str] | None = None,
         temporal_pairs: list[tuple[str, str]] | None = None,
+        reference_date: date | str | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -65,6 +67,8 @@ class ProfilerConfig:
     def temporal_columns(self) -> list[str]: ...
     @property
     def temporal_pairs(self) -> list[tuple[str, str]]: ...
+    @property
+    def reference_date(self) -> date | None: ...
     @property
     def jsonl_on_error(self) -> str: ...
 

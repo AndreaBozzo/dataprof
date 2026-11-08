@@ -72,6 +72,7 @@ pub struct AdaptiveProfiler {
     columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<Locale>,
+    reference_date: Option<chrono::NaiveDate>,
     semantic_hints: SemanticHints,
     memory_limit_mb: Option<usize>,
     chunk_size: Option<ChunkSize>,
@@ -85,6 +86,7 @@ impl AdaptiveProfiler {
             columns: None,
             csv_config: None,
             locale: None,
+            reference_date: None,
             semantic_hints: SemanticHints::default(),
             memory_limit_mb: None,
             chunk_size: None,
@@ -128,6 +130,12 @@ impl AdaptiveProfiler {
         self
     }
 
+    /// Fix the date timeliness measures against; unset, it reads today's.
+    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
+        self.reference_date = Some(date);
+        self
+    }
+
     pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
         self.semantic_hints = hints;
         self
@@ -145,6 +153,7 @@ impl AdaptiveProfiler {
                 .with_metric_packs(self.metric_packs.clone())
                 .with_quality_dimensions(self.quality_dimensions.clone())
                 .with_locale(self.locale)
+                .with_reference_date(self.reference_date)
                 .with_semantic_hints(self.semantic_hints.clone());
             return dataprof_parquet::analyze_parquet_with_options(
                 file_path,
@@ -335,6 +344,9 @@ impl AdaptiveProfiler {
                 if let Some(l) = self.locale {
                     profiler = profiler.locale(l);
                 }
+                if let Some(date) = self.reference_date {
+                    profiler = profiler.reference_date(date);
+                }
                 if let Some(mb) = self.memory_limit_mb {
                     profiler = profiler.memory_limit_mb(mb);
                 }
@@ -363,6 +375,9 @@ impl AdaptiveProfiler {
                 }
                 if let Some(l) = self.locale {
                     profiler = profiler.locale(l);
+                }
+                if let Some(date) = self.reference_date {
+                    profiler = profiler.reference_date(date);
                 }
                 profiler = profiler.semantic_hints(self.semantic_hints.clone());
                 profiler.analyze_file(file_path)

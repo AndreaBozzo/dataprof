@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 arrow = { workspace = true }
 bytes = { workspace = true, optional = true }
 csv = { workspace = true, optional = true }

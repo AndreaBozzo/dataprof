@@ -7,6 +7,8 @@ properties and methods live in _accessors, exactly as for native reports.
 from __future__ import annotations
 
 import math
+import re
+from datetime import date as _date
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
@@ -257,11 +259,54 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
         read_scores[dim] = float(score) if score is not None else None
     values["dimension_scores"] = read_scores
     values["score_weights"] = _read_score_weights(document)
+    _check_timeliness_clock(document)
     # Whether the summary named its weights. Before 0.12 a summary dropped
     # custom weights, so the defaults filled in above may not be the ones
     # behind its stored score, and a re-export must not claim they are.
     values["score_weights_recorded"] = "score_weights" in document
     return _MappingAccessor(values)
+
+
+_CALENDAR_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _is_calendar_date(value: Any) -> bool:
+    """A real date written ``YYYY-MM-DD``, as the Rust reader takes it.
+
+    ``date.fromisoformat`` alone also takes ``20260610`` and week dates, which
+    ``compare()`` would then refuse.
+    """
+    if not (isinstance(value, str) and _CALENDAR_DATE.fullmatch(value)):
+        return False
+    try:
+        _date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _check_timeliness_clock(document: dict[str, Any]) -> None:
+    """Refuse a malformed ``quality.timeliness.clock`` (#903).
+
+    Absent means the summary did not record one; anything present must be the
+    object the Rust summary writes, as ``compare()`` reads it.
+    """
+    timeliness = document.get("timeliness")
+    if not isinstance(timeliness, dict) or "clock" not in timeliness:
+        return
+    clock = timeliness["clock"]
+    if not (
+        isinstance(clock, dict)
+        and clock.get("mode") in ("fixed", "rolling")
+        and _is_calendar_date(clock.get("reference_date"))
+        and clock.get("timezone") == "UTC"
+        and _is_finite_number(clock.get("max_data_age_years"))
+    ):
+        raise ValueError(
+            "from_dict(): 'quality.timeliness.clock' must be an object with mode "
+            "'fixed' or 'rolling', a YYYY-MM-DD reference_date, timezone 'UTC' and a finite "
+            f"max_data_age_years, got {clock!r}."
+        )
 
 
 def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:

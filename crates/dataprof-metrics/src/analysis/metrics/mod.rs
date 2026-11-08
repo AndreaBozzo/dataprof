@@ -90,6 +90,8 @@ pub struct MetricsCalculator {
     pub thresholds: IsoQualityConfig,
     /// Exact full-stream complete-record count, when the engine tracked one.
     row_completeness: Option<RowCompletenessSummary>,
+    /// The fixed date timeliness measures against; `None` reads today's.
+    reference_date: Option<chrono::NaiveDate>,
 }
 
 impl Default for MetricsCalculator {
@@ -109,6 +111,7 @@ impl MetricsCalculator {
         Self {
             thresholds,
             row_completeness: None,
+            reference_date: None,
         }
     }
 
@@ -120,6 +123,19 @@ impl MetricsCalculator {
     /// Create a calculator with lenient thresholds (exploratory, marketing)
     pub fn lenient() -> Self {
         Self::with_thresholds(IsoQualityConfig::lenient())
+    }
+
+    /// Fix the date timeliness measures against, or `None` to read today's
+    /// UTC date once per calculation (#903).
+    pub fn with_reference_date(mut self, reference_date: Option<chrono::NaiveDate>) -> Self {
+        self.reference_date = reference_date;
+        self
+    }
+
+    /// The timeliness calculator for one calculation, so every timeliness
+    /// figure of a report, its score bounds included, reads one date.
+    fn timeliness_calculator(&self) -> TimelinessCalculator<'_> {
+        TimelinessCalculator::new(&self.thresholds, self.reference_date)
     }
 
     /// Supply the engine's exact complete-record count over the full stream.
@@ -209,6 +225,7 @@ impl MetricsCalculator {
             return Ok(Self::default_metrics_for_empty_dataset(
                 &requested_dimensions,
                 self.thresholds.score_weights,
+                self.timeliness_calculator().clock(),
             ));
         }
 
@@ -307,7 +324,8 @@ impl MetricsCalculator {
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
             let temporal_columns =
                 Self::effective_temporal_columns(column_profiles, semantic_hints);
-            let t = TimelinessCalculator::new(&self.thresholds).calculate(
+            let calculator = self.timeliness_calculator();
+            let t = calculator.calculate(
                 data,
                 &temporal_columns,
                 &semantic_hints.temporal_pairs,
@@ -320,6 +338,7 @@ impl MetricsCalculator {
                 invalid_date_values: t.invalid_date_values,
                 date_values_checked: t.date_values_checked,
                 temporal_pairs_checked: t.temporal_pairs_checked,
+                clock: Some(calculator.clock()),
             })
         } else {
             None
@@ -364,6 +383,7 @@ impl MetricsCalculator {
     fn default_metrics_for_empty_dataset(
         requested: &Option<&[QualityDimension]>,
         score_weights: dataprof_core::QualityScoreWeights,
+        clock: crate::quality::TimelinessClock,
     ) -> QualityMetrics {
         let is_req = |d| match requested {
             None => true,
@@ -425,6 +445,7 @@ impl MetricsCalculator {
                     invalid_date_values: 0,
                     date_values_checked: 0,
                     temporal_pairs_checked: 0,
+                    clock: Some(clock),
                 })
             } else {
                 None
@@ -495,6 +516,7 @@ impl MetricsCalculator {
                 metrics: Self::default_metrics_for_empty_dataset(
                     &requested_dimensions,
                     self.thresholds.score_weights,
+                    self.timeliness_calculator().clock(),
                 ),
                 exact_dimensions: vec![],
                 sampled_dimensions: vec![],
@@ -508,7 +530,7 @@ impl MetricsCalculator {
         let requested = &requested_dimensions;
         // One calculator, so the score bounds judge dates against the same
         // reference day as the score.
-        let timeliness_calculator = TimelinessCalculator::new(&self.thresholds);
+        let timeliness_calculator = self.timeliness_calculator();
         let temporal_columns = Self::effective_temporal_columns(column_profiles, semantic_hints);
 
         let mut exact_dimensions = Vec::new();
@@ -673,6 +695,7 @@ impl MetricsCalculator {
                 invalid_date_values: t.invalid_date_values,
                 date_values_checked: t.date_values_checked,
                 temporal_pairs_checked: t.temporal_pairs_checked,
+                clock: Some(timeliness_calculator.clock()),
             })
         } else {
             None

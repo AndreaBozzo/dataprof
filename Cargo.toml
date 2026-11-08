@@ -130,6 +130,7 @@ dataprof-parquet = { workspace = true, optional = true }
 dataprof-partial = { workspace = true }
 dataprof-db = { workspace = true, optional = true }
 dataprof-runtime = { workspace = true }
+chrono = { workspace = true }
 
 # Note: Async support is available via async-streaming and database feature flags.
 tokio = { workspace = true, features = ["full"], optional = true }
@@ -137,7 +138,6 @@ bytes = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 tempfile = { workspace = true }
 anyhow = { workspace = true }
 env_logger = { workspace = true }

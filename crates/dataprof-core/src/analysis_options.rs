@@ -10,6 +10,8 @@
 
 use std::collections::HashSet;
 
+use chrono::NaiveDate;
+
 use crate::errors::DataProfilerError;
 use crate::locale::Locale;
 use crate::quality::{MetricPack, QualityDimension};
@@ -26,6 +28,7 @@ pub struct AnalysisOptions {
     quality_dimensions: Option<Vec<QualityDimension>>,
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
+    reference_date: Option<NaiveDate>,
 }
 
 impl AnalysisOptions {
@@ -66,6 +69,15 @@ impl AnalysisOptions {
         self
     }
 
+    /// Fix the date timeliness measures against. `None` (the default) reads
+    /// today's UTC date when the run starts, so an unchanged file's timeliness
+    /// moves as the calendar does; a fixed date makes it reproducible (#903).
+    /// The report records which one the score used.
+    pub fn with_reference_date(mut self, reference_date: Option<NaiveDate>) -> Self {
+        self.reference_date = reference_date;
+        self
+    }
+
     /// The packs to compute, with an empty quality-dimension selection folded in.
     ///
     /// Resolved on read rather than in the setters so the outcome does not
@@ -102,6 +114,11 @@ impl AnalysisOptions {
     /// runs.
     pub fn locale(&self) -> Option<Locale> {
         self.locale
+    }
+
+    /// The fixed timeliness reference date, or `None` to read today's.
+    pub fn reference_date(&self) -> Option<NaiveDate> {
+        self.reference_date
     }
 
     /// The requested quality dimensions, if the caller narrowed them.

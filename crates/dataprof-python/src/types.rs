@@ -693,6 +693,9 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                if let Some(clock) = &t.clock {
+                    m.insert("clock".into(), timeliness_clock_dict(py, clock)?);
+                }
                 Ok(m)
             })
             .transpose()
@@ -1707,4 +1710,11 @@ pub fn report_delta_json(a: DeltaInput<'_>, b: DeltaInput<'_>) -> PyResult<Strin
     serde_json::to_string(&delta).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
     })
+}
+
+/// The timeliness clock as the object the Rust summary writes (#903).
+fn timeliness_clock_dict(py: Python<'_>, clock: &dataprof::TimelinessClock) -> PyResult<Py<PyAny>> {
+    let value = serde_json::to_string(clock)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("timeliness clock: {e}")))?;
+    Ok(py.import("json")?.call_method1("loads", (value,))?.unbind())
 }

@@ -15,7 +15,8 @@ pub use analysis::{
 pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
     QualityAssessment, QualityMetrics, QualityScores, RowCompletenessSummary, RowDuplicateSummary,
-    ScoreBounds, ScoreInterval, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
+    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 pub use stats::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal, HyperLogLog,
