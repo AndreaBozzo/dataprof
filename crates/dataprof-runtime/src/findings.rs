@@ -37,7 +37,8 @@ use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataSource, DataType, DelimiterDetection, FileFormat, PatternCategory, TypeHomogeneity,
+    DataSource, DataType, DelimiterDetection, FileFormat, KeyColumnSource, PatternCategory,
+    TypeHomogeneity,
 };
 
 use crate::profile_report::ProfileReport;
@@ -107,6 +108,8 @@ pub enum FindingCode {
     /// read as one column, while a character outside them splits the header
     /// and every sampled record alike.
     HeaderNotSplit,
+    /// The declared key column holds a non-null value more than once.
+    KeyDuplicates,
     /// At least half of a column's text values are numbers written with a
     /// decimal comma or digit-group separators, which no numeric statistic
     /// includes.
@@ -138,6 +141,7 @@ impl FindingCode {
             | Self::DuplicateRows
             | Self::FutureDates
             | Self::HeaderNotSplit
+            | Self::KeyDuplicates
             | Self::LocaleNumbers
             | Self::MixedTypes
             | Self::NullHeavy
@@ -167,6 +171,9 @@ impl FindingCode {
                 "no delimiter detection tries (comma, semicolon, tab, pipe) splits the CSV \
                  header, so the source was read as one column, but another character splits the \
                  header and every sampled record alike; set csv_delimiter to read it as a table"
+            }
+            Self::KeyDuplicates => {
+                "some non-null values of the declared key column occur more than once"
             }
             Self::LocaleNumbers => {
                 "at least half of the text values in this column are numbers written with a \
@@ -201,6 +208,7 @@ impl fmt::Display for FindingCode {
             Self::DuplicateRows => "duplicate_rows",
             Self::FutureDates => "future_dates",
             Self::HeaderNotSplit => "header_not_split",
+            Self::KeyDuplicates => "key_duplicates",
             Self::LocaleNumbers => "locale_numbers",
             Self::MixedTypes => "mixed_types",
             Self::NullHeavy => "null_heavy",
@@ -266,7 +274,8 @@ pub enum NotEvaluatedReason {
     /// assess in this run.
     NotAssessed,
     /// The number the rule reads is an estimate, which witnesses nothing: an
-    /// estimated duplicate count is not evidence that a duplicate exists.
+    /// estimated duplicate or distinct count is not evidence that a duplicate
+    /// exists.
     Estimated,
     /// The count the rule reads is zero, but it came from the retained quality
     /// sample rather than every scanned row, so it rules nothing out for the
@@ -274,7 +283,8 @@ pub enum NotEvaluatedReason {
     Sampled,
     /// The report does not record what the rule needs to tell a zero from an
     /// unmeasured value: a document written before dataprof recorded it
-    /// (ragged rows before 0.10, quality sample coverage before 0.12).
+    /// (ragged rows before 0.10, quality sample coverage before 0.12, how the
+    /// key column was chosen before 0.13).
     Unrecorded,
     /// The metric the rule reads was not computed for these columns: the
     /// metric pack was not selected, or the column type does not carry it.
@@ -356,6 +366,11 @@ pub struct FindingsInput {
     /// from an unrecorded one.
     #[serde(default)]
     csv_source_unrecorded: bool,
+    /// How the report chose the column `key_uniqueness` measured. Absent for
+    /// a report written before 0.13, whose key may be a guess from column
+    /// names (#1065).
+    #[serde(default)]
+    key_column_source: Option<KeyColumnSource>,
     /// The report's `quality_status` state, read when `quality` is absent.
     quality_status: String,
     quality: Option<QualityFacts>,
@@ -382,6 +397,9 @@ struct UniquenessFacts {
     duplicate_rows: usize,
     #[serde(default)]
     duplicate_rows_approximate: bool,
+    /// The column `key_uniqueness` measured, absent when no key was measured.
+    #[serde(default)]
+    key_column: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -404,6 +422,9 @@ struct ColumnFacts {
     total_count: usize,
     null_count: usize,
     unique_count: Option<usize>,
+    /// Whether `unique_count` is an estimate; absent when not recorded.
+    #[serde(default)]
+    unique_count_is_approximate: Option<bool>,
     type_homogeneity: Option<TypeHomogeneity>,
     locale_number_count: Option<usize>,
     patterns: Option<Vec<PatternFacts>>,
@@ -444,6 +465,10 @@ impl From<&ProfileReport> for FindingsInput {
                 .csv_metadata()
                 .and_then(|metadata| metadata.delimiter_detection.clone()),
             csv_source_unrecorded: csv_source_unrecorded(&report.data_source),
+            key_column_source: report
+                .metric_semantics
+                .as_ref()
+                .and_then(|semantics| semantics.key_column_source),
             quality_status: quality_status_name(&report.quality_status).to_string(),
             quality: report.quality.as_ref().map(|quality| QualityFacts {
                 uniqueness: quality
@@ -454,6 +479,7 @@ impl From<&ProfileReport> for FindingsInput {
                         rows_checked: uniqueness.rows_checked,
                         duplicate_rows: uniqueness.duplicate_rows,
                         duplicate_rows_approximate: uniqueness.duplicate_rows_approximate,
+                        key_column: uniqueness.key_column.clone(),
                     }),
                 timeliness: quality
                     .metrics
@@ -477,6 +503,7 @@ impl From<&ProfileReport> for FindingsInput {
                     total_count: column.total_count,
                     null_count: column.null_count,
                     unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
                     type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
                     patterns: column.patterns.as_ref().map(|patterns| {
@@ -908,9 +935,10 @@ fn csv_source_unrecorded(source: &DataSource) -> bool {
 }
 
 fn quality_findings(input: &FindingsInput, out: &mut Collector) {
-    const QUALITY_RULES: [FindingCode; 3] = [
+    const QUALITY_RULES: [FindingCode; 4] = [
         FindingCode::DuplicateRows,
         FindingCode::FutureDates,
+        FindingCode::KeyDuplicates,
         FindingCode::TemporalOrderViolations,
     ];
     let Some(quality) = input.quality.as_ref() else {
@@ -949,6 +977,8 @@ fn quality_findings(input: &FindingsInput, out: &mut Collector) {
         ),
         Some(_) => skip_unless_complete(out, FindingCode::DuplicateRows, quality, "duplicate_rows"),
     }
+
+    key_duplicates(input, quality, out);
 
     let timeliness = quality.timeliness.as_ref();
     match timeliness.filter(|timeliness| timeliness.date_values_checked > 0) {
@@ -993,6 +1023,95 @@ fn quality_findings(input: &FindingsInput, out: &mut Collector) {
             "timeliness",
         ),
     }
+}
+
+/// Report repeated values in the declared key column (#1068).
+///
+/// Reads the key the uniqueness dimension measured, which is only ever a
+/// declared one (#1065), and the key column's own distinct count over its
+/// non-null values: a null key is completeness's finding, not a repeat. Whole
+/// duplicate rows are `duplicate_rows`; this finds the same key on rows that
+/// differ elsewhere, which no row comparison sees.
+///
+/// The rule needs an exact distinct count. An estimate witnesses no repeat,
+/// and a report that does not record whether its count was exact, or how its
+/// key was chosen, is listed rather than judged.
+fn key_duplicates(input: &FindingsInput, quality: &QualityFacts, out: &mut Collector) {
+    const CODE: FindingCode = FindingCode::KeyDuplicates;
+    let Some(key) = quality
+        .uniqueness
+        .as_ref()
+        .and_then(|uniqueness| uniqueness.key_column.as_deref())
+    else {
+        out.skip_report(CODE, NotEvaluatedReason::NotAssessed);
+        return;
+    };
+    // Before 0.13 an undeclared key was the first id-like column name, so
+    // the column may be a foreign key that repeats by design.
+    let Some(source) = input.key_column_source else {
+        out.skip(CODE, NotEvaluatedReason::Unrecorded, key);
+        return;
+    };
+    let Some((index, column)) = input
+        .columns
+        .iter()
+        .enumerate()
+        .find(|(_, column)| column.name == key)
+    else {
+        out.skip(CODE, NotEvaluatedReason::NotComputed, key);
+        return;
+    };
+    let Some(unique_count) = column.unique_count else {
+        out.skip(CODE, NotEvaluatedReason::NotComputed, key);
+        return;
+    };
+    let values = column.total_count.saturating_sub(column.null_count);
+    if values == 0 {
+        out.skip(CODE, NotEvaluatedReason::NoValues, key);
+        return;
+    }
+    let coverage = sampled_component_evidence(
+        quality.sampled_dimensions.as_deref(),
+        &quality.unlisted_components,
+        &[],
+        Provenance::Component("key_uniqueness"),
+    );
+    // The key component is filed as sampled exactly when the key's distinct
+    // count is an estimate.
+    let estimated = column.unique_count_is_approximate == Some(true)
+        || matches!(
+            coverage,
+            Evidence::Incomplete {
+                reason: EvidenceGap::QualitySampled
+            }
+        );
+    if estimated {
+        out.skip(CODE, NotEvaluatedReason::Estimated, key);
+        return;
+    }
+    let exact =
+        column.unique_count_is_approximate == Some(false) || matches!(coverage, Evidence::Complete);
+    if !exact {
+        out.skip(CODE, NotEvaluatedReason::Unrecorded, key);
+        return;
+    }
+    let repeated = values.saturating_sub(unique_count);
+    if repeated == 0 {
+        return;
+    }
+    let source = match source {
+        KeyColumnSource::Declared => "declared",
+    };
+    out.column(
+        CODE,
+        index,
+        key,
+        [
+            ("key_values_checked", EvidenceValue::Count(values)),
+            ("repeated_values", EvidenceValue::Count(repeated)),
+            ("key_column_source", EvidenceValue::Text(source.to_string())),
+        ],
+    );
 }
 
 /// A zero count is a clean result only when it covers every scanned row.
@@ -1718,6 +1837,139 @@ mod tests {
                 EvidenceValue::Text(expected.to_string())
             );
         }
+    }
+
+    /// A report whose declared key `order_id` holds ten non-null values and
+    /// one null, `unique` of them distinct.
+    fn key_report(
+        unique: usize,
+        approximate: Option<bool>,
+        confidence: MetricConfidence,
+    ) -> ProfileReport {
+        let values = 10;
+        let mut key = column("order_id", values + 1, 1);
+        key.data_type = DataType::Identifier;
+        key.unique_count = Some(unique);
+        key.unique_count_is_approximate = approximate;
+        let metrics = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: unique as f64 / values as f64 * 100.0,
+                high_cardinality_warning: false,
+                rows_checked: values + 1,
+                key_column: Some("order_id".to_string()),
+                key_values_checked: Some(values),
+                duplicate_rows_approximate: false,
+            }),
+            ..QualityMetrics::default()
+        };
+        ProfileReport::new(
+            source(),
+            vec![column("amount", values + 1, 0), key],
+            ExecutionMetadata::new(values + 1, 0, 10),
+            Some(QualityAssessment::new(metrics, confidence)),
+        )
+    }
+
+    fn key_sampled() -> MetricConfidence {
+        MetricConfidence::Mixed {
+            exact_dimensions: vec!["duplicate_rows".to_string()],
+            sampled_dimensions: vec!["key_uniqueness".to_string()],
+            sample_size: 10,
+        }
+    }
+
+    /// What the key rule did: its finding's evidence, or its skip reason.
+    fn key_outcome(result: &FindingsResult) -> String {
+        let found: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|finding| finding.code == FindingCode::KeyDuplicates)
+            .collect();
+        match (
+            found.as_slice(),
+            skipped(result, FindingCode::KeyDuplicates),
+        ) {
+            ([finding], None) => format!(
+                "found on {:?}: {}",
+                finding.column,
+                serde_json::to_string(&finding.evidence).unwrap()
+            ),
+            ([], Some(reason)) => format!("skipped: {}", serde_json::to_string(reason).unwrap()),
+            ([], None) => "clean".to_string(),
+            _ => format!("inconsistent: {found:?}"),
+        }
+    }
+
+    #[test]
+    fn a_repeated_declared_key_is_reported_only_from_an_exact_count() {
+        let found = r#"found on Some("order_id"): {"key_column_source":"declared","key_values_checked":10,"repeated_values":2}"#;
+        let skip = |reason: &str| format!(r#"skipped: {{"reason":"{reason}"}}"#);
+        let mut legacy_key = key_report(8, Some(false), MetricConfidence::Exact);
+        legacy_key
+            .metric_semantics
+            .as_mut()
+            .expect("a current report records its semantics")
+            .key_column_source = None;
+        let mut no_key = key_report(8, Some(false), MetricConfidence::Exact);
+        no_key
+            .quality
+            .as_mut()
+            .and_then(|quality| quality.metrics.uniqueness.as_mut())
+            .expect("uniqueness assessed")
+            .key_column = None;
+        let mut all_null_key = key_report(0, Some(false), MetricConfidence::Exact);
+        all_null_key.column_profiles[1].null_count = 11;
+
+        let cases = [
+            (
+                "exact count with repeats",
+                key_report(8, Some(false), MetricConfidence::Exact),
+                found.to_string(),
+            ),
+            (
+                // One null and ten distinct values: a null is not a repeat.
+                "exact count, distinct, one null",
+                key_report(10, Some(false), MetricConfidence::Exact),
+                "clean".to_string(),
+            ),
+            (
+                "estimated distinct count",
+                key_report(8, Some(true), MetricConfidence::Exact),
+                skip("estimated"),
+            ),
+            (
+                "key component filed as sampled",
+                key_report(8, Some(false), key_sampled()),
+                skip("estimated"),
+            ),
+            (
+                "exactness recorded on the column only",
+                key_report(8, Some(false), MetricConfidence::Unrecorded),
+                found.to_string(),
+            ),
+            (
+                "exactness recorded in the coverage only",
+                key_report(8, None, MetricConfidence::Exact),
+                found.to_string(),
+            ),
+            (
+                "exactness recorded nowhere",
+                key_report(8, None, MetricConfidence::Unrecorded),
+                skip("unrecorded"),
+            ),
+            ("key chosen before 0.13", legacy_key, skip("unrecorded")),
+            ("no key measured", no_key, skip("not_assessed")),
+            ("key without values", all_null_key, skip("no_values")),
+        ];
+        let mut wrong = Vec::new();
+        for (case, report, expected) in cases {
+            let outcome = key_outcome(&report.findings());
+            if outcome != expected {
+                wrong.push(format!("{case}: {outcome}, expected {expected}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]

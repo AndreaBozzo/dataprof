@@ -271,3 +271,96 @@ def test_distinct_binary_tokens_are_not_a_constant_column(tmp_path: Path, route:
     saved = tmp_path / f"tokens-{route}.json"
     report.save(saved)
     assert dp.ProfileReport.load(saved).to_dict()["columns"][0] == column
+
+
+def _orders_with_repeated_keys() -> dict[str, list[Any]]:
+    """10,000 orders where 5 order_id values repeat with a different amount (#1068)."""
+    ids = [f"O-{i}" for i in range(9_995)] + [f"O-{i}" for i in range(5)]
+    amounts = [float(i) for i in range(9_995)] + [0.5 + i for i in range(5)]
+    return {"order_id": ids, "amount": amounts}
+
+
+KEY_ROUTES = ["dict", "csv", "jsonl", "parquet"]
+
+
+def _orders_report(route: str, tmp_path: Path) -> dp.ProfileReport:
+    data = _orders_with_repeated_keys()
+    if route == "dict":
+        return dp.profile(data, identifier_columns=["order_id"])
+    path = tmp_path / f"orders.{route}"
+    rows = list(zip(data["order_id"], data["amount"], strict=True))
+    if route == "csv":
+        path.write_text(
+            "order_id,amount\n" + "".join(f"{key},{amount}\n" for key, amount in rows),
+            encoding="utf-8",
+        )
+    elif route == "jsonl":
+        path.write_text(
+            "".join(json.dumps({"order_id": key, "amount": amount}) + "\n" for key, amount in rows),
+            encoding="utf-8",
+        )
+    else:
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+        pq.write_table(pa.table(data), path)
+    return dp.profile_file(path, identifier_columns=["order_id"])
+
+
+@pytest.mark.parametrize("route", KEY_ROUTES)
+def test_a_repeated_declared_key_is_found_where_rows_differ(tmp_path: Path, route: str):
+    """No row repeats, so only the key's distinct count sees the five repeats."""
+    report = _orders_report(route, tmp_path)
+    expected = {
+        "code": "key_duplicates",
+        "severity": "warning",
+        "column": "order_id",
+        "evidence": {
+            "key_column_source": "declared",
+            "key_values_checked": 10_000,
+            "repeated_values": 5,
+        },
+        "summary": "some non-null values of the declared key column occur more than once",
+    }
+    wrong = []
+    for layout, loaded in (
+        ("native", report),
+        ("document", dp.ProfileReport.from_json(report.to_json())),
+        ("flat summary", dp.ProfileReport.from_dict(report.to_dict())),
+    ):
+        result = loaded.findings()
+        found = [f.to_dict() for f in result if f.code == "key_duplicates"]
+        if found != [expected]:
+            wrong.append(f"{layout}: {found}")
+        if "duplicate_rows" in {f.code for f in result}:
+            wrong.append(f"{layout}: duplicate_rows reported on distinct rows")
+    assert not wrong, f"{route}: " + "; ".join(wrong)
+
+
+def test_a_flat_summary_that_does_not_record_the_key_is_not_judged():
+    """Exactness or the key choice missing from a summary: listed, not judged."""
+    report = dp.profile(_orders_with_repeated_keys(), identifier_columns=["order_id"])
+    assert "key_duplicates" in {f.code for f in report.findings()}
+
+    def without_exactness(document: dict[str, Any]) -> None:
+        document["columns"][0]["unique_count_is_approximate"] = None
+        del document["quality"]["sampled_dimensions"]
+
+    def estimated(document: dict[str, Any]) -> None:
+        document["columns"][0]["unique_count_is_approximate"] = True
+
+    def before_declared_keys(document: dict[str, Any]) -> None:
+        del document["metric_semantics"]["key_column_source"]
+
+    wrong = []
+    for edit, reason in (
+        (without_exactness, "unrecorded"),
+        (estimated, "estimated"),
+        (before_declared_keys, "unrecorded"),
+    ):
+        result = _edited(report, edit).findings()
+        if "key_duplicates" in {f.code for f in result}:
+            wrong.append(f"{edit.__name__}: reported")
+        entry = next((e for e in result.not_evaluated if e["code"] == "key_duplicates"), None)
+        if entry != {"code": "key_duplicates", "reason": reason, "columns": ["order_id"]}:
+            wrong.append(f"{edit.__name__}: {entry}")
+    assert not wrong, "; ".join(wrong)
