@@ -119,6 +119,34 @@ def test_without_timeliness_the_overall_rule_reads_no_clock() -> None:
         assert result.checks[0].status == "passed", (rule, result.checks[0].reason)
 
 
+def test_a_zero_weight_timeliness_leaves_the_overall_rule_without_a_clock() -> None:
+    """Timeliness weighted 0 still reports its score but moves no average, so
+    the overall rule reads no clock there, while the timeliness rule does. No
+    keyword takes the weights yet (#921), so the recorded weights are edited."""
+
+    def zero_weight(clock: Clock) -> dp.ProfileReport:
+        document = json.loads(_with_clock(clock).to_json())
+        document["quality"]["metrics"]["score_weights"]["timeliness"] = 0.0
+        return dp.ProfileReport.from_json(json.dumps(document))
+
+    baseline, report = zero_weight(F10), zero_weight(F11)
+    wrong = []
+    for route, side in (
+        ("document", baseline),
+        ("summary", dp.ProfileReport.from_dict(baseline.to_dict())),
+    ):
+        result = report.check(
+            baseline=side,
+            max_quality_score_drop=100,
+            max_dimension_score_drops={"timeliness": 100},
+        )
+        for check in result.checks:
+            want = "setting_changed" if check.dimension == "timeliness" else "decided"
+            if _outcome(check) != want:
+                wrong.append(f"[{route}] {check.dimension or 'overall'}: {_outcome(check)}")
+    assert not wrong, "\n".join(wrong)
+
+
 def test_the_default_is_the_fixed_rule() -> None:
     result = _with_clock(R11).check(baseline=_with_clock(R10), max_quality_score_drop=100)
     assert result.baseline is not None

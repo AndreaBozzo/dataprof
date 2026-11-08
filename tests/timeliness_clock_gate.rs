@@ -268,6 +268,42 @@ fn without_timeliness_the_overall_rule_reads_no_clock() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Timeliness weighted `0.0` still reports its score but moves no average, so
+/// the overall rule reads no clock there, while the timeliness rule still
+/// does. No public setter takes the weights yet (#921), so the recorded
+/// weights are edited, as the clocks are.
+#[test]
+fn a_zero_weight_timeliness_leaves_the_overall_rule_without_a_clock() {
+    let zero_weight = |clock: Clock| -> ProfileReport {
+        let mut document = serde_json::to_value(with_clock(clock)).unwrap();
+        document["quality"]["metrics"]["score_weights"]["timeliness"] = Value::from(0.0);
+        serde_json::from_value(document).unwrap()
+    };
+    let baseline = zero_weight(Some(("fixed", 10, 5.0)));
+    let report = zero_weight(Some(("fixed", 11, 5.0)));
+
+    let mut wrong = Vec::new();
+    for (route, side) in baselines(&baseline) {
+        let result = policy(TimelinessClockRule::Fixed)
+            .evaluate_against(&report, &side)
+            .unwrap();
+        for check in &result.checks {
+            let want = match check.dimension {
+                Some(QualityDimension::Timeliness) => Outcome::Changed,
+                _ => Outcome::Decided,
+            };
+            match outcome(&check.status) {
+                Ok(got) if got == want => {}
+                got => wrong.push(format!(
+                    "[{route}] {:?}: {got:?}, expected {want:?}",
+                    check.dimension
+                )),
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 #[test]
 fn the_rule_parses_from_its_name() {
     assert_eq!("fixed".parse(), Ok(TimelinessClockRule::Fixed));

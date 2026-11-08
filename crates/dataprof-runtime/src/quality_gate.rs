@@ -1797,7 +1797,7 @@ impl QualityPolicy {
                     identifiers,
                     dimension,
                     self.timeliness_clock,
-                    timeliness_scored(delta),
+                    score_reads_clock(delta, dimension),
                 )
             })
         };
@@ -2534,15 +2534,15 @@ fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
 /// reads, except completeness, which counts nulls whatever the type. Accuracy
 /// also reads the positive hint, timeliness the temporal ones and its clock,
 /// and validity the locale, which ranks the detected patterns it scores. The
-/// overall score reads the clock only when both sides assessed timeliness: a
-/// side without a timeliness score records no clock, and its average does
-/// not read one.
+/// clock is read only when `reads_clock` says the score depends on it (see
+/// [`score_reads_clock`]): a side without a timeliness score records no
+/// clock, and an average without timeliness does not read one.
 fn setting_gap(
     configuration: &ConfigurationComparison,
     identifiers: &Sides<Option<&[String]>>,
     dimension: Option<QualityDimension>,
     clock_rule: TimelinessClockRule,
-    timeliness_scored: bool,
+    reads_clock: bool,
 ) -> Option<NotEvaluated> {
     let hints = &configuration.semantic_hints;
     let reads = |dimensions: &[QualityDimension]| {
@@ -2603,7 +2603,7 @@ fn setting_gap(
         ),
         (
             "timeliness_clock",
-            timeliness_scored && reads(&[QualityDimension::Timeliness]),
+            reads_clock && reads(&[QualityDimension::Timeliness]),
             clock_agreement(
                 clock_rule,
                 configuration.timeliness_clock.a.as_ref(),
@@ -2625,16 +2625,27 @@ fn setting_gap(
         })
 }
 
-/// Whether both sides carry a timeliness score. A score rule reaches the
-/// setting comparison only when its own scores, and for the overall score the
-/// set of assessed dimensions, agree, so this is true for a timeliness rule
-/// there and for an overall rule whose average includes timeliness.
-fn timeliness_scored(delta: &ReportDelta) -> bool {
-    delta
+/// Whether the score a rule reads depends on the timeliness clock: both sides
+/// carry a timeliness score and, for the overall score, timeliness carries
+/// weight in its average. A dimension weighted `0.0` still reports its score
+/// but moves no average. The overall rule compares the weights before the
+/// clock, so the evaluated report's weight stands for both sides; an
+/// unrecorded weight counts as one, and leaves the rule unevaluated on
+/// `score_weights` first.
+fn score_reads_clock(delta: &ReportDelta, dimension: Option<QualityDimension>) -> bool {
+    let scored = delta
         .dimensions
         .iter()
         .find(|change| change.dimension == QualityDimension::Timeliness)
-        .is_some_and(|change| change.score.a.is_some() && change.score.b.is_some())
+        .is_some_and(|change| change.score.a.is_some() && change.score.b.is_some());
+    let weighted = dimension.is_some()
+        || delta
+            .configuration
+            .score_weights
+            .b
+            .as_ref()
+            .is_none_or(|weights| weights.timeliness > 0.0);
+    scored && weighted
 }
 
 /// How the two recorded timeliness clocks compare under the policy's rule.
