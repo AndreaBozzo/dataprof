@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable as _Callable
+from datetime import date as _date
 from typing import Any as _Any
 
 from ._api import profile
@@ -169,6 +170,16 @@ class Profiler:
     def temporal_pairs(self, pairs: list[tuple[str, str]]) -> Profiler:
         """Declare start/end column pairs for timeliness to compare as given."""
         self._kwargs["temporal_pairs"] = pairs
+        return self
+
+    def reference_date(self, date: _date | str) -> Profiler:
+        """Fix the date timeliness measures against, so a score can be
+        reproduced later on the same data.
+
+        Takes a ``datetime.date`` or a ``"YYYY-MM-DD"`` string; see
+        :func:`profile`.
+        """
+        self._kwargs["reference_date"] = date
         return self
 
     def metrics(self, packs: list[str]) -> Profiler:

@@ -168,6 +168,80 @@ pub struct TimelinessMetrics {
     /// scan does not.
     #[serde(default)]
     pub temporal_pairs_checked: usize,
+    /// The date the values were judged against, and how it was chosen.
+    /// Absent from a report written before 0.14, which read today's date
+    /// without recording it (#903). An explicit null is malformed, so
+    /// neither the reader nor the schema accepts one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_clock"
+    )]
+    #[schemars(with = "TimelinessClock")]
+    pub clock: Option<TimelinessClock>,
+}
+
+/// Only an absent `clock` means the report did not record one.
+fn present_clock<'de, D>(deserializer: D) -> Result<Option<TimelinessClock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    TimelinessClock::deserialize(deserializer).map(Some)
+}
+
+/// How the timeliness reference date was chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelinessClockMode {
+    /// The caller fixed the date, so the score is reproducible.
+    Fixed,
+    /// dataprof read today's date when the run started, so the same data
+    /// scores differently on another day.
+    Rolling,
+}
+
+/// The time zone a rolling clock reads today's date in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum TimelinessClockTimezone {
+    #[serde(rename = "UTC")]
+    Utc,
+}
+
+/// What a timeliness score was measured against (#903).
+///
+/// A later rule can decide whether two scores are comparable from this, but
+/// it cannot reconstruct how an old score was computed, so the report
+/// records it rather than leaving it to the report's timestamp: a backfill
+/// or a delayed job runs on a different day than the data it describes.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
+pub struct TimelinessClock {
+    /// Whether the caller fixed the date or dataprof read it.
+    pub mode: TimelinessClockMode,
+    /// The date a value later than which is a future date, as `YYYY-MM-DD`.
+    #[schemars(with = "String", extend("format" = "date"))]
+    pub reference_date: chrono::NaiveDate,
+    /// The zone a rolling clock reads today's date in. A fixed date records
+    /// it too, so both modes have one shape.
+    pub timezone: TimelinessClockTimezone,
+    /// The age, in years of 365.2425 days, past which a value is stale.
+    pub max_data_age_years: f64,
+}
+
+impl TimelinessClock {
+    /// A clock at `reference_date`, chosen as `mode`, with `max_data_age_years`.
+    pub fn new(
+        mode: TimelinessClockMode,
+        reference_date: chrono::NaiveDate,
+        max_data_age_years: f64,
+    ) -> Self {
+        Self {
+            mode,
+            reference_date,
+            timezone: TimelinessClockTimezone::Utc,
+            max_data_age_years,
+        }
+    }
 }
 
 /// Validity metrics derived from confidently detected semantic patterns.
@@ -385,6 +459,7 @@ impl QualityMetrics {
                 invalid_date_values: 0,
                 date_values_checked: 0,
                 temporal_pairs_checked: 0,
+                clock: None,
             }),
             validity: Some(ValidityMetrics {
                 valid_values_ratio: 100.0,
@@ -1377,6 +1452,7 @@ mod tests {
                 invalid_date_values: 0,
                 date_values_checked: 100,
                 temporal_pairs_checked: 100,
+                clock: None,
             }),
             validity: Some(ValidityMetrics {
                 valid_values_ratio: 100.0,

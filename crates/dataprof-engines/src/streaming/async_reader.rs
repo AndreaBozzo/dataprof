@@ -388,6 +388,12 @@ impl AsyncStreamingProfiler {
         self
     }
 
+    /// Fix the date timeliness measures against; unset, it reads today's.
+    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
+        self.options = std::mem::take(&mut self.options).with_reference_date(Some(date));
+        self
+    }
+
     pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
         self.options = std::mem::take(&mut self.options).with_semantic_hints(hints);
         self

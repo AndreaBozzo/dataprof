@@ -67,7 +67,7 @@ use dataprof_core::{
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    TimelinessClock, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 use serde::ser::{SerializeMap, Serializer};
 
@@ -267,6 +267,12 @@ pub struct ConfigurationComparison {
     /// The locale detected patterns were ranked with, which the validity
     /// score reads. `None` on a side written before dataprof recorded it.
     pub pattern_locale: SettingComparison<PatternLocale>,
+    /// The date the timeliness score was measured against, how it was
+    /// chosen, and the age past which a value is stale (#903). `None` on a
+    /// side with no timeliness assessment, or written before 0.14. Two
+    /// rolling clocks read on different days differ here, as their scores
+    /// were measured against different dates.
+    pub timeliness_clock: SettingComparison<TimelinessClock>,
 }
 
 /// Which columns each side has.
@@ -408,6 +414,7 @@ impl ReportDelta {
                     b.semantic_hints.clone(),
                 ),
                 pattern_locale: SettingComparison::new(a.pattern_locale, b.pattern_locale),
+                timeliness_clock: SettingComparison::new(a.timeliness_clock, b.timeliness_clock),
             },
             schema: SchemaChange {
                 added,
@@ -468,6 +475,7 @@ pub struct ReportSide {
     /// uniqueness score reads, so the quality gate compares this order.
     identifier_order: Option<Vec<String>>,
     pattern_locale: Option<PatternLocale>,
+    timeliness_clock: Option<TimelinessClock>,
     /// Which columns the side profiled, `None` when it did not record it.
     column_selection: Option<ColumnSelection>,
     /// Whether the source declares its columns up front, so the column set
@@ -618,6 +626,12 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.pattern_locale),
+            // Only an assessed dimension is written, so a clock behind no
+            // timeliness score is not part of the report a summary reads.
+            timeliness_clock: quality
+                .and_then(|assessment| assessment.metrics.timeliness.as_ref())
+                .filter(|timeliness| timeliness.is_assessed())
+                .and_then(|timeliness| timeliness.clock),
             column_selection: report
                 .analysis_settings
                 .as_ref()
@@ -798,6 +812,9 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.pattern_locale),
+            timeliness_clock: quality
+                .and_then(|quality| quality.timeliness.as_ref())
+                .and_then(|timeliness| timeliness.clock),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has
@@ -982,7 +999,7 @@ struct SummaryQuality {
     #[serde(default)]
     accuracy: Option<serde::de::IgnoredAny>,
     #[serde(default)]
-    timeliness: Option<serde::de::IgnoredAny>,
+    timeliness: Option<SummaryTimeliness>,
     #[serde(default)]
     validity: Option<serde::de::IgnoredAny>,
     #[serde(default)]
@@ -992,6 +1009,24 @@ struct SummaryQuality {
     /// malformed, as in Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
+}
+
+/// The timeliness facts a comparison reads: the clock its score used.
+#[derive(serde::Deserialize)]
+struct SummaryTimeliness {
+    /// Absent before 0.14. Explicit null is malformed.
+    #[serde(default, deserialize_with = "summary_timeliness_clock")]
+    clock: Option<TimelinessClock>,
+}
+
+/// Only an absent key means the summary did not record its clock.
+fn summary_timeliness_clock<'de, D>(deserializer: D) -> Result<Option<TimelinessClock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("quality.timeliness.clock: {error}"))
+    })
 }
 
 /// The uniqueness facts that decide which of its components carry signal,

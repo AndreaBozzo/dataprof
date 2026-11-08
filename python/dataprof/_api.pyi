@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from os import PathLike
 from typing import Any
 
@@ -40,6 +41,7 @@ def profile(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: date | str | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
@@ -68,6 +70,7 @@ def profile_file(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: date | str | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path with file-oriented options."""

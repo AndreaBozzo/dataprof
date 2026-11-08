@@ -7,6 +7,7 @@ use super::utils::{extract_date, identifier_words};
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
+use crate::quality::{TimelinessClock, TimelinessClockMode};
 use crate::stats::datetime::resolve_slash_order;
 use crate::types::ColumnProfile;
 use chrono::{Days, NaiveDate, Utc};
@@ -154,17 +155,27 @@ pub(crate) struct TimelinessCalculator<'a> {
     /// "Now" for every comparison this calculator makes.
     ///
     /// Captured once at construction so a single report cannot straddle a
-    /// midnight boundary and classify two equal values differently, and so
-    /// tests can pin it. Internal only: the public API still reads the clock.
+    /// midnight boundary and classify two equal values differently.
     reference_date: NaiveDate,
+    /// Whether the caller fixed `reference_date` or it is today's.
+    mode: TimelinessClockMode,
 }
 
 impl<'a> TimelinessCalculator<'a> {
-    pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
-        Self::with_reference_date(thresholds, Utc::now().date_naive())
+    /// Measure against `reference_date`, or against today's UTC date when it
+    /// is `None` (#903).
+    pub fn new(thresholds: &'a IsoQualityConfig, reference_date: Option<NaiveDate>) -> Self {
+        match reference_date {
+            Some(date) => Self::with_reference_date(thresholds, date),
+            None => Self {
+                thresholds,
+                reference_date: Utc::now().date_naive(),
+                mode: TimelinessClockMode::Rolling,
+            },
+        }
     }
 
-    /// Construct with an explicit "now", so assertions do not rot as the
+    /// Construct with a fixed "now", so assertions do not rot as the
     /// calendar advances.
     pub(crate) fn with_reference_date(
         thresholds: &'a IsoQualityConfig,
@@ -173,7 +184,17 @@ impl<'a> TimelinessCalculator<'a> {
         Self {
             thresholds,
             reference_date,
+            mode: TimelinessClockMode::Fixed,
         }
+    }
+
+    /// What this calculator measures against, as the report records it.
+    pub fn clock(&self) -> TimelinessClock {
+        TimelinessClock::new(
+            self.mode,
+            self.reference_date,
+            self.thresholds.max_data_age_years,
+        )
     }
 
     /// Calculate timeliness dimension metrics
@@ -513,7 +534,7 @@ mod tests {
         )]);
         let config = IsoQualityConfig::default();
 
-        let metrics = TimelinessCalculator::new(&config)
+        let metrics = TimelinessCalculator::new(&config, None)
             .calculate_whole(&data, &[])
             .expect("timeliness metrics");
 
@@ -530,7 +551,7 @@ mod tests {
         )]);
         let config = IsoQualityConfig::default();
 
-        let metrics = TimelinessCalculator::new(&config)
+        let metrics = TimelinessCalculator::new(&config, None)
             .calculate_whole(&data, &["event_value".to_string()])
             .expect("timeliness metrics");
 
@@ -546,7 +567,7 @@ mod tests {
         ]);
         let config = IsoQualityConfig::default();
 
-        let metrics = TimelinessCalculator::new(&config)
+        let metrics = TimelinessCalculator::new(&config, None)
             .calculate_whole(&data, &["start".to_string(), "end".to_string()])
             .expect("timeliness metrics");
 
@@ -568,7 +589,7 @@ mod tests {
             ),
         ]);
         let config = IsoQualityConfig::default();
-        let calculator = TimelinessCalculator::new(&config);
+        let calculator = TimelinessCalculator::new(&config, None);
 
         let partial = calculator
             .calculate_whole(&data, &["start".to_string()])

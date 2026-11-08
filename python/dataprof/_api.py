@@ -8,6 +8,7 @@ import os as _os
 import pathlib as _pathlib
 import warnings as _warnings
 from collections.abc import Callable as _Callable
+from datetime import date as _date
 from typing import Any as _Any
 
 from ._dataprof import (
@@ -106,6 +107,7 @@ def profile_file(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: _date | str | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
@@ -189,6 +191,12 @@ def profile_file(
             compares row by row, such as ``("valid_from", "valid_until")``.
             Declared pairs are compared as given; the remaining temporal
             columns are still paired by name.
+        reference_date: The date timeliness measures against, as a
+            ``datetime.date`` or a ``"YYYY-MM-DD"`` string. None reads today's
+            UTC date when the run starts, so an unchanged source's timeliness
+            score moves as the calendar does; a fixed date makes it
+            reproducible. The report records which one it used under
+            ``quality.timeliness["clock"]``.
         source_version: The version of the source being profiled, recorded
             verbatim as ``report.source_identity["version"]``: a table
             snapshot ID, a commit version, a load or batch ID. dataprof neither
@@ -223,6 +231,7 @@ def profile_file(
         identifier_columns=identifier_columns,
         temporal_columns=temporal_columns,
         temporal_pairs=temporal_pairs,
+        reference_date=reference_date,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)._record_source_version(source_version)
@@ -252,6 +261,7 @@ def profile(
     identifier_columns: list[str] | None = None,
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: _date | str | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
@@ -345,6 +355,12 @@ def profile(
             compares row by row, such as ``("valid_from", "valid_until")``.
             Declared pairs are compared as given; the remaining temporal
             columns are still paired by name.
+        reference_date: The date timeliness measures against, as a
+            ``datetime.date`` or a ``"YYYY-MM-DD"`` string. None reads today's
+            UTC date when the run starts, so an unchanged source's timeliness
+            score moves as the calendar does; a fixed date makes it
+            reproducible. The report records which one it used under
+            ``quality.timeliness["clock"]``.
         source_version: The version of the source being profiled, recorded
             verbatim as ``report.source_identity["version"]``: a table
             snapshot ID, a commit version, a load or batch ID. dataprof neither
@@ -382,6 +398,7 @@ def profile(
             identifier_columns=identifier_columns,
             temporal_columns=temporal_columns,
             temporal_pairs=temporal_pairs,
+            reference_date=reference_date,
             source_version=source_version,
         )
 
@@ -400,6 +417,7 @@ def profile(
                 identifier_columns,
                 temporal_columns,
                 temporal_pairs,
+                reference_date,
             )
         ):
             return ProfilerConfig(
@@ -412,6 +430,7 @@ def profile(
                 identifier_columns=identifier_columns,
                 temporal_columns=temporal_columns,
                 temporal_pairs=temporal_pairs,
+                reference_date=reference_date,
             )
         return None
 

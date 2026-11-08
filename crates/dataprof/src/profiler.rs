@@ -61,6 +61,12 @@ pub struct ProfilerConfig {
     /// entry points, and database queries. A locale ranks the same patterns
     /// whichever path read the data.
     pub locale: Option<Locale>,
+    /// The date timeliness measures against. `None` (the default) reads
+    /// today's UTC date when the run starts, so an unchanged source's
+    /// timeliness score moves as the calendar does; a fixed date makes it
+    /// reproducible. The report records which one it used, under
+    /// `quality.timeliness.clock`.
+    pub reference_date: Option<chrono::NaiveDate>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
@@ -91,6 +97,7 @@ impl Default for ProfilerConfig {
             metric_packs: None,
             columns: None,
             locale: None,
+            reference_date: None,
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
             temporal_columns: Vec::new(),
@@ -293,6 +300,23 @@ impl Profiler {
     /// ```
     pub fn locale(mut self, locale: Locale) -> Self {
         self.config.locale = Some(locale);
+        self
+    }
+
+    /// Fix the date timeliness measures against, so a score can be
+    /// reproduced later on the same data.
+    ///
+    /// Without it timeliness reads today's UTC date when the run starts.
+    ///
+    /// ```
+    /// use dataprof::{NaiveDate, Profiler};
+    ///
+    /// let date = NaiveDate::from_ymd_opt(2026, 10, 21).unwrap();
+    /// let profiler = Profiler::new().reference_date(date);
+    /// # let _ = profiler;
+    /// ```
+    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
+        self.config.reference_date = Some(date);
         self
     }
 
@@ -606,6 +630,7 @@ impl Profiler {
             .with_metric_packs(self.config.metric_packs.clone())
             .with_quality_dimensions(self.config.quality_dimensions.clone())
             .with_locale(self.config.locale)
+            .with_reference_date(self.config.reference_date)
             .with_semantic_hints(self.semantic_hints())
     }
 
@@ -804,6 +829,9 @@ impl Profiler {
                     if let Some(l) = self.config.locale {
                         profiler = profiler.locale(l);
                     }
+                    if let Some(date) = self.config.reference_date {
+                        profiler = profiler.reference_date(date);
+                    }
                     if let Some(columns) = &self.config.columns {
                         profiler = profiler.columns(columns.clone());
                     }
@@ -876,6 +904,9 @@ impl Profiler {
         if let Some(l) = self.config.locale {
             profiler = profiler.locale(l);
         }
+        if let Some(date) = self.config.reference_date {
+            profiler = profiler.reference_date(date);
+        }
         if let Some(columns) = &self.config.columns {
             profiler = profiler.columns(columns.clone());
         }
@@ -938,6 +969,9 @@ impl Profiler {
             }
             if let Some(l) = self.config.locale {
                 profiler = profiler.locale(l);
+            }
+            if let Some(date) = self.config.reference_date {
+                profiler = profiler.reference_date(date);
             }
             if let Some(columns) = &self.config.columns {
                 profiler = profiler.columns(columns.clone());

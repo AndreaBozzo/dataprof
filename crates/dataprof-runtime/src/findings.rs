@@ -1403,6 +1403,7 @@ mod tests {
                 invalid_date_values: 0,
                 date_values_checked: 10_000,
                 temporal_pairs_checked: 10_000,
+                clock: None,
             }),
             ..QualityMetrics::default()
         };

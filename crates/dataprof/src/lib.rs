@@ -22,6 +22,9 @@ pub use profiler::{
     EngineType, Profiler, ProfilerConfig, quick_quality_check, quick_quality_check_source,
 };
 
+/// The date type [`Profiler::reference_date`] takes, re-exported so a caller
+/// needs no `chrono` dependency of its own.
+pub use chrono::NaiveDate;
 pub use dataprof_core::{
     AccuracyComparison, AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema,
     ColumnStats, CountMethod, CsvSourceMetadata, DataFrameLibrary, DataProfilerError, DataSource,
@@ -43,11 +46,11 @@ pub use dataprof_json::{
 pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
     PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
-    ScoreBounds, ScoreInterval, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
-    analyze_column, analyze_column_fast, analyze_column_with_analysis_options,
-    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
-    classify_lexical_forms, detect_patterns, infer_type, is_null_like_token, lexical_class,
-    list_patterns,
+    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
+    TimelinessMetrics, UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
+    analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
+    calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, is_null_like_token,
+    lexical_class, list_patterns,
 };
 #[cfg(feature = "parquet-async")]
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};

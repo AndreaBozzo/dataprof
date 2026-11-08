@@ -16,6 +16,7 @@ parquet = ["dep:parquet", "dep:bytes", "arrow"]
 parquet-async = ["parquet", "parquet/async", "dep:bytes", "dep:futures", "dep:reqwest"]
 
 [dependencies]
+chrono = { workspace = true }
 anyhow = { workspace = true }
 arrow = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }

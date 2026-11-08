@@ -1033,7 +1033,7 @@ mod tests {
         let thresholds = IsoQualityConfig::default();
         let bounds = score_bounds(
             &thresholds,
-            &TimelinessCalculator::new(&thresholds),
+            &TimelinessCalculator::new(&thresholds, None),
             &data,
             &profiles,
             &SemanticHints::default(),

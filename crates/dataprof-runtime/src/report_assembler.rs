@@ -35,6 +35,8 @@ pub struct ReportAssembler {
     row_completeness: Option<RowCompletenessSummary>,
     /// What the caller profiled with, once `with_analysis_options` saw it.
     analysis_settings: Option<AnalysisSettings>,
+    /// The fixed date timeliness measures against; `None` reads today's.
+    reference_date: Option<chrono::NaiveDate>,
     /// Test seam for the failure branch. No input path can currently make
     /// `MetricsCalculator` return `Err`: both of its error constructions sit
     /// behind an emptiness check that has already returned by then. The branch
@@ -60,6 +62,7 @@ impl ReportAssembler {
             row_duplicates: None,
             row_completeness: None,
             analysis_settings: None,
+            reference_date: None,
             #[cfg(test)]
             forced_quality_failure: None,
         }
@@ -141,6 +144,7 @@ impl ReportAssembler {
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
         self.skip = (!options.include_quality()).then_some(QualityAnalysisStatus::NotRequested);
         self.semantic_hints = options.semantic_hints().clone();
+        self.reference_date = options.reference_date();
         self = self.record_analysis_settings(options);
         self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
         if options.has_column_projection() && self.skip.is_none() {
@@ -350,7 +354,9 @@ impl ReportAssembler {
         &self,
         data: &HashMap<String, Vec<String>>,
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
-        let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
+        let calculator = MetricsCalculator::new()
+            .with_row_completeness(self.row_completeness)
+            .with_reference_date(self.reference_date);
         match calculator.calculate_bifurcated_metrics_with_hints(
             data,
             &self.columns,
@@ -379,7 +385,9 @@ impl ReportAssembler {
         &self,
         data: &HashMap<String, Vec<String>>,
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
-        let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
+        let calculator = MetricsCalculator::new()
+            .with_row_completeness(self.row_completeness)
+            .with_reference_date(self.reference_date);
         match calculator.calculate_comprehensive_metrics_with_hints(
             data,
             &self.columns,

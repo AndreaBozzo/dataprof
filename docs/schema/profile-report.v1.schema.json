@@ -3082,9 +3082,65 @@
       ],
       "type": "object"
     },
+    "TimelinessClock": {
+      "description": "What a timeliness score was measured against (#903).\n\nA later rule can decide whether two scores are comparable from this, but\nit cannot reconstruct how an old score was computed, so the report\nrecords it rather than leaving it to the report's timestamp: a backfill\nor a delayed job runs on a different day than the data it describes.",
+      "properties": {
+        "max_data_age_years": {
+          "description": "The age, in years of 365.2425 days, past which a value is stale.",
+          "format": "double",
+          "type": "number"
+        },
+        "mode": {
+          "$ref": "#/$defs/TimelinessClockMode",
+          "description": "Whether the caller fixed the date or dataprof read it."
+        },
+        "reference_date": {
+          "description": "The date a value later than which is a future date, as `YYYY-MM-DD`.",
+          "format": "date",
+          "type": "string"
+        },
+        "timezone": {
+          "$ref": "#/$defs/TimelinessClockTimezone",
+          "description": "The zone a rolling clock reads today's date in. A fixed date records\nit too, so both modes have one shape."
+        }
+      },
+      "required": [
+        "mode",
+        "reference_date",
+        "timezone",
+        "max_data_age_years"
+      ],
+      "type": "object"
+    },
+    "TimelinessClockMode": {
+      "description": "How the timeliness reference date was chosen.",
+      "oneOf": [
+        {
+          "const": "fixed",
+          "description": "The caller fixed the date, so the score is reproducible.",
+          "type": "string"
+        },
+        {
+          "const": "rolling",
+          "description": "dataprof read today's date when the run started, so the same data\nscores differently on another day.",
+          "type": "string"
+        }
+      ]
+    },
+    "TimelinessClockTimezone": {
+      "description": "The time zone a rolling clock reads today's date in.",
+      "enum": [
+        "UTC"
+      ],
+      "type": "string"
+    },
     "TimelinessMetrics": {
       "description": "Timeliness metrics (ISO 8000-8).",
       "properties": {
+        "clock": {
+          "$ref": "#/$defs/TimelinessClock",
+          "description": "The date the values were judged against, and how it was chosen.\nAbsent from a report written before 0.14, which read today's date\nwithout recording it (#903). An explicit null is malformed, so\nneither the reader nor the schema accepts one."
+        },
         "date_values_checked": {
           "default": 0,
           "description": "Non-null values examined in inferred or explicitly configured temporal\ncolumns. 0 means\nthe dimension had nothing to assess and it is excluded from the\noverall score.",

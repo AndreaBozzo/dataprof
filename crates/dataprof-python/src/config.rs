@@ -35,6 +35,7 @@ pub struct PyProfilerConfig {
     pub(crate) metric_packs: Option<Vec<MetricPack>>,
     pub(crate) columns: Option<Vec<String>>,
     pub(crate) locale: Option<Locale>,
+    pub(crate) reference_date: Option<chrono::NaiveDate>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
@@ -65,6 +66,7 @@ impl PyProfilerConfig {
         temporal_columns = None,
         columns = None,
         temporal_pairs = None,
+        reference_date = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -88,6 +90,7 @@ impl PyProfilerConfig {
         temporal_columns: Option<Vec<String>>,
         columns: Option<Vec<String>>,
         temporal_pairs: Option<Vec<Vec<String>>>,
+        reference_date: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -132,6 +135,8 @@ impl PyProfilerConfig {
                     .collect::<PyResult<Vec<_>>>()
             })
             .transpose()?;
+
+        let reference_date = reference_date.map(parse_reference_date).transpose()?;
 
         // Parse the locale tag here rather than storing it raw: an unrecognised
         // tag suppresses every locale-specific pattern, so accepting one would
@@ -179,6 +184,7 @@ impl PyProfilerConfig {
             metric_packs,
             columns,
             locale,
+            reference_date,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
             temporal_columns: temporal_columns.unwrap_or_default(),
@@ -245,6 +251,18 @@ impl PyProfilerConfig {
     #[getter]
     fn locale(&self) -> Option<&str> {
         self.locale.map(|locale| locale.as_str())
+    }
+
+    /// The date timeliness measures against, or `None` for today's UTC date.
+    #[getter]
+    fn reference_date<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.reference_date
+            .map(|date| {
+                py.import("datetime")?
+                    .getattr("date")?
+                    .call_method1("fromisoformat", (date.format("%Y-%m-%d").to_string(),))
+            })
+            .transpose()
     }
 
     /// Columns selected for profiling, or `None` for every column.
@@ -345,6 +363,9 @@ impl PyProfilerConfig {
         if let Some(l) = self.locale {
             profiler = profiler.locale(l);
         }
+        if let Some(date) = self.reference_date {
+            profiler = profiler.reference_date(date);
+        }
         if !self.positive_columns.is_empty() {
             profiler = profiler.positive_columns(self.positive_columns.clone());
         }
@@ -382,8 +403,50 @@ impl PyProfilerConfig {
             .with_metric_packs(self.metric_packs.clone())
             .with_quality_dimensions(self.quality_dimensions.clone())
             .with_locale(self.locale)
+            .with_reference_date(self.reference_date)
             .with_semantic_hints(self.semantic_hints())
     }
+}
+
+/// Read `reference_date=` as a `datetime.date` or a `YYYY-MM-DD` string.
+///
+/// A `datetime` is refused rather than cut to its date: which date it names
+/// depends on a time zone the value may not carry, and timeliness compares
+/// calendar dates.
+fn parse_reference_date(value: &Bound<'_, PyAny>) -> PyResult<chrono::NaiveDate> {
+    let datetime = value.py().import("datetime")?;
+    let text = if value.is_instance(&datetime.getattr("datetime")?)? {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "reference_date must be a date, not a datetime: pass value.date() in the \
+             time zone the dates in the data are written in",
+        ));
+    } else if value.is_instance(&datetime.getattr("date")?)? {
+        value.call_method0("isoformat")?.extract::<String>()?
+    } else if let Ok(text) = value.extract::<String>() {
+        text
+    } else {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "reference_date must be a datetime.date or a 'YYYY-MM-DD' string, got {}",
+            value.get_type().name()?
+        )));
+    };
+    // `%Y` alone would accept a sign, more digits or a one-digit month.
+    let well_formed = text.len() == 10
+        && text.bytes().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
+    well_formed
+        .then(|| chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d").ok())
+        .flatten()
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "reference_date must be a calendar date written YYYY-MM-DD, got {text:?}"
+            ))
+        })
 }
 
 fn parse_engine(s: &str) -> PyResult<EngineType> {

@@ -26,6 +26,7 @@ async-streaming = [
 parquet-async = ["async-streaming", "dataprof-runtime/parquet-async"]
 
 [dependencies]
+chrono = { workspace = true }
 csv = { workspace = true }
 dataprof-core = { workspace = true }
 dataprof-csv = { workspace = true }

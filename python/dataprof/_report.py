@@ -1274,12 +1274,14 @@ class ProfileReport:
         - ``configuration``: the recorded settings that move a score on
           unchanged data, ``score_weights``, ``semantic_hints`` (the
           columns named by ``positive_columns``, ``identifier_columns``,
-          ``temporal_columns`` and ``temporal_pairs``) and ``pattern_locale``
-          (see :attr:`analysis_settings`). Each has ``a``, ``b`` and
+          ``temporal_columns`` and ``temporal_pairs``), ``pattern_locale``
+          (see :attr:`analysis_settings`) and ``timeliness_clock`` (the
+          ``clock`` in ``quality.timeliness``). Each has ``a``, ``b`` and
           ``same``: ``True`` when both sides recorded it and agree, ``False``
           when they differ, ``None`` when either did not record it (weights
           on a summary saved before 0.12, hints before 0.10, the locale
-          before 0.13).
+          before 0.13, the clock before 0.14 or with no timeliness
+          assessment). Two rolling clocks read on different days differ.
           A score that moved under a different setting may not reflect a change
           in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
