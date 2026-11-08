@@ -801,6 +801,7 @@ class ProfileReport:
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
+        timeliness_clock: str = "fixed",
     ) -> _QualityGateResult:
         """Evaluate a quality policy against this report.
 
@@ -873,6 +874,16 @@ class ProfileReport:
                 to be profiled still. One check per baseline column.
             forbid_added_columns: Allow no column the baseline did not profile:
                 a closed schema. One check per column of this report.
+            timeliness_clock: How the timeliness clocks of the baseline and
+                this report may differ, for the overall and timeliness score
+                drop rules. ``"fixed"`` (the default) needs the same
+                reference date on both sides, as when every run passes the
+                same ``reference_date``. ``"rolling"`` lets two rolling
+                clocks, each read on its own run day, have different dates,
+                and compares the scores as measured. Under either, the time
+                zone and the maximum age must match, and a clock either side
+                did not record leaves the rule ``setting_unrecorded`` on the
+                setting ``timeliness_clock``.
 
         A missing column fails a column rule only when the side without it
         shows its source lacks it: it recorded its column selection, the
@@ -926,6 +937,7 @@ class ProfileReport:
             require_columns=require_columns,
             forbid_removed_columns=forbid_removed_columns,
             forbid_added_columns=forbid_added_columns,
+            timeliness_clock=timeliness_clock,
         ).evaluate(self._native_report)
 
     def findings(

@@ -33,6 +33,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage_increase": None,
     "forbid_removed_columns": False,
     "forbid_added_columns": False,
+    "timeliness_clock": "fixed",
 }
 
 
@@ -350,6 +351,14 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         action="store_const",
         const=True,
         help="fail when a column the baseline did not profile appears (a closed schema)",
+    )
+    parser.add_argument(
+        "--timeliness-clock",
+        choices=("fixed", "rolling"),
+        help=(
+            "how the timeliness reference dates may differ from the baseline's: fixed "
+            "(default) needs the same date, rolling lets each run measure against its own day"
+        ),
     )
     return parser
 
