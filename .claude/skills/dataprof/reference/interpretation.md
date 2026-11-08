@@ -79,7 +79,10 @@ values look.
 **Uniqueness** — duplicate rows and key behavior. `key_uniqueness` and
 `duplicate_rows` are the evidence. `key_uniqueness` measures only a declared
 key (the first `identifier_columns` entry present); without one, `key_column`
-is absent and uniqueness rests on duplicate rows. A high-cardinality column
+is absent and uniqueness rests on duplicate rows. A declared key that repeats
+a non-null value is a `key_duplicates` finding, with `repeated_values`; it
+catches the same key on rows that differ elsewhere, which `duplicate_rows`
+does not. A high-cardinality column
 is not a key, and `high_cardinality_warning` is not a defect.
 
 **Accuracy** — range and sign violations against declared expectations.

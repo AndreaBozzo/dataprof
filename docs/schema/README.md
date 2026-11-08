@@ -895,8 +895,9 @@ is unassessed without one. Declare the key to have it scored:
 
 A report that records no `key_column_source` reads back with it unknown, and a
 quality gate leaves the uniqueness and overall score rules over it
-`definition_not_comparable`. Documents written before it keep their key and
-score as recorded. The field is additive and not `required`, so stored v1
+`definition_not_comparable`. `findings()` lists its `key_duplicates` rule as
+`unrecorded` rather than judging a key that may be a guess from column names.
+Documents written before it keep their key and score as recorded. The field is additive and not `required`, so stored v1
 reports remain valid; an explicit `null` for `key_column_source` is malformed,
 as for `text_length_unit`.
 

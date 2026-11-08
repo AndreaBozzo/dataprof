@@ -190,6 +190,9 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
         # A flat summary records no source format, so a missing entry cannot
         # be told from a source that is not CSV: nothing is listed for it.
         "delimiter_detection": (report.csv_metadata or {}).get("delimiter_detection"),
+        # Absent for a summary written before 0.13, whose key may be a guess
+        # from column names (#1065).
+        "key_column_source": (report.metric_semantics or {}).get("key_column_source"),
         "quality_status": report.quality_status,
         "quality": None
         if quality is None
@@ -198,6 +201,7 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
                 quality.uniqueness,
                 counts=("rows_checked", "duplicate_rows"),
                 flags=("duplicate_rows_approximate",),
+                names=("key_column",),
             ),
             "timeliness": _metric_facts(
                 quality.timeliness,
@@ -224,11 +228,14 @@ def _metric_facts(
     *,
     counts: tuple[str, ...],
     flags: tuple[str, ...] = (),
+    names: tuple[str, ...] = (),
 ) -> dict[str, _Any] | None:
     if not metrics:
         return None
     facts: dict[str, _Any] = {name: _count(metrics.get(name)) for name in counts}
     facts.update({name: bool(metrics.get(name)) for name in flags})
+    # A name stays absent when the summary records none.
+    facts.update({name: metrics.get(name) for name in names})
     return facts
 
 
@@ -240,6 +247,7 @@ def _column_facts(column: _Any) -> dict[str, _Any]:
         "total_count": column.total_count,
         "null_count": column.null_count,
         "unique_count": column.unique_count,
+        "unique_count_is_approximate": column.unique_count_is_approximate,
         "type_homogeneity": _homogeneity_counts(column.type_homogeneity),
         "locale_number_count": column.locale_number_count,
         "patterns": None
