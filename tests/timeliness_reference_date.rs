@@ -90,11 +90,11 @@ fn profiler(reference_date: Option<NaiveDate>) -> Profiler {
 fn reports(reference_date: Option<NaiveDate>) -> Vec<(String, ProfileReport)> {
     let csv = file(".csv", &csv_text());
     let mut reports = Vec::new();
-    for engine in [
-        EngineType::Auto,
-        EngineType::Incremental,
-        EngineType::Columnar,
-    ] {
+    let mut engines = vec![EngineType::Auto, EngineType::Incremental];
+    // The columnar engine is the Arrow CSV reader.
+    #[cfg(feature = "arrow")]
+    engines.push(EngineType::Columnar);
+    for engine in engines {
         let report = profiler(reference_date)
             .engine(engine)
             .analyze_file(csv.path())
