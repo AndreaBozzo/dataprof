@@ -7,6 +7,8 @@ properties and methods live in _accessors, exactly as for native reports.
 from __future__ import annotations
 
 import math
+import re
+from datetime import date as _date
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
@@ -265,6 +267,24 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     return _MappingAccessor(values)
 
 
+_CALENDAR_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _is_calendar_date(value: Any) -> bool:
+    """A real date written ``YYYY-MM-DD``, as the Rust reader takes it.
+
+    ``date.fromisoformat`` alone also takes ``20260610`` and week dates, which
+    ``compare()`` would then refuse.
+    """
+    if not (isinstance(value, str) and _CALENDAR_DATE.fullmatch(value)):
+        return False
+    try:
+        _date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_timeliness_clock(document: dict[str, Any]) -> None:
     """Refuse a malformed ``quality.timeliness.clock`` (#903).
 
@@ -278,13 +298,13 @@ def _check_timeliness_clock(document: dict[str, Any]) -> None:
     if not (
         isinstance(clock, dict)
         and clock.get("mode") in ("fixed", "rolling")
-        and isinstance(clock.get("reference_date"), str)
+        and _is_calendar_date(clock.get("reference_date"))
         and clock.get("timezone") == "UTC"
         and _is_finite_number(clock.get("max_data_age_years"))
     ):
         raise ValueError(
             "from_dict(): 'quality.timeliness.clock' must be an object with mode "
-            "'fixed' or 'rolling', a reference_date, timezone 'UTC' and a finite "
+            "'fixed' or 'rolling', a YYYY-MM-DD reference_date, timezone 'UTC' and a finite "
             f"max_data_age_years, got {clock!r}."
         )
 

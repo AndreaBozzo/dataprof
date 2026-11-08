@@ -182,7 +182,17 @@ def test_a_value_that_is_not_one_calendar_date_is_refused(
         dp.ProfilerConfig(reference_date=value)
 
 
-@pytest.mark.parametrize("clock", [None, "2026-06-10", {"mode": "weekly"}])
+@pytest.mark.parametrize(
+    "clock",
+    [
+        None,
+        "2026-06-10",
+        {"mode": "weekly"},
+        {**FIXED_CLOCK, "reference_date": "2026-02-30"},
+        {**FIXED_CLOCK, "reference_date": "not-a-date"},
+        {**FIXED_CLOCK, "reference_date": "20260610"},
+    ],
+)
 def test_a_loaded_summary_refuses_a_malformed_clock(tmp_path: Path, clock: Any) -> None:
     path = tmp_path / "t.csv"
     path.write_text(CSV)

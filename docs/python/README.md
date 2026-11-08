@@ -118,6 +118,7 @@ dp.profile(
     identifier_columns=None,         # list[str] -- semantic IDs, not measures; the first is the key
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
+    reference_date=None,             # datetime.date | "YYYY-MM-DD" -- the date timeliness measures against
     source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
@@ -715,6 +716,13 @@ Timeliness scoring assesses confidently inferred date columns by default.
 as mixed-format date strings. `temporal_pairs=[("valid_from", "valid_until")]`
 declares start/end pairs that timeliness compares row by row, for names no role
 word pairs; the remaining temporal columns are still paired by name.
+
+Timeliness judges dates against today's UTC date unless `reference_date` fixes
+one, so an unchanged file's timeliness score moves as the calendar does. Pass
+`reference_date=datetime.date(2026, 6, 10)` (or `"2026-06-10"`) to make it
+reproducible, for example in a gate on `min_quality_score`. The report records
+the clock it used in `quality.timeliness["clock"]`: `mode` (`"fixed"` or
+`"rolling"`), `reference_date`, `timezone` and `max_data_age_years`.
 
 Hints are validated, never silently dropped. A hint that names a missing column
 raises `ValueError` listing the unmatched names and the available columns; a
@@ -1512,12 +1520,14 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
-  `temporal_pairs`), and `pattern_locale` (see `analysis_settings`). Each has
-  `a`, `b` and `same`, which is `None` when a side did not record the
-  setting: weights on a summary saved before 0.12, hints on one saved before
-  0.10, the locale on one saved before 0.13. A score that moved while `same` is `False` may
-  reflect the setting rather than the data. Settings not recorded here, such
-  as `metrics` and the timeliness reference date, still need the same
+  `temporal_pairs`), `pattern_locale` (see `analysis_settings`) and
+  `timeliness_clock` (the `clock` in `quality.timeliness`). Each has `a`, `b`
+  and `same`, which is `None` when a side did not record the setting: weights
+  on a summary saved before 0.12, hints on one saved before 0.10, the locale
+  on one saved before 0.13, the clock on one saved before 0.14 or with no
+  timeliness assessment. Two rolling clocks read on different days differ. A
+  score that moved while `same` is `False` may reflect the setting rather than
+  the data. Settings not recorded here, such as `metrics`, still need the same
   options on both sides.
 
 Either side may be a report loaded from a flat `to_dict()` summary, including

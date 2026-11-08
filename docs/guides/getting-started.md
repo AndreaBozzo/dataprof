@@ -229,7 +229,9 @@ consistent. Inferred date columns participate automatically. Pass
 be inferred confidently, such as mixed-format strings. Pass
 `temporal_pairs=[("valid_from", "valid_until")]` in Python or call
 `.temporal_pairs(...)` on the Rust profiler to compare start/end pairs that no
-role word below pairs by name.
+role word below pairs by name. Dates are judged against today's UTC date unless
+`reference_date=` in Python or `.reference_date(...)` on the Rust profiler fixes
+one; the report records the clock it used in `quality.timeliness.clock`.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated

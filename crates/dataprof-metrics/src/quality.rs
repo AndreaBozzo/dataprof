@@ -192,6 +192,7 @@ where
 /// How the timeliness reference date was chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TimelinessClockMode {
     /// The caller fixed the date, so the score is reproducible.
     Fixed,
@@ -202,6 +203,7 @@ pub enum TimelinessClockMode {
 
 /// The time zone a rolling clock reads today's date in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
 pub enum TimelinessClockTimezone {
     #[serde(rename = "UTC")]
     Utc,
