@@ -1519,6 +1519,7 @@ impl PyProfileReport {
         require_columns = Vec::new(),
         forbid_removed_columns = false,
         forbid_added_columns = false,
+        timeliness_clock = "fixed",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn quality_gate_json(
@@ -1542,10 +1543,13 @@ impl PyProfileReport {
         require_columns: Vec<String>,
         forbid_removed_columns: bool,
         forbid_added_columns: bool,
+        timeliness_clock: &str,
     ) -> PyResult<String> {
         let value_error = pyo3::exceptions::PyValueError::new_err::<String>;
         let dimension = |name: &str| name.parse::<QualityDimension>().map_err(value_error);
-        let mut policy = QualityPolicy::new().scope(scope.parse().map_err(value_error)?);
+        let mut policy = QualityPolicy::new()
+            .scope(scope.parse().map_err(value_error)?)
+            .timeliness_clock(timeliness_clock.parse().map_err(value_error)?);
         if let Some(min) = min_rows {
             policy = policy.min_rows(min);
         }

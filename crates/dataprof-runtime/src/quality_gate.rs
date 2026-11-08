@@ -48,7 +48,10 @@
 //! - a setting that moves the score on unchanged data, such as the score
 //!   weights or a semantic hint, that differs or that either side did not
 //!   record ([`NotEvaluated::SettingChanged`],
-//!   [`NotEvaluated::SettingUnrecorded`]);
+//!   [`NotEvaluated::SettingUnrecorded`]). The timeliness clock is one: two
+//!   reports measured against different reference dates are comparable only
+//!   when the policy declares a rolling clock
+//!   ([`QualityPolicy::timeliness_clock`]);
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
 //!   cover the whole source.
 //!
@@ -100,7 +103,9 @@ use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
-use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
+use dataprof_metrics::{
+    QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
+};
 use serde::Serialize;
 
 use crate::profile_report::{
@@ -175,6 +180,53 @@ impl fmt::Display for PolicyError {
 }
 
 impl std::error::Error for PolicyError {}
+
+/// How a rule about change reads the timeliness clocks of the two reports
+/// (#1024).
+///
+/// The timeliness score counts dates later than a reference date and dates
+/// older than a maximum age before it, so the same data scores differently
+/// against another date. Every report records its clock, and the policy
+/// states which difference between two clocks still measures the same thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TimelinessClockRule {
+    /// Both reports must record the same reference date, time zone and
+    /// maximum age. The default, and what a pipeline that passes a fixed
+    /// `reference_date` to every run wants.
+    #[default]
+    Fixed,
+    /// Each report measures against its own run date: when both read a
+    /// rolling clock, in the same time zone and with the same maximum age,
+    /// their reference dates may differ and the scores are compared as
+    /// measured. A fixed clock on either side still needs the same date on
+    /// both.
+    Rolling,
+}
+
+impl fmt::Display for TimelinessClockRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed => write!(f, "fixed"),
+            Self::Rolling => write!(f, "rolling"),
+        }
+    }
+}
+
+impl std::str::FromStr for TimelinessClockRule {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "fixed" => Ok(Self::Fixed),
+            "rolling" => Ok(Self::Rolling),
+            _ => Err(format!(
+                "Unknown timeliness clock: {s}. Valid clocks: fixed, rolling"
+            )),
+        }
+    }
+}
 
 /// What the requirements in a policy are statements about.
 ///
@@ -598,6 +650,8 @@ pub struct BaselineComparison {
     /// The schema changes from the baseline, whatever the policy states. A
     /// diagnostic never moves the verdict. Empty when nothing changed.
     pub diagnostics: Vec<Diagnostic>,
+    /// The clock rule the timeliness and overall score rules read.
+    pub timeliness_clock: TimelinessClockRule,
 }
 
 /// Stable identifier for a kind of schema change.
@@ -819,6 +873,7 @@ pub struct QualityPolicy {
     require_columns: BTreeSet<String>,
     forbid_removed_columns: bool,
     forbid_added_columns: bool,
+    timeliness_clock: TimelinessClockRule,
     scope: PolicyScope,
 }
 
@@ -972,6 +1027,18 @@ impl QualityPolicy {
     /// of the source. Needs [`evaluate_against`](Self::evaluate_against).
     pub fn forbid_added_columns(mut self) -> Self {
         self.forbid_added_columns = true;
+        self
+    }
+
+    /// Declare how the timeliness clocks of the baseline and the report may
+    /// differ, for the rules about change that read the timeliness score: the
+    /// overall score drop, when both sides assessed timeliness, and the
+    /// timeliness score drop. Defaults to [`TimelinessClockRule::Fixed`]. A
+    /// difference the rule does not allow, or a clock either side did not
+    /// record, leaves those rules unevaluated on the setting
+    /// `timeliness_clock`.
+    pub fn timeliness_clock(mut self, rule: TimelinessClockRule) -> Self {
+        self.timeliness_clock = rule;
         self
     }
 
@@ -1155,6 +1222,7 @@ impl QualityPolicy {
                 reports: delta.reports,
                 schema: delta.schema,
                 diagnostics,
+                timeliness_clock: self.timeliness_clock,
             }),
         })
     }
@@ -1723,7 +1791,15 @@ impl QualityPolicy {
                 delta.metric_semantics.b.as_ref(),
                 score_definitions(dimension),
             )
-            .or_else(|| setting_gap(&delta.configuration, identifiers, dimension))
+            .or_else(|| {
+                setting_gap(
+                    &delta.configuration,
+                    identifiers,
+                    dimension,
+                    self.timeliness_clock,
+                    timeliness_scored(delta),
+                )
+            })
         };
         if let Some(reason) = reason {
             return not_evaluated_change(check, reason, subject);
@@ -2456,12 +2532,17 @@ fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
 /// identically. The overall score reads every setting. A dimension reads the
 /// identifier hint, which retypes its columns and names the key uniqueness
 /// reads, except completeness, which counts nulls whatever the type. Accuracy
-/// also reads the positive hint, timeliness the temporal ones, and validity
-/// the locale, which ranks the detected patterns it scores.
+/// also reads the positive hint, timeliness the temporal ones and its clock,
+/// and validity the locale, which ranks the detected patterns it scores. The
+/// overall score reads the clock only when both sides assessed timeliness: a
+/// side without a timeliness score records no clock, and its average does
+/// not read one.
 fn setting_gap(
     configuration: &ConfigurationComparison,
     identifiers: &Sides<Option<&[String]>>,
     dimension: Option<QualityDimension>,
+    clock_rule: TimelinessClockRule,
+    timeliness_scored: bool,
 ) -> Option<NotEvaluated> {
     let hints = &configuration.semantic_hints;
     let reads = |dimensions: &[QualityDimension]| {
@@ -2520,6 +2601,15 @@ fn setting_gap(
             reads(&[QualityDimension::Validity]),
             recorded(configuration.pattern_locale.same),
         ),
+        (
+            "timeliness_clock",
+            timeliness_scored && reads(&[QualityDimension::Timeliness]),
+            clock_agreement(
+                clock_rule,
+                configuration.timeliness_clock.a.as_ref(),
+                configuration.timeliness_clock.b.as_ref(),
+            ),
+        ),
     ];
     settings
         .into_iter()
@@ -2533,6 +2623,42 @@ fn setting_gap(
                 setting: setting.to_string(),
             }),
         })
+}
+
+/// Whether both sides carry a timeliness score. A score rule reaches the
+/// setting comparison only when its own scores, and for the overall score the
+/// set of assessed dimensions, agree, so this is true for a timeliness rule
+/// there and for an overall rule whose average includes timeliness.
+fn timeliness_scored(delta: &ReportDelta) -> bool {
+    delta
+        .dimensions
+        .iter()
+        .find(|change| change.dimension == QualityDimension::Timeliness)
+        .is_some_and(|change| change.score.a.is_some() && change.score.b.is_some())
+}
+
+/// How the two recorded timeliness clocks compare under the policy's rule.
+/// The time zone and the maximum age define what "today" and "stale" mean,
+/// so they must match under either rule; the reference date may differ only
+/// between two rolling clocks under [`TimelinessClockRule::Rolling`]. The
+/// mode alone moves no score, so two clocks at the same date agree whichever
+/// way each date was chosen.
+fn clock_agreement(
+    rule: TimelinessClockRule,
+    a: Option<&TimelinessClock>,
+    b: Option<&TimelinessClock>,
+) -> Agreement {
+    let (Some(a), Some(b)) = (a, b) else {
+        return Agreement::Unrecorded;
+    };
+    let rolling = |clock: &TimelinessClock| clock.mode == TimelinessClockMode::Rolling;
+    let date_free = rule == TimelinessClockRule::Rolling && rolling(a) && rolling(b);
+    let same_basis = a.timezone == b.timezone && a.max_data_age_years == b.max_data_age_years;
+    if same_basis && (date_free || a.reference_date == b.reference_date) {
+        Agreement::Same
+    } else {
+        Agreement::Changed
+    }
 }
 
 fn check_percentage(

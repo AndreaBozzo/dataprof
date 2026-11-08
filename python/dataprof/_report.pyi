@@ -168,6 +168,7 @@ class ProfileReport:
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,
+        timeliness_clock: str = ...,
     ) -> QualityGateResult:
         """Evaluate a quality policy and return the structured result."""
         ...

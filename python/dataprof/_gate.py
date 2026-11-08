@@ -28,6 +28,8 @@ _PERCENTAGE_MAX = 100.0
 
 #: What the requirements in a policy are statements about.
 _SCOPES = ("full_source", "observed")
+#: How the timeliness clocks of a baseline and a report may differ (#1024).
+_TIMELINESS_CLOCKS = ("fixed", "rolling")
 
 
 class _PolicyFieldError(ValueError):
@@ -133,8 +135,9 @@ class QualityGateResult:
     checks: tuple[QualityCheck, ...] = _field(default_factory=tuple)
     #: When the policy was evaluated against a baseline: ``reports``, with the
     #: baseline as ``a`` and this report as ``b``, ``schema``, the columns
-    #: ``added``, ``removed`` and ``common``, and ``diagnostics``, the schema
-    #: changes from the baseline, which never move the verdict. ``None``
+    #: ``added``, ``removed`` and ``common``, ``diagnostics``, the schema
+    #: changes from the baseline, which never move the verdict, and
+    #: ``timeliness_clock``, the clock rule the score rules read. ``None``
     #: otherwise.
     baseline: dict[str, _Any] | None = None
 
@@ -270,6 +273,7 @@ class _Policy:
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
+        timeliness_clock: str = "fixed",
     ) -> None:
         if scope not in _SCOPES:
             raise _PolicyFieldError(
@@ -277,6 +281,13 @@ class _Policy:
                 f"scope must be one of {_SCOPES}, got {scope!r}",
             )
         self.scope = scope
+
+        if timeliness_clock not in _TIMELINESS_CLOCKS:
+            raise _PolicyFieldError(
+                "timeliness_clock",
+                f"timeliness_clock must be one of {_TIMELINESS_CLOCKS}, got {timeliness_clock!r}",
+            )
+        self.timeliness_clock = timeliness_clock
 
         self.min_rows = None if min_rows is None else _count("min_rows", min_rows)
 
@@ -462,6 +473,7 @@ class _Policy:
                 require_columns=self.require_columns,
                 forbid_removed_columns=self.forbid_removed_columns,
                 forbid_added_columns=self.forbid_added_columns,
+                timeliness_clock=self.timeliness_clock,
             )
         )
         return _result_from_document(document)

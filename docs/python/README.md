@@ -1017,6 +1017,7 @@ if not result.passed:
 | `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
 | `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
+| `timeliness_clock` | `str` | `"fixed"` (default) or `"rolling"`: how the timeliness reference dates of the baseline and this report may differ (0.14+) |
 
 Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A score, its bounds, a null percentage and the threshold are
@@ -1192,15 +1193,45 @@ unevaluated, with one of these reasons:
   overall score reads them all. A report records which columns the pairs named
   but not which column pairs with which, so a non-empty `temporal_pairs` reads
   as `setting_unrecorded`, and so does the locale on a report saved before
-  0.13, which did not record it;
+  0.13, which did not record it. Timeliness, and the overall score when both
+  sides assessed timeliness, also read `timeliness_clock` (0.14+), as the
+  next paragraph describes;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
   not cover its whole source.
+
+**The timeliness clock (0.14+).** Timeliness counts dates later than a
+reference date and dates older than a maximum age, so the same data scores
+differently against another date. `timeliness_clock` declares which
+difference between the two recorded clocks still measures the same thing:
+
+- `"fixed"`, the default: both reports must record the same
+  `reference_date`, as when every run passes the same `reference_date=`;
+- `"rolling"`: two rolling clocks, each read on its own run day, may record
+  different dates, and the scores are compared as measured. A daily
+  checkpoint that does not pass `reference_date=` wants this one. A fixed
+  clock on either side still needs the same date on both.
+
+Under either, the time zone and `max_data_age_years` must match. A
+difference the rule does not allow is `setting_changed`, and a clock either
+side did not record (a report saved before 0.14) is `setting_unrecorded`,
+both on the setting `timeliness_clock`. Without the declaration, two daily
+runs that read today's date leave the timeliness and overall drop rules
+unevaluated whenever their dates differ:
+
+```python
+result = dp.profile("daily_drop.csv").check(
+    baseline=baseline,
+    max_quality_score_drop=2,
+    timeliness_clock="rolling",
+)
+```
 
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
 drop or `change_at_most` for an increase. `result.baseline` names both reports
-(`a` is the baseline) and the `schema` change between them. The baseline may be
+(`a` is the baseline), the `schema` change between them, and the
+`timeliness_clock` rule the score rules read. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
 unrecorded.
 
@@ -1423,6 +1454,7 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
 | `--forbid-removed-columns` | `forbid_removed_columns` |
 | `--forbid-added-columns` | `forbid_added_columns` |
+| `--timeliness-clock fixed\|rolling` | `timeliness_clock` |
 
 A rule about change without `--baseline` is a policy error (exit `3`). The
 baseline is a `.json` report that `--report` or `save()` wrote, or a flat `to_dict()` summary,

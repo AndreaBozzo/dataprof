@@ -309,6 +309,7 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "require_columns": [],
             "forbid_removed_columns": False,
             "forbid_added_columns": False,
+            "timeliness_clock": "fixed",
         }
     ]
     expected = report.check(max_null_percentage={"customer_id": 10, "*": 20})

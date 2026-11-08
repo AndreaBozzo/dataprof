@@ -94,6 +94,7 @@ class _Policy:
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,
+        timeliness_clock: str = ...,
     ) -> None: ...
     # Takes the report's runtime object, or `None` for a report restored
     # from a flat summary, which the gate refuses.
