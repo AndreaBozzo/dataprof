@@ -745,8 +745,9 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 /// kept as an [`ExactDecimal`] where it fits one (#1149), and is
 /// [`Unheld`](Self::Unheld) where it does not: from [`TEXT_EXACT_DIGITS`]
 /// significant digits for [`parse`](Self::parse), from
-/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal).
-/// Everything else is its `f64`.
+/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal), and
+/// at any length when it underflows to 0 or to a subnormal it does not write
+/// (#1182). Everything else is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ParsedNumber {
@@ -805,6 +806,21 @@ impl ParsedNumber {
             && (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(&integer)
         {
             return Some(Self::Integer(integer));
+        }
+        // A non-zero literal that reads as 0, or as a subnormal that is not
+        // its digits, underflowed: no float wrote it, so however short it is
+        // it is held as written, and 1e-400 and 2e-400 stay two values
+        // (#1182). A float written out, 5e-324, still reads as that float.
+        if value.abs() < f64::MIN_POSITIVE
+            && let Some(literal) = DecimalLiteral::read(text)
+            && literal.written_digits > 0
+            && !literal.round_trips(value)
+        {
+            return Some(
+                literal
+                    .exact()
+                    .map_or(Self::Unheld(value), |exact| Self::from_exact(exact, value)),
+            );
         }
         // A plain integer below 2^53 is its `f64` exactly: ids and epoch
         // milliseconds skip the digit scan.
@@ -1525,6 +1541,48 @@ mod tests {
                 ParsedNumber::parse(&written),
                 Some(ParsedNumber::Float(value)),
                 "{written}"
+            );
+        }
+    }
+
+    /// 1e-400 and 2e-400 both read as 0.0 and were one value (#1182).
+    #[test]
+    fn parsed_numbers_hold_literals_that_underflow() {
+        for (text, unscaled, scale) in [
+            ("1e-400", 1, 400),
+            ("2e-400", 2, 400),
+            ("-3.5E-330", -35, 331),
+            // A subnormal, but not the one these digits write.
+            ("1.2345678e-320", 12_345_678, 327),
+        ] {
+            let expected = Some(ExactDecimal { unscaled, scale });
+            for parsed in [ParsedNumber::parse(text), ParsedNumber::parse_decimal(text)] {
+                let parsed = parsed.unwrap();
+                assert_eq!(parsed.exact(), expected, "{text:?}");
+                assert_eq!(parsed.to_f64(), text.parse::<f64>().unwrap(), "{text:?}");
+            }
+        }
+        let key = |text| ParsedNumber::parse(text).unwrap().value_key();
+        assert_ne!(key("1e-400"), key("2e-400"));
+        assert_ne!(key("1e-400"), key("0"));
+
+        // Past the largest scale held: unheld, still not a float.
+        assert_eq!(
+            ParsedNumber::parse("1e-700"),
+            Some(ParsedNumber::Unheld(0.0))
+        );
+        // Zeros, and subnormals as a float writes them, stay floats.
+        for (text, value) in [
+            ("0", 0.0),
+            ("0.000", 0.0),
+            ("-0e-400", -0.0),
+            ("5e-324", 5e-324),
+            ("1.5e-320", 1.5e-320),
+        ] {
+            assert_eq!(
+                ParsedNumber::parse(text),
+                Some(ParsedNumber::Float(value)),
+                "{text:?}"
             );
         }
     }
