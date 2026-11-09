@@ -21,4 +21,12 @@ ignore = [
     # arrow-rs; no upstream replacement yet.
     # Reviewed 2026-07-24, next review 2026-10-01. See docs/SECURITY.md.
     "RUSTSEC-2024-0436",
+
+    # Uninitialized page-cache memory in the SQLite bundled by libsqlite3-sys
+    # 0.30.1, reached only through sqlx-sqlite (the non-default `sqlite`
+    # feature and the test dev-dependency; the wheels do not ship it). Applies
+    # only to an untrusted SQLite file opened with its `-wal`. No sqlx release
+    # allows the fixed libsqlite3-sys 0.39.
+    # Reviewed 2026-11-09, next review 2027-01-09. See docs/SECURITY.md.
+    "RUSTSEC-2026-0459",
 ]
