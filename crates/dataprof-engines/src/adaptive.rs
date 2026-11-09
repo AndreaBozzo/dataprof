@@ -31,13 +31,14 @@ fn can_retry_with_another_parser(error: &DataProfilerError) -> bool {
     true
 }
 
-#[cfg(feature = "parquet")]
-use dataprof_core::AnalysisOptions;
 use dataprof_core::execution::{RecoveryEvent, RecoveryKind};
 use dataprof_core::{
-    ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension, SemanticHints,
+    AnalysisOptions, ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension,
+    SemanticHints,
 };
 use dataprof_csv::CsvParserConfig;
+#[cfg(feature = "arrow")]
+use dataprof_parquet::ArrowProfiler;
 use dataprof_runtime::ProfileReport;
 
 use crate::streaming::IncrementalProfiler;
@@ -66,79 +67,117 @@ impl InternalEngineType {
 ///
 /// Simple heuristic: Incremental is the default (streaming, memory-bounded).
 /// Arrow is selected when the file has many numeric columns and enough memory.
+///
+/// It holds the engines it chooses between, configured, and no settings of its
+/// own: whoever builds the engines decides what they run with, so a setting
+/// cannot reach one engine through this selector and miss the other (#717).
 pub struct AdaptiveProfiler {
-    quality_dimensions: Option<Vec<QualityDimension>>,
-    metric_packs: Option<Vec<MetricPack>>,
-    columns: Option<Vec<String>>,
-    csv_config: Option<CsvParserConfig>,
-    locale: Option<Locale>,
-    reference_date: Option<chrono::NaiveDate>,
-    semantic_hints: SemanticHints,
-    memory_limit_mb: Option<usize>,
-    chunk_size: Option<ChunkSize>,
+    incremental: IncrementalProfiler,
+    /// `None` when the caller handed over only the incremental engine; the
+    /// selector then never picks Arrow.
+    #[cfg(feature = "arrow")]
+    arrow: Option<ArrowProfiler>,
 }
 
 impl AdaptiveProfiler {
     pub fn new() -> Self {
         Self {
-            quality_dimensions: None,
-            metric_packs: None,
-            columns: None,
-            csv_config: None,
-            locale: None,
-            reference_date: None,
-            semantic_hints: SemanticHints::default(),
-            memory_limit_mb: None,
-            chunk_size: None,
+            incremental: IncrementalProfiler::new(),
+            #[cfg(feature = "arrow")]
+            arrow: Some(ArrowProfiler::new()),
         }
     }
 
-    /// Set the memory limit, in MB, passed on to whichever engine is selected.
+    /// Select over engines the caller has already configured, starting with
+    /// the incremental one. Without [`with_arrow_engine`](Self::with_arrow_engine)
+    /// every file goes to it.
+    ///
+    /// The CSV settings that steer the choice (the delimiter for the width
+    /// probe, strict parsing for the fallback) are read from `incremental`, so
+    /// an Arrow engine added later should carry the same CSV configuration.
+    pub fn from_engines(incremental: IncrementalProfiler) -> Self {
+        Self {
+            incremental,
+            #[cfg(feature = "arrow")]
+            arrow: None,
+        }
+    }
+
+    /// Add the configured Arrow engine the selector may choose for wide,
+    /// numeric CSV files.
+    #[cfg(feature = "arrow")]
+    pub fn with_arrow_engine(mut self, arrow: ArrowProfiler) -> Self {
+        self.arrow = Some(arrow);
+        self
+    }
+
+    /// Set the whole analysis selection on both engines, replacing any
+    /// selection the per-option setters made before it.
+    pub fn analysis_options(mut self, options: AnalysisOptions) -> Self {
+        #[cfg(feature = "arrow")]
+        {
+            self.arrow = self
+                .arrow
+                .map(|arrow| arrow.analysis_options(options.clone()));
+        }
+        self.incremental = self.incremental.analysis_options(options);
+        self
+    }
+
+    fn update_options(self, update: impl FnOnce(AnalysisOptions) -> AnalysisOptions) -> Self {
+        let options = update(self.incremental.options().clone());
+        self.analysis_options(options)
+    }
+
+    /// Set the memory limit, in MB, on both engines.
     pub fn memory_limit_mb(mut self, limit: usize) -> Self {
-        self.memory_limit_mb = Some(limit);
+        #[cfg(feature = "arrow")]
+        {
+            self.arrow = self.arrow.map(|arrow| arrow.memory_limit_mb(limit));
+        }
+        self.incremental = self.incremental.memory_limit_mb(limit);
         self
     }
 
     /// Set the per-chunk read size, in bytes, for the streaming engine.
     pub fn chunk_size(mut self, chunk_size: ChunkSize) -> Self {
-        self.chunk_size = Some(chunk_size);
+        self.incremental = self.incremental.chunk_size(chunk_size);
         self
     }
 
-    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
-        self.quality_dimensions = Some(dims);
-        self
+    pub fn quality_dimensions(self, dims: Vec<QualityDimension>) -> Self {
+        self.update_options(|options| options.with_quality_dimensions(Some(dims)))
     }
 
-    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
-        self.metric_packs = Some(packs);
-        self
+    pub fn metric_packs(self, packs: Vec<MetricPack>) -> Self {
+        self.update_options(|options| options.with_metric_packs(Some(packs)))
     }
 
-    pub fn columns(mut self, columns: Vec<String>) -> Self {
-        self.columns = Some(columns);
-        self
+    pub fn columns(self, columns: Vec<String>) -> Self {
+        self.update_options(|options| options.with_columns(Some(columns)))
     }
 
+    /// Set the CSV settings on both engines.
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
-        self.csv_config = Some(config);
+        #[cfg(feature = "arrow")]
+        {
+            self.arrow = self.arrow.map(|arrow| arrow.csv_config(config.clone()));
+        }
+        self.incremental = self.incremental.csv_config(config);
         self
     }
 
-    pub fn locale(mut self, locale: Locale) -> Self {
-        self.locale = Some(locale);
-        self
+    pub fn locale(self, locale: Locale) -> Self {
+        self.update_options(|options| options.with_locale(Some(locale)))
     }
 
     /// Fix the date timeliness measures against; unset, it reads today's.
-    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
-        self.reference_date = Some(date);
-        self
+    pub fn reference_date(self, date: chrono::NaiveDate) -> Self {
+        self.update_options(|options| options.with_reference_date(Some(date)))
     }
 
-    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
-        self.semantic_hints = hints;
-        self
+    pub fn semantic_hints(self, hints: SemanticHints) -> Self {
+        self.update_options(|options| options.with_semantic_hints(hints))
     }
 
     /// Analyze a file, auto-selecting the best engine.
@@ -148,17 +187,10 @@ impl AdaptiveProfiler {
         // Parquet has its own parser — short-circuit
         #[cfg(feature = "parquet")]
         if is_parquet(file_path) {
-            let options = AnalysisOptions::default()
-                .with_columns(self.columns.clone())
-                .with_metric_packs(self.metric_packs.clone())
-                .with_quality_dimensions(self.quality_dimensions.clone())
-                .with_locale(self.locale)
-                .with_reference_date(self.reference_date)
-                .with_semantic_hints(self.semantic_hints.clone());
             return dataprof_parquet::analyze_parquet_with_options(
                 file_path,
                 &dataprof_parquet::ParquetConfig::default(),
-                &options,
+                self.incremental.options(),
             );
         }
 
@@ -201,7 +233,10 @@ impl AdaptiveProfiler {
                 // Likewise when the caller asked for strict CSV parsing: they
                 // opted out of recovery, so retrying under a second parser only
                 // trades their actionable diagnostic for "all engines failed".
-                if self.csv_config.as_ref().is_some_and(|c| !c.flexible)
+                if self
+                    .incremental
+                    .csv_parser_config()
+                    .is_some_and(|c| !c.flexible)
                     && matches!(primary_err, DataProfilerError::CsvParsingError { .. })
                 {
                     return Err(primary_err);
@@ -209,7 +244,10 @@ impl AdaptiveProfiler {
                 #[cfg(feature = "arrow")]
                 let fallback = match engine {
                     InternalEngineType::Arrow => InternalEngineType::Incremental,
-                    InternalEngineType::Incremental => InternalEngineType::Arrow,
+                    InternalEngineType::Incremental if self.arrow.is_some() => {
+                        InternalEngineType::Arrow
+                    }
+                    InternalEngineType::Incremental => InternalEngineType::Incremental,
                 };
                 #[cfg(not(feature = "arrow"))]
                 let fallback = InternalEngineType::Incremental;
@@ -260,8 +298,8 @@ impl AdaptiveProfiler {
 
         // Use configured delimiter or default to comma
         let delimiter = self
-            .csv_config
-            .as_ref()
+            .incremental
+            .csv_parser_config()
             .and_then(|c| c.delimiter)
             .unwrap_or(b',');
 
@@ -307,7 +345,7 @@ impl AdaptiveProfiler {
 
         // Arrow for wide + numeric datasets
         #[cfg(feature = "arrow")]
-        if numeric_ratio > 0.5 {
+        if numeric_ratio > 0.5 && self.arrow.is_some() {
             InternalEngineType::Arrow
         } else {
             InternalEngineType::Incremental
@@ -326,62 +364,15 @@ impl AdaptiveProfiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         match engine_type {
             #[cfg(feature = "arrow")]
-            InternalEngineType::Arrow => {
-                use dataprof_parquet::ArrowProfiler;
-                let mut profiler = ArrowProfiler::new();
-                if let Some(ref dims) = self.quality_dimensions {
-                    profiler = profiler.quality_dimensions(dims.clone());
-                }
-                if let Some(ref packs) = self.metric_packs {
-                    profiler = profiler.metric_packs(packs.clone());
-                }
-                if let Some(ref columns) = self.columns {
-                    profiler = profiler.columns(columns.clone());
-                }
-                if let Some(ref config) = self.csv_config {
-                    profiler = profiler.csv_config(config.clone());
-                }
-                if let Some(l) = self.locale {
-                    profiler = profiler.locale(l);
-                }
-                if let Some(date) = self.reference_date {
-                    profiler = profiler.reference_date(date);
-                }
-                if let Some(mb) = self.memory_limit_mb {
-                    profiler = profiler.memory_limit_mb(mb);
-                }
-                profiler = profiler.semantic_hints(self.semantic_hints.clone());
-                profiler.analyze_csv_file(file_path)
-            }
-            InternalEngineType::Incremental => {
-                let mut profiler = IncrementalProfiler::new();
-                if let Some(mb) = self.memory_limit_mb {
-                    profiler = profiler.memory_limit_mb(mb);
-                }
-                if let Some(ref cs) = self.chunk_size {
-                    profiler = profiler.chunk_size(cs.clone());
-                }
-                if let Some(ref dims) = self.quality_dimensions {
-                    profiler = profiler.quality_dimensions(dims.clone());
-                }
-                if let Some(ref packs) = self.metric_packs {
-                    profiler = profiler.metric_packs(packs.clone());
-                }
-                if let Some(ref columns) = self.columns {
-                    profiler = profiler.columns(columns.clone());
-                }
-                if let Some(ref config) = self.csv_config {
-                    profiler = profiler.csv_config(config.clone());
-                }
-                if let Some(l) = self.locale {
-                    profiler = profiler.locale(l);
-                }
-                if let Some(date) = self.reference_date {
-                    profiler = profiler.reference_date(date);
-                }
-                profiler = profiler.semantic_hints(self.semantic_hints.clone());
-                profiler.analyze_file(file_path)
-            }
+            InternalEngineType::Arrow => match &self.arrow {
+                Some(arrow) => arrow.analyze_csv_file(file_path),
+                // The selector picks Arrow only when it holds one.
+                None => Err(DataProfilerError::invalid_config(
+                    "the adaptive profiler was given no columnar engine",
+                    "Add one with AdaptiveProfiler::with_arrow_engine.",
+                )),
+            },
+            InternalEngineType::Incremental => self.incremental.analyze_file(file_path),
         }
     }
 }

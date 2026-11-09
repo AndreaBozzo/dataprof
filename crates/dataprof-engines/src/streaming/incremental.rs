@@ -23,13 +23,10 @@ pub struct IncrementalProfiler {
     progress_interval: Duration,
     memory: MemoryConfig,
     stop_condition: StopCondition,
-    quality_dimensions: Option<Vec<QualityDimension>>,
-    metric_packs: Option<Vec<MetricPack>>,
-    columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
-    locale: Option<Locale>,
-    reference_date: Option<chrono::NaiveDate>,
-    semantic_hints: SemanticHints,
+    /// The caller's analysis selection, held whole so a new option reaches
+    /// this engine without a field of its own here (#717).
+    options: AnalysisOptions,
 }
 
 impl IncrementalProfiler {
@@ -41,14 +38,31 @@ impl IncrementalProfiler {
             progress_interval: Duration::from_millis(500),
             memory: MemoryConfig::default(),
             stop_condition: StopCondition::Never,
-            quality_dimensions: None,
-            metric_packs: None,
-            columns: None,
             csv_config: None,
-            locale: None,
-            reference_date: None,
-            semantic_hints: SemanticHints::default(),
+            options: AnalysisOptions::default(),
         }
+    }
+
+    /// Set the whole analysis selection at once, replacing any selection the
+    /// per-option setters made before it.
+    pub fn analysis_options(mut self, options: AnalysisOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The analysis selection this engine runs with.
+    pub(crate) fn options(&self) -> &AnalysisOptions {
+        &self.options
+    }
+
+    /// The CSV settings this engine reads with, if any were set.
+    pub(crate) fn csv_parser_config(&self) -> Option<&CsvParserConfig> {
+        self.csv_config.as_ref()
+    }
+
+    fn update_options(mut self, update: impl FnOnce(AnalysisOptions) -> AnalysisOptions) -> Self {
+        self.options = update(std::mem::take(&mut self.options));
+        self
     }
 
     pub fn chunk_size(mut self, chunk_size: ChunkSize) -> Self {
@@ -77,19 +91,16 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
-        self.quality_dimensions = Some(dims);
-        self
+    pub fn quality_dimensions(self, dims: Vec<QualityDimension>) -> Self {
+        self.update_options(|options| options.with_quality_dimensions(Some(dims)))
     }
 
-    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
-        self.metric_packs = Some(packs);
-        self
+    pub fn metric_packs(self, packs: Vec<MetricPack>) -> Self {
+        self.update_options(|options| options.with_metric_packs(Some(packs)))
     }
 
-    pub fn columns(mut self, columns: Vec<String>) -> Self {
-        self.columns = Some(columns);
-        self
+    pub fn columns(self, columns: Vec<String>) -> Self {
+        self.update_options(|options| options.with_columns(Some(columns)))
     }
 
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
@@ -97,20 +108,17 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn locale(mut self, locale: Locale) -> Self {
-        self.locale = Some(locale);
-        self
+    pub fn locale(self, locale: Locale) -> Self {
+        self.update_options(|options| options.with_locale(Some(locale)))
     }
 
     /// Fix the date timeliness measures against; unset, it reads today's.
-    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
-        self.reference_date = Some(date);
-        self
+    pub fn reference_date(self, date: chrono::NaiveDate) -> Self {
+        self.update_options(|options| options.with_reference_date(Some(date)))
     }
 
-    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
-        self.semantic_hints = hints;
-        self
+    pub fn semantic_hints(self, hints: SemanticHints) -> Self {
+        self.update_options(|options| options.with_semantic_hints(hints))
     }
 
     pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
@@ -143,7 +151,7 @@ impl IncrementalProfiler {
 
         // Initialize streaming statistics collection
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb)
-            .with_semantic_hints(&self.semantic_hints);
+            .with_semantic_hints(self.options.semantic_hints());
 
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
@@ -459,13 +467,7 @@ impl IncrementalProfiler {
         memory_sampler.sample_now();
         progress_tracker.emit_finished(!source_exhausted);
 
-        let options = AnalysisOptions::default()
-            .with_columns(self.columns.clone())
-            .with_metric_packs(self.metric_packs.clone())
-            .with_quality_dimensions(self.quality_dimensions.clone())
-            .with_locale(self.locale)
-            .with_reference_date(self.reference_date)
-            .with_semantic_hints(self.semantic_hints.clone());
+        let options = &self.options;
 
         if let Some(indices) = options.column_indices(&column_stats.column_names())? {
             let available = column_stats.column_names();
@@ -559,14 +561,14 @@ impl IncrementalProfiler {
         .columns(column_profiles);
 
         if !MetricPack::include_quality(packs) {
-            assembler = assembler.record_analysis_settings(&options).skip_quality();
+            assembler = assembler.record_analysis_settings(options).skip_quality();
         } else {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_row_duplicates(column_stats.row_duplicate_summary())
                 .with_row_completeness(column_stats.row_completeness_summary())
                 .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-                .with_analysis_options(&options);
+                .with_analysis_options(options);
         }
 
         Ok(assembler.build())

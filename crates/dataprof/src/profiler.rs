@@ -409,11 +409,7 @@ impl Profiler {
             ));
         }
 
-        let format = self
-            .config
-            .format_override
-            .clone()
-            .unwrap_or_else(|| Self::detect_format(path));
+        let format = self.resolve_format(path);
         // A binary file bound for a text reader fails here with what it is,
         // before every engine fails on it with parsing advice (#893).
         if !matches!(format, FileFormat::Parquet) {
@@ -441,11 +437,8 @@ impl Profiler {
             });
         }
 
-        let result = match self.config.engine {
-            EngineType::Auto => self.run_auto(path, format),
-            EngineType::Incremental => self.run_incremental(path, format),
-            EngineType::Columnar => self.run_columnar(path, format),
-        };
+        let options = self.analysis_options();
+        let result = self.run_file(path, format, &options);
         // Every CSV engine ultimately requires UTF-8, but their raw errors use
         // different variants and wording. Normalize at the shared file boundary
         // so an explicit engine choice cannot regress the product error contract.
@@ -454,7 +447,7 @@ impl Profiler {
         } else {
             result?
         };
-        self.validate_semantic_hints(&report)?;
+        self.validate_semantic_hints(&options, &report)?;
         if bracket {
             let execution = &report.execution;
             // These routes do not all record bytes read; a completed scan read
@@ -526,11 +519,7 @@ impl Profiler {
     /// their values decide (#693).
     pub fn infer_schema<P: AsRef<Path>>(&self, path: P) -> Result<SchemaResult, DataProfilerError> {
         let path = path.as_ref();
-        let format = self
-            .config
-            .format_override
-            .clone()
-            .unwrap_or_else(|| Self::detect_format(path));
+        let format = self.resolve_format(path);
         partial::infer_schema_with_format(path, format)
     }
 
@@ -543,11 +532,7 @@ impl Profiler {
         path: P,
     ) -> Result<RowCountEstimate, DataProfilerError> {
         let path = path.as_ref();
-        let format = self
-            .config
-            .format_override
-            .clone()
-            .unwrap_or_else(|| Self::detect_format(path));
+        let format = self.resolve_format(path);
         partial::quick_row_count_with_format(path, format)
     }
 
@@ -562,17 +547,22 @@ impl Profiler {
         max_rows: Option<usize>,
     ) -> Result<StructureReport, DataProfilerError> {
         let path = path.as_ref();
-        let format = self
-            .config
-            .format_override
-            .clone()
-            .unwrap_or_else(|| Self::detect_format(path));
+        let format = self.resolve_format(path);
         partial::analyze_structure_with_format(path, format, max_rows)
     }
 
     /// Detect file format from extension
     pub fn detect_format(file_path: &Path) -> FileFormat {
         partial::detect_format(file_path)
+    }
+
+    /// The format a path is read as: the `.format()` override, else what its
+    /// extension says. Every path-taking entry point asks here.
+    fn resolve_format(&self, path: &Path) -> FileFormat {
+        self.config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path))
     }
 
     /// Build a `CsvParserConfig` from the profiler's CSV settings.
@@ -587,27 +577,21 @@ impl Profiler {
         csv_config
     }
 
-    fn semantic_hints(&self) -> SemanticHints {
-        SemanticHints::new(
-            self.config.positive_columns.clone(),
-            self.config.identifier_columns.clone(),
-        )
-        .with_temporal_columns(self.config.temporal_columns.clone())
-        .with_temporal_pairs(self.config.temporal_pairs.clone())
-    }
-
     /// Reject semantic hints that could not bind to the profiled data.
     ///
     /// Runs once a report exists so both checks use real schema and evidence:
     /// hint names must exist among the columns, and a hint proven inert over the
     /// full data (matched no value) is an error rather than a silent no-op.
-    fn validate_semantic_hints(&self, report: &ProfileReport) -> Result<(), DataProfilerError> {
-        let hints = self.semantic_hints();
+    fn validate_semantic_hints(
+        &self,
+        options: &AnalysisOptions,
+        report: &ProfileReport,
+    ) -> Result<(), DataProfilerError> {
+        let hints = options.semantic_hints();
         if hints.is_empty() {
             return Ok(());
         }
-        let packs = self.effective_metric_packs();
-        hints.validate_quality_usage(MetricPack::include_quality(packs.as_deref()))?;
+        hints.validate_quality_usage(options.include_quality())?;
         let names: Vec<&str> = report
             .column_profiles
             .iter()
@@ -623,15 +607,23 @@ impl Profiler {
     /// Built in one place and passed whole, so a path cannot pick up the
     /// dimensions and hints while quietly dropping the metric packs or the
     /// locale — which is exactly how JSON, Parquet, and the async pipeline came
-    /// to compute work the caller had deselected.
+    /// to compute work the caller had deselected. This is the only place that
+    /// reads the analysis fields of [`ProfilerConfig`]: a new option added here
+    /// reaches every parser and engine a `Profiler` entry point runs (#717).
     fn analysis_options(&self) -> AnalysisOptions {
+        let hints = SemanticHints::new(
+            self.config.positive_columns.clone(),
+            self.config.identifier_columns.clone(),
+        )
+        .with_temporal_columns(self.config.temporal_columns.clone())
+        .with_temporal_pairs(self.config.temporal_pairs.clone());
         AnalysisOptions::default()
             .with_columns(self.config.columns.clone())
             .with_metric_packs(self.config.metric_packs.clone())
             .with_quality_dimensions(self.config.quality_dimensions.clone())
             .with_locale(self.config.locale)
             .with_reference_date(self.config.reference_date)
-            .with_semantic_hints(self.semantic_hints())
+            .with_semantic_hints(hints)
     }
 
     /// The metric packs to compute, with an empty quality-dimension selection
@@ -640,6 +632,7 @@ impl Profiler {
     /// Resolved on read rather than in the setters so the outcome does not
     /// depend on whether `quality_dimensions` or `metric_packs` was called
     /// first.
+    #[cfg(feature = "database")]
     fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
         self.analysis_options().effective_metric_packs()
     }
@@ -685,6 +678,14 @@ impl Profiler {
             "Profile a CSV source with the auto or incremental engine, which sample \
              row by row, or remove the sampling strategy.",
         ))
+    }
+
+    /// Reject the stop conditions and sampling a reader that materialises
+    /// batches cannot apply: the JSON and Parquet parsers, and the columnar
+    /// engine on every format.
+    fn ensure_batch_reader(&self, what: &str) -> Result<(), DataProfilerError> {
+        self.ensure_row_limit_only(what)?;
+        self.ensure_no_sampling(what)
     }
 
     /// The row cap implied by the configured stop condition, if any.
@@ -759,36 +760,41 @@ impl Profiler {
         ))
     }
 
-    /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON/Parquet.
+    /// Read a file with the reader its format needs, on the configured engine.
     ///
-    /// Format dispatch happens here (not inside the adaptive engine) so that an
-    /// explicit `.format()` override is respected even when the path extension
-    /// would otherwise pick a different parser.
-    fn run_auto(
+    /// The one place a synchronous file request is dispatched (#717). Format
+    /// dispatch happens here, not inside an engine, so an explicit `.format()`
+    /// override is respected even when the extension would pick another
+    /// parser; JSON and Parquet reach the same parser whichever engine was
+    /// chosen, and only CSV reaches an engine.
+    fn run_file(
         &self,
         file_path: &Path,
         format: FileFormat,
+        options: &AnalysisOptions,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let options = self.analysis_options();
+        // Every columnar path enforces a row cap, but none can evaluate a
+        // richer stop condition per chunk, and none samples row by row.
+        if self.config.engine == EngineType::Columnar {
+            self.ensure_batch_reader("the columnar engine")?;
+        }
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                self.ensure_row_limit_only("the JSON parser")?;
-                self.ensure_no_sampling("the JSON parser")?;
+                self.ensure_batch_reader("the JSON parser")?;
                 dataprof_json::analyze_json_file_with_options(
                     file_path,
                     &self.json_config_for(format),
-                    &options,
+                    options,
                 )
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
                 {
-                    self.ensure_row_limit_only("the Parquet parser")?;
-                    self.ensure_no_sampling("the Parquet parser")?;
+                    self.ensure_batch_reader("the Parquet parser")?;
                     dataprof_parquet::analyze_parquet_with_options(
                         file_path,
                         &self.parquet_config_for_stop(),
-                        &options,
+                        options,
                     )
                 }
                 #[cfg(not(feature = "parquet"))]
@@ -798,201 +804,122 @@ impl Profiler {
                     })
                 }
             }
-            _ => {
-                // AdaptiveProfiler cannot honour early-stop conditions. Auto's job
-                // is engine selection, so when the caller asked to stop early we
-                // select an engine that can deliver it rather than silently
-                // scanning the whole source (which also leaves the report claiming
-                // `source_exhausted` with no truncation reason).
-                // The same applies to sampling: only the incremental engine
-                // applies a strategy row by row, so a sampled auto run routes
-                // there rather than quietly returning a full profile. And to
-                // progress: only that engine reports while it reads, so a run
-                // with a sink routes there rather than going silent.
-                if !matches!(self.config.stop_condition, StopCondition::Never)
-                    || self.has_sampling()
-                    || self.progress_sink.is_active()
-                {
-                    self.run_incremental(file_path, format)
-                } else {
-                    let mut profiler =
-                        AdaptiveProfiler::new().chunk_size(self.config.chunk_size.clone());
-                    if let Some(mb) = self.config.memory_limit_mb {
-                        profiler = profiler.memory_limit_mb(mb);
-                    }
-                    if let Some(d) = &self.config.quality_dimensions {
-                        profiler = profiler.quality_dimensions(d.clone());
-                    }
-                    if let Some(p) = self.effective_metric_packs() {
-                        profiler = profiler.metric_packs(p);
-                    }
-                    if let Some(l) = self.config.locale {
-                        profiler = profiler.locale(l);
-                    }
-                    if let Some(date) = self.config.reference_date {
-                        profiler = profiler.reference_date(date);
-                    }
-                    if let Some(columns) = &self.config.columns {
-                        profiler = profiler.columns(columns.clone());
-                    }
-                    profiler = profiler.semantic_hints(options.semantic_hints().clone());
-                    let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
-                    profiler = profiler.csv_config(csv_config);
-                    // Format already resolved here; skip the engine's extension-based
-                    // Parquet redetection so explicit `.format()` overrides win.
-                    profiler
-                        .analyze_csv_file(file_path)
-                        .map(|report| with_csv_metadata(report, csv_metadata))
-                }
-            }
+            _ => self.run_csv(file_path, options),
         }
     }
 
-    /// Dispatch to IncrementalProfiler with all configured options
-    fn run_incremental(
+    /// Which CSV engine runs this request.
+    ///
+    /// `Auto` selects between the engines by file shape, except that only the
+    /// incremental engine evaluates early-stop conditions, applies a sampling
+    /// strategy row by row and reports progress while it reads: a request that
+    /// asks for any of them goes there rather than silently scanning the whole
+    /// source, returning a full profile, or going quiet.
+    fn csv_route(&self) -> Result<CsvRoute, DataProfilerError> {
+        match self.config.engine {
+            EngineType::Columnar => {
+                #[cfg(feature = "arrow")]
+                {
+                    Ok(CsvRoute::Columnar)
+                }
+                #[cfg(not(feature = "arrow"))]
+                {
+                    Err(DataProfilerError::UnsupportedFormat {
+                        format: "columnar engine (enable the `arrow` or `parquet` feature)"
+                            .to_string(),
+                    })
+                }
+            }
+            EngineType::Incremental => Ok(CsvRoute::Incremental),
+            EngineType::Auto
+                if !matches!(self.config.stop_condition, StopCondition::Never)
+                    || self.has_sampling()
+                    || self.progress_sink.is_active() =>
+            {
+                Ok(CsvRoute::Incremental)
+            }
+            EngineType::Auto => Ok(CsvRoute::Adaptive),
+        }
+    }
+
+    /// Profile a CSV file on the engine [`csv_route`](Self::csv_route) picks,
+    /// each engine built by its one builder below.
+    fn run_csv(
         &self,
         file_path: &Path,
-        format: FileFormat,
+        options: &AnalysisOptions,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let options = self.analysis_options();
-        // IncrementalProfiler only supports CSV
-        match format {
-            FileFormat::Json | FileFormat::Jsonl => {
-                self.ensure_row_limit_only("the JSON parser")?;
-                self.ensure_no_sampling("the JSON parser")?;
-                return dataprof_json::analyze_json_file_with_options(
-                    file_path,
-                    &self.json_config_for(format),
-                    &options,
+        let route = self.csv_route()?;
+        let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
+        let report = match route {
+            CsvRoute::Incremental => self
+                .incremental_engine(options, csv_config)
+                .analyze_file(file_path),
+            #[cfg(feature = "arrow")]
+            CsvRoute::Columnar => self
+                .arrow_engine(options, csv_config)
+                .analyze_csv_file(file_path),
+            CsvRoute::Adaptive => {
+                let adaptive = AdaptiveProfiler::from_engines(
+                    self.incremental_engine(options, csv_config.clone()),
                 );
+                #[cfg(feature = "arrow")]
+                let adaptive = adaptive.with_arrow_engine(self.arrow_engine(options, csv_config));
+                // Format already resolved here; skip the engine's
+                // extension-based Parquet redetection so explicit `.format()`
+                // overrides win.
+                adaptive.analyze_csv_file(file_path)
             }
-            FileFormat::Parquet => {
-                #[cfg(feature = "parquet")]
-                {
-                    self.ensure_row_limit_only("the Parquet parser")?;
-                    self.ensure_no_sampling("the Parquet parser")?;
-                    return dataprof_parquet::analyze_parquet_with_options(
-                        file_path,
-                        &self.parquet_config_for_stop(),
-                        &options,
-                    );
-                }
-                #[cfg(not(feature = "parquet"))]
-                return Err(DataProfilerError::UnsupportedFormat {
-                    format: "parquet (enable the `parquet` feature)".to_string(),
-                });
-            }
-            _ => {}
-        }
+        };
+        report.map(|report| with_csv_metadata(report, csv_metadata))
+    }
 
-        use dataprof_engines::streaming::IncrementalProfiler;
-
-        let mut profiler = IncrementalProfiler::new()
+    /// The incremental CSV engine, configured for this request.
+    fn incremental_engine(
+        &self,
+        options: &AnalysisOptions,
+        csv_config: dataprof_csv::CsvParserConfig,
+    ) -> dataprof_engines::streaming::IncrementalProfiler {
+        let profiler = dataprof_engines::streaming::IncrementalProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
             .sampling(self.config.sampling.clone())
             .stop_condition(self.config.stop_condition.clone())
-            .progress(self.progress_sink.clone(), self.config.progress_interval);
-        if let Some(mb) = self.config.memory_limit_mb {
-            profiler = profiler.memory_limit_mb(mb);
+            .progress(self.progress_sink.clone(), self.config.progress_interval)
+            .analysis_options(options.clone())
+            .csv_config(csv_config);
+        match self.config.memory_limit_mb {
+            Some(mb) => profiler.memory_limit_mb(mb),
+            None => profiler,
         }
-        if let Some(d) = &self.config.quality_dimensions {
-            profiler = profiler.quality_dimensions(d.clone());
-        }
-        if let Some(p) = self.effective_metric_packs() {
-            profiler = profiler.metric_packs(p);
-        }
-        if let Some(l) = self.config.locale {
-            profiler = profiler.locale(l);
-        }
-        if let Some(date) = self.config.reference_date {
-            profiler = profiler.reference_date(date);
-        }
-        if let Some(columns) = &self.config.columns {
-            profiler = profiler.columns(columns.clone());
-        }
-        profiler = profiler.semantic_hints(options.semantic_hints().clone());
-        let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
-        profiler = profiler.csv_config(csv_config);
-
-        profiler
-            .analyze_file(file_path)
-            .map(|report| with_csv_metadata(report, csv_metadata))
     }
 
-    /// Dispatch to ArrowProfiler for CSV, or fall back to native parsers for other formats
-    fn run_columnar(
+    /// The Arrow CSV engine, configured for this request.
+    #[cfg(feature = "arrow")]
+    fn arrow_engine(
         &self,
-        file_path: &Path,
-        format: FileFormat,
-    ) -> Result<ProfileReport, DataProfilerError> {
-        let options = self.analysis_options();
-        // Every columnar path enforces a row cap, but none can evaluate a richer
-        // stop condition per chunk, and none samples row by row.
-        self.ensure_row_limit_only("the columnar engine")?;
-        self.ensure_no_sampling("the columnar engine")?;
-        match format {
-            FileFormat::Parquet => {
-                #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_options(
-                    file_path,
-                    &self.parquet_config_for_stop(),
-                    &options,
-                );
-                #[cfg(not(feature = "parquet"))]
-                return Err(DataProfilerError::UnsupportedFormat {
-                    format: "parquet (enable the `parquet` feature)".to_string(),
-                });
-            }
-            FileFormat::Json | FileFormat::Jsonl => {
-                return dataprof_json::analyze_json_file_with_options(
-                    file_path,
-                    &self.json_config_for(format),
-                    &options,
-                );
-            }
-            _ => {}
-        }
-
-        // CSV — use ArrowProfiler
-        #[cfg(feature = "arrow")]
-        {
-            use dataprof_engines::columnar::ArrowProfiler;
-            let mut profiler = ArrowProfiler::new();
-            if let Some(mb) = self.config.memory_limit_mb {
-                profiler = profiler.memory_limit_mb(mb);
-            }
-            if let Some(d) = &self.config.quality_dimensions {
-                profiler = profiler.quality_dimensions(d.clone());
-            }
-            if let Some(p) = self.effective_metric_packs() {
-                profiler = profiler.metric_packs(p);
-            }
-            if let Some(l) = self.config.locale {
-                profiler = profiler.locale(l);
-            }
-            if let Some(date) = self.config.reference_date {
-                profiler = profiler.reference_date(date);
-            }
-            if let Some(columns) = &self.config.columns {
-                profiler = profiler.columns(columns.clone());
-            }
-            profiler = profiler.semantic_hints(options.semantic_hints().clone());
-            // ArrowProfiler reads the row cap off the CSV config; the incremental
-            // engine evaluates the stop condition itself, so only set it here.
-            let (csv_config, csv_metadata) = self.csv_config_for_file(file_path)?;
-            profiler = profiler.csv_config(csv_config.max_rows(self.stop_max_rows()));
-            profiler
-                .analyze_csv_file(file_path)
-                .map(|report| with_csv_metadata(report, csv_metadata))
-        }
-        #[cfg(not(feature = "arrow"))]
-        {
-            let _ = file_path;
-            Err(DataProfilerError::UnsupportedFormat {
-                format: "columnar engine (enable the `arrow` or `parquet` feature)".to_string(),
-            })
+        options: &AnalysisOptions,
+        csv_config: dataprof_csv::CsvParserConfig,
+    ) -> dataprof_engines::columnar::ArrowProfiler {
+        // ArrowProfiler reads the row cap off the CSV config; the incremental
+        // engine evaluates the stop condition itself, so only set it here.
+        let profiler = dataprof_engines::columnar::ArrowProfiler::new()
+            .analysis_options(options.clone())
+            .csv_config(csv_config.max_rows(self.stop_max_rows()));
+        match self.config.memory_limit_mb {
+            Some(mb) => profiler.memory_limit_mb(mb),
+            None => profiler,
         }
     }
+}
+
+/// The CSV engine a request runs on, decided by [`Profiler::csv_route`].
+enum CsvRoute {
+    Incremental,
+    #[cfg(feature = "arrow")]
+    Columnar,
+    /// The adaptive selector, over the incremental engine and (with the
+    /// `arrow` feature) the Arrow one.
+    Adaptive,
 }
 
 /// Record how a CSV source was split into fields on the report an engine
@@ -1163,10 +1090,11 @@ impl Profiler {
         if let Some(delimiter) = self.config.csv_delimiter {
             profiler = profiler.csv_delimiter(delimiter);
         }
-        profiler = profiler.analysis_options(self.analysis_options());
+        let options = self.analysis_options();
+        profiler = profiler.analysis_options(options.clone());
 
         let report = profiler.analyze_stream(source).await?;
-        self.validate_semantic_hints(&report)?;
+        self.validate_semantic_hints(&options, &report)?;
         Ok(report)
     }
 
@@ -1182,17 +1110,17 @@ impl Profiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         #[cfg(feature = "parquet")]
         {
-            self.ensure_row_limit_only("the async Parquet reader")?;
-            self.ensure_no_sampling("the async Parquet reader")?;
+            self.ensure_batch_reader("the async Parquet reader")?;
             let name = label.to_string();
             let options = self.analysis_options();
+            let task_options = options.clone();
             let parquet_config = self.parquet_config_for_stop();
             let report = tokio::task::spawn_blocking(move || {
                 dataprof_parquet::analyze_parquet_bytes_with_options(
                     data,
                     &name,
                     &parquet_config,
-                    &options,
+                    &task_options,
                 )
             })
             .await
@@ -1201,7 +1129,7 @@ impl Profiler {
             .map_err(|e| {
                 DataProfilerError::streaming_error(&format!("Blocking task failed: {e}"))
             })??;
-            self.validate_semantic_hints(&report)?;
+            self.validate_semantic_hints(&options, &report)?;
             Ok(report)
         }
         #[cfg(not(feature = "parquet"))]
@@ -1236,11 +1164,7 @@ impl Profiler {
         use dataprof_engines::streaming::async_source::AsyncSourceInfo;
 
         let path = file_path.as_ref();
-        let format = self
-            .config
-            .format_override
-            .clone()
-            .unwrap_or_else(|| Self::detect_format(path));
+        let format = self.resolve_format(path);
         if !matches!(format, FileFormat::Parquet) {
             dataprof_core::binary_input::reject_binary_input(path)?;
         }
@@ -1249,17 +1173,17 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
                 {
-                    self.ensure_row_limit_only("the async Parquet parser")?;
-                    self.ensure_no_sampling("the async Parquet parser")?;
+                    self.ensure_batch_reader("the async Parquet parser")?;
                     // Parquet requires seeking — delegate to sync parser on a blocking thread.
                     let path = path.to_path_buf();
                     let options = self.analysis_options();
+                    let task_options = options.clone();
                     let parquet_config = self.parquet_config_for_stop();
                     let report = tokio::task::spawn_blocking(move || {
                         dataprof_parquet::analyze_parquet_with_options(
                             &path,
                             &parquet_config,
-                            &options,
+                            &task_options,
                         )
                     })
                     .await
@@ -1270,7 +1194,7 @@ impl Profiler {
                         // the same answer the other JoinError sites give.
                         DataProfilerError::streaming_error(&format!("Blocking task failed: {e}"))
                     })??;
-                    self.validate_semantic_hints(&report)?;
+                    self.validate_semantic_hints(&options, &report)?;
                     Ok(report)
                 }
                 #[cfg(not(feature = "parquet"))]
@@ -1372,26 +1296,24 @@ impl Profiler {
         // Detect format from URL path, respecting format_override.
         // Extract the last path segment to avoid OS-specific Path parsing issues
         // (e.g., Windows treating "https:" as a drive prefix).
-        let format = self.config.format_override.clone().unwrap_or_else(|| {
-            let without_query = url.split('?').next().unwrap_or(url);
-            let without_fragment = without_query.split('#').next().unwrap_or(without_query);
-            let last_segment = without_fragment.rsplit('/').next().unwrap_or("");
-            Self::detect_format(Path::new(last_segment))
-        });
+        let without_query = url.split('?').next().unwrap_or(url);
+        let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+        let last_segment = without_fragment.rsplit('/').next().unwrap_or("");
+        let format = self.resolve_format(Path::new(last_segment));
 
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet-async")]
                 {
-                    self.ensure_row_limit_only("the remote Parquet reader")?;
-                    self.ensure_no_sampling("the remote Parquet reader")?;
+                    self.ensure_batch_reader("the remote Parquet reader")?;
+                    let options = self.analysis_options();
                     let report = dataprof_parquet::analyze_parquet_async_http_with_options(
                         url,
                         &self.parquet_config_for_stop(),
-                        &self.analysis_options(),
+                        &options,
                     )
                     .await?;
-                    self.validate_semantic_hints(&report)?;
+                    self.validate_semantic_hints(&options, &report)?;
                     Ok(report)
                 }
 
