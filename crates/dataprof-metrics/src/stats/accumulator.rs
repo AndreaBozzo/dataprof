@@ -332,31 +332,29 @@ impl NumericAccumulator {
 
     /// Fold in a decimal, `nearest` being its nearest `f64`.
     ///
-    /// Only an anchor, or a deviation that cannot be exact, needs the
-    /// remainder beyond `nearest`. The running sum goes without it otherwise:
-    /// the mean is reported as an `f64`, which cannot hold it either.
+    /// Every decimal adds its remainder beyond `nearest` to the compensated
+    /// sum, as a wide integer does, so the mean follows the exact values and
+    /// does not depend on which value came first (#1262). The deviation needs
+    /// the remainder only for an anchor, or for one that cannot be exact.
     fn update_decimal(&mut self, exact: ExactDecimal, nearest: f64) {
+        let low = exact.low_part(nearest);
         let anchor = match self.anchor {
             Some(anchor) => anchor,
             None if self.count == 0 => {
                 self.anchor = Some(exact);
-                self.push(nearest, exact.low_part(nearest));
+                self.push(nearest, low);
                 return;
             }
             None => {
-                self.reanchor(exact, nearest, exact.low_part(nearest));
+                self.reanchor(exact, nearest, low);
                 exact
             }
         };
         self.count += 1;
-        let (shifted, low) = match exact.minus(anchor) {
-            Some(shifted) => (shifted, 0.0),
-            None => {
-                self.note_unheld(nearest);
-                let low = exact.low_part(nearest);
-                ((nearest - self.shift) - (self.shift_low - low), low)
-            }
-        };
+        let shifted = exact.minus(anchor).unwrap_or_else(|| {
+            self.note_unheld(nearest);
+            (nearest - self.shift) - (self.shift_low - low)
+        });
         self.fold(shifted, nearest, low);
     }
 
@@ -1636,6 +1634,61 @@ mod tests {
                 accumulator.mean()
             );
         }
+    }
+
+    /// Every decimal's remainder beyond its nearest `f64` enters the sum, not
+    /// the first value's alone: `[x, -x]` has a mean of 0, and the mean does
+    /// not depend on which value comes first (#1262).
+    #[test]
+    fn decimal_mean_carries_every_remainder() {
+        let x = "12345678901234567890.5";
+        let neg_x = "-12345678901234567890.5";
+        let wide = "99999999999999999999";
+        let neg_wide = "-99999999999999999999";
+        let mut balanced: Vec<Vec<&str>> = vec![
+            vec![x, neg_x],
+            vec![neg_x, x],
+            // One value is a 64-bit integer, the other is past that range.
+            vec!["18446744073709551615", "-18446744073709551615"],
+            vec!["-18446744073709551615", "18446744073709551615"],
+        ];
+        balanced.push([neg_wide; 20].into_iter().chain([wide; 20]).collect());
+        balanced.push([neg_wide, wide].repeat(20));
+        let mut wrong = Vec::new();
+        for cells in &balanced {
+            let mean = accumulate_text(cells).mean();
+            if mean != 0.0 {
+                wrong.push(format!(
+                    "{:?}.. ({} values): {mean}",
+                    &cells[..2],
+                    cells.len()
+                ));
+            }
+        }
+
+        // Order invariance with a mean that is not 0.
+        let (a, b, c) = ("12345678901234567.89", "0.25", "-12345678901234567.89");
+        for cells in [
+            [a, b, c],
+            [a, c, b],
+            [b, a, c],
+            [b, c, a],
+            [c, a, b],
+            [c, b, a],
+        ] {
+            let mean = accumulate_text(&cells).mean();
+            if (mean - 0.25 / 3.0).abs() > 1e-15 {
+                wrong.push(format!("{cells:?}: {mean}"));
+            }
+        }
+
+        // Partial accumulators merged, as chunked and parallel scans do.
+        let mut merged = accumulate_text(&[x, neg_x]);
+        merged.merge(&accumulate_text(&[x, neg_x]));
+        if merged.mean() != 0.0 {
+            wrong.push(format!("merged halves: {}", merged.mean()));
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]
