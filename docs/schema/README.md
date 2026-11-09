@@ -166,8 +166,9 @@ existed (#1038).
 Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
 deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
-`outlier_count` are exact as above, and the other statistics are taken in
-`f64`. A column typed as a decimal (an Arrow decimal of any
+`outlier_count` are exact as above, `mean` sums each value's remainder beyond
+its nearest `f64` in the compensated sum, as it does for integers (#1262), and
+the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
 polars) is held exactly from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
