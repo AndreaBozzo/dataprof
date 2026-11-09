@@ -14,7 +14,6 @@
 //! twin.
 
 use std::io::Write;
-use std::path::Path;
 
 use dataprof::{
     ColumnStats, EngineType, Locale, MetricPack, NaiveDate, ProfileReport, Profiler,
@@ -125,14 +124,18 @@ fn parquet_bytes() -> Vec<u8> {
 
 /// Each fixture as a labelled file with the extension its format detects by.
 fn fixtures() -> Vec<(&'static str, NamedTempFile)> {
-    let mut sources: Vec<(&'static str, &'static str, Vec<u8>)> = vec![
+    let sources: Vec<(&'static str, &'static str, Vec<u8>)> = vec![
         ("csv", ".csv", csv_text(false).into_bytes()),
         ("csv-wide", ".csv", csv_text(true).into_bytes()),
         ("json", ".json", json_text().into_bytes()),
         ("jsonl", ".jsonl", jsonl_text().into_bytes()),
     ];
     #[cfg(feature = "parquet")]
-    sources.push(("parquet", ".parquet", parquet_bytes()));
+    let sources = {
+        let mut sources = sources;
+        sources.push(("parquet", ".parquet", parquet_bytes()));
+        sources
+    };
     sources
         .into_iter()
         .map(|(label, suffix, bytes)| {
@@ -254,11 +257,22 @@ fn every_sync_file_route_honours_every_analysis_option() {
             ("columnar", EngineType::Columnar),
         ] {
             let route = format!("analyze_file[{engine_label}] {label}");
-            check(
-                &mut wrong,
-                &route,
-                configured().engine(engine).analyze_file(file.path()),
-            );
+            let result = configured().engine(engine).analyze_file(file.path());
+            // Without `arrow` there is no columnar CSV engine: the request is
+            // refused by name rather than run on another engine.
+            if !cfg!(feature = "arrow")
+                && engine == EngineType::Columnar
+                && label.starts_with("csv")
+            {
+                if !matches!(
+                    result,
+                    Err(dataprof::DataProfilerError::UnsupportedFormat { .. })
+                ) {
+                    wrong.push(format!("{route}: expected UnsupportedFormat without arrow"));
+                }
+                continue;
+            }
+            check(&mut wrong, &route, result);
         }
         // A row cap sends an Auto CSV request to the incremental engine
         // directly, not through the selector.
@@ -289,7 +303,7 @@ fn the_wide_csv_reaches_the_arrow_engine_through_the_selector() {
         .find(|(label, _)| *label == "csv")
         .unwrap()
         .1;
-    let engine = |path: &Path| {
+    let engine = |path: &std::path::Path| {
         configured()
             .analyze_file(path)
             .unwrap()
