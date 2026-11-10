@@ -9,7 +9,7 @@ use dataprof_core::{
     AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, NativeType, QualityDimension,
     QueryEngine,
 };
-use dataprof_metrics::analyze_column_with_analysis_options;
+use dataprof_metrics::analyze_declared_column;
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, RowCompletenessTracker, RowSignature, RowUniquenessTracker,
     mark_container_columns,
@@ -278,11 +278,11 @@ pub async fn analyze_database_with_options(
             .iter()
             .zip(columns.type_names())
             .map(|((name, data), type_name)| {
-                let mut profile = analyze_column_with_analysis_options(name, data, options);
-                profile.native_type = type_system
+                // A declared decimal is read as one, as an Arrow decimal is (#1268).
+                let native_type = type_system
                     .zip(type_name)
                     .map(|(system, type_name)| NativeType::new(system, type_name));
-                profile
+                analyze_declared_column(name, data, options, native_type)
             })
             .collect(),
         &columns.container_counts(),

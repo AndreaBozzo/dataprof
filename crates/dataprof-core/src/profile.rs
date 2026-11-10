@@ -159,6 +159,33 @@ impl NativeType {
             name: name.into(),
         }
     }
+
+    /// Whether this declares a decimal, a type whose values no float wrote,
+    /// so they are read as decimals and kept exact (#1268): an Arrow
+    /// `decimal32` to `decimal256`, a pandas column of one
+    /// (`decimal128(12, 2)[pyarrow]`), PostgreSQL `NUMERIC` and MySQL
+    /// `DECIMAL`.
+    ///
+    /// A pandas `object` column declares no type, though pyarrow may read its
+    /// `Decimal` values into a decimal; nor does an Arrow extension type over
+    /// decimal storage, which is named as the extension.
+    pub fn declares_decimal(&self) -> bool {
+        let arrow_decimal = |name: &str| {
+            ["decimal32(", "decimal64(", "decimal128(", "decimal256("]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+        };
+        match self.system.as_str() {
+            Self::ARROW => arrow_decimal(&self.name),
+            Self::PANDAS => self
+                .name
+                .strip_suffix("[pyarrow]")
+                .is_some_and(arrow_decimal),
+            Self::POSTGRESQL => self.name == "NUMERIC",
+            Self::MYSQL => self.name == "DECIMAL",
+            _ => false,
+        }
+    }
 }
 
 /// Quartile statistics for numeric distributions.
@@ -458,6 +485,40 @@ pub enum ColumnStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every declaration that names a decimal, and the neighbours that do
+    /// not: a float, an array of decimals, an extension over one, a pandas
+    /// `object` column, and a system this build does not know (#1268).
+    #[test]
+    fn declares_decimal_names_each_systems_decimal() {
+        let cases = [
+            (NativeType::ARROW, "decimal32(9, 2)", true),
+            (NativeType::ARROW, "decimal64(18, 2)", true),
+            (NativeType::ARROW, "decimal128(12, 2)", true),
+            (NativeType::ARROW, "decimal256(40, -2)", true),
+            (NativeType::PANDAS, "decimal128(12, 2)[pyarrow]", true),
+            (NativeType::POSTGRESQL, "NUMERIC", true),
+            (NativeType::MYSQL, "DECIMAL", true),
+            (NativeType::ARROW, "double", false),
+            (NativeType::ARROW, "list<item: decimal128(12, 2)>", false),
+            (NativeType::ARROW, "extension<example.money>", false),
+            (NativeType::PANDAS, "object", false),
+            (NativeType::PANDAS, "decimal128(12, 2)", false),
+            (NativeType::PANDAS, "Float64", false),
+            (NativeType::POSTGRESQL, "NUMERIC[]", false),
+            (NativeType::POSTGRESQL, "FLOAT8", false),
+            (NativeType::MYSQL, "DOUBLE", false),
+            ("duckdb", "DECIMAL", false),
+        ];
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter(|(system, name, want)| {
+                NativeType::new(*system, *name).declares_decimal() != *want
+            })
+            .map(|(system, name, want)| format!("{system} {name}: expected {want}"))
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
 
     /// `std_dev`, `variance` and `quartiles.iqr` are nullable but required: a
     /// `null` is a spread that overflowed `f64`, a missing key a malformed
