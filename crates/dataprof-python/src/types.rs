@@ -84,6 +84,12 @@ pub struct PyColumnProfile {
     /// the count did not run (or the report predates it); `Some(0)` = none.
     #[pyo3(get)]
     pub locale_number_count: Option<usize>,
+    /// The type the source declared for the column, as `{"system": ...,
+    /// "name": ...}`: `{"system": "arrow", "name": "decimal128(12, 2)"}`.
+    /// Provenance, not a measurement. `None` = the source declares no type
+    /// (CSV, JSON, JSONL, Python objects, SQLite), or the report predates it.
+    #[pyo3(get)]
+    pub native_type: Option<std::collections::BTreeMap<String, String>>,
     /// Percentage of null values, or `None` for a zero-row column where the
     /// ratio (`null_count / total_count`) is undefined — absent means "not
     /// measured", never "0% nulls".
@@ -276,6 +282,12 @@ impl From<&ColumnProfile> for PyColumnProfile {
             invalid_count: profile.invalid_count,
             type_homogeneity,
             locale_number_count: profile.locale_number_count,
+            native_type: profile.native_type.as_ref().map(|native_type| {
+                std::collections::BTreeMap::from([
+                    ("system".to_string(), native_type.system.clone()),
+                    ("name".to_string(), native_type.name.clone()),
+                ])
+            }),
             null_percentage,
             uniqueness_ratio,
             min,

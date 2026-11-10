@@ -285,6 +285,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         type_homogeneity: Some(classify_lexical_forms(input.sample_values)),
         // Over the same retained sample, so it stays a subset of `text` above.
         locale_number_count: Some(count_locale_numbers(input.sample_values)),
+        native_type: None,
         stats,
         patterns,
     }
@@ -308,6 +309,7 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,
+        native_type: None,
         stats: ColumnStats::None,
         patterns: None,
     }
@@ -338,7 +340,12 @@ pub fn mark_container_columns(
             let containers = container_counts.get(&profile.name).copied().unwrap_or(0);
             let non_null = profile.total_count - profile.null_count;
             if containers > 0 && containers == non_null {
-                nested_column_profile(profile.name, profile.total_count, profile.null_count)
+                // The declaration is provenance, not a measurement over the
+                // values, so it outlives the statistics this drops (#906).
+                let mut nested =
+                    nested_column_profile(profile.name, profile.total_count, profile.null_count);
+                nested.native_type = profile.native_type;
+                nested
             } else {
                 profile
             }

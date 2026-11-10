@@ -153,6 +153,14 @@ def _is_homogeneity_counts(value: Any) -> bool:
     return all(name in value and _is_count(value[name]) for name in _LEXICAL_CLASS_ORDER)
 
 
+def _is_native_type(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("system"), str)
+        and isinstance(value.get("name"), str)
+    )
+
+
 def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     values = dict(document)
     # `null` is the schema's "not analyzed", the same answer as a missing key.
@@ -179,6 +187,19 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     )
     values["type_homogeneity"] = (
         _homogeneity_counts(homogeneity) if homogeneity is not None else None
+    )
+    native_type = _read_field(
+        document,
+        "native_type",
+        f"{path}.native_type",
+        "a mapping with string 'system' and 'name', or null",
+        lambda value: value is None or _is_native_type(value),
+        None,
+    )
+    values["native_type"] = (
+        {"system": native_type["system"], "name": native_type["name"]}
+        if native_type is not None
+        else None
     )
     patterns = _read_field(
         document,

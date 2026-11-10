@@ -20,6 +20,7 @@ import json
 from typing import Any
 
 import pytest
+from _provenance import without_native_type
 
 try:
     import dataprof
@@ -192,7 +193,10 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
             del column["stats"][key]
     # No approximation or post-export re-rounding here: consumers see these
     # exact numbers, including every optional statistic and absence marker.
-    assert report.to_dict()["columns"] == expected_columns, engine
+    # Each route declares its own column types, or none (#906): provenance.
+    assert without_native_type(report.to_dict()["columns"]) == without_native_type(
+        expected_columns
+    ), engine
     # Compare the canonical documents directly too, without re-rounding via
     # the convenience projection. Source/execution provenance is separate.
     canonical_columns = json.loads(reference.to_json())["column_profiles"]
@@ -202,7 +206,9 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
                 column[field] = value.capitalize() if field == "data_type" else value
         for key in ABSENT_STATS.get((engine, column["name"]), ()):
             del column["stats"]["Numeric"][key]
-    assert json.loads(report.to_json())["column_profiles"] == canonical_columns, engine
+    assert without_native_type(
+        json.loads(report.to_json())["column_profiles"]
+    ) == without_native_type(canonical_columns), engine
     # Quality scores are rounded metrics, not execution provenance, so they are
     # on the contract surface too. Left out, an engine could agree on every
     # column and still report a different overall score.

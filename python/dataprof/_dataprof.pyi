@@ -177,6 +177,11 @@ class ColumnProfile:
     #: means the count did not run, including a report written before dataprof
     #: recorded it; ``0`` means none were found.
     locale_number_count: int | None
+    #: The type the source declared, as ``{"system": ..., "name": ...}``:
+    #: ``{"system": "arrow", "name": "decimal128(12, 2)"}``. Provenance, not a
+    #: measurement. ``None`` means the source declares no type (CSV, JSON,
+    #: JSONL, Python objects, SQLite), or the report predates the field.
+    native_type: dict[str, str] | None
     null_percentage: float | None
     uniqueness_ratio: float | None
     min: float | None

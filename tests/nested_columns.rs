@@ -123,8 +123,12 @@ fn column<'a>(report: &'a ProfileReport, name: &str) -> &'a ColumnProfile {
         .unwrap_or_else(|| panic!("no column {name}"))
 }
 
-/// Everything a profile says about a column, not a hand-picked subset.
+/// Everything a profile says about a column, not a hand-picked subset, but its
+/// declared type, which is provenance: Parquet declares one and JSON does not
+/// (#906).
 fn observable(profile: &ColumnProfile) -> String {
+    let mut profile = profile.clone();
+    profile.native_type = None;
     format!("{profile:?}")
 }
 

@@ -256,3 +256,28 @@ async fn an_unchanged_object_takes_the_same_requests() {
         );
     }
 }
+
+/// The remote reader records each column's declared type, as the local Parquet
+/// reader does (#906, `tests/column_native_type.rs`).
+#[tokio::test]
+async fn a_remote_profile_records_each_columns_declared_type() {
+    let a = Arc::new(version(0));
+    let server = spawn(a.clone(), a, usize::MAX, Validators::EtagOnly);
+    let report = profile(&server).await.expect("unchanged object");
+    let declared: Vec<_> = report
+        .column_profiles
+        .iter()
+        .map(|column| {
+            let native_type = column.native_type.as_ref().expect("a declared type");
+            (
+                column.name.as_str(),
+                native_type.system.as_str(),
+                native_type.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        declared,
+        [("a", "arrow", "int64"), ("b", "arrow", "double")]
+    );
+}

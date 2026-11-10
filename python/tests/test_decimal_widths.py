@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _provenance import without_native_type
 
 try:
     import dataprof as dp
@@ -91,7 +92,7 @@ def _parquet_bytes(table: Any) -> bytes:
 
 
 def _columns(report: dp.ProfileReport) -> dict[str, dict[str, Any]]:
-    return {column["name"]: column for column in report.to_dict()["columns"]}
+    return without_native_type({column["name"]: column for column in report.to_dict()["columns"]})
 
 
 def _wrong_against_decimal128(

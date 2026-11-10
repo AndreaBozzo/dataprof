@@ -54,8 +54,11 @@ fn profile(array: ArrayRef) -> ColumnProfile {
 /// `unique_count_is_approximate` as well as the fields a test would think to
 /// name. A listed subset would let an encoding diverge in the unlisted ones and
 /// still pass. The column is named `c` in every file here, so the name is
-/// common rather than noise.
+/// common rather than noise. The one field left out is the declared type,
+/// which is provenance and names the encoding by definition (#906).
 fn observable(profile: &ColumnProfile) -> String {
+    let mut profile = profile.clone();
+    profile.native_type = None;
     format!("{profile:?}")
 }
 

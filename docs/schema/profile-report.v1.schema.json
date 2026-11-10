@@ -139,6 +139,17 @@
         "name": {
           "type": "string"
         },
+        "native_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type the source declared for the column, recorded as provenance\n(#906). `None` when the source declares none, which is every text\ninput (CSV, JSON, JSONL), Python objects and SQLite, and on a report\nwritten before dataprof recorded it. See [`NativeType`] for the\nsources that declare one.\n\n`data_type` is what dataprof profiled the column as, and several\ndeclared types share one: an Arrow `decimal128(12, 2)` profiles as\n`Float` and a `timestamp[us, tz=UTC]` as `Date`. This keeps the\ndeclaration itself, so a reader can tell that a column kept its type.\n\nProvenance, not a metric: two input paths over the same logical data\ndeclare different types, or none, so it stays outside the\nserialized-value parity comparison."
+        },
         "null_count": {
           "format": "uint",
           "minimum": 0,
@@ -1227,6 +1238,22 @@
       },
       "type": "object"
     },
+    "NativeType": {
+      "description": "A column type as the source declared it (#906).\n\n`system` names the type system the declaration belongs to, and `name`\nspells the type the way that system does:\n\n- `arrow`: Arrow tables, record batches and streams, polars frames, ADBC\n  results and Parquet files. The name is the one pyarrow prints for the\n  type, such as `decimal128(12, 2)`, `timestamp[us, tz=UTC]` or\n  `dictionary<values=string, indices=int32, ordered=0>`. An extension type\n  is named as the extension (`extension<arrow.uuid>`), not its storage\n  type, and without the parameters pyarrow adds to a parameterized one.\n  A Parquet column\n  carries the Arrow type its reader produced from the file's schema, which\n  keeps the Arrow schema the writer stored with the file.\n- `pandas`: pandas DataFrames. The name is the column's dtype as pandas\n  prints it (`int64`, `object`, `datetime64[ns, UTC]`, `Int64`). An\n  `object` column declares no type for its values; pyarrow infers one from\n  them, which is why the pandas dtype is recorded rather than the Arrow\n  type the profiler read.\n- `postgresql` and `mysql`: the database connectors. The name is the\n  server's type name as the driver reports it (`NUMERIC`, `INT4`,\n  `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED`).\n\nBoth are strings so that a report from a later release, which may record\na system this build does not know, still loads. Build one with\n[`NativeType::new`]: the struct is `non_exhaustive`, as the rest of the\nreport model is to become before 1.0 (#1162).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "system",
+        "name"
+      ],
+      "type": "object"
+    },
     "NullTokenSet": {
       "description": "The null vocabulary a report was measured with, as recorded in its metric\nsemantics.\n\nOnly the current vocabulary has a value. Releases that knew only empty,\n`null` and `nan` recorded none, and a report from one reads back with the\nvocabulary unknown rather than as one it never declared.",
       "oneOf": [
@@ -1670,6 +1697,16 @@
         },
         "name": {
           "type": "string"
+        },
+        "native_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeType"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "null_count": {
           "format": "uint",

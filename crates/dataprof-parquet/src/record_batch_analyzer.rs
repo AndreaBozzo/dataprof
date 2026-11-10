@@ -5,7 +5,8 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
+    ColumnProfile, DataType, Locale, NativeType, SemanticHintBinding, SemanticHintKind,
+    SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
@@ -111,6 +112,201 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
         | ArrowDataType::FixedSizeList(_, _)
         | ArrowDataType::Map(_, _) => Some(DataType::Nested),
         _ => None,
+    }
+}
+
+/// The name pyarrow prints for the type of `field`, which is how a report
+/// records an Arrow column's declared type (#906).
+///
+/// It follows Arrow C++'s `DataType::ToString`, the spelling pyarrow users see
+/// (`decimal128(12, 2)`, `timestamp[us, tz=UTC]`, `list<item: int64>`), rather
+/// than arrow-rs's `Display`, which is not the same and has changed between
+/// arrow-rs releases. A report field must not move with a dependency bump.
+///
+/// It takes the field, not the type, because two parts of the name live on
+/// the field in arrow-rs: a dictionary's ordering, and an extension type,
+/// which a field declares in its metadata over a storage type. A column of
+/// `pa.uuid()` is `extension<arrow.uuid>`, not the `fixed_size_binary[16]`
+/// that stores it. pyarrow appends the parameters of a parameterized
+/// extension (`arrow.fixed_shape_tensor[value_type=int32, shape=[2,2]]`),
+/// which it parses from the extension's own metadata; this spells the
+/// extension's name only.
+pub fn arrow_type_name(field: &arrow::datatypes::Field) -> String {
+    let mut name = String::new();
+    write_field_type(&mut name, field);
+    name
+}
+
+/// The metadata key under which a field names its extension type, from the
+/// Arrow columnar format's extension type specification.
+const EXTENSION_NAME_KEY: &str = "ARROW:extension:name";
+
+/// The type of `field`: the extension it declares, or else its Arrow type.
+fn write_field_type(out: &mut String, field: &arrow::datatypes::Field) {
+    match field.metadata().get(EXTENSION_NAME_KEY) {
+        Some(extension) => {
+            let _ = write!(out, "extension<{extension}>");
+        }
+        None => write_arrow_type_name(
+            out,
+            field.data_type(),
+            field.dict_is_ordered().unwrap_or(false),
+        ),
+    }
+}
+
+fn write_arrow_type_name(out: &mut String, data_type: &arrow::datatypes::DataType, ordered: bool) {
+    use arrow::datatypes::{DataType as T, IntervalUnit, TimeUnit, UnionMode};
+
+    let unit = |unit: &TimeUnit| match unit {
+        TimeUnit::Second => "s",
+        TimeUnit::Millisecond => "ms",
+        TimeUnit::Microsecond => "us",
+        TimeUnit::Nanosecond => "ns",
+    };
+    // A child is spelled `name: type`, with ` not null` when it cannot hold one.
+    let child = |out: &mut String, field: &arrow::datatypes::Field| {
+        let _ = write!(out, "{}: ", field.name());
+        write_field_type(out, field);
+        if !field.is_nullable() {
+            out.push_str(" not null");
+        }
+    };
+    match data_type {
+        T::Null => out.push_str("null"),
+        T::Boolean => out.push_str("bool"),
+        T::Int8 => out.push_str("int8"),
+        T::Int16 => out.push_str("int16"),
+        T::Int32 => out.push_str("int32"),
+        T::Int64 => out.push_str("int64"),
+        T::UInt8 => out.push_str("uint8"),
+        T::UInt16 => out.push_str("uint16"),
+        T::UInt32 => out.push_str("uint32"),
+        T::UInt64 => out.push_str("uint64"),
+        T::Float16 => out.push_str("halffloat"),
+        T::Float32 => out.push_str("float"),
+        T::Float64 => out.push_str("double"),
+        T::Timestamp(u, None) => {
+            let _ = write!(out, "timestamp[{}]", unit(u));
+        }
+        T::Timestamp(u, Some(tz)) => {
+            let _ = write!(out, "timestamp[{}, tz={tz}]", unit(u));
+        }
+        T::Date32 => out.push_str("date32[day]"),
+        T::Date64 => out.push_str("date64[ms]"),
+        T::Time32(u) => {
+            let _ = write!(out, "time32[{}]", unit(u));
+        }
+        T::Time64(u) => {
+            let _ = write!(out, "time64[{}]", unit(u));
+        }
+        T::Duration(u) => {
+            let _ = write!(out, "duration[{}]", unit(u));
+        }
+        T::Interval(IntervalUnit::YearMonth) => out.push_str("month_interval"),
+        T::Interval(IntervalUnit::DayTime) => out.push_str("day_time_interval"),
+        T::Interval(IntervalUnit::MonthDayNano) => out.push_str("month_day_nano_interval"),
+        T::Binary => out.push_str("binary"),
+        T::FixedSizeBinary(width) => {
+            let _ = write!(out, "fixed_size_binary[{width}]");
+        }
+        T::LargeBinary => out.push_str("large_binary"),
+        T::BinaryView => out.push_str("binary_view"),
+        T::Utf8 => out.push_str("string"),
+        T::LargeUtf8 => out.push_str("large_string"),
+        T::Utf8View => out.push_str("string_view"),
+        T::List(item) | T::ListView(item) | T::LargeList(item) | T::LargeListView(item) => {
+            out.push_str(match data_type {
+                T::List(_) => "list<",
+                T::ListView(_) => "list_view<",
+                T::LargeList(_) => "large_list<",
+                _ => "large_list_view<",
+            });
+            child(out, item);
+            out.push('>');
+        }
+        T::FixedSizeList(item, size) => {
+            out.push_str("fixed_size_list<");
+            child(out, item);
+            let _ = write!(out, ">[{size}]");
+        }
+        T::Struct(fields) => {
+            out.push_str("struct<");
+            for (index, field) in fields.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                child(out, field);
+            }
+            out.push('>');
+        }
+        T::Union(fields, mode) => {
+            out.push_str(match mode {
+                UnionMode::Sparse => "sparse_union<",
+                UnionMode::Dense => "dense_union<",
+            });
+            for (index, (type_id, field)) in fields.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                child(out, field);
+                let _ = write!(out, "={type_id}");
+            }
+            out.push('>');
+        }
+        T::Dictionary(indices, values) => {
+            out.push_str("dictionary<values=");
+            write_arrow_type_name(out, values, false);
+            out.push_str(", indices=");
+            write_arrow_type_name(out, indices, false);
+            let _ = write!(out, ", ordered={}>", u8::from(ordered));
+        }
+        T::Decimal32(precision, scale) => {
+            let _ = write!(out, "decimal32({precision}, {scale})");
+        }
+        T::Decimal64(precision, scale) => {
+            let _ = write!(out, "decimal64({precision}, {scale})");
+        }
+        T::Decimal128(precision, scale) => {
+            let _ = write!(out, "decimal128({precision}, {scale})");
+        }
+        T::Decimal256(precision, scale) => {
+            let _ = write!(out, "decimal256({precision}, {scale})");
+        }
+        T::Map(entries, keys_sorted) => {
+            // The key and the item are spelled as types, each followed by its
+            // field name in parentheses when it is not the standard one.
+            out.push_str("map<");
+            match entries.data_type() {
+                T::Struct(pair) if pair.len() == 2 => {
+                    for (index, (field, standard)) in pair.iter().zip(["key", "value"]).enumerate()
+                    {
+                        if index > 0 {
+                            out.push_str(", ");
+                        }
+                        write_field_type(out, field);
+                        if field.name() != standard {
+                            let _ = write!(out, " ('{}')", field.name());
+                        }
+                    }
+                }
+                // arrow-rs refuses a map whose entries are not a two-field
+                // struct, so this spells whatever the entries are rather than
+                // invent a key and an item.
+                other => write_arrow_type_name(out, other, false),
+            }
+            if *keys_sorted {
+                out.push_str(", keys_sorted");
+            }
+            out.push('>');
+        }
+        T::RunEndEncoded(run_ends, values) => {
+            out.push_str("run_end_encoded<run_ends: ");
+            write_arrow_type_name(out, run_ends.data_type(), false);
+            out.push_str(", values: ");
+            write_field_type(out, values);
+            out.push('>');
+        }
     }
 }
 
@@ -544,11 +740,18 @@ impl RecordBatchAnalyzer {
                 || pair_columns.contains(&column_name.as_str());
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
-                entry.insert(ColumnAnalyzer::with_value_hints(
+                let mut analyzer = ColumnAnalyzer::with_value_hints(
                     field.data_type(),
                     positive_hint,
                     temporal_hint,
-                ));
+                );
+                // Every caller of this analyzer holds a declared Arrow schema:
+                // a Parquet file's, or the one an Arrow producer exported. The
+                // declaration is the field as given, before
+                // `logical_arrow_type` strips its encoding (#906).
+                analyzer.native_type =
+                    Some(NativeType::new(NativeType::ARROW, arrow_type_name(field)));
+                entry.insert(analyzer);
             }
         }
         Ok(())
@@ -677,6 +880,19 @@ impl RecordBatchAnalyzer {
             .collect()
     }
 
+    /// Replace the declared type recorded for `column` (#906).
+    ///
+    /// For a caller whose batches came from a conversion rather than from
+    /// the source's own Arrow schema, so the Arrow type is not what the
+    /// source declared: a pandas `object` column reaches here with the type
+    /// pyarrow inferred from its values. `None` records no declaration. A
+    /// column the analyzer has not seen is ignored.
+    pub fn set_native_type(&mut self, column: &str, native_type: Option<NativeType>) {
+        if let Some(analyzer) = self.column_analyzers.get_mut(column) {
+            analyzer.native_type = native_type;
+        }
+    }
+
     pub fn create_sample_columns(&self) -> HashMap<String, Vec<String>> {
         let mut samples = HashMap::new();
         for (name, analyzer) in &self.column_analyzers {
@@ -707,6 +923,9 @@ impl Default for RecordBatchAnalyzer {
 
 pub struct ColumnAnalyzer {
     data_type: arrow::datatypes::DataType,
+    /// The type the source declared, when the schema the analyzer was seeded
+    /// from is a declaration. `None` for an analyzer built on its own.
+    native_type: Option<NativeType>,
     total_count: usize,
     null_count: usize,
     cardinality: CardinalityEstimator,
@@ -739,6 +958,7 @@ impl ColumnAnalyzer {
             // The physical encoding is stripped once, here, so nothing
             // downstream has to know about dictionaries or view layouts.
             data_type: logical_arrow_type(data_type),
+            native_type: None,
             total_count: 0,
             null_count: 0,
             cardinality: CardinalityEstimator::new(),
@@ -1543,7 +1763,7 @@ impl ColumnAnalyzer {
         // scanned, so sensitivity is unknown, not absent. Both stay absent until
         // #645 decides what a binary column reports.
         let encoded_bytes = self.renders_values_as_encoded_bytes();
-        build_column_profile(ColumnProfileInput {
+        let mut profile = build_column_profile(ColumnProfileInput {
             name,
             data_type,
             total_count: self.total_count,
@@ -1574,7 +1794,9 @@ impl ColumnAnalyzer {
                     | arrow::datatypes::DataType::Decimal128(_, _)
                     | arrow::datatypes::DataType::Decimal256(_, _)
             ),
-        })
+        });
+        profile.native_type = self.native_type.clone();
+        profile
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -1609,6 +1831,87 @@ mod tests {
     use arrow::record_batch::RecordBatch;
     use dataprof_core::ColumnStats;
     use std::sync::Arc;
+
+    /// The two interval units pyarrow cannot build, so the Python twin cannot
+    /// compare them with `str(type)`; the names are Arrow C++'s. Every other
+    /// arm is checked against pyarrow itself in
+    /// `python/tests/test_column_native_type.py`.
+    #[test]
+    fn interval_units_pyarrow_cannot_build_are_named_as_arrow_cpp_names_them() {
+        use arrow::datatypes::IntervalUnit;
+
+        for (unit, name) in [
+            (IntervalUnit::YearMonth, "month_interval"),
+            (IntervalUnit::DayTime, "day_time_interval"),
+            (IntervalUnit::MonthDayNano, "month_day_nano_interval"),
+        ] {
+            let field = Field::new("v", ArrowDataType::Interval(unit), true);
+            assert_eq!(arrow_type_name(&field), name);
+        }
+    }
+
+    /// A field that declares an extension type is named as the extension, at
+    /// the top level and as a child, not as the storage type it sits on.
+    #[test]
+    fn an_extension_field_is_named_as_its_extension() {
+        let uuid = |name: &str| {
+            Field::new(name, ArrowDataType::FixedSizeBinary(16), true).with_metadata(
+                std::collections::HashMap::from([(
+                    "ARROW:extension:name".to_string(),
+                    "arrow.uuid".to_string(),
+                )]),
+            )
+        };
+        assert_eq!(arrow_type_name(&uuid("u")), "extension<arrow.uuid>");
+        let list = Field::new("l", ArrowDataType::List(Arc::new(uuid("item"))), true);
+        assert_eq!(arrow_type_name(&list), "list<item: extension<arrow.uuid>>");
+        let plain = Field::new("p", ArrowDataType::FixedSizeBinary(16), true);
+        assert_eq!(arrow_type_name(&plain), "fixed_size_binary[16]");
+    }
+
+    /// The declaration is taken from the schema the analyzer is seeded with,
+    /// before `logical_arrow_type` strips the encoding, and a caller whose
+    /// schema is not the source's can replace it.
+    #[test]
+    fn the_declared_type_is_the_field_as_given_and_can_be_replaced() {
+        let values: DictionaryArray<arrow::datatypes::Int8Type> =
+            vec!["a", "b"].into_iter().collect();
+        let field = Field::new("v", values.data_type().clone(), true).with_dict_is_ordered(true);
+        let schema = Arc::new(Schema::new(vec![field]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(values)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let declared = |analyzer: &RecordBatchAnalyzer| {
+            analyzer.to_profiles(false, false, None)[0]
+                .native_type
+                .clone()
+        };
+        assert_eq!(
+            declared(&analyzer),
+            Some(NativeType::new(
+                NativeType::ARROW,
+                "dictionary<values=string, indices=int8, ordered=1>"
+            ))
+        );
+
+        analyzer.set_native_type("v", Some(NativeType::new(NativeType::PANDAS, "category")));
+        assert_eq!(
+            declared(&analyzer),
+            Some(NativeType::new(NativeType::PANDAS, "category"))
+        );
+        analyzer.set_native_type("v", None);
+        assert_eq!(declared(&analyzer), None);
+        // An analyzer built on its own has no schema to read a declaration from.
+        let alone = ColumnAnalyzer::new(&ArrowDataType::Int64).to_column_profile(
+            "v".into(),
+            false,
+            false,
+            None,
+            &SemanticHints::default(),
+        );
+        assert_eq!(alone.native_type, None);
+    }
 
     #[test]
     fn container_markers_preserve_arrow_columns_and_record_signatures_across_batches() {
@@ -1851,7 +2154,12 @@ mod tests {
             let batch = RecordBatch::try_new(schema, vec![column]).unwrap();
             let mut analyzer = RecordBatchAnalyzer::new();
             analyzer.process_batch(&batch).unwrap();
-            serde_json::to_value(analyzer.to_profiles(false, false, None)).unwrap()
+            // The declared type is provenance and names the width (#906).
+            let mut profiles = analyzer.to_profiles(false, false, None);
+            for profile in &mut profiles {
+                profile.native_type = None;
+            }
+            serde_json::to_value(profiles).unwrap()
         };
         let narrow = profile(
             ArrowDataType::Float32,
@@ -2139,7 +2447,8 @@ mod tests {
     }
 
     /// Profile one column through `RecordBatchAnalyzer` and return everything
-    /// the profile says about it.
+    /// the profile says about it, but its declared type: that is provenance,
+    /// and differs between encodings by definition (#906).
     fn observable(array: ArrayRef) -> String {
         let schema = Arc::new(Schema::new(vec![Field::new(
             "c",
@@ -2150,7 +2459,9 @@ mod tests {
 
         let mut analyzer = RecordBatchAnalyzer::new();
         analyzer.process_batch(&batch).unwrap();
-        format!("{:?}", analyzer.to_profiles(false, false, None)[0])
+        let mut profile = analyzer.to_profiles(false, false, None).remove(0);
+        profile.native_type = None;
+        format!("{profile:?}")
     }
 
     /// Run-end encoding never survives a Parquet round trip, so the file-level

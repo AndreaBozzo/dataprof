@@ -284,6 +284,25 @@ def _pandas_to_pyarrow_table(df: _Any, pyarrow: _Any, *, container_markers: bool
             raise ValueError(f"pandas DataFrame conversion failed: {exc}") from exc
 
 
+def _pandas_native_types(df: _Any, table: _Any) -> list[str | None]:
+    """Each column's pandas dtype, in the order of ``table``'s columns (#906).
+
+    ``table`` is ``df`` converted by ``_pandas_to_pyarrow_table``, which keeps
+    the frame's columns in order and appends any index it stores as columns
+    after them; those take the dtype of the index level they hold. A layout
+    this cannot match column for column records no dtype rather than a wrong
+    one.
+    """
+    dtypes: list[str | None] = [str(dtype) for dtype in df.dtypes]
+    extra = table.num_columns - len(dtypes)
+    if extra == 0:
+        return dtypes
+    index = df.index
+    if extra == index.nlevels:
+        return dtypes + [str(index.get_level_values(level).dtype) for level in range(extra)]
+    return [None] * table.num_columns
+
+
 def _columns_from_dict(source: dict[_Any, _Any]) -> list[_Column]:
     """Convert a dict of equal-length sequences into columns."""
     columns: list[_Column] = []

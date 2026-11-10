@@ -1117,3 +1117,43 @@ follows: a component carrying signal that neither list names has
 `coverage_unrecorded` coverage, and so has any score that weighs it. A summary
 without `exact_dimensions` keeps reading a component that is not listed as
 sampled as exact. Stored v1 reports remain valid.
+
+## v1 additive change: column `native_type`
+
+Both dialects carry an optional `native_type` object on each column (#906):
+the type the source declared for the column, which `data_type` does not keep.
+Several declared types profile as one `data_type`, so an Arrow
+`decimal128(12, 2)` column is `Float` and a `timestamp[us, tz=UTC]` column is
+`Date`; `native_type` says which one the source declared.
+
+| field | meaning |
+| --- | --- |
+| `system` | the type system the declaration belongs to |
+| `name` | the type as that system spells it |
+
+| `system` | sources | `name` |
+| --- | --- | --- |
+| `arrow` | Arrow tables, record batches and streams, polars frames, ADBC results, Parquet files and buffers, local or remote | the name pyarrow prints for the type: `decimal128(12, 2)`, `timestamp[us, tz=UTC]`, `dictionary<values=string, indices=int32, ordered=0>` |
+| `pandas` | pandas DataFrames | the column's dtype as pandas prints it: `int64`, `object`, `datetime64[ns, UTC]`, `Int64`, `category` |
+| `postgresql`, `mysql` | the database connectors | the server's type name as the driver reports it: `NUMERIC`, `INT4`, `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED` |
+
+A field that declares an Arrow extension type is named as the extension,
+`extension<arrow.uuid>` rather than the `fixed_size_binary[16]` that stores it,
+also as the child of a list, struct or map. pyarrow appends the parameters of a
+parameterized extension (`arrow.fixed_shape_tensor[value_type=int32, ...]`);
+the report keeps the name only. A Parquet column carries the Arrow type its reader produced from the file's
+schema, which keeps the Arrow schema the writer stored with the file. A pandas
+column records its dtype rather than the Arrow type the profiler read, because
+an `object` column declares no type for its values: pyarrow infers one from
+them. An index that pandas stores as columns takes the dtype of its level.
+
+The field is absent when the source declares no type: CSV, JSON and JSONL in
+every engine, Python dicts and lists of records, and SQLite, whose driver reads
+a declared type into a few classes and reports the first value's storage class
+for an expression or a declaration it does not know. It is also absent in every
+report written before 0.14. Both values are strings, so a report that names a
+system this build does not know still loads.
+
+The declaration is provenance, not a metric. Two input paths over the same
+logical data declare different types or none, so it stays outside the
+serialized-value parity comparison. Stored v1 reports remain valid.

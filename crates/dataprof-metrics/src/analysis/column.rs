@@ -235,6 +235,7 @@ fn analyze_column_with_options(
         // the inferred type itself, not a statistic derived from a pack.
         type_homogeneity: Some(classify_lexical_forms(data)),
         locale_number_count: Some(count_locale_numbers(data)),
+        native_type: None,
         stats,
         patterns,
     }
