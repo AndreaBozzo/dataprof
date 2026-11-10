@@ -83,6 +83,22 @@ pub struct ColumnProfile {
     /// written before dataprof recorded it; `Some(0)` means none were found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale_number_count: Option<usize>,
+    /// The type the source declared for the column, recorded as provenance
+    /// (#906). `None` when the source declares none, which is every text
+    /// input (CSV, JSON, JSONL), Python objects and SQLite, and on a report
+    /// written before dataprof recorded it. See [`NativeType`] for the
+    /// sources that declare one.
+    ///
+    /// `data_type` is what dataprof profiled the column as, and several
+    /// declared types share one: an Arrow `decimal128(12, 2)` profiles as
+    /// `Float` and a `timestamp[us, tz=UTC]` as `Date`. This keeps the
+    /// declaration itself, so a reader can tell that a column kept its type.
+    ///
+    /// Provenance, not a metric: two input paths over the same logical data
+    /// declare different types, or none, so it stays outside the
+    /// serialized-value parity comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_type: Option<NativeType>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -91,6 +107,55 @@ pub struct ColumnProfile {
     /// matched. Consumers that gate on sensitivity -- redaction, agent-facing
     /// output -- must treat `None` as "unknown", never as "no sensitive data".
     pub patterns: Option<Vec<Pattern>>,
+}
+
+/// A column type as the source declared it (#906).
+///
+/// `system` names the type system the declaration belongs to, and `name`
+/// spells the type the way that system does:
+///
+/// - `arrow`: Arrow tables, record batches and streams, polars frames, ADBC
+///   results and Parquet files. The name is the one pyarrow prints for the
+///   type, such as `decimal128(12, 2)`, `timestamp[us, tz=UTC]` or
+///   `dictionary<values=string, indices=int32, ordered=0>`. A Parquet column
+///   carries the Arrow type its reader produced from the file's schema, which
+///   keeps the Arrow schema the writer stored with the file.
+/// - `pandas`: pandas DataFrames. The name is the column's dtype as pandas
+///   prints it (`int64`, `object`, `datetime64[ns, UTC]`, `Int64`). An
+///   `object` column declares no type for its values; pyarrow infers one from
+///   them, which is why the pandas dtype is recorded rather than the Arrow
+///   type the profiler read.
+/// - `postgresql` and `mysql`: the database connectors. The name is the
+///   server's type name as the driver reports it (`NUMERIC`, `INT4`,
+///   `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED`).
+///
+/// Both are strings so that a report from a later release, which may record
+/// a system this build does not know, still loads. Build one with
+/// [`NativeType::new`]: the struct is `non_exhaustive`, as the rest of the
+/// report model is to become before 1.0 (#1162).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
+pub struct NativeType {
+    pub system: String,
+    pub name: String,
+}
+
+impl NativeType {
+    /// The type system of Arrow and the readers built on it.
+    pub const ARROW: &'static str = "arrow";
+    /// pandas dtypes.
+    pub const PANDAS: &'static str = "pandas";
+    /// PostgreSQL type names.
+    pub const POSTGRESQL: &'static str = "postgresql";
+    /// MySQL type names.
+    pub const MYSQL: &'static str = "mysql";
+
+    pub fn new(system: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            system: system.into(),
+            name: name.into(),
+        }
+    }
 }
 
 /// Quartile statistics for numeric distributions.
@@ -445,6 +510,7 @@ mod tests {
             invalid_count: Some(0),
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -502,6 +568,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,

@@ -30,7 +30,7 @@ use pyo3::types::{PyCapsule, PyDict};
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, EngineType, ExecutionMetadata,
-    FileFormat, MetricPack, Profiler, TruncationReason,
+    FileFormat, MetricPack, NativeType, Profiler, TruncationReason,
 };
 use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_runtime::ReportAssembler;
@@ -393,6 +393,7 @@ pub fn profile_dataframe(
     let ImportedDataFrame {
         batches,
         mut container_markers,
+        native_types,
     } = convert_dataframe_to_batches(py, &df, &source_library)?;
 
     // Optionally limit rows before analysis
@@ -451,6 +452,16 @@ pub fn profile_dataframe(
             .collect::<Vec<_>>();
         analyze_imported_batch(&mut analyzer, batch, &batch_markers)?;
         row_offset = end;
+    }
+    // Matched by the names the frame had before the column selection; a
+    // column the selection dropped is not in the analyzer and is skipped.
+    if let Some(native_types) = native_types {
+        for (column, native_type) in available_columns.iter().zip(native_types) {
+            analyzer.set_native_type(
+                column,
+                native_type.map(|name| NativeType::new(NativeType::PANDAS, name)),
+            );
+        }
     }
 
     let locale = options.locale();
@@ -925,6 +936,10 @@ struct ImportedDataFrame {
     /// Original column positions and full-frame row flags, before limits or
     /// projection. Only pandas columns that needed text fallback have entries.
     container_markers: HashMap<usize, Vec<bool>>,
+    /// Per Arrow column, in schema order, the type the frame declared when
+    /// it is not the Arrow type (#906). `None` keeps the Arrow schema as the
+    /// declaration, which it is for every library but pandas.
+    native_types: Option<Vec<Option<String>>>,
 }
 
 /// Convert a DataFrame to the sequence of Arrow batches backing it.
@@ -963,6 +978,7 @@ fn convert_dataframe_to_batches(
     Ok(ImportedDataFrame {
         batches,
         container_markers: HashMap::new(),
+        native_types: None,
     })
 }
 
@@ -986,6 +1002,14 @@ fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
         .call((df, &pyarrow), Some(&kwargs))?
         .extract()?;
 
+    // The pandas dtypes, read before the frame's Arrow form replaces them: an
+    // `object` column's Arrow type is what pyarrow inferred from its values,
+    // not a declaration (#906).
+    let native_types: Vec<Option<String>> = inputs_mod
+        .getattr("_pandas_native_types")?
+        .call1((df, pa_table.bind(py)))?
+        .extract()?;
+
     let batches = import_batches_from_pyarrow(py, pa_table.bind(py))?;
     let num_columns = batches[0].num_columns();
     let num_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
@@ -1004,6 +1028,7 @@ fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
     Ok(ImportedDataFrame {
         batches,
         container_markers,
+        native_types: Some(native_types),
     })
 }
 

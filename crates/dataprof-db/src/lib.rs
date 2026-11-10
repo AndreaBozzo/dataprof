@@ -6,7 +6,8 @@
 
 pub(crate) use dataprof_core::DataProfilerError;
 use dataprof_core::{
-    AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, QualityDimension, QueryEngine,
+    AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, NativeType, QualityDimension,
+    QueryEngine,
 };
 use dataprof_metrics::analyze_column_with_analysis_options;
 use dataprof_runtime::{
@@ -259,13 +260,30 @@ pub async fn analyze_database_with_options(
     // `columns` keeps the query's column order, so the report reports columns in
     // the order they were selected — the same source-order contract CSV, Parquet
     // and JSON honour.
+    // The server's declared type, for the engines whose driver reports one
+    // (#906). sqlx reads a SQLite column's declared type into a handful of
+    // classes, and falls back to the first value's storage class for an
+    // expression or a declaration it does not know (`DECIMAL(12,2)`), so what
+    // it reports there is not a declaration and is left out.
+    let type_system = match query_engine {
+        QueryEngine::Postgres => Some(NativeType::POSTGRESQL),
+        QueryEngine::MySql => Some(NativeType::MYSQL),
+        _ => None,
+    };
     // A JSON or array column whose values are all containers is reported as
     // nested, counts only, as Parquet, Arrow and the JSON readers report the
     // same data (#766).
     let column_profiles = mark_container_columns(
         columns
             .iter()
-            .map(|(name, data)| analyze_column_with_analysis_options(name, data, options))
+            .zip(columns.type_names())
+            .map(|((name, data), type_name)| {
+                let mut profile = analyze_column_with_analysis_options(name, data, options);
+                profile.native_type = type_system
+                    .zip(type_name)
+                    .map(|(system, type_name)| NativeType::new(system, type_name));
+                profile
+            })
             .collect(),
         &columns.container_counts(),
     );

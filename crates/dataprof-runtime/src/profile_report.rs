@@ -709,6 +709,8 @@ struct PythonColumnDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     locale_number_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    native_type: Option<dataprof_core::NativeType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<PythonColumnStatsDocument>,
     #[serde(skip_serializing_if = "Option::is_none")]
     patterns: Option<Vec<PythonPatternDocument>>,
@@ -938,6 +940,7 @@ impl PythonProfileReportDocument {
                     invalid_count: column.invalid_count,
                     type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
+                    native_type: column.native_type.clone(),
                     stats,
                     patterns: column.patterns.as_ref().map(|patterns| {
                         patterns
