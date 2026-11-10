@@ -35,61 +35,82 @@ pq = pytest.importorskip("pyarrow.parquet")
 #: Arrow types, each built as a one-column table and profiled. Every arm of the
 #: renderer is here, with the cases where pyarrow adds detail: a non-nullable or
 #: renamed child, an ordered dictionary, union type codes, map field names.
-ARROW_TYPES: dict[str, Any] = {
-    "null": pa.null(),
-    "bool": pa.bool_(),
-    "int8": pa.int8(),
-    "int16": pa.int16(),
-    "int32": pa.int32(),
-    "int64": pa.int64(),
-    "uint8": pa.uint8(),
-    "uint16": pa.uint16(),
-    "uint32": pa.uint32(),
-    "uint64": pa.uint64(),
-    "float16": pa.float16(),
-    "float32": pa.float32(),
-    "float64": pa.float64(),
-    "string": pa.string(),
-    "large_string": pa.large_string(),
-    "string_view": pa.string_view(),
-    "binary": pa.binary(),
-    "large_binary": pa.large_binary(),
-    "binary_view": pa.binary_view(),
-    "fixed_size_binary": pa.binary(4),
-    "date32": pa.date32(),
-    "date64": pa.date64(),
-    "time32": pa.time32("s"),
-    "time64": pa.time64("ns"),
-    "timestamp": pa.timestamp("ms"),
-    "timestamp_utc": pa.timestamp("us", tz="UTC"),
-    "timestamp_zone": pa.timestamp("ns", tz="Europe/Rome"),
-    "timestamp_offset": pa.timestamp("s", tz="+01:00"),
-    "duration": pa.duration("ms"),
-    "interval": pa.month_day_nano_interval(),
-    "decimal32": pa.decimal32(5, 2),
-    "decimal64": pa.decimal64(12, 2),
-    "decimal128": pa.decimal128(12, 2),
-    "decimal256": pa.decimal256(40, -3),
-    "list": pa.list_(pa.int64()),
-    "list_named_required": pa.list_(pa.field("x", pa.int64(), nullable=False)),
-    "large_list": pa.large_list(pa.string()),
-    "fixed_size_list": pa.list_(pa.int32(), 3),
-    "list_view": pa.list_view(pa.int8()),
-    "large_list_view": pa.large_list_view(pa.int8()),
-    "struct": pa.struct([("a", pa.int64()), pa.field("b", pa.string(), nullable=False)]),
-    "empty_struct": pa.struct([]),
-    "nested": pa.list_(pa.struct([("a", pa.list_(pa.int8()))])),
-    "map": pa.map_(pa.string(), pa.int64()),
-    "map_sorted": pa.map_(pa.string(), pa.int64(), keys_sorted=True),
-    "map_named": pa.map_(pa.field("k", pa.string(), nullable=False), pa.field("val", pa.int64())),
-    "dictionary": pa.dictionary(pa.int32(), pa.string()),
-    "dictionary_ordered": pa.dictionary(pa.int8(), pa.string(), ordered=True),
-    "run_end_encoded": pa.run_end_encoded(pa.int32(), pa.string()),
-    "sparse_union": pa.sparse_union(
+_ARROW_TYPE_FACTORIES: dict[str, Any] = {
+    "null": lambda: pa.null(),
+    "bool": lambda: pa.bool_(),
+    "int8": lambda: pa.int8(),
+    "int16": lambda: pa.int16(),
+    "int32": lambda: pa.int32(),
+    "int64": lambda: pa.int64(),
+    "uint8": lambda: pa.uint8(),
+    "uint16": lambda: pa.uint16(),
+    "uint32": lambda: pa.uint32(),
+    "uint64": lambda: pa.uint64(),
+    "float16": lambda: pa.float16(),
+    "float32": lambda: pa.float32(),
+    "float64": lambda: pa.float64(),
+    "string": lambda: pa.string(),
+    "large_string": lambda: pa.large_string(),
+    "string_view": lambda: pa.string_view(),
+    "binary": lambda: pa.binary(),
+    "large_binary": lambda: pa.large_binary(),
+    "binary_view": lambda: pa.binary_view(),
+    "fixed_size_binary": lambda: pa.binary(4),
+    "date32": lambda: pa.date32(),
+    "date64": lambda: pa.date64(),
+    "time32": lambda: pa.time32("s"),
+    "time64": lambda: pa.time64("ns"),
+    "timestamp": lambda: pa.timestamp("ms"),
+    "timestamp_utc": lambda: pa.timestamp("us", tz="UTC"),
+    "timestamp_zone": lambda: pa.timestamp("ns", tz="Europe/Rome"),
+    "timestamp_offset": lambda: pa.timestamp("s", tz="+01:00"),
+    "duration": lambda: pa.duration("ms"),
+    "interval": lambda: pa.month_day_nano_interval(),
+    "decimal32": lambda: pa.decimal32(5, 2),
+    "decimal64": lambda: pa.decimal64(12, 2),
+    "decimal128": lambda: pa.decimal128(12, 2),
+    "decimal256": lambda: pa.decimal256(40, -3),
+    "list": lambda: pa.list_(pa.int64()),
+    "list_named_required": lambda: pa.list_(pa.field("x", pa.int64(), nullable=False)),
+    "large_list": lambda: pa.large_list(pa.string()),
+    "fixed_size_list": lambda: pa.list_(pa.int32(), 3),
+    "list_view": lambda: pa.list_view(pa.int8()),
+    "large_list_view": lambda: pa.large_list_view(pa.int8()),
+    "struct": lambda: pa.struct([("a", pa.int64()), pa.field("b", pa.string(), nullable=False)]),
+    "empty_struct": lambda: pa.struct([]),
+    "nested": lambda: pa.list_(pa.struct([("a", pa.list_(pa.int8()))])),
+    "map": lambda: pa.map_(pa.string(), pa.int64()),
+    "map_sorted": lambda: pa.map_(pa.string(), pa.int64(), keys_sorted=True),
+    "map_named": lambda: pa.map_(
+        pa.field("k", pa.string(), nullable=False), pa.field("val", pa.int64())
+    ),
+    "dictionary": lambda: pa.dictionary(pa.int32(), pa.string()),
+    "dictionary_ordered": lambda: pa.dictionary(pa.int8(), pa.string(), ordered=True),
+    "run_end_encoded": lambda: pa.run_end_encoded(pa.int32(), pa.string()),
+    "sparse_union": lambda: pa.sparse_union(
         [pa.field("a", pa.int32()), pa.field("b", pa.string())], type_codes=[5, 7]
     ),
-    "dense_union": pa.dense_union([pa.field("a", pa.int32())]),
+    "dense_union": lambda: pa.dense_union([pa.field("a", pa.int32())]),
 }
+
+
+def _available(factories: dict[str, Any]) -> dict[str, Any]:
+    """The types this pyarrow can build.
+
+    The dev floor is pyarrow 14, and the view and decimal32/64 factories came
+    later; a missing one leaves its type out instead of failing the module at
+    import.
+    """
+    built = {}
+    for name, factory in factories.items():
+        try:
+            built[name] = factory()
+        except AttributeError:
+            continue
+    return built
+
+
+ARROW_TYPES = _available(_ARROW_TYPE_FACTORIES)
 
 
 def _native_types(report: dp.ProfileReport) -> dict[str, Any]:
@@ -150,6 +171,8 @@ def _extension_table() -> Any:
 
 def test_an_extension_type_is_named_as_the_extension_not_its_storage(tmp_path: Path) -> None:
     """``pa.uuid()`` is stored as ``fixed_size_binary[16]``; the declaration is the uuid."""
+    if not all(hasattr(pa, name) for name in ("uuid", "json_", "bool8")):
+        pytest.skip("pyarrow without the uuid, json and bool8 extension types")
     table = _extension_table()
     path = tmp_path / "extensions.parquet"
     pq.write_table(table, path)
@@ -177,6 +200,8 @@ def test_an_extension_type_is_named_as_the_extension_not_its_storage(tmp_path: P
 
 def test_a_parameterized_extension_is_named_without_its_parameters() -> None:
     """pyarrow parses parameters out of the extension's own metadata; the name is what is kept."""
+    if not hasattr(pa, "fixed_shape_tensor"):
+        pytest.skip("pyarrow without the fixed_shape_tensor extension type")
     tensor = pa.fixed_shape_tensor(pa.int32(), [2, 2])
     storage = pa.array([[1, 2, 3, 4], None], tensor.storage_type)
     report = dp.profile(pa.table({"t": pa.ExtensionArray.from_storage(tensor, storage)}))
