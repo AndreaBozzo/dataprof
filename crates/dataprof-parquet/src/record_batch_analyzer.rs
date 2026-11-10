@@ -123,16 +123,36 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
 /// than arrow-rs's `Display`, which is not the same and has changed between
 /// arrow-rs releases. A report field must not move with a dependency bump.
 ///
-/// It takes the field, not the type, because a dictionary's ordering is a
-/// property of the field in arrow-rs and part of the type's name in pyarrow.
+/// It takes the field, not the type, because two parts of the name live on
+/// the field in arrow-rs: a dictionary's ordering, and an extension type,
+/// which a field declares in its metadata over a storage type. A column of
+/// `pa.uuid()` is `extension<arrow.uuid>`, not the `fixed_size_binary[16]`
+/// that stores it. pyarrow appends the parameters of a parameterized
+/// extension (`arrow.fixed_shape_tensor[value_type=int32, shape=[2,2]]`),
+/// which it parses from the extension's own metadata; this spells the
+/// extension's name only.
 pub fn arrow_type_name(field: &arrow::datatypes::Field) -> String {
     let mut name = String::new();
-    write_arrow_type_name(
-        &mut name,
-        field.data_type(),
-        field.dict_is_ordered().unwrap_or(false),
-    );
+    write_field_type(&mut name, field);
     name
+}
+
+/// The metadata key under which a field names its extension type, from the
+/// Arrow columnar format's extension type specification.
+const EXTENSION_NAME_KEY: &str = "ARROW:extension:name";
+
+/// The type of `field`: the extension it declares, or else its Arrow type.
+fn write_field_type(out: &mut String, field: &arrow::datatypes::Field) {
+    match field.metadata().get(EXTENSION_NAME_KEY) {
+        Some(extension) => {
+            let _ = write!(out, "extension<{extension}>");
+        }
+        None => write_arrow_type_name(
+            out,
+            field.data_type(),
+            field.dict_is_ordered().unwrap_or(false),
+        ),
+    }
 }
 
 fn write_arrow_type_name(out: &mut String, data_type: &arrow::datatypes::DataType, ordered: bool) {
@@ -147,11 +167,7 @@ fn write_arrow_type_name(out: &mut String, data_type: &arrow::datatypes::DataTyp
     // A child is spelled `name: type`, with ` not null` when it cannot hold one.
     let child = |out: &mut String, field: &arrow::datatypes::Field| {
         let _ = write!(out, "{}: ", field.name());
-        write_arrow_type_name(
-            out,
-            field.data_type(),
-            field.dict_is_ordered().unwrap_or(false),
-        );
+        write_field_type(out, field);
         if !field.is_nullable() {
             out.push_str(" not null");
         }
@@ -268,11 +284,7 @@ fn write_arrow_type_name(out: &mut String, data_type: &arrow::datatypes::DataTyp
                         if index > 0 {
                             out.push_str(", ");
                         }
-                        write_arrow_type_name(
-                            out,
-                            field.data_type(),
-                            field.dict_is_ordered().unwrap_or(false),
-                        );
+                        write_field_type(out, field);
                         if field.name() != standard {
                             let _ = write!(out, " ('{}')", field.name());
                         }
@@ -292,11 +304,7 @@ fn write_arrow_type_name(out: &mut String, data_type: &arrow::datatypes::DataTyp
             out.push_str("run_end_encoded<run_ends: ");
             write_arrow_type_name(out, run_ends.data_type(), false);
             out.push_str(", values: ");
-            write_arrow_type_name(
-                out,
-                values.data_type(),
-                values.dict_is_ordered().unwrap_or(false),
-            );
+            write_field_type(out, values);
             out.push('>');
         }
     }
@@ -1840,6 +1848,25 @@ mod tests {
             let field = Field::new("v", ArrowDataType::Interval(unit), true);
             assert_eq!(arrow_type_name(&field), name);
         }
+    }
+
+    /// A field that declares an extension type is named as the extension, at
+    /// the top level and as a child, not as the storage type it sits on.
+    #[test]
+    fn an_extension_field_is_named_as_its_extension() {
+        let uuid = |name: &str| {
+            Field::new(name, ArrowDataType::FixedSizeBinary(16), true).with_metadata(
+                std::collections::HashMap::from([(
+                    "ARROW:extension:name".to_string(),
+                    "arrow.uuid".to_string(),
+                )]),
+            )
+        };
+        assert_eq!(arrow_type_name(&uuid("u")), "extension<arrow.uuid>");
+        let list = Field::new("l", ArrowDataType::List(Arc::new(uuid("item"))), true);
+        assert_eq!(arrow_type_name(&list), "list<item: extension<arrow.uuid>>");
+        let plain = Field::new("p", ArrowDataType::FixedSizeBinary(16), true);
+        assert_eq!(arrow_type_name(&plain), "fixed_size_binary[16]");
     }
 
     /// The declaration is taken from the schema the analyzer is seeded with,

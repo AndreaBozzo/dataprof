@@ -1137,7 +1137,11 @@ Several declared types profile as one `data_type`, so an Arrow
 | `pandas` | pandas DataFrames | the column's dtype as pandas prints it: `int64`, `object`, `datetime64[ns, UTC]`, `Int64`, `category` |
 | `postgresql`, `mysql` | the database connectors | the server's type name as the driver reports it: `NUMERIC`, `INT4`, `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED` |
 
-A Parquet column carries the Arrow type its reader produced from the file's
+A field that declares an Arrow extension type is named as the extension,
+`extension<arrow.uuid>` rather than the `fixed_size_binary[16]` that stores it,
+also as the child of a list, struct or map. pyarrow appends the parameters of a
+parameterized extension (`arrow.fixed_shape_tensor[value_type=int32, ...]`);
+the report keeps the name only. A Parquet column carries the Arrow type its reader produced from the file's
 schema, which keeps the Arrow schema the writer stored with the file. A pandas
 column records its dtype rather than the Arrow type the profiler read, because
 an `object` column declares no type for its values: pyarrow infers one from

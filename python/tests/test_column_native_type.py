@@ -133,6 +133,60 @@ def test_every_arrow_type_is_spelled_as_pyarrow_spells_it() -> None:
     assert not wrong, "\n".join(wrong)
 
 
+def _extension_table() -> Any:
+    """Extension columns, alone and as the child of a list, struct and map."""
+    uuids = pa.ExtensionArray.from_storage(pa.uuid(), pa.array([b"\x01" * 16, None], pa.binary(16)))
+    return pa.table(
+        {
+            "uuid": uuids,
+            "json": pa.array(['{"a": 1}', None], pa.json_()),
+            "bool8": pa.ExtensionArray.from_storage(pa.bool8(), pa.array([1, None], pa.int8())),
+            "uuid_list": pa.ListArray.from_arrays(pa.array([0, 1, 2]), uuids),
+            "uuid_struct": pa.StructArray.from_arrays([uuids], names=["id"]),
+            "uuid_map": pa.MapArray.from_arrays(pa.array([0, 1, 2]), pa.array(["a", "b"]), uuids),
+        }
+    )
+
+
+def test_an_extension_type_is_named_as_the_extension_not_its_storage(tmp_path: Path) -> None:
+    """``pa.uuid()`` is stored as ``fixed_size_binary[16]``; the declaration is the uuid."""
+    table = _extension_table()
+    path = tmp_path / "extensions.parquet"
+    pq.write_table(table, path)
+    wrong = []
+    in_memory = {field.name: str(field.type) for field in table.schema}
+    # pyarrow's Parquet writer names a list's child `element`. Its own reader
+    # also renames a map's value after the column, which the Rust reader does
+    # not, so the file's names are spelled out rather than read back.
+    in_file = {
+        **in_memory,
+        "uuid_list": "list<element: extension<arrow.uuid>>",
+        "uuid_map": "map<string, extension<arrow.uuid>>",
+    }
+    assert in_memory["uuid"] == "extension<arrow.uuid>"
+    for route, report, names in [
+        ("arrow table", dp.profile(table), in_memory),
+        ("parquet file", dp.profile(str(path)), in_file),
+    ]:
+        for name, column in report.column_profiles.items():
+            expected = {"system": "arrow", "name": names[name]}
+            if column.native_type != expected:
+                wrong.append(f"{route}, {name}: {column.native_type} != {expected}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_a_parameterized_extension_is_named_without_its_parameters() -> None:
+    """pyarrow parses parameters out of the extension's own metadata; the name is what is kept."""
+    tensor = pa.fixed_shape_tensor(pa.int32(), [2, 2])
+    storage = pa.array([[1, 2, 3, 4], None], tensor.storage_type)
+    report = dp.profile(pa.table({"t": pa.ExtensionArray.from_storage(tensor, storage)}))
+    assert str(tensor).startswith("extension<arrow.fixed_shape_tensor[")
+    assert report.column_profiles["t"].native_type == {
+        "system": "arrow",
+        "name": "extension<arrow.fixed_shape_tensor>",
+    }
+
+
 def test_every_arrow_route_records_the_declared_type(tmp_path: Path) -> None:
     table = _table()
     path = tmp_path / "typed.parquet"

@@ -117,7 +117,10 @@ pub struct ColumnProfile {
 /// - `arrow`: Arrow tables, record batches and streams, polars frames, ADBC
 ///   results and Parquet files. The name is the one pyarrow prints for the
 ///   type, such as `decimal128(12, 2)`, `timestamp[us, tz=UTC]` or
-///   `dictionary<values=string, indices=int32, ordered=0>`. A Parquet column
+///   `dictionary<values=string, indices=int32, ordered=0>`. An extension type
+///   is named as the extension (`extension<arrow.uuid>`), not its storage
+///   type, and without the parameters pyarrow adds to a parameterized one.
+///   A Parquet column
 ///   carries the Arrow type its reader produced from the file's schema, which
 ///   keeps the Arrow schema the writer stored with the file.
 /// - `pandas`: pandas DataFrames. The name is the column's dtype as pandas
