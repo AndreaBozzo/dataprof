@@ -312,13 +312,18 @@ impl<'a> AccuracyCalculator<'a> {
     }
 }
 
-/// Whether `profile`'s statistics read its values as a decimal's renderings,
-/// with [`ParsedNumber::parse_decimal`]: a `Float` column reports exact order
-/// statistics only then. A decimal column whose exact form was dropped reads
-/// as text, as before #1181.
+/// Whether `profile`'s values are a decimal's renderings, read with
+/// [`ParsedNumber::parse_decimal`] as its statistics read them: a `Float`
+/// column whose source declared a decimal (#1268), or whose statistics hold
+/// its order exactly, which a `Float` column's do only then. The declaration
+/// decides a run without statistics the same way as one with them.
 fn read_as_decimal(profile: &ColumnProfile) -> bool {
     profile.data_type == DataType::Float
-        && matches!(&profile.stats, ColumnStats::Numeric(stats) if stats.exact.is_some())
+        && (profile
+            .native_type
+            .as_ref()
+            .is_some_and(|native| native.declares_decimal())
+            || matches!(&profile.stats, ColumnStats::Numeric(stats) if stats.exact.is_some()))
 }
 
 /// The nearest `f64` of a cell the range and sign rules check: a finite

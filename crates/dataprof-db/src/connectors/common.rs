@@ -114,8 +114,11 @@ macro_rules! db_column_to_string {
         }
         // Arms the shared chain cannot express because the type has no impl
         // for one of the backends. `to_string` is exact for both of today's
-        // callers: `u64` prints its digits, and `BigDecimal` keeps the scale
-        // the database stored rather than rounding through f64.
+        // callers: `u64` prints its digits, and `BigDecimal` keeps the
+        // database's value rather than rounding through f64. Its scale can
+        // differ: sqlx pads a PostgreSQL `NUMERIC` to whole groups of four
+        // decimals and drops the declared scale (`NUMERIC(10,2)` 1.50 reads
+        // `1.5000`, 4.00 reads `4`; transact-rs/sqlx#468).
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
             v.map(|x| x.to_string())
         })*

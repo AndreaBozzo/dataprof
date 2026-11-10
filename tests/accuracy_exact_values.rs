@@ -156,15 +156,13 @@ fn outlier_ratio_reads_a_decimal_column_as_a_decimal() {
     let report = Profiler::new().analyze_file(file.path()).unwrap();
     assert_eq!(outliers(&report), (Some(1), Value::from(12.5)));
 
-    // Pins a known gap, #906: the accuracy pass tells a decimal column from
-    // its statistics, so a run without them reads its values as text and the
-    // `f64` fences miss the outlier, as every run did before #1181. Once the
-    // column records its source type, this run reports 12.5 too.
+    // A run without statistics reads the column as a decimal from its
+    // declared type (#1268); `tests/declared_decimals.rs` covers every width.
     let quality_only = Profiler::new()
         .metric_packs(vec![MetricPack::Quality])
         .analyze_file(file.path())
         .unwrap();
-    assert_eq!(outliers(&quality_only), (None, Value::from(0.0)));
+    assert_eq!(outliers(&quality_only), (None, Value::from(12.5)));
 }
 
 /// Rule cases: a column name, its values, and the expected serialized

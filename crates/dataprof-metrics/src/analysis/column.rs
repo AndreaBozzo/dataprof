@@ -1,4 +1,4 @@
-use dataprof_core::AnalysisOptions;
+use dataprof_core::{AnalysisOptions, NativeType};
 
 use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
@@ -8,7 +8,8 @@ use crate::analysis::inference::{
 };
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::numeric::{
-    compute_integer_stats_with_parsed_count, compute_numeric_stats_with_parsed_count,
+    compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
+    compute_numeric_stats_with_parsed_count,
 };
 use crate::stats::{calculate_datetime_stats, calculate_text_stats_from_refs};
 
@@ -26,6 +27,10 @@ struct ColumnAnalysis {
     locale: Option<Locale>,
     /// Leave `unique_count` absent instead of counting distinct values.
     skip_unique_count: bool,
+    /// The source declared a decimal, so a `Float` column's values are read
+    /// as a decimal's renderings, as `build_column_profile` reads an Arrow
+    /// decimal's (#1268).
+    decimal_values: bool,
 }
 
 /// The statistics a column carries: none when it holds no non-null value.
@@ -54,6 +59,7 @@ pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
             skip_patterns: false,
             locale: None,
             skip_unique_count: false,
+            decimal_values: false,
         },
     )
 }
@@ -68,6 +74,7 @@ pub fn analyze_column_fast(name: &str, data: &[String]) -> ColumnProfile {
             skip_patterns: true,
             locale: None,
             skip_unique_count: true,
+            decimal_values: false,
         },
     )
 }
@@ -84,7 +91,21 @@ pub fn analyze_column_with_analysis_options(
     data: &[String],
     options: &AnalysisOptions,
 ) -> ColumnProfile {
-    analyze_column_with_options(
+    analyze_declared_column(name, data, options, None)
+}
+
+/// [`analyze_column_with_analysis_options`] for a column whose source
+/// declared its type, recorded as the profile's `native_type`. A declared
+/// decimal (PostgreSQL `NUMERIC`, MySQL `DECIMAL`) arrives as text, and a
+/// `Float` column of it is read as an Arrow decimal is, with exact order
+/// statistics (#1268).
+pub fn analyze_declared_column(
+    name: &str,
+    data: &[String],
+    options: &AnalysisOptions,
+    native_type: Option<NativeType>,
+) -> ColumnProfile {
+    let mut profile = analyze_column_with_options(
         name,
         data,
         &ColumnAnalysis {
@@ -92,8 +113,13 @@ pub fn analyze_column_with_analysis_options(
             skip_patterns: !options.include_patterns(),
             locale: options.locale(),
             skip_unique_count: false,
+            decimal_values: native_type
+                .as_ref()
+                .is_some_and(NativeType::declares_decimal),
         },
-    )
+    );
+    profile.native_type = native_type;
+    profile
 }
 
 /// Analyze a column with configurable options
@@ -129,6 +155,8 @@ fn analyze_column_with_options(
             DataType::Integer | DataType::Float => {
                 let (numeric, parsed) = if data_type == DataType::Integer {
                     compute_integer_stats_with_parsed_count(data)
+                } else if analysis.decimal_values {
+                    compute_decimal_stats_with_parsed_count(data)
                 } else {
                     compute_numeric_stats_with_parsed_count(data)
                 };
@@ -517,5 +545,50 @@ mod tests {
         assert_eq!(stats.min_length, 1);
         assert_eq!(stats.max_length, 1);
         assert_eq!(stats.avg_length, 1.0);
+    }
+
+    /// A database decimal arrives as text. Declared `NUMERIC` or `DECIMAL`,
+    /// a `Float` column of it is read as an Arrow decimal is, with its order
+    /// held exactly (#1268); undeclared, or declared a float, it stays text.
+    #[test]
+    fn a_declared_decimal_is_read_as_a_decimal() {
+        // `9999999999999 + cents / 100`, the lowest value just below the
+        // lower fence, which the `f64` fences do not resolve.
+        let data: Vec<String> = [80, 173, 195, 209, 222, 255, 284, 331]
+            .iter()
+            .map(|cents: &i64| {
+                let value = 999_999_999_999_900_i64 + cents;
+                format!("{}.{:02}", value / 100, value % 100)
+            })
+            .collect();
+        let options = AnalysisOptions::default();
+        let mut wrong = Vec::new();
+        for (native_type, exact) in [
+            (
+                Some(NativeType::new(NativeType::POSTGRESQL, "NUMERIC")),
+                true,
+            ),
+            (Some(NativeType::new(NativeType::MYSQL, "DECIMAL")), true),
+            (
+                Some(NativeType::new(NativeType::POSTGRESQL, "FLOAT8")),
+                false,
+            ),
+            (None, false),
+        ] {
+            let label = format!("{native_type:?}");
+            let profile = analyze_declared_column("v", &data, &options, native_type.clone());
+            if profile.native_type != native_type {
+                wrong.push(format!("{label}: recorded {:?}", profile.native_type));
+            }
+            match &profile.stats {
+                ColumnStats::Numeric(stats) if stats.exact.is_some() == exact => {
+                    if exact && stats.outlier_count != Some(1) {
+                        wrong.push(format!("{label}: outlier_count {:?}", stats.outlier_count));
+                    }
+                }
+                other => wrong.push(format!("{label}: {other:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }

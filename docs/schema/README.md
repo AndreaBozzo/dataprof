@@ -156,11 +156,11 @@ strings (no exponent, no trailing zeros in a fraction): `min`, `max`, `median`,
 `q1`, `q2`, `q3` and `mode`, each present when the `f64` field of the same name
 is, over the same values. It is present on every integer column and every
 decimal-typed column (an Arrow decimal read from Arrow, Parquet, pandas or
-polars), and absent on a float column, whose values are not held exactly. A
-CSV or JSON column of long decimal text is typed `float` and has no `exact`
-although its spread is exact, and so is a database `numeric` column, which
-arrives as text. A median or quartile between two integers is a decimal, such
-as `"9007199254740997.5"`. `exact` is absent on a report written before it
+polars, and a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column, whose declared
+type selects the decimal reading of its text, #1268), and absent on a float
+column, whose values are not held exactly. A CSV or JSON column of long decimal
+text is typed `float` and has no `exact` although its spread is exact. A median
+or quartile between two integers is a decimal, such as `"9007199254740997.5"`. `exact` is absent on a report written before it
 existed (#1038).
 
 Decimals with more digits than `f64` keeps get the same treatment (#1149):
@@ -170,7 +170,8 @@ deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
 its nearest `f64` in the compensated sum, as it does for integers (#1262), and
 the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
-polars) is held exactly from 11 significant digits. Text is held exactly
+polars, or a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column) is held exactly
+from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
 as the float it may be, as the same column typed `Float64` does. A CSV of a
 decimal column therefore serializes what the typed column does when its values
@@ -930,7 +931,10 @@ counted with the exact Tukey fences a column's `outlier_count` uses, and a
 value whose nearest `f64` equals a range or sign bound is compared with it by
 its digits. Through 0.13 both comparisons went through the value's nearest
 `f64`, so `100.000000000000000001` in a percentage column broke no rule, and a
-64-bit integer past 2^53 could land on the wrong side of a fence. The same
+64-bit integer past 2^53 could land on the wrong side of a fence. A column
+whose source declared a decimal (`native_type`) is read as a decimal with or
+without statistics (#1268); a pandas `object` column of `Decimal` values
+declares none and is read as text when statistics are not requested. The same
 bytes can therefore score lower on accuracy, and overall, than they did.
 
 A report that records no `accuracy_comparison` reads back with it unknown, and
