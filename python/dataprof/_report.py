@@ -1296,7 +1296,13 @@ class ProfileReport:
           validity, precision), as :meth:`quality_summary` reports them.
         - ``columns``: per-column ``null_pct_a``, ``null_pct_b`` and
           ``null_pct_delta`` over the union of column names, this report's
-          order first.
+          order first. Each entry also has ``data_type_a`` and
+          ``data_type_b``, the inferred type (``"integer"``), ``None`` on a
+          side that lacks the column or read no value for it that is not
+          null, so two different names are what :meth:`check` reports as
+          ``column_type_changed``; and ``native_type_a`` and
+          ``native_type_b``, the type the source declared (see
+          :attr:`ColumnProfile.native_type`), ``None`` where it declared none.
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
         - ``metric_semantics``: each side's :attr:`metric_semantics` and
           ``comparable``: ``True`` when both record every definition this
@@ -1308,13 +1314,15 @@ class ProfileReport:
           unchanged data, ``score_weights``, ``semantic_hints`` (the
           columns named by ``positive_columns``, ``identifier_columns``,
           ``temporal_columns`` and ``temporal_pairs``), ``pattern_locale``
-          (see :attr:`analysis_settings`) and ``timeliness_clock`` (the
-          ``clock`` in ``quality.timeliness``). Each has ``a``, ``b`` and
+          (see :attr:`analysis_settings`), ``timeliness_clock`` (the
+          ``clock`` in ``quality.timeliness``) and ``columns`` (each side's
+          ``columns=`` selection, see :attr:`analysis_settings`; ``same``
+          ignores the order a list gives). Each has ``a``, ``b`` and
           ``same``: ``True`` when both sides recorded it and agree, ``False``
           when they differ, ``None`` when either did not record it (weights
           on a summary saved before 0.12, hints before 0.10, the locale
-          before 0.13, the clock before 0.14 or with no timeliness
-          assessment). Two rolling clocks read on different days differ.
+          and the selection before 0.13, the clock before 0.14 or with no
+          timeliness assessment). Two rolling clocks read on different days differ.
           A score that moved under a different setting may not reflect a change
           in the data.
         - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``

@@ -49,6 +49,10 @@ def test_the_shape_is_the_frozen_contract():
         "null_pct_a": 50.0,
         "null_pct_b": 0.0,
         "null_pct_delta": -50.0,
+        "data_type_a": "integer",
+        "data_type_b": "integer",
+        "native_type_a": None,
+        "native_type_b": None,
     }
     assert set(delta["metric_semantics"]) == {"a", "b", "comparable"}
     assert list(delta["configuration"]) == [
@@ -56,6 +60,7 @@ def test_the_shape_is_the_frozen_contract():
         "semantic_hints",
         "pattern_locale",
         "timeliness_clock",
+        "columns",
     ]
     for setting in delta["configuration"].values():
         assert set(setting) == {"a", "b", "same"}
