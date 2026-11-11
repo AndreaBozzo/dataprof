@@ -35,6 +35,11 @@
 //! both sides measured the same thing the same way. Otherwise the rule is left
 //! unevaluated, naming what differs:
 //!
+//! - for the validity score, and for the overall score when validity is
+//!   assessed on one side only, pattern detection run on one side only
+//!   ([`NotEvaluated::SettingChanged`] on `metric_packs`): validity scores
+//!   the detected patterns. This names the cause ahead of the reasons below
+//!   that name its effect, and needs both sides to record their packs;
 //! - a value the baseline does not carry ([`NotEvaluated::NotInBaseline`]);
 //! - for a score, a different column set ([`NotEvaluated::SchemaChanged`]).
 //!   A dataset-level score has the columns as its subject, so a column that
@@ -127,7 +132,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
+use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, MetricPack, QualityDimension};
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
 };
@@ -1969,7 +1974,9 @@ impl QualityPolicy {
                 .dimensions
                 .iter()
                 .any(|change| change.score.a.is_some() != change.score.b.is_some());
-        let reason = if change.b.is_none() {
+        let reason = if let Some(gap) = pack_gap(delta, dimension) {
+            Some(gap)
+        } else if change.b.is_none() {
             Some(NotEvaluated::NotAssessed)
         } else if change.a.is_none() {
             Some(NotEvaluated::NotInBaseline)
@@ -2770,6 +2777,40 @@ fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
         (Some(_), Some(_)) => Agreement::Changed,
         _ => Agreement::Unrecorded,
     }
+}
+
+/// [`NotEvaluated::SettingChanged`] on `metric_packs` when one side ran
+/// pattern detection and the other did not, and the score the rule reads
+/// moved because of it. Validity scores the detected patterns, so a side
+/// without the `patterns` pack assesses no validity, and its overall score
+/// averages the other dimensions. The rule reads the packs only where that
+/// shows: the validity score, and the overall score when validity is
+/// assessed on one side only. No other score reads a pack: without
+/// `quality` a side has no score at all, and `statistics` moves none.
+///
+/// Checked before the reasons that name the effect (`not_assessed`,
+/// `not_in_baseline`, `dimensions_changed`), so the rule names the cause.
+/// A side that did not record its packs (written before 0.14) leaves those
+/// reasons to decide, as they did before: two sides that both assessed
+/// validity both ran pattern detection, so the packs need no record there.
+fn pack_gap(delta: &ReportDelta, dimension: Option<QualityDimension>) -> Option<NotEvaluated> {
+    let packs = &delta.configuration.metric_packs;
+    let patterns = |packs: &Vec<MetricPack>| packs.contains(&MetricPack::Patterns);
+    let differ = packs.a.as_ref().map(patterns)? != packs.b.as_ref().map(patterns)?;
+    let validity_moved = || {
+        delta
+            .dimensions
+            .iter()
+            .find(|change| change.dimension == QualityDimension::Validity)
+            .is_some_and(|change| change.score.a.is_some() != change.score.b.is_some())
+    };
+    let reads = match dimension {
+        Some(dimension) => dimension == QualityDimension::Validity,
+        None => validity_moved(),
+    };
+    (differ && reads).then(|| NotEvaluated::SettingChanged {
+        setting: "metric_packs".to_string(),
+    })
 }
 
 /// The first setting a score reads that the two sides do not both record

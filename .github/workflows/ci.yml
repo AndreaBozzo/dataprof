@@ -674,4 +674,5 @@ jobs:
           python/tests/test_database_option_parity.py
           python/tests/test_column_order.py
           python/tests/test_engine_parity.py::test_sqlite_parity
+          python/tests/test_metric_packs_settings.py::test_a_database_query_records_its_packs
           -v -ra

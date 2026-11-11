@@ -384,6 +384,10 @@ _METRIC_SEMANTICS = {
 #: `PatternLocale` serializes them: no locale, or a supported locale's code.
 _PATTERN_LOCALES = ("none", "CA", "DE", "FR", "GB", "IT", "US")
 
+#: The names `analysis_settings.metric_packs` may list, as the Rust
+#: `MetricPack` serializes them.
+_METRIC_PACKS = ("schema", "statistics", "patterns", "quality")
+
 
 def _read_column_selection(columns: Any) -> dict[str, Any]:
     """Read `analysis_settings.columns` as the Rust `ColumnSelection`."""
@@ -409,7 +413,8 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
     A missing key is a document written before dataprof recorded it, so the
     settings are unknown: None, never the defaults. Unknown settings from a
     later writer are ignored; a malformed or missing `pattern_locale` or
-    `columns` is an error, as it is in Rust.
+    `columns` is an error, as it is in Rust. `metric_packs` is absent before
+    0.14 and stays absent; present, it must be a list of pack names.
     """
     if "analysis_settings" not in document:
         return None
@@ -422,7 +427,16 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
             "from_dict(): 'analysis_settings.pattern_locale' must be one of "
             f"{', '.join(_PATTERN_LOCALES)}, got {locale!r}."
         )
-    return {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
+    read = {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
+    if "metric_packs" in settings:
+        packs = settings["metric_packs"]
+        if not isinstance(packs, list) or any(pack not in _METRIC_PACKS for pack in packs):
+            raise ValueError(
+                "from_dict(): 'analysis_settings.metric_packs' must be a list of "
+                f"{', '.join(_METRIC_PACKS)}, got {packs!r}."
+            )
+        read["metric_packs"] = list(packs)
+    return read
 
 
 def _read_generator(document: dict[str, Any]) -> dict[str, Any] | None:

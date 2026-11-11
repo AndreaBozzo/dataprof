@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use dataprof_core::{
     AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
     ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, Locale,
-    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
+    MetricPack, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
     SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
@@ -390,6 +390,19 @@ pub struct AnalysisSettings {
     /// set as its subject, and a report without a column's profile needs this
     /// to tell a column the source lacks from one that was not selected.
     pub columns: ColumnSelection,
+    /// The metric packs the run computed, `schema` always among them, in a
+    /// fixed order: `schema`, `statistics`, `patterns`, `quality`. Without
+    /// `patterns` no column has detected patterns, so validity is not
+    /// assessed and the overall score averages the other dimensions; an
+    /// empty `quality_dimensions` selection drops `quality`. Absent from a
+    /// report written before 0.14, which did not record them.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<MetricPack>")]
+    pub metric_packs: Option<Vec<MetricPack>>,
 }
 
 impl AnalysisSettings {
@@ -398,6 +411,7 @@ impl AnalysisSettings {
         Self {
             pattern_locale: options.locale().into(),
             columns: ColumnSelection::from_options(options),
+            metric_packs: Some(options.selected_metric_packs()),
         }
     }
 }

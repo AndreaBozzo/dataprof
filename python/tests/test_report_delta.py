@@ -61,6 +61,7 @@ def test_the_shape_is_the_frozen_contract():
         "pattern_locale",
         "timeliness_clock",
         "columns",
+        "metric_packs",
     ]
     for setting in delta["configuration"].values():
         assert set(setting) == {"a", "b", "same"}

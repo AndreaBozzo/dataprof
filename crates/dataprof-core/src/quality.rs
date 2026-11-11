@@ -161,7 +161,17 @@ pub enum JsonNumberReading {
 }
 
 /// High-level categories of analysis that can be selectively enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum MetricPack {
     /// Column names, data types, null counts — always included.

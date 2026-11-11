@@ -13,7 +13,11 @@ import dataprof as dp
 import pytest
 
 EMAILS = {"email": ["a@example.com", "b@example.com", "c@example.com"]}
-ITALIAN = {"pattern_locale": "IT", "columns": {"selection": "all"}}
+ITALIAN = {
+    "pattern_locale": "IT",
+    "columns": {"selection": "all"},
+    "metric_packs": ["schema", "statistics", "patterns", "quality"],
+}
 
 
 def _routes(tmp_path: Path) -> dict[str, Any]:
@@ -104,7 +108,7 @@ def test_a_document_keeps_the_settings_and_their_absence(tmp_path: Path):
 
     # A setting a later release adds is ignored.
     later = report.to_dict()
-    later["analysis_settings"]["metric_packs"] = ["schema"]
+    later["analysis_settings"]["sample_seed"] = 7
     assert dp.ProfileReport.from_dict(later).analysis_settings == ITALIAN
 
 

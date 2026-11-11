@@ -89,6 +89,23 @@ impl AnalysisOptions {
         )
     }
 
+    /// Every pack the run computes, in [`MetricPack::all`] order: the
+    /// effective selection with the schema pack, which is always computed,
+    /// made explicit. Two requests that compute the same packs return the
+    /// same list, whatever order or repetition they were given in.
+    pub fn selected_metric_packs(&self) -> Vec<MetricPack> {
+        let effective = self.effective_metric_packs();
+        MetricPack::all()
+            .into_iter()
+            .filter(|pack| {
+                *pack == MetricPack::Schema
+                    || effective
+                        .as_deref()
+                        .is_none_or(|selected| selected.contains(pack))
+            })
+            .collect()
+    }
+
     /// Whether per-column statistics should be computed.
     pub fn include_statistics(&self) -> bool {
         MetricPack::include_statistics(self.effective_metric_packs().as_deref())
@@ -243,6 +260,31 @@ mod tests {
             packs_first.effective_metric_packs()
         );
         assert!(!dims_first.include_quality());
+    }
+
+    #[test]
+    fn selected_packs_list_what_runs_once_in_a_fixed_order() {
+        use MetricPack::{Patterns, Quality, Schema, Statistics};
+        let selected = |options: AnalysisOptions| options.selected_metric_packs();
+        assert_eq!(
+            selected(AnalysisOptions::default()),
+            vec![Schema, Statistics, Patterns, Quality]
+        );
+        assert_eq!(
+            selected(
+                AnalysisOptions::default()
+                    .with_metric_packs(Some(vec![Quality, Patterns, Quality]))
+            ),
+            vec![Schema, Patterns, Quality]
+        );
+        assert_eq!(
+            selected(AnalysisOptions::default().with_metric_packs(Some(vec![]))),
+            vec![Schema]
+        );
+        assert_eq!(
+            selected(AnalysisOptions::default().with_quality_dimensions(Some(vec![]))),
+            vec![Schema, Statistics, Patterns]
+        );
     }
 
     #[test]
