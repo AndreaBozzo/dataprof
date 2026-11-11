@@ -118,9 +118,40 @@ fn literals_below_the_f64_range_stay_distinct() {
         ".json",
     ));
     assert_eq!(csv, json);
+    // 4 before the fix too, so this does not guard #1182 on its own.
     assert_eq!(csv["unique_count"], 4, "{csv}");
-    // No value repeats, so there is no mode.
+    // No value repeats, so there is no mode: before, the mode was 0.0.
     assert_eq!(csv["stats"]["Numeric"].get("mode"), None, "{csv}");
+}
+
+/// `pandas.DataFrame.to_csv(float_format='%.17g')` pads 5e-324 and 1.5e-320
+/// past their shortest form, as it does 0.1. A float wrote them, so they read
+/// as those floats, and the column profiles as the shortest-form CSV of the
+/// same floats does (#783, #1182).
+#[test]
+fn subnormals_written_with_17_digits_stay_floats() {
+    let padded = column(&profile(
+        "id,v\n1,4.9406564584124654e-324\n2,1.4999833007740245e-320\n3,0.10000000000000001\n",
+        ".csv",
+    ));
+    let shortest = column(&profile("id,v\n1,5e-324\n2,1.5e-320\n3,0.1\n", ".csv"));
+    assert_eq!(padded, shortest);
+
+    // No value repeats there, so nothing tells a held literal from its float.
+    // `mode` counts values, not cell text (`unique_count` keeps the two
+    // spellings of 0.1 apart too): 5e-324 written both ways is its mode, as
+    // 0.1 written both ways is.
+    let mode = |cells: &str| {
+        column(&profile(&format!("id,v\n{cells}"), ".csv"))["stats"]["Numeric"]["mode"].clone()
+    };
+    assert_eq!(
+        mode("1,4.9406564584124654e-324\n2,5e-324\n3,7\n"),
+        mode("1,5e-324\n2,5e-324\n3,7\n")
+    );
+    assert_eq!(
+        mode("1,0.10000000000000001\n2,0.1\n3,7\n"),
+        mode("1,0.1\n2,0.1\n3,7\n")
+    );
 }
 
 /// `1e00000000000000000000` is 1, which the `f64` holds, so it stays the

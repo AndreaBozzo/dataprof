@@ -746,8 +746,8 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 /// [`Unheld`](Self::Unheld) where it does not: from [`TEXT_EXACT_DIGITS`]
 /// significant digits for [`parse`](Self::parse), from
 /// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal), and
-/// at any length when it underflows to 0 or to a subnormal it does not write
-/// (#1182). Everything else is its `f64`.
+/// at any length when it underflows to 0 or to a subnormal no float writer
+/// writes as these digits (#1182). Everything else is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ParsedNumber {
@@ -810,11 +810,14 @@ impl ParsedNumber {
         // A non-zero literal that reads as 0, or as a subnormal that is not
         // its digits, underflowed: no float wrote it, so however short it is
         // it is held as written, and 1e-400 and 2e-400 stay two values
-        // (#1182). A float written out, 5e-324, still reads as that float.
+        // (#1182). A float written out still reads as that float, in its
+        // shortest form (5e-324) or padded to 17 digits by `%.17g`
+        // (4.9406564584124654e-324), as 0.10000000000000001 does (#783).
         if value.abs() < f64::MIN_POSITIVE
             && let Some(literal) = DecimalLiteral::read(text)
             && literal.written_digits > 0
             && !literal.round_trips(value)
+            && !literal.float_writes(value)
         {
             return Some(
                 literal
@@ -1312,9 +1315,27 @@ impl<'a> DecimalLiteral<'a> {
     /// padded with zeros to the units digit when it writes no exponent. Such a
     /// literal reads as that `f64`, as it did before #1149: an Arrow `Float64`
     /// sample of 1e300 is written out in 301 digits. Only called for a literal
-    /// too wide for an [`ExactDecimal`], or for text of an integer past the
-    /// 64-bit range, so the allocations stay off the common path.
+    /// too wide for an [`ExactDecimal`], for text of an integer past the
+    /// 64-bit range, or for a non-zero literal that reads as 0 or as a
+    /// subnormal (#1182), so the allocations stay off the common path.
     fn round_trips(&self, value: f64) -> bool {
+        self.writes(&format!("{:e}", value.abs()))
+    }
+
+    /// Whether a float writer could have written this literal: it has at most
+    /// 17 significant digits, and `value` formatted to that many digits, as
+    /// `%.17g` formats it, writes it. `4.9406564584124654e-324` is 5e-324 so
+    /// written; `1.2345678e-320` is not, since 8 digits of its `f64` write
+    /// `1.2346700e-320`. Only called where [`round_trips`](Self::round_trips)
+    /// is, for a literal that reads as 0 or as a subnormal.
+    fn float_writes(&self, value: f64) -> bool {
+        (1..=17).contains(&self.written_digits)
+            && self.writes(&format!("{:.*e}", self.written_digits - 1, value.abs()))
+    }
+
+    /// Whether this literal has the value `formatted` writes, which is
+    /// `{:e}`-formatted: its significant digits and its exponent agree.
+    fn writes(&self, formatted: &str) -> bool {
         let mut significant = String::new();
         let (mut whole, mut leading, mut point) = (0_i64, 0_i64, false);
         for byte in self.mantissa.bytes() {
@@ -1332,8 +1353,7 @@ impl<'a> DecimalLiteral<'a> {
                 }
             }
         }
-        let shortest = format!("{:e}", value.abs());
-        let Some((digits, exponent)) = shortest.split_once('e') else {
+        let Some((digits, exponent)) = formatted.split_once('e') else {
             return false;
         };
         let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
@@ -1578,6 +1598,10 @@ mod tests {
             ("-0e-400", -0.0),
             ("5e-324", 5e-324),
             ("1.5e-320", 1.5e-320),
+            // The same floats as `%.17g` writes them.
+            ("4.9406564584124654e-324", 5e-324),
+            ("1.4999833007740245e-320", 1.5e-320),
+            ("-4.9406564584124654E-324", -5e-324),
         ] {
             assert_eq!(
                 ParsedNumber::parse(text),
