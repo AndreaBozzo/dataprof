@@ -129,13 +129,15 @@ pub struct ReportPair {
     pub a: ReportReference,
     /// The second report.
     pub b: ReportReference,
-    /// Whether the same build wrote both reports. `Some(false)` when the
-    /// builds are known to differ: different versions, different commits, or
-    /// one commit built clean and dirty. `Some(true)` only when both record
-    /// the same version and commit, each built clean. `None` otherwise:
-    /// either side recorded no build, either build did not record its commit
-    /// or its dirty flag, or both are dirty builds of one commit, whose
-    /// uncommitted changes nothing records.
+    /// Whether the same build wrote both reports, read in order and stopping
+    /// at the first answer: `None` when either side recorded no build;
+    /// `Some(false)` when the versions differ; `None` when either side
+    /// recorded no commit; `Some(false)` when the commits differ; `None` when
+    /// either side recorded no dirty flag; then `Some(true)` when both are
+    /// clean, `Some(false)` when one is dirty, and `None` when both are dirty
+    /// builds of one commit, whose uncommitted changes nothing records. A
+    /// known difference gives `Some(false)` even when a later field is
+    /// missing.
     pub same_build: Option<bool>,
 }
 

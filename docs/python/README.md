@@ -1629,11 +1629,13 @@ delta["reports"]["same_build"]          # True, False, or None when it cannot te
 - **Builds (0.14+).** Each side of `reports` names its `generator`, the
   build that wrote it (see `report.generator`), and its `source_identity`,
   the caller's version of the source; each is `None` where the side did not
-  record it. `same_build` is `True` when both record the same version and
-  commit, each built clean; `False` when the version or the commit differs,
-  or the same commit was built once clean and once dirty; `None` when either side did not record
-  its build, its commit or its dirty flag, or both are dirty builds. A
-  change between two builds can come from a definition that changed between
+  record it. `same_build` reads the two builds in order and stops at the
+  first answer: `None` when either side recorded no build; `False` when the
+  versions differ; `None` when either side recorded no commit; `False` when
+  the commits differ; `None` when either side recorded no dirty flag; then
+  `True` when both are clean, `False` when one is dirty, and `None` when
+  both are dirty builds of one commit. A known difference therefore gives
+  `False` even when a later field is missing. A change between two builds can come from a definition that changed between
   them rather than from the data.
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns

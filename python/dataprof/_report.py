@@ -1357,11 +1357,14 @@ class ProfileReport:
           ``rows_processed``, the scan's ``evidence``, ``generator`` (the
           build that wrote it, see :attr:`generator`) and ``source_identity``
           (see :attr:`source_identity`), each ``None`` where the side did not
-          record it; and ``same_build``: ``True`` when both sides record the
-          same version and commit, each built clean, ``False`` when the builds
-          differ (version, commit, or one commit built clean and dirty),
-          ``None`` when either side did not record its build, its commit or
-          its dirty flag, or both are dirty builds of one commit. A change
+          record it; and ``same_build``, which reads the builds in order and
+          stops at the first answer: ``None`` when either side recorded no
+          build, ``False`` when the versions differ, ``None`` when either
+          side recorded no commit, ``False`` when the commits differ,
+          ``None`` when either side recorded no dirty flag, then ``True``
+          when both are clean, ``False`` when one is dirty, and ``None``
+          when both are dirty builds of one commit. A known difference gives
+          ``False`` even when a later field is missing. A change
           between two builds can come from a definition that changed between
           them.
 
