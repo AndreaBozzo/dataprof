@@ -31,6 +31,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_quality_score_drop": None,
     "max_dimension_score_drops": None,
     "max_null_percentage_increase": None,
+    "max_distinct_drop": None,
     "forbid_removed_columns": False,
     "forbid_added_columns": False,
     "forbid_findings": None,
@@ -349,6 +350,18 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-distinct-drop",
+        dest="max_distinct_drop",
+        type=_named_percentage,
+        action="append",
+        metavar="COLUMN=PERCENT",
+        help=(
+            "how far a column's distinct count may fall, in percent of the baseline's (0-100), "
+            "failing only when its distinct share of non-null values fell as far; "
+            "use *=PERCENT for every column both reports profiled; repeatable"
+        ),
+    )
+    parser.add_argument(
         "--forbid-removed-columns",
         action="store_const",
         const=True,
@@ -422,6 +435,7 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
                 "max_null_count",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
+                "max_distinct_drop",
             ):
                 value = dict(value)
             policy[key] = value

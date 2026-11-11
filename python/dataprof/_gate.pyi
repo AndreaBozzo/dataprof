@@ -95,6 +95,7 @@ class _Policy:
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,
+        max_distinct_drop: Mapping[str, float] | float | None = ...,
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,

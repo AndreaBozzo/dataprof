@@ -808,6 +808,7 @@ class ProfileReport:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_distinct_drop: _Mapping[str, float] | float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -879,6 +880,15 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            max_distinct_drop: How far a column's distinct count may fall,
+                in percent (0-100) of the baseline's count, as a key that
+                suddenly repeats. Same mapping shape as
+                ``max_null_percentage_increase``. Fewer rows alone are not a
+                collapse: the check fails only when the column's distinct
+                share of non-null values also fell by more than that
+                percentage of the baseline's share. Decided on exact counts
+                only, so a count either side estimated, or did not record as
+                exact, leaves it ``approximate_count``.
             require_columns: Columns this report must have; needs no baseline.
                 One check per name, in name order.
             forbid_removed_columns: Require every column the baseline profiled
@@ -964,6 +974,7 @@ class ProfileReport:
             max_quality_score_drop=max_quality_score_drop,
             max_dimension_score_drops=max_dimension_score_drops,
             max_null_percentage_increase=max_null_percentage_increase,
+            max_distinct_drop=max_distinct_drop,
             require_columns=require_columns,
             forbid_removed_columns=forbid_removed_columns,
             forbid_added_columns=forbid_added_columns,

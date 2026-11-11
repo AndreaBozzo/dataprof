@@ -31,9 +31,10 @@
 //! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
 //! [`ReportDelta`] between it and the report, and evaluates rules about change:
 //! how far the overall score or a dimension score may drop, and how far a
-//! column's null percentage may rise, in points. A change is decided only when
-//! both sides measured the same thing the same way. Otherwise the rule is left
-//! unevaluated, naming what differs:
+//! column's null percentage may rise, in points, and how far a column's
+//! distinct count may fall, in percent of the baseline's (#1026). A change is
+//! decided only when both sides measured the same thing the same way.
+//! Otherwise the rule is left unevaluated, naming what differs:
 //!
 //! - for the validity score, and for the overall score when validity is
 //!   assessed on one side only, pattern detection run on one side only
@@ -41,6 +42,8 @@
 //!   the detected patterns. This names the cause ahead of the reasons below
 //!   that name its effect, and needs both sides to record their packs;
 //! - a value the baseline does not carry ([`NotEvaluated::NotInBaseline`]);
+//! - for a distinct count, an estimate on either side, or a count either
+//!   side did not record as exact ([`NotEvaluated::ApproximateCount`]);
 //! - for a score, a different column set ([`NotEvaluated::SchemaChanged`]).
 //!   A dataset-level score has the columns as its subject, so a column that
 //!   appeared or vanished changes what is measured, not how good it is. A
@@ -410,6 +413,9 @@ pub enum CheckCode {
     /// A column's null percentage may rise at most the threshold's number of
     /// points above the baseline's.
     MaxNullPercentageIncrease,
+    /// A column's distinct count may fall at most the threshold's percentage
+    /// of the baseline's, unless its distinct share of non-null values held.
+    MaxDistinctDrop,
     /// A named column must be profiled.
     RequireColumn,
     /// A column the baseline profiled must still be profiled.
@@ -433,6 +439,7 @@ impl fmt::Display for CheckCode {
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
             Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
+            Self::MaxDistinctDrop => write!(f, "max_distinct_drop"),
             Self::RequireColumn => write!(f, "require_column"),
             Self::ForbidRemovedColumn => write!(f, "forbid_removed_column"),
             Self::ForbidAddedColumn => write!(f, "forbid_added_column"),
@@ -498,6 +505,14 @@ pub enum Expectation {
         /// The threshold, in points.
         value: MetricValue,
     },
+    /// The change from the baseline as a percentage of the baseline's value,
+    /// `(observed - baseline) / baseline * 100`, must be at least `value`. A
+    /// permitted drop is a negative value.
+    #[non_exhaustive]
+    RelativeChangeAtLeast {
+        /// The threshold, in percent of the baseline's value.
+        value: MetricValue,
+    },
     /// The column must be profiled. No number is compared.
     Present,
     /// The column must be one the baseline profiled. No number is compared.
@@ -512,6 +527,9 @@ impl fmt::Display for Expectation {
             Self::Analyzed => write!(f, "analyzed"),
             Self::ChangeAtLeast { value } => write!(f, "a change of at least {value}"),
             Self::ChangeAtMost { value } => write!(f, "a change of at most {value}"),
+            Self::RelativeChangeAtLeast { value } => {
+                write!(f, "a relative change of at least {value}%")
+            }
             Self::Present => write!(f, "present"),
             Self::InBaseline => write!(f, "in the baseline"),
         }
@@ -555,6 +573,11 @@ pub enum NotEvaluated {
     /// assess the metric, did not profile the column, or read no values for
     /// it.
     NotInBaseline,
+    /// A distinct count the requirement reads is an estimate on at least one
+    /// side, because the exact set of values spilled into its sketch, or the
+    /// side does not record whether it is exact. An estimate falling is not a
+    /// column collapsing, so the requirement decides on exact counts only.
+    ApproximateCount,
     /// The two reports profiled different column sets, and the requirement
     /// is about a dataset-level score, whose subject is the column set. The
     /// result's `baseline.schema` names the columns that differ.
@@ -685,8 +708,10 @@ pub struct BaselineReading {
     pub observed: Option<MetricValue>,
     /// Whether the data behind the baseline's value covers its whole source.
     pub evidence: Evidence,
-    /// The check's `observed` minus the baseline's, in points, at the
-    /// report's serialized precision. `None` when either side has no value.
+    /// The check's `observed` minus the baseline's, at the report's
+    /// serialized precision: in points, or, for a rule on a relative change
+    /// such as `max_distinct_drop`, in percent of the baseline's value.
+    /// `None` when either side has no value.
     pub change: Option<MetricValue>,
 }
 
@@ -923,6 +948,8 @@ pub struct QualityPolicy {
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage_increase: BTreeMap<String, f64>,
     max_null_percentage_increase_any: Option<f64>,
+    max_distinct_drop: BTreeMap<String, f64>,
+    max_distinct_drop_any: Option<f64>,
     require_columns: BTreeSet<String>,
     forbid_removed_columns: bool,
     forbid_added_columns: bool,
@@ -1049,6 +1076,27 @@ impl QualityPolicy {
         self
     }
 
+    /// Allow the named column's distinct count to fall at most `percent`
+    /// (0..=100) of the baseline's (#1026). Fewer rows alone do not make a
+    /// collapse, so the check fails only when the column's distinct share of
+    /// non-null values fell by more than `percent` of the baseline's share as
+    /// well. Decided on exact counts only: an estimate on either side leaves
+    /// it [`NotEvaluated::ApproximateCount`]. Takes precedence over
+    /// [`max_distinct_drop_any`](Self::max_distinct_drop_any) for that
+    /// column. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_distinct_drop(mut self, column: impl Into<String>, percent: f64) -> Self {
+        self.max_distinct_drop.insert(column.into(), percent);
+        self
+    }
+
+    /// [`max_distinct_drop`](Self::max_distinct_drop) for every other column
+    /// both reports profiled. A column only the evaluated report has is not
+    /// covered. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_distinct_drop_any(mut self, percent: f64) -> Self {
+        self.max_distinct_drop_any = Some(percent);
+        self
+    }
+
     /// Require each named column to be profiled. A column missing from the
     /// report fails only when the report shows its source lacks it: the run's
     /// column selection included the column, and the column set covers the
@@ -1157,6 +1205,12 @@ impl QualityPolicy {
         if let Some(points) = self.max_null_percentage_increase_any {
             check_percentage(CheckCode::MaxNullPercentageIncrease, None, points)?;
         }
+        for (column, percent) in &self.max_distinct_drop {
+            check_percentage(CheckCode::MaxDistinctDrop, Some(column.clone()), *percent)?;
+        }
+        if let Some(percent) = self.max_distinct_drop_any {
+            check_percentage(CheckCode::MaxDistinctDrop, None, percent)?;
+        }
         if self.is_empty() {
             return Err(PolicyError::NoRequirements);
         }
@@ -1184,6 +1238,8 @@ impl QualityPolicy {
             || !self.max_dimension_score_drops.is_empty()
             || !self.max_null_percentage_increase.is_empty()
             || self.max_null_percentage_increase_any.is_some()
+            || !self.max_distinct_drop.is_empty()
+            || self.max_distinct_drop_any.is_some()
             || self.forbid_removed_columns
             || self.forbid_added_columns
     }
@@ -1215,8 +1271,9 @@ impl QualityPolicy {
     ///
     /// Every requirement is evaluated as [`evaluate`](Self::evaluate) does,
     /// then each rule about change, in a fixed order: the overall score, the
-    /// dimensions in [`QualityDimension::all`] order, then the named columns
-    /// in name order and every other shared column in the baseline's order.
+    /// dimensions in [`QualityDimension::all`] order, then for the null
+    /// increase and then the distinct drop rules the named columns in name
+    /// order and every other shared column in the baseline's order.
     /// The baseline may come from a flat summary, which leaves what it did
     /// not record unrecorded. See the [module docs](self) for when a change
     /// is decided.
@@ -1248,6 +1305,7 @@ impl QualityPolicy {
             }
         }
         checks.extend(self.null_increase_checks(&delta));
+        checks.extend(self.distinct_drop_checks(&delta, baseline, &current));
         // Collected once, so a rule over every column does not rescan the
         // other side's columns for each one.
         let (baseline_names, current_names) = (column_names(baseline), column_names(&current));
@@ -2116,6 +2174,153 @@ impl QualityPolicy {
         check
     }
 
+    /// One check per named column, in name order, then one per other column
+    /// both reports profiled, in the baseline's order, as for
+    /// [`null_increase_checks`](Self::null_increase_checks).
+    fn distinct_drop_checks(
+        &self,
+        delta: &ReportDelta,
+        baseline: &ReportSide,
+        current: &ReportSide,
+    ) -> Vec<Check> {
+        if self.max_distinct_drop.is_empty() && self.max_distinct_drop_any.is_none() {
+            return Vec::new();
+        }
+        fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+            side.columns()
+                .iter()
+                .map(|column| (column.name.as_str(), column))
+                .collect()
+        }
+        let sides = Sides {
+            a: by_name(baseline),
+            b: by_name(current),
+        };
+        let mut checks = Vec::new();
+        for (column, percent) in &self.max_distinct_drop {
+            checks.push(self.distinct_drop_check(delta, &sides, column, *percent));
+        }
+        if let Some(percent) = self.max_distinct_drop_any {
+            for column in &delta.schema.common {
+                if !self.max_distinct_drop.contains_key(column) {
+                    checks.push(self.distinct_drop_check(delta, &sides, column, percent));
+                }
+            }
+        }
+        checks
+    }
+
+    /// How far a column's distinct count may fall below the baseline's, in
+    /// percent of the baseline's count (#1026). Distinct counts accumulate
+    /// over every scanned row, so each side's scan coverage is its evidence.
+    /// A count that fell with the rows is not a collapse: the check fails
+    /// only when the distinct share of non-null values fell by more than the
+    /// allowance too. Both changes are compared at the serialized precision.
+    fn distinct_drop_check(
+        &self,
+        delta: &ReportDelta,
+        sides: &Sides<HashMap<&str, &ColumnSide>>,
+        column: &str,
+        percent: f64,
+    ) -> Check {
+        let read = |side: &HashMap<&str, &ColumnSide>| {
+            side.get(column).map(|column| DistinctReading::of(column))
+        };
+        let (a, b) = (read(&sides.a), read(&sides.b));
+        let counted = |reading: Option<DistinctReading>| {
+            reading.and_then(|reading| reading.non_null.filter(|&n| n > 0).and(reading.count))
+        };
+        let (count_a, count_b) = (counted(a), counted(b));
+        let count_change = count_a
+            .zip(count_b)
+            .map(|(a, b)| relative_change(a as f64, b as f64));
+        let evidence = Sides {
+            a: delta.reports.a.evidence,
+            b: delta.reports.b.evidence,
+        };
+        let mut check = Check {
+            code: CheckCode::MaxDistinctDrop,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            // `0.0 - percent`, not `-percent`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            expected: Expectation::RelativeChangeAtLeast {
+                value: MetricValue::Percentage(0.0 - percent),
+            },
+            observed: count_b.map(MetricValue::Count),
+            scope: self.scope,
+            evidence: evidence.b,
+            bounds: None,
+            baseline: Some(BaselineReading {
+                observed: count_a.map(MetricValue::Count),
+                evidence: evidence.a,
+                change: count_change.map(MetricValue::Percentage),
+            }),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let exact = |reading: Option<DistinctReading>| {
+            reading.is_some_and(|reading| reading.approximate == Some(false))
+        };
+        let reason = if b.is_none() {
+            Some(NotEvaluated::ColumnNotProfiled)
+        } else if a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if count_b.is_none() {
+            Some(NotEvaluated::NotAssessed)
+        } else if count_a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if !exact(a) || !exact(b) {
+            Some(NotEvaluated::ApproximateCount)
+        } else {
+            definition_gap(
+                delta.metric_semantics.a.as_ref(),
+                delta.metric_semantics.b.as_ref(),
+                &[Definition::NullTokens, Definition::JsonNumberReading],
+            )
+        };
+        let subject = "this column's distinct count";
+        if let Some(reason) = reason {
+            let mut check = not_evaluated_change(check, reason, subject);
+            // A nested column holds values but has no distinct count.
+            if count_b.is_none()
+                && b.is_some_and(|b| b.count.is_none() && b.non_null.is_some_and(|n| n > 0))
+            {
+                check.message = "the report counted no distinct values for this column".into();
+            }
+            return check;
+        }
+        let (Some(a), Some(b), Some(count_change)) = (a, b, count_change) else {
+            unreachable!("a counted column has a reading and a change on both sides")
+        };
+        let allowed = 0.0 - rounded_2(percent);
+        let count_held = count_change >= allowed;
+        let share_held = || {
+            let share = |reading: DistinctReading| {
+                reading.count.expect("counted") as f64 / reading.non_null.expect("counted") as f64
+            };
+            relative_change(share(a), share(b)) >= allowed
+        };
+        check.status = self.decide_change(&evidence, count_held || share_held());
+        check.message = match check.status {
+            CheckStatus::Passed if count_held => {
+                format!("{subject} fell no more than allowed from the baseline")
+            }
+            CheckStatus::Passed => format!(
+                "{subject} fell more than allowed from the baseline, and its distinct share of \
+                 non-null values fell no more than allowed, so the drop follows fewer values"
+            ),
+            CheckStatus::Failed => format!(
+                "{subject} and its distinct share of non-null values both fell more than allowed \
+                 from the baseline"
+            ),
+            CheckStatus::NotEvaluated(_) => evidence_message(subject),
+        };
+        check
+    }
+
     /// Whether the side without `column` shows its source lacks it: the
     /// side's selection included the column, so it was not in what the side
     /// read, and the side's column set covers the whole source. Under
@@ -2497,6 +2702,34 @@ fn schema_diagnostics(
 
 /// A delta's columns by name, built once per evaluation so a rule over every
 /// shared column does not rescan the schema for each one.
+/// What the distinct drop rule reads about one column on one side.
+#[derive(Debug, Clone, Copy)]
+struct DistinctReading {
+    /// Distinct non-null values, `None` when not counted or not recorded.
+    count: Option<usize>,
+    /// Whether the count is an estimate, `None` when not recorded.
+    approximate: Option<bool>,
+    /// Non-null values read, `None` when the counts were not recorded.
+    non_null: Option<usize>,
+}
+
+impl DistinctReading {
+    fn of(column: &ColumnSide) -> Self {
+        Self {
+            count: column.unique_count,
+            approximate: column.unique_count_is_approximate,
+            non_null: column
+                .counts
+                .map(|(total, nulls)| total.saturating_sub(nulls)),
+        }
+    }
+}
+
+/// `(b - a) / a` in percent, at the serialized precision. `a` is positive.
+fn relative_change(a: f64, b: f64) -> f64 {
+    rounded_2((b - a) / a * 100.0)
+}
+
 struct ColumnIndex<'a> {
     changes: HashMap<&'a str, &'a ColumnChange>,
     /// Columns the evaluated report profiled.
@@ -2617,6 +2850,10 @@ fn not_evaluated_change(mut check: Check, reason: NotEvaluated, subject: &str) -
         NotEvaluated::NotAssessed => format!("{subject} was not assessed in this report"),
         NotEvaluated::ColumnNotProfiled => "this column has no profile in the report".to_string(),
         NotEvaluated::NotInBaseline => format!("the baseline carries no value for {subject}"),
+        NotEvaluated::ApproximateCount => format!(
+            "{subject} is an estimate on at least one side, or not recorded as exact, and an \
+             estimate falling is not a column collapsing"
+        ),
         NotEvaluated::SchemaChanged => format!(
             "the two reports profiled different columns, so {subject} has a different subject \
              on each side"

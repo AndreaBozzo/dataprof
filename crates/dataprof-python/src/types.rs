@@ -1535,6 +1535,8 @@ impl PyProfileReport {
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
         max_null_percentage_increase_any = None,
+        max_distinct_drop = Vec::new(),
+        max_distinct_drop_any = None,
         require_columns = Vec::new(),
         forbid_removed_columns = false,
         forbid_added_columns = false,
@@ -1560,6 +1562,8 @@ impl PyProfileReport {
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
         max_null_percentage_increase_any: Option<f64>,
+        max_distinct_drop: Vec<(String, f64)>,
+        max_distinct_drop_any: Option<f64>,
         require_columns: Vec<String>,
         forbid_removed_columns: bool,
         forbid_added_columns: bool,
@@ -1612,6 +1616,12 @@ impl PyProfileReport {
         }
         if let Some(points) = max_null_percentage_increase_any {
             policy = policy.max_null_percentage_increase_any(points);
+        }
+        for (column, percent) in max_distinct_drop {
+            policy = policy.max_distinct_drop(column, percent);
+        }
+        if let Some(percent) = max_distinct_drop_any {
+            policy = policy.max_distinct_drop_any(percent);
         }
         if !require_columns.is_empty() {
             policy = policy.require_columns(require_columns);

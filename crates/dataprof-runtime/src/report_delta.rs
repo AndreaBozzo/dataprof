@@ -593,6 +593,12 @@ pub(crate) struct ColumnSide {
     pub(crate) counts: Option<(usize, usize)>,
     /// The type the source declared, `None` when it recorded none.
     pub(crate) native_type: Option<NativeType>,
+    /// Distinct values among the non-null values read, `None` when the side
+    /// did not count them or did not record the count.
+    pub(crate) unique_count: Option<usize>,
+    /// Whether `unique_count` is an estimate, `None` when the side did not
+    /// record it. Only `Some(false)` makes the count exact.
+    pub(crate) unique_count_is_approximate: Option<bool>,
 }
 
 impl ColumnSide {
@@ -694,6 +700,8 @@ impl ReportSide {
                     data_type: Some(column.data_type.clone()),
                     counts: Some((column.total_count, column.null_count)),
                     native_type: column.native_type.clone(),
+                    unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -879,6 +887,8 @@ impl ReportSide {
                 data_type: column.data_type.as_deref().and_then(DataType::from_name),
                 counts: column.total_count.zip(column.null_count),
                 native_type: column.native_type,
+                unique_count: column.unique_count,
+                unique_count_is_approximate: column.unique_count_is_approximate,
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -1069,6 +1079,12 @@ struct SummaryColumn {
     /// Absent before 0.14, and for a column whose source declared no type.
     #[serde(default)]
     native_type: Option<NativeType>,
+    #[serde(default)]
+    unique_count: Option<usize>,
+    /// Absent, or null, where the writer did not record whether
+    /// `unique_count` is exact; that reads as unrecorded, never as exact.
+    #[serde(default)]
+    unique_count_is_approximate: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
