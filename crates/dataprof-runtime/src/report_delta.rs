@@ -31,7 +31,7 @@
 //!   releases is not a difference in the data.
 //! - **Configuration.** `configuration` lists each recorded setting that moves
 //!   a score on unchanged data (the score weights, the semantic hints, the
-//!   pattern locale) on both
+//!   pattern locale, the timeliness clock, the column selection) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
@@ -62,8 +62,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataSource, DataType, FileFormat, QualityDimension, QualityScoreWeights, SemanticHintBinding,
-    SemanticHintKind,
+    DataSource, DataType, FileFormat, NativeType, QualityDimension, QualityScoreWeights,
+    SemanticHintBinding, SemanticHintKind,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
@@ -170,6 +170,30 @@ pub struct ColumnChange {
     /// `null_pct_b - null_pct_a`, when both are present. Positive means more
     /// nulls.
     pub null_pct_delta: Option<f64>,
+    /// The type `a` inferred, by its lowercase name (`"integer"`), or `None`
+    /// when `a` has no such column, read no value for it that is not null,
+    /// or did not record its counts or a type this build knows. A column
+    /// whose values are all null establishes no type, so two names that
+    /// differ here are the change the quality gate reports as
+    /// `column_type_changed`.
+    #[serde(serialize_with = "serialize_type_name")]
+    pub data_type_a: Option<DataType>,
+    /// The type `b` inferred, under the same rules.
+    #[serde(serialize_with = "serialize_type_name")]
+    pub data_type_b: Option<DataType>,
+    /// The type `a`'s source declared for the column (#906), or `None` when
+    /// `a` has no such column or recorded no declaration. A declaration does
+    /// not depend on the values, so it is kept for an all-null column too.
+    pub native_type_a: Option<NativeType>,
+    /// The type `b`'s source declared, under the same rules.
+    pub native_type_b: Option<NativeType>,
+}
+
+fn serialize_type_name<S: Serializer>(
+    data_type: &Option<DataType>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&data_type.as_ref().map(DataType::name), serializer)
 }
 
 /// Each side's recorded measurement definitions, and whether they agree.
@@ -203,11 +227,32 @@ pub struct SettingComparison<T> {
 
 impl<T: PartialEq> SettingComparison<T> {
     fn new(a: Option<T>, b: Option<T>) -> Self {
+        Self::new_by(a, b, |left, right| left == right)
+    }
+}
+
+impl<T> SettingComparison<T> {
+    fn new_by(a: Option<T>, b: Option<T>, same: impl Fn(&T, &T) -> bool) -> Self {
         let same = match (&a, &b) {
-            (Some(left), Some(right)) => Some(left == right),
+            (Some(left), Some(right)) => Some(same(left, right)),
             _ => None,
         };
         Self { a, b, same }
+    }
+}
+
+/// Whether two selections profile the same columns. The order a `columns=`
+/// list gives orders the report's columns and moves no score, so it is not
+/// compared; `all` and a list are different settings even when the list
+/// names every column, since only `all` follows the source's columns.
+fn same_selection(a: &ColumnSelection, b: &ColumnSelection) -> bool {
+    match (a, b) {
+        (ColumnSelection::Listed { names: left }, ColumnSelection::Listed { names: right }) => {
+            let left: HashSet<&str> = left.iter().map(String::as_str).collect();
+            let right: HashSet<&str> = right.iter().map(String::as_str).collect();
+            left == right
+        }
+        _ => a == b,
     }
 }
 
@@ -273,6 +318,11 @@ pub struct ConfigurationComparison {
     /// rolling clocks read on different days differ here, as their scores
     /// were measured against different dates.
     pub timeliness_clock: SettingComparison<TimelinessClock>,
+    /// Which columns each side profiled: `all`, or the `columns=` list as
+    /// given. A dataset score covers only the selected columns. `same`
+    /// compares the columns selected, not the order a list gives them in.
+    /// `None` on a side written before 0.13.
+    pub columns: SettingComparison<ColumnSelection>,
 }
 
 /// Which columns each side has.
@@ -353,15 +403,15 @@ impl ReportDelta {
             .iter()
             .map(|column| column.name.as_str())
             .collect();
-        let a_nulls: BTreeMap<&str, Option<f64>> = a
+        let a_by_name: BTreeMap<&str, &ColumnSide> = a
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
-        let b_nulls: BTreeMap<&str, Option<f64>> = b
+        let b_by_name: BTreeMap<&str, &ColumnSide> = b
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
         let added: Vec<String> = b
             .columns
@@ -375,13 +425,19 @@ impl ReportDelta {
             .map(|column| &column.name)
             .chain(&added)
             .map(|name| {
-                let null_pct_a = a_nulls.get(name.as_str()).copied().flatten();
-                let null_pct_b = b_nulls.get(name.as_str()).copied().flatten();
+                let side_a = a_by_name.get(name.as_str()).copied();
+                let side_b = b_by_name.get(name.as_str()).copied();
+                let null_pct_a = side_a.and_then(|column| column.null_pct);
+                let null_pct_b = side_b.and_then(|column| column.null_pct);
                 ColumnChange {
                     name: name.clone(),
                     null_pct_a,
                     null_pct_b,
                     null_pct_delta: null_pct_a.zip(null_pct_b).map(|(a, b)| rounded_2(b - a)),
+                    data_type_a: side_a.and_then(ColumnSide::established_type),
+                    data_type_b: side_b.and_then(ColumnSide::established_type),
+                    native_type_a: side_a.and_then(|column| column.native_type.clone()),
+                    native_type_b: side_b.and_then(|column| column.native_type.clone()),
                 }
             })
             .collect();
@@ -415,6 +471,11 @@ impl ReportDelta {
                 ),
                 pattern_locale: SettingComparison::new(a.pattern_locale, b.pattern_locale),
                 timeliness_clock: SettingComparison::new(a.timeliness_clock, b.timeliness_clock),
+                columns: SettingComparison::new_by(
+                    a.column_selection.clone(),
+                    b.column_selection.clone(),
+                    same_selection,
+                ),
             },
             schema: SchemaChange {
                 added,
@@ -517,9 +578,20 @@ pub(crate) struct ColumnSide {
     /// record both. Exact where the rounded percentage is not: 99.999% null
     /// rounds to 100.00 and still holds a value.
     pub(crate) counts: Option<(usize, usize)>,
+    /// The type the source declared, `None` when it recorded none.
+    pub(crate) native_type: Option<NativeType>,
 }
 
 impl ColumnSide {
+    /// The inferred type, when the side read a value for the column that is
+    /// not null. The quality gate holds the same condition before it calls a
+    /// type a change.
+    fn established_type(&self) -> Option<DataType> {
+        self.populated()
+            .filter(|&populated| populated)
+            .and(self.data_type.clone())
+    }
+
     /// At least one value read for the column is not null. `None` when the
     /// counts were not recorded.
     pub(crate) fn populated(&self) -> Option<bool> {
@@ -608,6 +680,7 @@ impl ReportSide {
                     null_pct: at_precision(pct),
                     data_type: Some(column.data_type.clone()),
                     counts: Some((column.total_count, column.null_count)),
+                    native_type: column.native_type.clone(),
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -788,6 +861,7 @@ impl ReportSide {
                 // reads as unrecorded, since this build has no type to name it with.
                 data_type: column.data_type.as_deref().and_then(DataType::from_name),
                 counts: column.total_count.zip(column.null_count),
+                native_type: column.native_type,
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -971,6 +1045,9 @@ struct SummaryColumn {
     total_count: Option<usize>,
     #[serde(default)]
     null_count: Option<usize>,
+    /// Absent before 0.14, and for a column whose source declared no type.
+    #[serde(default)]
+    native_type: Option<NativeType>,
 }
 
 #[derive(serde::Deserialize)]

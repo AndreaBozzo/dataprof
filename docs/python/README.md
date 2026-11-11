@@ -1561,7 +1561,9 @@ delta = baseline.compare(dp.profile("orders.csv"))
 
 delta["quality_score"]                  # {"a": 91.2, "b": 88.75, "abs": -2.45, "rel_pct": -2.69, "evidence": {...}}
 delta["dimensions"]["completeness"]     # the same shape, for each of the seven dimensions
-delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5}
+delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5,
+                                        #  "data_type_a": "string", "data_type_b": "string",
+                                        #  "native_type_a": None, "native_type_b": None}
 delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
 delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
 delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
@@ -1574,6 +1576,14 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **No invented numbers.** A score either side did not assess, or a column one
   side lacks or that holds no values, leaves the change `None`. `rel_pct` is
   `None` when `a` is 0.
+- **Types.** `data_type_a` and `data_type_b` are each side's inferred
+  type, `None` on a side that lacks the column or read no value for it that
+  is not null: an all-null column establishes no type, so two different
+  names are exactly what `check()` reports as `column_type_changed`.
+  `native_type_a` and `native_type_b` are the type each source declared
+  (`native_type` on the column), kept for an all-null column too, and `None`
+  where the source declared none. A Parquet column that moved from
+  `decimal128(12, 2)` to `double` shows there while both sides read `float`.
 - **Evidence.** Each score carries the coverage behind it on both sides, with
   the reasons `check()` uses (`truncated`, `sampled`, `records_skipped`,
   `quality_sampled`, `coverage_unrecorded`). A change between an exact
@@ -1587,11 +1597,13 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
   `temporal_pairs`), `pattern_locale` (see `analysis_settings`) and
-  `timeliness_clock` (the `clock` in `quality.timeliness`). Each has `a`, `b`
-  and `same`, which is `None` when a side did not record the setting: weights
-  on a summary saved before 0.12, hints on one saved before 0.10, the locale
-  on one saved before 0.13, the clock on one saved before 0.14 or with no
-  timeliness assessment. Two rolling clocks read on different days differ. A
+  `timeliness_clock` (the `clock` in `quality.timeliness`) and `columns`
+  (each side's `columns=` selection, as in `analysis_settings`; `same` ignores
+  the order a list gives, and `all` differs from a list naming every column).
+  Each has `a`, `b` and `same`, which is `None` when a side did not record the
+  setting: weights on a summary saved before 0.12, hints on one saved before
+  0.10, the locale and the selection on one saved before 0.13, the clock on one
+  saved before 0.14 or with no timeliness assessment. Two rolling clocks read on different days differ. A
   score that moved while `same` is `False` may reflect the setting rather than
   the data. Settings not recorded here, such as `metrics`, still need the same
   options on both sides.
