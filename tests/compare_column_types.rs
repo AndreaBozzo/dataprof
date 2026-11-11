@@ -11,14 +11,19 @@
 //! `python/tests/test_compare_column_types.py` is the Python twin.
 
 use std::io::Write;
+#[cfg(feature = "parquet")]
 use std::sync::Arc;
 
+#[cfg(feature = "parquet")]
 use arrow::array::{ArrayRef, Decimal128Array, Float64Array, Int64Array};
+#[cfg(feature = "parquet")]
 use arrow::datatypes::{Field, Schema};
+#[cfg(feature = "parquet")]
 use arrow::record_batch::RecordBatch;
-use dataprof::{
-    DiagnosticCode, NativeType, ProfileReport, Profiler, QualityPolicy, ReportDelta, ReportSide,
-};
+#[cfg(feature = "parquet")]
+use dataprof::NativeType;
+use dataprof::{DiagnosticCode, ProfileReport, Profiler, QualityPolicy, ReportDelta, ReportSide};
+#[cfg(feature = "parquet")]
 use parquet::arrow::ArrowWriter;
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
@@ -171,6 +176,7 @@ fn a_summary_carries_a_type_only_with_its_counts_and_a_known_name() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+#[cfg(feature = "parquet")]
 fn parquet(amount: ArrayRef) -> NamedTempFile {
     let batch = RecordBatch::try_new(
         Arc::new(Schema::new(vec![
@@ -187,6 +193,7 @@ fn parquet(amount: ArrayRef) -> NamedTempFile {
     file
 }
 
+#[cfg(feature = "parquet")]
 #[test]
 fn each_side_carries_the_type_its_source_declared() {
     // The same profiled type, `float`, from two declarations; the baseline's
