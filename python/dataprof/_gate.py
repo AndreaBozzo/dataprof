@@ -79,7 +79,8 @@ class QualityCheck:
     bounds: dict[str, _Any] | None = None
     #: The baseline's side of a rule about change: its ``observed`` value,
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
-    #: baseline's in points. ``None`` on every other rule.
+    #: baseline's: in points, or for ``max_distinct_drop`` in percent of the
+    #: baseline's distinct count. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
     #: The findings code a ``forbid_finding`` check concerns. ``None`` on
     #: every other rule.
@@ -283,6 +284,7 @@ class _Policy:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_distinct_drop: _Mapping[str, float] | float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -387,6 +389,22 @@ class _Policy:
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
 
+        self.max_distinct_drop: dict[str, float] = {}
+        self.max_distinct_drop_any: float | None = None
+        if isinstance(max_distinct_drop, _Mapping):
+            for column, value in max_distinct_drop.items():
+                limit = _percentage(
+                    "max_distinct_drop",
+                    None if column == "*" else str(column),
+                    value,
+                )
+                if column == "*":
+                    self.max_distinct_drop_any = limit
+                else:
+                    self.max_distinct_drop[str(column)] = limit
+        elif max_distinct_drop is not None:
+            self.max_distinct_drop_any = _percentage("max_distinct_drop", None, max_distinct_drop)
+
         # A bare string is a sequence of characters, never a list of columns,
         # and a one-shot iterator would be consumed by the check below.
         if require_columns is not None and (
@@ -431,7 +449,8 @@ class _Policy:
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase, forbid_removed_columns, forbid_added_columns) "
+                "max_null_percentage_increase, max_distinct_drop, forbid_removed_columns, "
+                "forbid_added_columns) "
                 "needs a baseline report to compare against",
             )
 
@@ -466,6 +485,8 @@ class _Policy:
             or bool(self.max_dimension_score_drops)
             or bool(self.max_null_percentage_increase)
             or self.max_null_percentage_increase_any is not None
+            or bool(self.max_distinct_drop)
+            or self.max_distinct_drop_any is not None
             or self.forbid_removed_columns
             or self.forbid_added_columns
         )
@@ -503,6 +524,8 @@ class _Policy:
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
+                max_distinct_drop=list(self.max_distinct_drop.items()),
+                max_distinct_drop_any=self.max_distinct_drop_any,
                 require_columns=self.require_columns,
                 forbid_removed_columns=self.forbid_removed_columns,
                 forbid_added_columns=self.forbid_added_columns,

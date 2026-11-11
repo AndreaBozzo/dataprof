@@ -1012,10 +1012,11 @@ if not result.passed:
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
-| `baseline` | `ProfileReport` | A saved report to measure change from; the three rules below need one |
+| `baseline` | `ProfileReport` | A saved report to measure change from; the rules about change below need one |
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
 | `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
 | `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
@@ -1169,6 +1170,9 @@ unevaluated, with one of these reasons:
 
 - `not_in_baseline`: the baseline did not assess the score, did not profile
   the column, or read no values for it;
+- `approximate_count`, for `max_distinct_drop`, when either side's distinct
+  count is an estimate (past a million distinct values the count spills into
+  a sketch) or a document does not record whether it is exact;
 - `schema_changed`, for a score, when the two reports profiled different
   columns. A dataset-level score has the column set as its subject, so a
   column that appeared or vanished changes what is measured. A column's own
@@ -1184,8 +1188,8 @@ unevaluated, with one of these reasons:
   score, `outlier_units` also for accuracy and the overall score,
   `key_column_source` also for uniqueness and the overall score,
   `accuracy_comparison` also for accuracy and the overall score,
-  `json_number_reading` also for consistency, precision, uniqueness, accuracy
-  and the overall score), when the two reports do not both record it identically. A
+  `json_number_reading` also for consistency, precision, uniqueness, accuracy,
+  the overall score and the distinct count), when the two reports do not both record it identically. A
   baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
@@ -1205,6 +1209,18 @@ unevaluated, with one of these reasons:
   `not_in_baseline` or `dimensions_changed`;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
   not cover its whole source.
+
+**A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
+10}` fails when the column's distinct count fell by more than 10% of the
+baseline's, as a key that suddenly repeats. Fewer rows alone are not a
+collapse: 10 distinct keys over 10 rows against 100 over 100 passes, because
+the distinct share of non-null values held. The check fails only when that
+share fell by more than the same percentage of the baseline's share too.
+`observed` and the baseline's `observed` are the two distinct counts, and the
+baseline's `change` is the count's change in percent of the baseline's
+(`-90.0` for 100 to 10). A column with no non-null values in this report is
+`not_assessed`. More rows over the same distinct values is not a fall in
+the count, so this rule does not read it.
 
 **The timeliness clock (0.14+).** Timeliness counts dates later than a
 reference date and dates older than a maximum age, so the same data scores
@@ -1236,7 +1252,9 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `result.baseline` names both reports
+drop or `change_at_most` for an increase. `max_distinct_drop` is relative
+instead: `change` is in percent of the baseline's distinct count, and
+`expected` is `{"comparison": "relative_change_at_least", "value": -10.0}`. `result.baseline` names both reports
 (`a` is the baseline), the `schema` change between them, and the
 `timeliness_clock` rule the score rules read. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
@@ -1490,6 +1508,7 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-quality-drop POINTS` | `max_quality_score_drop` |
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
+| `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
 | `--forbid-removed-columns` | `forbid_removed_columns` |
 | `--forbid-added-columns` | `forbid_added_columns` |
 | `--timeliness-clock fixed\|rolling` | `timeliness_clock` |
