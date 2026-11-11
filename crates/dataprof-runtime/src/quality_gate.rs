@@ -145,10 +145,11 @@ use crate::findings::{
     Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, UnevaluatedRule,
 };
 use crate::profile_report::{
-    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
+    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus, ReportGenerator,
+    SourceIdentity,
 };
 use crate::report_delta::{
-    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
+    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportPair,
     ReportSide, SchemaChange, Sides,
 };
 
@@ -721,8 +722,8 @@ pub struct BaselineReading {
 #[non_exhaustive]
 pub struct BaselineComparison {
     /// `a` is the baseline and `b` the report evaluated, as in a
-    /// [`ReportDelta`] between them.
-    pub reports: Sides<ReportReference>,
+    /// [`ReportDelta`] between them, with whether one build wrote both.
+    pub reports: ReportPair,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
     /// The schema changes from the baseline, whatever the policy states. A
@@ -891,6 +892,13 @@ pub struct GateResult {
     /// baseline. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<BaselineComparison>,
+    /// The build that wrote the report evaluated, which decided the metrics
+    /// the verdict reads. `None` (serialized as `null`) when the report did
+    /// not record one. The build evaluating the policy can be another.
+    pub generator: Option<ReportGenerator>,
+    /// The caller's version of the source the report describes, `None`
+    /// (serialized as `null`) when none was recorded.
+    pub source_identity: Option<SourceIdentity>,
 }
 
 impl GateResult {
@@ -1263,6 +1271,8 @@ impl QualityPolicy {
             evidence: scan_evidence(&report.execution),
             checks,
             baseline: None,
+            generator: report.generator.clone(),
+            source_identity: report.source_identity.clone(),
         })
     }
 
@@ -1350,6 +1360,8 @@ impl QualityPolicy {
                 diagnostics,
                 timeliness_clock: self.timeliness_clock,
             }),
+            generator: report.generator.clone(),
+            source_identity: report.source_identity.clone(),
         })
     }
 
@@ -4555,9 +4567,10 @@ mod tests {
     /// carry the report's 2dp convention; counts stay whole.
     #[test]
     fn result_serializes_into_the_documented_shape() {
+        let report = complete_report();
         let result = QualityPolicy::new()
             .max_null_percentage("note", 10.0)
-            .evaluate(&complete_report())
+            .evaluate(&report)
             .unwrap();
 
         assert_eq!(
@@ -4576,6 +4589,9 @@ mod tests {
                     "status": "failed",
                     "message": "this column's null percentage is above the allowance",
                 }],
+                // The report's build and source version, written either way.
+                "generator": serde_json::to_value(&report.generator).unwrap(),
+                "source_identity": null,
             })
         );
     }

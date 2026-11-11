@@ -1057,6 +1057,14 @@ does not record the provenance the gate decides on.
 as a green one. `"fail"` wins over `"inconclusive"`: a witnessed violation is a
 decision.
 
+**Which build decided (0.14+).** `result.generator` is the build that wrote
+the report evaluated, the one whose metrics the verdict reads, and
+`result.source_identity` the caller's version of its source; each is `None`
+when the report did not record it, and `to_dict()` writes both keys either
+way. With a baseline, `result.baseline["reports"]` carries the same for both
+reports, and `same_build` as in `compare()`. A stored `verdict.json` then
+says which build passed which version without the report beside it.
+
 A requirement goes unevaluated -- and lands in `result.unevaluated` -- when:
 
 - the report carries no quality assessment (`reason: quality_unavailable`,
@@ -1589,7 +1597,9 @@ delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5,
                                         #  "native_type_a": None, "native_type_b": None}
 delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
 delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
-delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
+delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence",
+                                        #  "generator", "source_identity"}
+delta["reports"]["same_build"]          # True, False, or None when it cannot tell
 ```
 
 - **Signs.** Every change is `b - a`. A positive score change is an
@@ -1616,6 +1626,17 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
   across that boundary a changed `max_length` on non-ASCII text can be the
   unit rather than the data. `comparable` covers how dataprof measures, not
   how each report was configured.
+- **Builds (0.14+).** Each side of `reports` names its `generator`, the
+  build that wrote it (see `report.generator`), and its `source_identity`,
+  the caller's version of the source; each is `None` where the side did not
+  record it. `same_build` reads the two builds in order and stops at the
+  first answer: `None` when either side recorded no build; `False` when the
+  versions differ; `None` when either side recorded no commit; `False` when
+  the commits differ; `None` when either side recorded no dirty flag; then
+  `True` when both are clean, `False` when one is dirty, and `None` when
+  both are dirty builds of one commit. A known difference therefore gives
+  `False` even when a later field is missing. A change between two builds can come from a definition that changed between
+  them rather than from the data.
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and

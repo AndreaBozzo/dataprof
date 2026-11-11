@@ -72,8 +72,17 @@ def test_the_shape_is_the_frozen_contract():
         "temporal_pair_columns",
     }
     assert set(delta["schema"]) == {"added", "removed", "common"}
-    for side in delta["reports"].values():
-        assert set(side) == {"id", "timestamp", "source", "rows_processed", "evidence"}
+    assert set(delta["reports"]) == {"a", "b", "same_build"}
+    for side in (delta["reports"]["a"], delta["reports"]["b"]):
+        assert set(side) == {
+            "id",
+            "timestamp",
+            "source",
+            "rows_processed",
+            "evidence",
+            "generator",
+            "source_identity",
+        }
 
 
 def test_every_change_is_b_minus_a():

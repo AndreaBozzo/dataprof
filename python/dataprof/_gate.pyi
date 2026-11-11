@@ -52,6 +52,8 @@ class QualityGateResult:
     evidence: dict[str, Any]
     checks: tuple[QualityCheck, ...]
     baseline: dict[str, Any] | None
+    generator: dict[str, Any] | None
+    source_identity: dict[str, Any] | None
 
     def __init__(
         self,
@@ -60,6 +62,8 @@ class QualityGateResult:
         evidence: dict[str, Any],
         checks: tuple[QualityCheck, ...] = ...,
         baseline: dict[str, Any] | None = ...,
+        generator: dict[str, Any] | None = ...,
+        source_identity: dict[str, Any] | None = ...,
     ) -> None: ...
     @property
     def passed(self) -> bool: ...

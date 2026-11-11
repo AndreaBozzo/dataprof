@@ -72,7 +72,7 @@ pub use dataprof_runtime::{
     TimelinessClockRule, UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
-    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
+    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta, ReportPair,
     ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
     Sides,
 };

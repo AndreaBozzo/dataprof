@@ -44,7 +44,7 @@ pub use quality_gate::{
 };
 pub use report_assembler::ReportAssembler;
 pub use report_delta::{
-    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
+    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta, ReportPair,
     ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
     Sides,
 };

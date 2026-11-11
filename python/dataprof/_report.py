@@ -947,6 +947,10 @@ class ProfileReport:
         each column added, removed, retyped or now all null, which never move
         the verdict.
 
+        ``result.generator`` and ``result.source_identity`` name the build
+        that wrote this report and the caller's version of its source, each
+        ``None`` when the report did not record it.
+
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
                 outside 0-100, an unknown dimension name, a rule about change
@@ -1348,9 +1352,21 @@ class ProfileReport:
           assessment). Two rolling clocks read on different days differ.
           A score that moved under a different setting may not reflect a change
           in the data.
-        - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
-          for a flat summary), ``source``, ``rows_processed`` and the scan's
-          ``evidence``.
+        - ``reports``: ``a`` and ``b``, each with its ``id`` and
+          ``timestamp`` (``None`` for a flat summary), ``source``,
+          ``rows_processed``, the scan's ``evidence``, ``generator`` (the
+          build that wrote it, see :attr:`generator`) and ``source_identity``
+          (see :attr:`source_identity`), each ``None`` where the side did not
+          record it; and ``same_build``, which reads the builds in order and
+          stops at the first answer: ``None`` when either side recorded no
+          build, ``False`` when the versions differ, ``None`` when either
+          side recorded no commit, ``False`` when the commits differ,
+          ``None`` when either side recorded no dirty flag, then ``True``
+          when both are clean, ``False`` when one is dirty, and ``None``
+          when both are dirty builds of one commit. A known difference gives
+          ``False`` even when a later field is missing. A change
+          between two builds can come from a definition that changed between
+          them.
 
         Every change is ``b - a``: a positive score change is an improvement,
         a positive ``null_pct_delta`` is more nulls. Numbers are compared at

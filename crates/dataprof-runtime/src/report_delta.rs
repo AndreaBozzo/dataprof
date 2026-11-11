@@ -38,6 +38,11 @@
 //!   Configuration is not comparability: a score that moved under a different
 //!   setting may not reflect a change in the data. Each policy reads only the
 //!   settings it depends on.
+//! - **Builds.** `reports` names each side's `generator`, the build that
+//!   wrote it, and its `source_identity`, the caller's version of the source,
+//!   `None` where the side did not record one. `same_build` says whether one
+//!   build wrote both: a difference between two builds can come from a
+//!   definition that changed between them, not from the data.
 //!
 //! Nothing here decides whether a change is acceptable; that is a policy's
 //! job. A window-over-window comparison reuses the same vocabulary: `a` and
@@ -74,6 +79,7 @@ use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
+    ReportGenerator, SourceIdentity,
 };
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
@@ -104,6 +110,60 @@ pub struct ReportReference {
     pub rows_processed: Option<usize>,
     /// Whether the scan covered the whole source.
     pub evidence: Evidence,
+    /// The build that wrote the report, `None` when the report did not
+    /// record one (before 0.13). Provenance, not a measurement: it never
+    /// moves a number in the comparison.
+    pub generator: Option<ReportGenerator>,
+    /// The caller's version of the source the report describes, `None` when
+    /// none was recorded. Provenance, like `generator`.
+    pub source_identity: Option<SourceIdentity>,
+}
+
+/// The two reports a comparison read, and whether one build wrote both.
+///
+/// Serialized as `{"a": ..., "b": ..., "same_build": ...}`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct ReportPair {
+    /// The first report.
+    pub a: ReportReference,
+    /// The second report.
+    pub b: ReportReference,
+    /// Whether the same build wrote both reports, read in order and stopping
+    /// at the first answer: `None` when either side recorded no build;
+    /// `Some(false)` when the versions differ; `None` when either side
+    /// recorded no commit; `Some(false)` when the commits differ; `None` when
+    /// either side recorded no dirty flag; then `Some(true)` when both are
+    /// clean, `Some(false)` when one is dirty, and `None` when both are dirty
+    /// builds of one commit, whose uncommitted changes nothing records. A
+    /// known difference gives `Some(false)` even when a later field is
+    /// missing.
+    pub same_build: Option<bool>,
+}
+
+impl ReportPair {
+    fn new(a: ReportReference, b: ReportReference) -> Self {
+        let same_build = same_build(a.generator.as_ref(), b.generator.as_ref());
+        Self { a, b, same_build }
+    }
+}
+
+/// Whether two recorded builds are the same build; see
+/// [`ReportPair::same_build`] for the rule.
+fn same_build(a: Option<&ReportGenerator>, b: Option<&ReportGenerator>) -> Option<bool> {
+    let (a, b) = (a?, b?);
+    if a.version != b.version {
+        return Some(false);
+    }
+    let (commit_a, commit_b) = (a.commit.as_ref()?, b.commit.as_ref()?);
+    if commit_a != commit_b {
+        return Some(false);
+    }
+    match (a.dirty?, b.dirty?) {
+        (false, false) => Some(true),
+        (true, true) => None,
+        _ => Some(false),
+    }
 }
 
 /// One score on both sides and how it moved.
@@ -364,8 +424,8 @@ pub struct ReportDelta {
     pub configuration: ConfigurationComparison,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
-    /// Which two reports were compared.
-    pub reports: Sides<ReportReference>,
+    /// Which two reports were compared, and whether one build wrote both.
+    pub reports: ReportPair,
 }
 
 impl ReportDelta {
@@ -492,10 +552,7 @@ impl ReportDelta {
                 removed,
                 common,
             },
-            reports: Sides {
-                a: a.reference.clone(),
-                b: b.reference.clone(),
-            },
+            reports: ReportPair::new(a.reference.clone(), b.reference.clone()),
         }
     }
 }
@@ -687,6 +744,8 @@ impl ReportSide {
                 source: report.source_identifier(),
                 rows_processed: Some(report.execution.rows_processed),
                 evidence: scan,
+                generator: report.generator.clone(),
+                source_identity: report.source_identity.clone(),
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
@@ -875,6 +934,8 @@ impl ReportSide {
                 source: summary.source,
                 rows_processed: execution.rows_processed,
                 evidence: scan,
+                generator: summary.generator,
+                source_identity: summary.source_identity,
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
@@ -1007,6 +1068,31 @@ struct Summary {
     /// canonical reader and Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_analysis_settings")]
     analysis_settings: Option<AnalysisSettings>,
+    /// Absent before 0.14, or when the build recorded none. An explicit null
+    /// is malformed, as in the canonical reader.
+    #[serde(default, deserialize_with = "summary_generator")]
+    generator: Option<ReportGenerator>,
+    /// Absent when the caller supplied no version. An explicit null is
+    /// malformed, as in the canonical reader.
+    #[serde(default, deserialize_with = "summary_source_identity")]
+    source_identity: Option<SourceIdentity>,
+}
+
+fn summary_generator<'de, D>(deserializer: D) -> Result<Option<ReportGenerator>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("generator: {error}")))
+}
+
+fn summary_source_identity<'de, D>(deserializer: D) -> Result<Option<SourceIdentity>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("source_identity: {error}"))
+    })
 }
 
 /// A flat summary's `source_type`. A kind a later release adds declares
