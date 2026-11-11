@@ -591,13 +591,22 @@ jobs:
           cache-prefix: rust-db
           components: ''
 
+      # The tests read the tables these scripts create. Each runs with the
+      # client inside its service image, so the job needs no package mirror,
+      # and stops on the first error. The MySQL script ends by creating a user,
+      # so it runs as root, as the image's entrypoint runs it in the
+      # devcontainer.
       - name: Initialize test databases
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          MYSQL_CONTAINER: ${{ job.services.mysql.id }}
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client default-mysql-client
-          PGPASSWORD=dev_password_123 psql -h localhost -U dataprof -d dataprof_test \
-            -f .devcontainer/init-scripts/postgres/01-init-schema.sql || true
-          mysql -h 127.0.0.1 -u dataprof -pdev_password_123 dataprof_test \
-            < .devcontainer/init-scripts/mysql/01-init-schema.sql || true
+          docker exec -i -e PGPASSWORD=dev_password_123 "$POSTGRES_CONTAINER" \
+            psql -v ON_ERROR_STOP=1 -U dataprof -d dataprof_test \
+            < .devcontainer/init-scripts/postgres/01-init-schema.sql
+          docker exec -i "$MYSQL_CONTAINER" \
+            mysql -u root -proot_password_123 dataprof_test \
+            < .devcontainer/init-scripts/mysql/01-init-schema.sql
 
       # all-db already includes the SQLite feature and its tests. Running a
       # SQLite-only command first forces Cargo to build two feature graphs and
