@@ -31,7 +31,8 @@
 //!   releases is not a difference in the data.
 //! - **Configuration.** `configuration` lists each recorded setting that moves
 //!   a score on unchanged data (the score weights, the semantic hints, the
-//!   pattern locale, the timeliness clock, the column selection) on both
+//!   pattern locale, the timeliness clock, the column selection, the metric
+//!   packs) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
@@ -62,8 +63,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataSource, DataType, FileFormat, NativeType, QualityDimension, QualityScoreWeights,
-    SemanticHintBinding, SemanticHintKind,
+    DataSource, DataType, FileFormat, MetricPack, NativeType, QualityDimension,
+    QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
@@ -323,6 +324,11 @@ pub struct ConfigurationComparison {
     /// compares the columns selected, not the order a list gives them in.
     /// `None` on a side written before 0.13.
     pub columns: SettingComparison<ColumnSelection>,
+    /// The metric packs each side computed, `schema` always among them, in
+    /// a fixed order. Without `patterns` validity is not assessed and the
+    /// overall score averages the other dimensions. `None` on a side written
+    /// before 0.14.
+    pub metric_packs: SettingComparison<Vec<MetricPack>>,
 }
 
 /// Which columns each side has.
@@ -476,6 +482,10 @@ impl ReportDelta {
                     b.column_selection.clone(),
                     same_selection,
                 ),
+                metric_packs: SettingComparison::new(
+                    a.metric_packs.clone(),
+                    b.metric_packs.clone(),
+                ),
             },
             schema: SchemaChange {
                 added,
@@ -539,6 +549,9 @@ pub struct ReportSide {
     timeliness_clock: Option<TimelinessClock>,
     /// Which columns the side profiled, `None` when it did not record it.
     column_selection: Option<ColumnSelection>,
+    /// The metric packs the side computed, `None` when it did not record
+    /// them.
+    metric_packs: Option<Vec<MetricPack>>,
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
@@ -709,6 +722,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.columns.clone()),
+            metric_packs: report
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.metric_packs.clone()),
             schema_declared: declares_schema(&report.data_source),
             unlisted_components: unlisted,
         }
@@ -889,6 +906,10 @@ impl ReportSide {
             timeliness_clock: quality
                 .and_then(|quality| quality.timeliness.as_ref())
                 .and_then(|timeliness| timeliness.clock),
+            metric_packs: summary
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.metric_packs.clone()),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has

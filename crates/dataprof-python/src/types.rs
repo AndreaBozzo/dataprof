@@ -1348,9 +1348,11 @@ impl PyProfileReport {
     }
 
     /// The analysis settings the report was profiled with, as a dict such as
-    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"}}``, where
-    /// ``"none"`` means no locale and a ``columns=`` selection reads
-    /// ``{"selection": "listed", "names": [...]}``.
+    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"},
+    /// "metric_packs": ["schema", "statistics", "patterns", "quality"]}``,
+    /// where ``"none"`` means no locale and a ``columns=`` selection reads
+    /// ``{"selection": "listed", "names": [...]}``. ``metric_packs`` is
+    /// absent from a report written before 0.14.
     ///
     /// None for a report loaded from a document written before dataprof
     /// recorded them: the settings are unknown, not the defaults.
@@ -1380,6 +1382,11 @@ impl PyProfileReport {
             }
         }
         dict.set_item("columns", columns)?;
+        // Absent, as in the document, when the report did not record them.
+        if let Some(packs) = &settings.metric_packs {
+            let names: Vec<String> = packs.iter().map(ToString::to_string).collect();
+            dict.set_item("metric_packs", names)?;
+        }
         Ok(Some(dict))
     }
 

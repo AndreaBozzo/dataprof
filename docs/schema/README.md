@@ -1161,3 +1161,23 @@ system this build does not know still loads.
 The declaration is provenance, not a metric. Two input paths over the same
 logical data declare different types or none, so it stays outside the
 serialized-value parity comparison. Stored v1 reports remain valid.
+
+## v1 additive change: `analysis_settings.metric_packs`
+
+`analysis_settings` gains an optional `metric_packs` list (#1030): the metric
+packs the run computed, from `"schema"`, `"statistics"`, `"patterns"` and
+`"quality"`. `"schema"` is always listed, since every run computes it, and the
+packs follow that fixed order. An empty `quality_dimensions` selection drops
+`"quality"`, as the run then computes no quality.
+
+The packs move a score on unchanged data. Without `"patterns"` no column has
+detected patterns, so validity is not assessed and the overall score averages
+the other dimensions. `compare()` lists the packs under `configuration`. The
+baseline gate reads them for the validity score, and for the overall score
+when validity is assessed on one side only: when both sides record their
+packs and only one ran `"patterns"`, the rule is `setting_changed` on
+`metric_packs`.
+
+The field is absent from every report written before 0.14, whose packs are
+unknown rather than all four. An explicit `null` and an unknown pack name are
+malformed. Stored v1 reports remain valid.

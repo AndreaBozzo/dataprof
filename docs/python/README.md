@@ -335,7 +335,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
+| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}, "metric_packs": ["schema", "statistics", "patterns", "quality"]}`, where `"none"` means no locale, a `columns=` projection reads `{"selection": "listed", "names": [...]}`, and `metric_packs` lists the packs the run computed (`"schema"` always), absent before 0.14; `None` for a report written before 0.13, whose settings are unknown |
 | `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
@@ -1198,7 +1198,11 @@ unevaluated, with one of these reasons:
   as `setting_unrecorded`, and so does the locale on a report saved before
   0.13, which did not record it. Timeliness, and the overall score when both
   sides assessed timeliness, also read `timeliness_clock` (0.14+), as the
-  next paragraph describes;
+  next paragraph describes. When both reports record their `metric_packs`
+  (0.14+) and only one ran the `patterns` pack, the validity score, and the
+  overall score when validity is assessed on one side only, read
+  `setting_changed` on `metric_packs` rather than `not_assessed`,
+  `not_in_baseline` or `dimensions_changed`;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
   not cover its whole source.
 
@@ -1596,17 +1600,18 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
-  `temporal_pairs`), `pattern_locale` (see `analysis_settings`) and
-  `timeliness_clock` (the `clock` in `quality.timeliness`) and `columns`
+  `temporal_pairs`), `pattern_locale` (see `analysis_settings`),
+  `timeliness_clock` (the `clock` in `quality.timeliness`), `columns`
   (each side's `columns=` selection, as in `analysis_settings`; `same` ignores
-  the order a list gives, and `all` differs from a list naming every column).
+  the order a list gives, and `all` differs from a list naming every column)
+  and `metric_packs` (the packs each side computed, as in `analysis_settings`).
   Each has `a`, `b` and `same`, which is `None` when a side did not record the
   setting: weights on a summary saved before 0.12, hints on one saved before
-  0.10, the locale and the selection on one saved before 0.13, the clock on one
-  saved before 0.14 or with no timeliness assessment. Two rolling clocks read on different days differ. A
+  0.10, the locale and the selection on one saved before 0.13, the clock and the
+  packs on one saved before 0.14, the clock also with no timeliness assessment. Two rolling clocks read on different days differ. A
   score that moved while `same` is `False` may reflect the setting rather than
-  the data. Settings not recorded here, such as `metrics`, still need the same
-  options on both sides.
+  the data. Settings not recorded here, such as `quality_dimensions`, still need
+  the same options on both sides.
 
 Either side may be a report loaded from a flat `to_dict()` summary, including
 one saved before 0.12; its `id` and `timestamp` are `None`, and coverage it

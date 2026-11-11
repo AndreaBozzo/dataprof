@@ -76,6 +76,13 @@
           "$ref": "#/$defs/ColumnSelection",
           "description": "The columns the run profiled. A dataset-level score has the column\nset as its subject, and a report without a column's profile needs this\nto tell a column the source lacks from one that was not selected."
         },
+        "metric_packs": {
+          "description": "The metric packs the run computed, `schema` always among them, in a\nfixed order: `schema`, `statistics`, `patterns`, `quality`. Without\n`patterns` no column has detected patterns, so validity is not\nassessed and the overall score averages the other dimensions; an\nempty `quality_dimensions` selection drops `quality`. Absent from a\nreport written before 0.14, which did not record them.",
+          "items": {
+            "$ref": "#/$defs/MetricPack"
+          },
+          "type": "array"
+        },
         "pattern_locale": {
           "$ref": "#/$defs/PatternLocale",
           "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
@@ -1184,6 +1191,31 @@
         {
           "const": "Unrecorded",
           "description": "The document this assessment was read from does not say how its\nnumbers were obtained. Only produced by deserializing a report written\nbefore dataprof recorded confidence; a profiling run always records it.\n\nDistinct from every other variant on purpose. Reading an unrecorded\nprovenance as `Exact` would let a decision about the whole source rest\non numbers that may have come from a sample.",
+          "type": "string"
+        }
+      ]
+    },
+    "MetricPack": {
+      "description": "High-level categories of analysis that can be selectively enabled.",
+      "oneOf": [
+        {
+          "const": "schema",
+          "description": "Column names, data types, null counts — always included.",
+          "type": "string"
+        },
+        {
+          "const": "statistics",
+          "description": "Numeric stats (min/max/mean/median/std_dev/quartiles), text lengths.",
+          "type": "string"
+        },
+        {
+          "const": "patterns",
+          "description": "Regex pattern detection (email, phone, UUID, etc.).",
+          "type": "string"
+        },
+        {
+          "const": "quality",
+          "description": "ISO 25012 quality dimensions (completeness, consistency, etc.).",
           "type": "string"
         }
       ]

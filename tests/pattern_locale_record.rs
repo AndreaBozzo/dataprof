@@ -91,7 +91,11 @@ fn a_document_keeps_the_settings_and_their_absence() {
     let document = serde_json::to_value(&report).unwrap();
     assert_eq!(
         document["analysis_settings"],
-        json!({"pattern_locale": "IT", "columns": {"selection": "all"}})
+        json!({
+            "pattern_locale": "IT",
+            "columns": {"selection": "all"},
+            "metric_packs": ["schema", "statistics", "patterns", "quality"],
+        })
     );
     let reloaded: ProfileReport = serde_json::from_value(document.clone()).unwrap();
     assert_eq!(recorded(&reloaded), Some(PatternLocale::It));
@@ -99,7 +103,11 @@ fn a_document_keeps_the_settings_and_their_absence() {
     let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
     assert_eq!(
         summary["analysis_settings"],
-        json!({"pattern_locale": "IT", "columns": {"selection": "all"}})
+        json!({
+            "pattern_locale": "IT",
+            "columns": {"selection": "all"},
+            "metric_packs": ["schema", "statistics", "patterns", "quality"],
+        })
     );
 
     // Written before the field: unknown, not the defaults.
@@ -137,7 +145,7 @@ fn a_document_keeps_the_settings_and_their_absence() {
     }
     // A setting a later release adds is ignored.
     let mut later = document;
-    later["analysis_settings"]["metric_packs"] = json!(["schema"]);
+    later["analysis_settings"]["sample_seed"] = json!(7);
     let later: ProfileReport = serde_json::from_value(later).unwrap();
     assert_eq!(recorded(&later), Some(PatternLocale::It));
 }
