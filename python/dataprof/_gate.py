@@ -79,7 +79,8 @@ class QualityCheck:
     bounds: dict[str, _Any] | None = None
     #: The baseline's side of a rule about change: its ``observed`` value,
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
-    #: baseline's in points. ``None`` on every other rule.
+    #: baseline's: in points, or for ``max_distinct_drop`` in percent of the
+    #: baseline's distinct count. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
     #: The findings code a ``forbid_finding`` check concerns. ``None`` on
     #: every other rule.

@@ -1252,7 +1252,9 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `result.baseline` names both reports
+drop or `change_at_most` for an increase. `max_distinct_drop` is relative
+instead: `change` is in percent of the baseline's distinct count, and
+`expected` is `{"comparison": "relative_change_at_least", "value": -10.0}`. `result.baseline` names both reports
 (`a` is the baseline), the `schema` change between them, and the
 `timeliness_clock` rule the score rules read. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
