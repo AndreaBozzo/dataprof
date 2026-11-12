@@ -49,6 +49,70 @@ cargo run --example etl_quality_gate
 uv run --no-sync python python/examples/etl_quality_gate.py
 ```
 
+#### Check a file before publishing it in CI
+
+Add these steps after your extract creates `orders.csv` and before the step
+that publishes it. This recipe uses the published 0.13.1 wheel and absolute
+checks: the file must have at least one row, both named columns must exist,
+and `customer_id` must have no nulls. Choose columns and limits with the feed's
+owner. For Parquet, replace `orders.csv` with `orders.parquet`.
+
+```yaml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install --only-binary=:all: dataprof==0.13.1
+      - name: Check the extracted file
+        shell: bash
+        run: |
+          mkdir -p quality-evidence
+          python -m dataprof.check orders.csv \
+            --min-rows 1 \
+            --require-column order_id --require-column customer_id \
+            --max-null-count customer_id=0 --scope full_source \
+            --report quality-evidence/profile.json --json \
+            > quality-evidence/verdict.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-evidence
+          path: quality-evidence/
+      # Put your publish step here, with its default success() condition.
+```
+
+The check is the last command in its step, so its exit code reaches the job:
+`0` passes, `1` rejects a batch, `2` is inconclusive, and `3` means the check
+could not run or write its output. Every nonzero result blocks publication.
+Keep the publish step's default condition and omit `continue-on-error` on the
+check. The artifact step runs after a rejection and retains both the full
+profile and JSON verdict; on an execution error, a profile may be absent and
+the JSON contains an error object. A runner or interpreter failure may leave
+no JSON. The step log remains the evidence in that case.
+
+Try the same command locally in a fresh virtual environment, outside a
+dataprof development checkout:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --only-binary=:all: dataprof==0.13.1
+printf 'order_id,customer_id\n1,C001\n2,C002\n' > orders.csv
+mkdir -p quality-evidence
+python -m dataprof.check orders.csv \
+  --min-rows 1 \
+  --require-column order_id --require-column customer_id \
+  --max-null-count customer_id=0 --scope full_source \
+  --report quality-evidence/profile.json --json \
+  > quality-evidence/verdict.json
+```
+
+This exits `0`. To simulate a rejected delivery, replace `C002` with an empty
+cell and rerun the check: it exits `1` with a `max_null_count` violation and
+writes both files. Save evidence per run, since the paths above are overwritten.
+For a percentage allowance, use `--max-null customer_id=5`; the count rule
+above enforces an exact zero at any row count.
+
 ### 3. Before/after cleaning comparison
 
 You wrote a cleaning script. Did it help? Profile the raw file, persist that

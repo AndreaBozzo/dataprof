@@ -1556,32 +1556,10 @@ The [baseline checkpoint example](../../examples/README.md#4-baseline-checkpoint
 runs this cycle over seven drops, including the ones that must not become the
 baseline, and shows it as a CI job that keeps the baseline in the repository.
 
-For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
-GitHub Actions job runs the gate and retains its result even when it fails:
-
-```yaml
-name: Data quality
-on: [push, pull_request]
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - run: python -m pip install dataprof==0.13.1
-      - name: Check incoming data
-        run: python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: quality-verdict
-          path: verdict.json
-```
-
-This example installs dataprof 0.13.1. To run the current checkout instead, build
-the extension with `uv sync --no-install-project` and
+The [file publication CI recipe](../../examples/README.md#check-a-file-before-publishing-it-in-ci)
+uses a pinned 0.13.1 wheel, required columns and a per-column null limit, and
+retains both the profile and verdict on a rejected run. To run the current
+checkout instead, build the extension with `uv sync --no-install-project` and
 `uv run --no-sync maturin develop`, then invoke the module with
 `uv run --no-sync python -m dataprof.check ...`.
 
