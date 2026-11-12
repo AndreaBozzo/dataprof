@@ -485,6 +485,7 @@ See the [Database Connectors Guide](database-connectors.md) for connection strin
 
 ## Next Steps
 
+- [Check an extracted file before publishing it](../../examples/README.md#check-a-file-before-publishing-it-in-ci) -- pinned wheel, required columns, null limits and retained evidence
 - [Examples Cookbook](examples.md) -- copy-pasteable recipes for common tasks
 - [Python API Guide](../python/README.md) -- full API reference
 - [Database Connectors](database-connectors.md) -- advanced database setup
