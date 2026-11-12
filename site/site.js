@@ -8,8 +8,16 @@ function selectTab(tab) {
     document.getElementById(candidate.getAttribute('aria-controls')).hidden = !selected;
   }
 }
+// Select a tab and record it in the URL hash (e.g. #tab-rust) without scrolling.
+function activateTab(tab) {
+  selectTab(tab);
+  history.replaceState(null, '', `#${tab.id}`);
+}
+// Open the tab named by the hash on load; leave the hash alone otherwise.
+const hashTab = tabs.find((tab) => tab.id === location.hash.slice(1));
+if (hashTab) selectTab(hashTab);
 for (const tab of tabs) {
-  tab.addEventListener('click', () => selectTab(tab));
+  tab.addEventListener('click', () => activateTab(tab));
   tab.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -18,7 +26,7 @@ for (const tab of tabs) {
     const next = event.key === 'Home' ? tabs[0]
       : event.key === 'End' ? tabs.at(-1)
       : tabs[(index + offset + tabs.length) % tabs.length];
-    selectTab(next);
+    activateTab(next);
     next.focus();
   });
 }
