@@ -87,9 +87,12 @@ cargo add dataprof
 ```rust
 use dataprof::{Profiler, QualityPolicy, Verdict};
 
-let report = Profiler::new().analyze_file("orders.csv")?;
-let result = QualityPolicy::new().min_quality_score(90.0).evaluate(&report)?;
-assert_eq!(result.verdict, Verdict::Pass);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let report = Profiler::new().analyze_file("orders.csv")?;
+    let result = QualityPolicy::new().min_quality_score(90.0).evaluate(&report)?;
+    assert_eq!(result.verdict, Verdict::Pass);
+    Ok(())
+}
 ```
 
 Minimum supported Rust: 1.96.
@@ -98,9 +101,9 @@ Minimum supported Rust: 1.96.
 
 - **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it.
 - **Bounded memory.** Files larger than RAM stream through fixed-size accumulators.
-- **Honest verdicts.** A sampled or partial scan never passes a claim about the whole file; scores carry their confidence interval.
+- **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it, such as a row minimum it reached; otherwise the check is inconclusive. Scores carry their confidence interval.
 - **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
-- **Private by default.** Reports and summaries carry counts and patterns, not your values.
+- **Local by default.** Profiling runs on your machine. Reports carry statistics, including numeric minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
 
 ## Status
 

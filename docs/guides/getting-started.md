@@ -73,7 +73,9 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
     println!("Columns: {}", report.execution.columns_detected);
 
     if let Some(quality) = &report.quality {
-        println!("Quality score: {:.1}%", quality.score());
+        if let Some(score) = quality.score() {
+            println!("Quality score: {score:.1}%");
+        }
     }
 
     for col in &report.column_profiles {
@@ -99,13 +101,16 @@ print(result.not_evaluated)                    # rules that could not look, and 
 ```
 
 ```rust
-use dataprof::FindingPolicy;
+use dataprof::{FindingPolicy, FindingPolicyError, ProfileReport};
 
-let result = FindingPolicy::new()
-    .null_heavy_percentage(20.0)
-    .evaluate(&report)?;                       // or report.findings() for the defaults
-for finding in &result.findings {
-    println!("{} {} {:?} {:?}", finding.severity, finding.code, finding.column, finding.evidence);
+fn print_findings(report: &ProfileReport) -> Result<(), FindingPolicyError> {
+    let result = FindingPolicy::new()
+        .null_heavy_percentage(20.0)
+        .evaluate(report)?;                   // or report.findings() for the defaults
+    for finding in &result.findings {
+        println!("{} {} {:?} {:?}", finding.severity, finding.code, finding.column, finding.evidence);
+    }
+    Ok(())
 }
 ```
 
@@ -124,7 +129,7 @@ a configurable weighted average of the dimensions that were actually assessed.
 
 Measures how much data is present vs. missing.
 
-- `missing_values_ratio` -- fraction of null/empty values across all columns
+- `missing_values_ratio` -- percentage of null/empty values across all columns (0–100)
 - `complete_records_ratio` -- percentage of rows with zero nulls, counted over
   every row read
 - `null_columns` -- columns past the configured null threshold (50% by default)
@@ -141,7 +146,7 @@ the ratio rather than reading the ratio alone.
 
 Measures whether values conform to their expected types and formats.
 
-- `data_type_consistency` -- fraction of values matching the column's type
+- `data_type_consistency` -- percentage of values matching the column's type (0–100)
 - `format_violations` -- values in a column's minority date format (`15/01/2024`
   beside `2024-01-15`, whatever the column is called), in a minority decimal
   separator (`1,5` beside `3.5`), or
@@ -151,17 +156,19 @@ Measures whether values conform to their expected types and formats.
   input
 - `encoding_issues` -- invalid character encoding detected
 
-For a column with an inferred type, `data_type_consistency` is the fraction of
-non-null values conforming to that type. A `string` column is scored differently,
-because every value conforms to `string` and the metric would report 100% for
+For a column with an inferred type, `data_type_consistency` is the percentage
+(0–100) of non-null values conforming to that type. A `string` column is scored
+differently, because every value conforms to `string` and the metric would report 100% for
 any mixture: each value is assigned to one lexical class -- numeric, date,
 boolean, or text -- and the score is the share held by the largest class. So a
 column of 60% numbers and 40% junk reports 60, while a genuinely textual column
 reports 100. Two exceptions keep the plain type check: columns you declared via
 `identifier_columns`, whose schemes mix forms on purpose, and columns whose name
 has a date word (`order_date`, `created_at`, `startTime`), which stay held to
-dates. The name is read by its words, so `candidate_name` or `lifetime_tier` is
-not a date name, nor is an actor (`created_by`) or a `time_zone`.
+dates unless they are string columns holding digit codes, such as `date_key`
+holding `"20240115"`. Those use their dominant lexical class. The name is read by
+its words, so `candidate_name` or `lifetime_tier` is not a date name, nor is an
+actor (`created_by`) or a `time_zone`.
 
 `data_type_consistency` is a dataset-level number and cannot say *which* column
 is mixed. Each column carries its own evidence in `type_homogeneity`, a count of
@@ -202,7 +209,8 @@ Measures duplication in the data.
 
 Measures whether values fall within expected ranges.
 
-- `outlier_ratio` -- share of values outside the interquartile range, over
+- `outlier_ratio` -- percentage beyond the Tukey fences,
+  `Q1 - 1.5*IQR` and `Q3 + 1.5*IQR` by default, over
   `outlier_values_checked`: the values of columns with at least
   `outlier_min_samples` numbers (4 by default). With none, no test ran and
   the component is left out; accuracy with neither an outlier test nor a
@@ -234,7 +242,7 @@ role word below pairs by name. Dates are judged against today's UTC date unless
 one; the report records the clock it used in `quality.timeliness.clock`.
 
 - `future_dates_count` -- dates that are in the future
-- `stale_data_ratio` -- fraction of temporal data that appears outdated
+- `stale_data_ratio` -- percentage of temporal data that appears outdated (0–100)
 - `temporal_violations` -- rows where an end date precedes its start date.
   Columns pair by a word of their names: `start` with `end`, `created` with
   `updated`, `begin_date` with `end_date`, `from_date` with `to_date`
@@ -281,7 +289,9 @@ report = dp.profile("pipe_export.csv")    # pipes auto-detected
 Detection judges each candidate by the header: one that does not split the
 header is never chosen, since the header sets the column count. When
 detection still gets a file wrong, name the delimiter with
-`csv_delimiter=";"`.
+`csv_delimiter=";"`. Detection reads a 4 KiB sample and extends it up to
+1 MiB to finish the header; a header longer than that stops with an error that
+asks for `csv_delimiter`.
 
 For files with inconsistent column counts, enable flexible parsing. Delimiter
 detection still applies:
@@ -347,6 +357,9 @@ report = dp.profile("huge.csv", sampling=SamplingStrategy.reservoir(100000))
 print(report.rows, report.sampling_applied, report.sampling_ratio)
 ```
 
+The synchronous Rust snippets in this section go inside
+`fn main() -> Result<(), dataprof::DataProfilerError>`, before its final `Ok(())`.
+
 ```rust
 // Rust
 use dataprof::{Profiler, SamplingStrategy};
@@ -404,16 +417,28 @@ report = await profile_url("https://example.com/data.parquet")
 
 ### Rust
 
+Enable `async-streaming` and add `bytes` as a direct dependency:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["async-streaming"] }
+bytes = "1.10"
+```
+
 ```rust
 use bytes::Bytes;
-use dataprof::{Profiler, AsyncDataSource, BytesSource, AsyncSourceInfo, FileFormat};
+use dataprof::{Profiler, BytesSource, AsyncSourceInfo, FileFormat};
 
-// Profile an async byte stream
-let bytes = Bytes::from("name,score\nada,100\n");
-let info = AsyncSourceInfo::new("upload", FileFormat::Csv)
-    .size_hint(Some(bytes.len() as u64));
-let source = BytesSource::new(bytes, info);
-let report = Profiler::new().profile_stream(source).await?;
+async fn profile_upload() -> Result<(), dataprof::DataProfilerError> {
+    // Profile an async byte stream
+    let bytes = Bytes::from("name,score\nada,100\n");
+    let info = AsyncSourceInfo::new("upload", FileFormat::Csv)
+        .size_hint(Some(bytes.len() as u64));
+    let source = BytesSource::new(bytes, info);
+    let report = Profiler::new().profile_stream(source).await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ## Database Profiling
@@ -434,6 +459,13 @@ report = await dp.analyze_database_async(
 ```
 
 ### Rust
+
+Enable the PostgreSQL connector:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["postgres"] }
+```
 
 ```rust
 use dataprof::Profiler;

@@ -568,6 +568,9 @@ asyncio.run(main())
 
 ## Rust Recipes
 
+The synchronous snippets go inside
+`fn main() -> Result<(), dataprof::DataProfilerError>`, before its final `Ok(())`.
+
 ### Basic file profiling
 
 ```rust
@@ -698,32 +701,66 @@ match quick_quality_check("data.csv")? {
 
 ### Async stream profiling
 
+Enable `async-streaming` for CSV and JSON byte streams, and add `bytes` directly:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["async-streaming"] }
+bytes = "1.10"
+```
+
 ```rust
 use dataprof::{Profiler, BytesSource, AsyncSourceInfo, FileFormat};
 
-let csv_bytes: bytes::Bytes = download_from_somewhere().await;
-let source = BytesSource::new(csv_bytes, AsyncSourceInfo::new("upload.csv", FileFormat::Csv));
+async fn profile_upload() -> Result<(), dataprof::DataProfilerError> {
+    let csv_bytes = bytes::Bytes::from_static(b"name,score\nada,100\n");
+    let source = BytesSource::new(csv_bytes, AsyncSourceInfo::new("upload.csv", FileFormat::Csv));
 
-let report = Profiler::new().profile_stream(source).await?;
+    let report = Profiler::new().profile_stream(source).await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ### Async URL profiling
 
+Remote Parquet needs `parquet-async`, which also enables `async-streaming`:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["parquet-async"] }
+```
+
 ```rust
 use dataprof::Profiler;
 
-let report = Profiler::new()
-    .profile_url("https://example.com/data.parquet")
-    .await?;
+async fn profile_remote() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .profile_url("https://example.com/data.parquet")
+        .await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ### Database query profiling
 
-```rust
-use dataprof::{Profiler, DatabaseConfig};
+Enable the PostgreSQL connector:
 
-let report = Profiler::new()
-    .connection_string("postgres://user:pass@localhost/mydb")
-    .analyze_query("SELECT * FROM users")
-    .await?;
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["postgres"] }
+```
+
+```rust
+use dataprof::Profiler;
+
+async fn profile_users() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .connection_string("postgres://user:pass@localhost/mydb")
+        .analyze_query("SELECT * FROM users")
+        .await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
