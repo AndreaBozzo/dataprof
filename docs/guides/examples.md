@@ -417,6 +417,35 @@ print(f"Before: {raw.quality_score:.2f}  After: {clean.quality_score:.2f}")
 print(f"Rows: {raw.rows} -> {clean.rows} ({raw.rows - clean.rows} dropped)")
 ```
 
+### Catch a key column that collapses to a few values
+
+```python
+import dataprof as dp
+
+baseline = dp.ProfileReport.load("quality/baseline.json")  # last accepted run
+today = dp.profile("landing/orders.csv", identifier_columns=["order_id"])
+
+result = today.check(
+    min_quality_score=85,
+    max_null_percentage={"customer_id": 5},
+    baseline=baseline,
+    # Fails when the distinct count fell by more than 10% of the baseline's
+    # and its share of the non-null values fell as far (0.14+).
+    max_distinct_drop={"customer_id": 10},
+)
+print(result.verdict)
+for check in result.violations:
+    if check.code == "max_distinct_drop":
+        print(check.column, check.baseline["observed"], "->", check.observed)
+    else:
+        print(check.code, check.column, check.observed)
+```
+
+A broken join that fills `customer_id` with one default value leaves the score
+and the null counts as they were. Only the distinct count moves, from 40 to 1
+in the runnable version, [`key_collapse_gate.py`](../../python/examples/key_collapse_gate.py).
+A smaller extract with the same share of distinct values passes.
+
 ### Monitor table quality across multiple CSVs
 
 ```python

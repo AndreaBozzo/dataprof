@@ -1,11 +1,12 @@
 # Examples
 
-Four scenarios. The first three are written twice — once in Rust, once in
+Five scenarios. The first three are written twice — once in Rust, once in
 Python — so you can read whichever matches the codebase you are working in. Both
 versions profile the same data and agree on every number they both report. The
 Python versions show a little more, because the Python API has
 `quality_summary()` and `compare()` where the Rust side leaves the diffing to
-you. The fourth, a checkpoint against the last accepted run, is in Python only.
+you. The fourth, a checkpoint against the last accepted run, and the fifth, a
+key column that collapses, are in Python only.
 
 Every example generates its own dataset in a temporary directory, so they run
 from a clean checkout with nothing to download and nothing left behind. The one
@@ -154,6 +155,26 @@ For a full pipeline around the same idea, with dlt loading into DuckDB and a
 batch published only when accepted, see
 [dataprof-pipeline-reference](https://github.com/AndreaBozzo/dataprof-pipeline-reference).
 
+### 5. Key column collapse
+
+An orders extract is joined to a customer table before it lands. One day the
+join breaks and every order gets the same default customer. Nothing is null,
+nothing is duplicated and the quality score stays at 100, so the usual limits
+pass. Only the number of distinct customers gives it away, from 40 to 1.
+
+`max_distinct_drop` judges that count against the last accepted report. It
+fails only when the count fell past the allowance and its share of the non-null
+values fell as far, so a quiet day with half the rows and half the customers
+passes, and so does a busier one. The example runs Tuesday and Wednesday (both
+pass), then Thursday with the broken join (fail), then Thursday again without
+the rule to show every other check passing. Each report carries a
+`source_version`, which the gate result echoes back to say which two extracts it
+compared. The rule needs dataprof 0.14 or later.
+
+```bash
+uv run --no-sync python python/examples/key_collapse_gate.py
+```
+
 ## Running them
 
 The Rust examples need nothing beyond the default feature set:
@@ -176,7 +197,7 @@ development checkout — no pandas, no source build.
 ## A note on the numbers
 
 These examples print real profiler output, not illustrative constants. If you
-change a metric's semantics, the examples change with it. CI runs all seven on
+change a metric's semantics, the examples change with it. CI runs all eight on
 every push for exactly that reason.
 
 Two results surprise people, so both examples call them out explicitly:
