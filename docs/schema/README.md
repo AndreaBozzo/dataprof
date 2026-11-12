@@ -1181,3 +1181,27 @@ packs and only one ran `"patterns"`, the rule is `setting_changed` on
 The field is absent from every report written before 0.14, whose packs are
 unknown rather than all four. An explicit `null` and an unknown pack name are
 malformed. Stored v1 reports remain valid.
+
+## v1 additive change: `analysis_settings.temporal_pairs`
+
+`analysis_settings` gains an optional `temporal_pairs` list (#1029): the
+start/end column pairs the run declared through `temporal_pairs`, each as
+`{"start": "...", "end": "..."}`. Timeliness counts a row whose start date
+falls after its end date, so pairing the same columns differently moves the
+score on unchanged data. The `temporal_pair` hint bindings already named the
+columns; this records which column pairs with which.
+
+The writer lists each pair once, sorted by start then end, since the
+calculator compares a repeated pair once and in any order. Direction is kept:
+a reversed pair counts the opposite rows. The list is empty when no pairs were
+declared.
+
+`compare()` lists the pairs under `configuration`, comparing them as a set of
+directed pairs. The baseline gate compares them for the timeliness and the
+overall score when both sides record them. Against a side that does not, it
+keeps the earlier rule: two empty pair-column lists agree, and anything else
+is `setting_unrecorded` on `temporal_pairs`.
+
+The field is absent from every report written before 0.14, whose pairs are
+unknown. An explicit `null` or a pair without a string `start` and `end` is
+malformed. Stored v1 reports remain valid.

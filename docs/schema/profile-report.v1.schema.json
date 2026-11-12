@@ -86,6 +86,13 @@
         "pattern_locale": {
           "$ref": "#/$defs/PatternLocale",
           "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
+        },
+        "temporal_pairs": {
+          "description": "The start/end column pairs `temporal_pairs` declared, each once,\nsorted by start then end. Timeliness counts a row whose start date\nfalls after its end date in a declared pair, so two runs that pair\nthe same columns differently score timeliness differently. The\ncalculator compares each pair once whatever order the list gives, so\nthe record keeps direction and drops order and repetition. Empty when\nnone were declared; absent from a report written before 0.14, which\nrecorded only the columns the pairs named.",
+          "items": {
+            "$ref": "#/$defs/TemporalPair"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -3094,6 +3101,24 @@
         }
       ],
       "description": "Supported stream source systems"
+    },
+    "TemporalPair": {
+      "description": "A start/end column pair declared through `temporal_pairs`.\n\nRead only from its object form, `{\"start\": ..., \"end\": ...}`: a derived\nreader would also take a two-element list, which the schema and the\nPython reader reject.",
+      "properties": {
+        "end": {
+          "description": "The column whose date must not fall before `start`'s.",
+          "type": "string"
+        },
+        "start": {
+          "description": "The column whose date must not fall after `end`'s.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "type": "object"
     },
     "TextLengthUnit": {
       "description": "The unit a report's text lengths were measured in, as recorded in its\nmetric semantics.\n\nOnly the current unit has a value. Releases that counted UTF-8 bytes\nrecorded no unit at all, and a report from one reads back with the unit\nunknown rather than as a byte count it never declared.",

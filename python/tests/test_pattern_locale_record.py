@@ -17,6 +17,7 @@ ITALIAN = {
     "pattern_locale": "IT",
     "columns": {"selection": "all"},
     "metric_packs": ["schema", "statistics", "patterns", "quality"],
+    "temporal_pairs": [],
 }
 
 
