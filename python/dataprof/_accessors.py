@@ -127,6 +127,9 @@ class Pattern(_View):
     category = _Field[str]()
     confidence = _Field[float]()
 
+    def __repr__(self) -> str:
+        return f"Pattern(name={self.name!r}, match_percentage={self.match_percentage!r})"
+
 
 class ColumnProfile(_View):
     """Column statistics, with the same read-only accessors for either backing.

@@ -22,7 +22,7 @@ from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _Rep
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ProfileReport as _RustProfileReport, report_delta_json as _report_delta_json
 from ._findings import FindingsResult as _FindingsResult, _evaluate as _evaluate_findings
-from ._gate import QualityGateResult as _QualityGateResult, _Policy
+from ._gate import QualityGateResult as _QualityGateResult, _Policy, _PolicyFieldError
 from ._paths import _normalize_pathlike
 from ._render import (
     _bounded,
@@ -1017,26 +1017,32 @@ class ProfileReport:
             raise TypeError(
                 f"baseline must be a dataprof ProfileReport, got {type(baseline).__name__}"
             )
-        return _Policy(
-            min_rows=min_rows,
-            min_quality_score=min_quality_score,
-            min_dimension_scores=min_dimension_scores,
-            max_null_percentage=max_null_percentage,
-            max_null_count=max_null_count,
-            max_duplicate_rows=max_duplicate_rows,
-            require_metrics=require_metrics,
-            scope=scope,
-            baseline=None if baseline is None else baseline._delta_input(),
-            max_quality_score_drop=max_quality_score_drop,
-            max_dimension_score_drops=max_dimension_score_drops,
-            max_null_percentage_increase=max_null_percentage_increase,
-            max_distinct_drop=max_distinct_drop,
-            require_columns=require_columns,
-            forbid_removed_columns=forbid_removed_columns,
-            forbid_added_columns=forbid_added_columns,
-            forbid_findings=forbid_findings,
-            timeliness_clock=timeliness_clock,
-        ).evaluate(self._native_report)
+        try:
+            policy = _Policy(
+                min_rows=min_rows,
+                min_quality_score=min_quality_score,
+                min_dimension_scores=min_dimension_scores,
+                max_null_percentage=max_null_percentage,
+                max_null_count=max_null_count,
+                max_duplicate_rows=max_duplicate_rows,
+                require_metrics=require_metrics,
+                scope=scope,
+                baseline=None if baseline is None else baseline._delta_input(),
+                max_quality_score_drop=max_quality_score_drop,
+                max_dimension_score_drops=max_dimension_score_drops,
+                max_null_percentage_increase=max_null_percentage_increase,
+                max_distinct_drop=max_distinct_drop,
+                require_columns=require_columns,
+                forbid_removed_columns=forbid_removed_columns,
+                forbid_added_columns=forbid_added_columns,
+                forbid_findings=forbid_findings,
+                timeliness_clock=timeliness_clock,
+            )
+        except _PolicyFieldError as exc:
+            if exc.key != "baseline":
+                raise
+            raise ValueError(f"{exc}: pass baseline=ProfileReport.load('baseline.json')") from None
+        return policy.evaluate(self._native_report)
 
     def findings(
         self,
@@ -1441,7 +1447,15 @@ class ProfileReport:
         The shape is stable: later releases may add keys, but do not remove
         or rename them. Either report may be loaded from a flat ``to_dict()``
         summary, including one saved before 0.12.
+
+        Raises:
+            TypeError: ``other`` is not a :class:`ProfileReport`.
         """
+        if not isinstance(other, ProfileReport):
+            raise TypeError(
+                f"other must be a dataprof ProfileReport, got {type(other).__name__}; "
+                "profile the data first, or load a saved report with ProfileReport.load(path)"
+            )
         return _json.loads(_report_delta_json(self._delta_input(), other._delta_input()))
 
     def _delta_input(self) -> _RustProfileReport | str:

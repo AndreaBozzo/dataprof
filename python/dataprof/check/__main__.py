@@ -14,7 +14,7 @@ from typing import Any, NoReturn
 
 import dataprof
 from dataprof import profile_file
-from dataprof._gate import _Policy, _PolicyFieldError
+from dataprof._gate import _Policy, _PolicyFieldError, _summary_lines
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
@@ -592,37 +592,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(result.to_json())
-    print(
-        f"dataprof {dataprof.__version__}: "
-        f"{result.verdict}: {len(result.checks)} checks, "
-        f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
-        f"(scope: {result.scope})",
-        file=sys.stderr,
-    )
-    if args.baseline is not None:
-        print(f"  baseline: {args.baseline}", file=sys.stderr)
-    for check in result.checks:
-        if check.status != "passed":
-            subject = next(
-                (s for s in (check.column, check.dimension, check.finding) if s is not None),
-                None,
-            )
-            label = f" [{subject}]" if subject is not None else ""
-            print(f"  {check.status}: {check.code}{label}: {check.message}", file=sys.stderr)
-    # Schema changes from the baseline never move the verdict, so a pass can
-    # carry them; without these lines only --json would show them.
-    for diagnostic in (result.baseline or {}).get("diagnostics", []):
-        detail = ""
-        if "data_type" in diagnostic:
-            types = diagnostic["data_type"]
-            detail += f" (baseline {types['a']}, report {types['b']})"
-        if "reason" in diagnostic:
-            detail += f" ({diagnostic['reason']}: {diagnostic['setting']})"
-        print(
-            f"  diagnostic: {diagnostic['code']} [{diagnostic['column']}]: "
-            f"{diagnostic['message']}{detail}",
-            file=sys.stderr,
-        )
+    for line in _summary_lines(result, version=dataprof.__version__, baseline_path=args.baseline):
+        print(line, file=sys.stderr)
     return _EXIT_CODES[result.verdict]
 
 

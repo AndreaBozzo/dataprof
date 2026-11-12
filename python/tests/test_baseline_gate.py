@@ -483,3 +483,16 @@ def test_a_type_change_the_identifier_hint_explains_names_the_hint():
     assert (retyped["reason"], retyped["setting"]) == ("setting_changed", "identifier_columns")
     # A data-driven change carries no reason.
     assert "reason" not in _listed(dp.profile(AFTER).check(baseline=dp.profile(BEFORE), **DRIFT))[0]
+
+
+def test_a_change_rule_without_a_baseline_says_how_to_pass_one():
+    report = dp.profile(CLEAN)
+    with pytest.raises(ValueError) as caught:
+        report.check(max_quality_score_drop=5)
+    message = str(caught.value)
+    assert "needs a baseline report to compare against" in message
+    assert message.endswith(": pass baseline=ProfileReport.load('baseline.json')")
+    # Other policy errors keep their own text.
+    with pytest.raises(ValueError, match="states no requirement") as other:
+        report.check()
+    assert "baseline=" not in str(other.value)

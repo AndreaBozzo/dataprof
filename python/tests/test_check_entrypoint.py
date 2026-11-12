@@ -1215,3 +1215,10 @@ def test_a_required_column_is_a_policy_key_and_a_flag(source: Path, tmp_path: Pa
     # A rule about change needs --baseline, which this run does not pass.
     policy.write_text(json.dumps({"forbid_added_columns": True}), encoding="utf-8")
     assert run_check(source, "--policy", policy, "--json").returncode == 3
+
+
+def test_the_command_line_prints_what_str_of_the_result_returns(source: Path):
+    result = run_check(source, "--max-null", "*=0")
+    expected = dp.profile_file(source).check(max_null_percentage={"*": 0})
+    assert result.returncode == 1
+    assert result.stderr.rstrip("\n") == str(expected)

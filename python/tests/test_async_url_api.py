@@ -303,3 +303,44 @@ class TestAsyncUrlProfiling:
         assert remote.source_exhausted == local.source_exhausted
         assert remote.to_dict()["columns"] == local.to_dict()["columns"]
         assert remote.to_dict()["quality"] == local.to_dict()["quality"]
+
+
+class TestAsyncArgumentErrors:
+    """The async functions name a bad argument as the synchronous ones do."""
+
+    @pytest.mark.parametrize("option", ["columns", "metrics", "quality_dimensions"])
+    def test_a_string_for_a_list_option_suggests_the_list(self, option):
+        calls = (
+            lambda: profile_file(INCIDENTS_CSV, **{option: "id"}),
+            lambda: profile_bytes(b"id\n1\n", format="csv", **{option: "id"}),
+            lambda: profile_url("http://127.0.0.1:9/x.csv", **{option: "id"}),
+        )
+        for call in calls:
+            with pytest.raises(TypeError) as caught:
+                asyncio.run(call())
+            assert str(caught.value).startswith(f"{option} must be a list of ")
+            assert "got str; did you mean ['id']?" in str(caught.value)
+
+    def test_a_negative_row_cap_is_a_value_error(self):
+        calls = (
+            lambda: profile_file(INCIDENTS_CSV, max_rows=-1),
+            lambda: profile_bytes(b"id\n1\n", format="csv", max_rows=-1),
+            lambda: profile_url("http://127.0.0.1:9/x.csv", max_rows=-1),
+        )
+        for call in calls:
+            with pytest.raises(ValueError, match="^max_rows must be an integer between 0 and "):
+                asyncio.run(call())
+
+    def test_a_missing_file_is_file_not_found(self, tmp_path):
+        missing = tmp_path / "gone" / "data.csv"
+        with pytest.raises(FileNotFoundError) as caught:
+            asyncio.run(profile_file(missing))
+        assert caught.value.filename == str(missing)
+        # An unrecognised extension used to hide the missing file behind a
+        # format error.
+        with pytest.raises(FileNotFoundError):
+            asyncio.run(profile_file(str(tmp_path / "gone.unknown")))
+
+    def test_a_bytes_path_is_a_type_error_like_the_sync_api(self):
+        with pytest.raises(TypeError, match="expected str or path-like object"):
+            asyncio.run(profile_file(b"data.csv"))  # type: ignore[arg-type]
