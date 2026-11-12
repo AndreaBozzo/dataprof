@@ -1,11 +1,10 @@
 # Examples
 
-Five scenarios. The first three are written twice — once in Rust, once in
-Python — so you can read whichever matches the codebase you are working in. Both
-versions profile the same data and agree on every number they both report. The
-Python versions show a little more, because the Python API has
-`quality_summary()` and `compare()` where the Rust side leaves the diffing to
-you. The fourth, a checkpoint against the last accepted run, and the fifth, a
+Five scenarios. The first three are written twice, once in Rust and once in
+Python, so you can read whichever matches the codebase you are working in. Both
+versions profile the same data and agree on every number they both report. Both
+compare reports: `report.compare()` in Python, `ReportDelta::between` in Rust.
+The Python messy CSV example also prints `quality_summary()`. The fourth, a checkpoint against the last accepted run, and the fifth, a
 key column that collapses, are in Python only.
 
 Every example generates its own dataset in a temporary directory, so they run
