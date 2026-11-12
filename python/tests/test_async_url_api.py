@@ -343,4 +343,4 @@ class TestAsyncArgumentErrors:
 
     def test_a_bytes_path_is_a_type_error_like_the_sync_api(self):
         with pytest.raises(TypeError, match="expected str or path-like object"):
-            asyncio.run(profile_file(b"data.csv"))  # type: ignore[arg-type]
+            asyncio.run(profile_file(b"data.csv"))  # ty: ignore[invalid-argument-type]
