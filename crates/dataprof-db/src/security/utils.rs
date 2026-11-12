@@ -52,9 +52,46 @@ pub fn add_query_param(connection_string: String, key: &str, value: &str) -> Str
     }
 }
 
+/// Add a query parameter unless the connection string already sets one of
+/// `aliases` (the names the driver accepts for the same setting).
+///
+/// sqlx applies query pairs in order, so a value appended after the caller's
+/// own would override it. A setting the caller wrote in the URL wins.
+pub fn add_query_param_if_absent(
+    connection_string: String,
+    aliases: &[&str],
+    value: &str,
+) -> String {
+    let already_set = connection_string.split_once('?').is_some_and(|(_, query)| {
+        query.split('&').any(|pair| {
+            let key = pair.split_once('=').map_or(pair, |(key, _)| key);
+            aliases.contains(&key)
+        })
+    });
+    if already_set {
+        connection_string
+    } else {
+        add_query_param(connection_string, aliases[0], value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_add_query_param_if_absent_keeps_the_callers_value() {
+        let url = "postgresql://h/db?ssl-mode=verify-full".to_string();
+        let result = add_query_param_if_absent(url, &["sslmode", "ssl-mode"], "prefer");
+        assert_eq!(result, "postgresql://h/db?ssl-mode=verify-full");
+
+        let url = "postgresql://h/db?application_name=x".to_string();
+        let result = add_query_param_if_absent(url, &["sslmode", "ssl-mode"], "prefer");
+        assert_eq!(
+            result,
+            "postgresql://h/db?application_name=x&sslmode=prefer"
+        );
+    }
 
     #[test]
     fn test_add_query_param() {
