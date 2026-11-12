@@ -30,6 +30,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import dataprof as dp
 
@@ -44,7 +45,7 @@ def orders(rows: int, customers: int, *, start: int = 1001, broken_join: bool = 
 
 
 # The absolute rules hold on every run. The broken day passes all of them.
-ABSOLUTE = {
+ABSOLUTE: dict[str, Any] = {
     "min_quality_score": 85,
     "max_null_percentage": {"customer_id": 5},
     "max_duplicate_rows": 0,
@@ -52,7 +53,7 @@ ABSOLUTE = {
 
 # The rule about change. A customer count may fall by 10% of the baseline's
 # before the gate objects, and then only if the distinct share fell as well.
-CHANGE = {
+CHANGE: dict[str, Any] = {
     "max_quality_score_drop": 2,
     "max_distinct_drop": {"customer_id": 10},
 }
