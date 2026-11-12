@@ -2,10 +2,11 @@
 
 Five scenarios. The first three are written twice, once in Rust and once in
 Python, so you can read whichever matches the codebase you are working in. Both
-versions profile the same data and agree on every number they both report. Both
-compare reports: `report.compare()` in Python, `ReportDelta::between` in Rust.
-The Python messy CSV example also prints `quality_summary()`. The fourth, a checkpoint against the last accepted run, and the fifth, a
-key column that collapses, are in Python only.
+versions profile the same data and agree on every number they both report.
+Either language can compare two reports: `report.compare()` in Python,
+`ReportDelta::between` in Rust. The Python messy CSV example also prints
+`quality_summary()`. The fourth, a checkpoint against the last accepted run, and
+the fifth, a key column that collapses, are in Python only.
 
 Every example generates its own dataset in a temporary directory, so they run
 from a clean checkout with nothing to download and nothing left behind. The one
