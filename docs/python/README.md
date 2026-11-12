@@ -497,8 +497,8 @@ Per-column profiling statistics.
 | `type_homogeneity` | `dict[str, int] \| None` | Non-null values counted by lexical class: `{"numeric", "date", "boolean", "text"}`. Tells a `string` column of ordinary text from one that defeated type inference, which `data_type` cannot. All four keys are always present; all-zero = classified with nothing to classify (all-null or no rows); `None` = the classification did not run. Counted over the values the profiler retained, so sum them against `total_count - null_count` to tell an exact count from one bounded by the 10k reservoir sample |
 | `locale_number_count` | `int \| None` | Of the `text` values in `type_homogeneity`, how many are numbers written with a decimal comma or digit-group separators (`10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56`). dataprof does not parse them as numbers, so they are in no numeric statistic: a column of them is typed `string`, and a numeric column counts them in `invalid_count`. `None` = the count did not run (a `nested` column, or a report saved before 0.12); `0` = none found |
 | `native_type` | `dict[str, str] \| None` | The type the source declared, as `{"system": ..., "name": ...}`: `arrow` with the name pyarrow prints (`decimal128(12, 2)`, `timestamp[us, tz=UTC]`) for Arrow, polars and Parquet, `pandas` with the dtype for pandas, `postgresql` or `mysql` with the server's type name for databases. Provenance, not a measurement: `data_type` is what dataprof profiled the column as. `None` = the source declares no type (CSV, JSON, JSONL, dicts, lists of records, SQLite), or the report predates 0.14 |
-| `null_percentage` | `float` | Null ratio (0.0--100.0) |
-| `uniqueness_ratio` | `float` | Unique values / total values |
+| `null_percentage` | `float \| None` | Null ratio (0.0--100.0); `None` when no rows were read |
+| `uniqueness_ratio` | `float \| None` | Unique values / total values; `None` when no rows were read or distinct values were not counted |
 | `min` | `float \| None` | Minimum (numeric columns) |
 | `max` | `float \| None` | Maximum (numeric columns) |
 | `mean` | `float \| None` | Mean (numeric columns) |
@@ -511,7 +511,7 @@ Per-column profiling statistics.
 | `coefficient_of_variation` | `float \| None` | CV |
 | `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}`; `iqr` is `None` when `q3 - q1` overflows `f64` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
-| `exact` | `dict \| None` | The order statistics exactly, on an integer or decimal-typed column: `min`, `max`, `median`, `q1`, `q2`, `q3` and `mode` where the float field is present. An integral value of an integer column is an `int`, every other value a `decimal.Decimal`; `to_dict()` and `to_json()` carry them as decimal strings. `None` on a float column |
+| `exact` | `dict \| None` | The order statistics exactly, on an integer or decimal-typed column: `min`, `max`, `median`, `q1`, `q2`, `q3` and `mode` where the float field is present. An integral value of an integer column is an `int`, every other value a `decimal.Decimal`; `to_dict()` and `to_json()` carry them as decimal strings. Declared decimals have public `data_type="float"`; ordinary floating-point columns have `exact=None` |
 | `min_length` | `int \| None` | Shortest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `max_length` | `int \| None` | Longest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `avg_length` | `float \| None` | Mean length, in Unicode scalar values (0.11: UTF-8 bytes) |
@@ -624,7 +624,8 @@ stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
 stop = StopCondition.schema_stable(500) & StopCondition.confidence_threshold(0.95)
 
 # Built-in presets
-StopCondition.schema_inference()   # fast schema-only mode
+StopCondition.schema_inference()   # stop at 10,000 rows or 1,000 stable rows
+# Pass metrics=["schema"] to compute only schema.
 StopCondition.quality_sample()     # enough rows for quality assessment
 StopCondition.never()              # process everything (default)
 
@@ -926,7 +927,7 @@ names; no finding carries a raw cell value.
 | `locale_numbers` | warning | At least half of a column's text values are numbers written with a decimal comma or digit grouping (`locale_number_count`), which no numeric statistic includes. Identifier columns are exempt |
 | `duplicate_rows` | warning | The source holds exact duplicate rows |
 | `key_duplicates` | warning | The declared key column (the first `identifier_columns` entry the source has) holds a non-null value more than once. `repeated_values` is the key's non-null values minus its distinct values, so it sees a key repeated on rows that differ elsewhere, which `duplicate_rows` does not. Nulls are not repeats. Without a declared key the rule is listed as `not_assessed` |
-| `future_dates` | warning | Date values lie after the time the report was produced |
+| `future_dates` | warning | Date values fall after the timeliness reference date recorded in `quality.timeliness["clock"]` |
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
 | `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
 | `unterminated_quote` | warning | A CSV source ended inside a quoted field, so its last record may hold several source rows |
@@ -1009,7 +1010,7 @@ if not result.passed:
 | `min_quality_score` | `float` | Floor for the overall score, 0--100 |
 | `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
-| `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.14+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
+| `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
@@ -1091,9 +1092,9 @@ being duplicates when more rows are read, so an exact duplicate count above the
 allowance fails conclusively even on a partial scan -- while a count at or
 below it is still not a pass, and an estimated count settles neither direction.
 
-`scope="observed"` states the requirements about whatever the metrics actually
-measured, which is always evaluable and says nothing about the rest of the
-source.
+`scope="observed"` evaluates available evidence over the analyzed population
+and says nothing about the rest of the source. Missing or unassessed metrics
+can still leave requirements unevaluated.
 
 Each check records its own `evidence`, which can be weaker than the scan's:
 `report.quality_sampled_dimensions` names the components computed from a
@@ -1291,14 +1292,14 @@ column for `forbid_removed_columns`, per column of this report for
 without it shows its source lacks it: it recorded its column selection
 (`analysis_settings["columns"]`, from 0.13), the selection included the column,
 and its column set covers the whole source. A CSV header, a Parquet schema, a
-DataFrame or a query result lists every column however few rows were read, so
-a capped CSV run still decides; for JSON, JSONL and `dataprof.asyncio` streams
-the columns are the keys of the records read, so only a scan of every record
-decides under `scope="full_source"`. A flat `to_dict()` summary records the
-kind of source but not a file's format, so a summary baseline of a file
-decides only when its scan was complete. Otherwise the check is unevaluated,
-with `setting_changed` or `setting_unrecorded` on the setting `columns`,
-`column_not_profiled` for a required column the run did not select, or
+DataFrame or a query result lists every column however few rows were read.
+CSV, Parquet and Arrow streams also declare their columns, so capped runs can
+decide column-presence checks. For JSON and JSONL, only a scan of every record
+decides under `scope="full_source"`. Flat `to_dict()` summaries written from
+0.14 record `source_format`, so capped CSV and Parquet baselines can decide
+schema checks. Older file summaries need complete scan coverage. Otherwise the
+check is unevaluated, with `setting_changed` or `setting_unrecorded` on the
+setting `columns`, `column_not_profiled` for a required column the run did not select, or
 `evidence_incomplete`.
 
 `forbid_added_columns` checks the columns this report profiled, so under
@@ -1477,7 +1478,8 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--max-null-count COLUMN=COUNT` (0.14+), `--min-dimension NAME=PERCENT`, `--require-metric NAME`, `--require-column NAME`,
+`--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
+`--require-metric NAME`, `--require-column NAME`,
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
@@ -1578,8 +1580,9 @@ jobs:
           path: verdict.json
 ```
 
-This example targets the 0.12 release. Before it is published, build this
-checkout with `uv sync --no-install-project` and `uv run --no-sync maturin develop`, then invoke the module with
+This example installs dataprof 0.13.1. To run the current checkout instead, build
+the extension with `uv sync --no-install-project` and
+`uv run --no-sync maturin develop`, then invoke the module with
 `uv run --no-sync python -m dataprof.check ...`.
 
 ### `compare()`

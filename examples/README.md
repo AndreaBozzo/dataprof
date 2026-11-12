@@ -55,9 +55,8 @@ report as JSON, profile the cleaned file, and diff the two. The saved baseline i
 the point: weeks later you can still answer "what did this data look like when we
 onboarded it?" without keeping the raw file around.
 
-Watch the `accuracy` dimension go *down* while the overall score goes up — a
-reminder that a single number can hide a regression, and that you should assert on
-the specific defects you set out to fix.
+Compare the overall score and per-column null changes, then inspect the explicit
+checks for duplicated identifiers, negative prices, and missing email.
 
 ```bash
 cargo run --example before_after_cleaning
@@ -179,10 +178,11 @@ These examples print real profiler output, not illustrative constants. If you
 change a metric's semantics, the examples change with it. CI runs all seven on
 every push for exactly that reason.
 
-Two results surprise people, so both examples call them out explicitly:
+Two results surprise people:
 
-- **`completeness` scores complete *records***, not populated cells. A file where
-  22% of cells are missing can score 0 if almost every row is missing something.
+- **`completeness` averages populated cells and complete records.** In the messy
+  CSV example, 22% of cells are missing and only 20% of rows are complete, so it
+  scores 49, well below the 78% of cells that are populated.
   Optional-column semantics are tracked in
   [#436](https://github.com/AndreaBozzo/dataprof/issues/436); inspect
   `missing_values_ratio` and `null_columns` beside the strict record ratio.

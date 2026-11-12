@@ -123,14 +123,19 @@ asyncio.run(main())
 ```rust
 use dataprof::Profiler;
 
-let report = Profiler::new()
-    .connection_string("postgres://user:pass@localhost/mydb")
-    .analyze_query("SELECT * FROM users")
-    .await?;
+async fn profile_users() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .connection_string("postgres://user:pass@localhost/mydb")
+        .analyze_query("SELECT * FROM users")
+        .await?;
 
-println!("Rows: {}", report.execution.rows_processed);
-if let Some(quality) = &report.quality {
-    println!("Quality: {:.1}%", quality.score());
+    println!("Rows: {}", report.execution.rows_processed);
+    if let Some(quality) = &report.quality {
+        if let Some(score) = quality.score() {
+            println!("Quality: {score:.1}%");
+        }
+    }
+    Ok(())
 }
 ```
 
@@ -140,17 +145,20 @@ if let Some(quality) = &report.quality {
 use dataprof::{DatabaseConfig, analyze_database};
 use dataprof::SslConfig;
 
-let config = DatabaseConfig {
-    connection_string: "postgres://user:pass@localhost/mydb".to_string(),
-    batch_size: 10000,
-    max_connections: Some(5),
-    connection_timeout: Some(std::time::Duration::from_secs(30)),
-    ssl_config: Some(SslConfig::default()),
-    load_credentials_from_env: true,
-};
+async fn profile_users_direct() -> Result<(), dataprof::DataProfilerError> {
+    let config = DatabaseConfig {
+        connection_string: "postgres://user:pass@localhost/mydb".to_string(),
+        batch_size: 10000,
+        max_connections: Some(5),
+        connection_timeout: Some(std::time::Duration::from_secs(30)),
+        ssl_config: Some(SslConfig::default()),
+        load_credentials_from_env: true,
+    };
 
-let report = analyze_database(config, "SELECT * FROM users", true, None).await?;
-println!("Rows: {}", report.execution.rows_processed);
+    let report = analyze_database(config, "SELECT * FROM users", true, None).await?;
+    println!("Rows: {}", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ## Connection Strings
@@ -217,7 +225,16 @@ The whole result is held in memory before it is profiled, so memory grows with t
 
 ## Security
 
+Queries may start with `SELECT` or `WITH`. PostgreSQL and MySQL use read-only
+transactions, and SQLite enables `query_only`.
+
 ### SSL/TLS Encryption
+
+The synchronous Rust snippets below go inside `fn main()`.
+
+`SslConfig::production()` requires TLS with certificate and hostname verification
+(PostgreSQL `verify-full`, MySQL `VERIFY_IDENTITY`). A TLS mode written in the
+URL wins over `ssl_config`.
 
 ```rust
 use dataprof::SslConfig;
@@ -232,7 +249,7 @@ let ssl = SslConfig::development();
 let ssl = SslConfig {
     require_ssl: true,
     verify_server_cert: true,
-    ssl_mode: Some("require".to_string()),
+    ssl_mode: Some("verify-full".to_string()),
     ca_cert_path: Some("/etc/ssl/certs/ca.pem".to_string()),
     ..Default::default()
 };
@@ -256,13 +273,16 @@ Avoid embedding credentials in connection strings. Set environment variables ins
 | `MYSQL_PASSWORD` | MySQL password |
 | `DATABASE_URL` | Generic connection URL |
 
-With `load_credentials_from_env: true` (the default), dataprof will read these automatically.
+With `load_credentials_from_env: true` (the default), credential environment
+variables can override an explicit URL. SSL environment variables are loaded
+when the connection string is empty; otherwise configure `ssl_config` or URL
+parameters.
 
 ## Troubleshooting
 
 ### Enable Debug Logging
 
-The connectors log through the `log` crate. In a Rust program, install a logger such as `env_logger` and set `RUST_LOG`:
+The connectors log through the `log` crate. In a Rust program, add `env_logger = "0.11"` to `[dependencies]` and set `RUST_LOG`:
 
 ```rust
 env_logger::init(); // first thing in main
@@ -279,15 +299,18 @@ The Python package does not forward these logs to Python's `logging` module.
 ```rust
 use dataprof::{DatabaseConfig, create_connector};
 
-let config = DatabaseConfig {
-    connection_string: "postgres://user:pass@localhost/mydb".to_string(),
-    ..Default::default()
-};
+async fn test_connection() -> Result<(), dataprof::DataProfilerError> {
+    let config = DatabaseConfig {
+        connection_string: "postgres://user:pass@localhost/mydb".to_string(),
+        ..Default::default()
+    };
 
-let mut connector = create_connector(config)?;
-connector.connect().await?;
-let ok = connector.test_connection().await?;
-println!("Connection: {}", if ok { "OK" } else { "FAILED" });
+    let mut connector = create_connector(config)?;
+    connector.connect().await?;
+    let ok = connector.test_connection().await?;
+    println!("Connection: {}", if ok { "OK" } else { "FAILED" });
+    Ok(())
+}
 ```
 
 ### Test Connection (Python)
@@ -299,7 +322,7 @@ print(f"Connection: {'OK' if ok else 'FAILED'}")
 
 ### Common Issues
 
-**Connection refused** -- verify the database is running and accessible. dataprof retries with exponential backoff (3 attempts by default).
+**Connection refused** -- verify the database is running and accessible. sqlx retries connection refusal and certain transient connection errors with exponential backoff until `connection_timeout` expires, normally after 30 seconds.
 
 **Table not found** -- check table name and schema permissions. Use fully qualified names (`schema.table`) if needed.
 
