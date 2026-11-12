@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import CSV_FILE, FIXTURES, JSON_FILE, JSONL_FILE, PARQUET_FILE
@@ -581,6 +582,68 @@ class TestProfileAdHocInputs:
             assert native[col].data_type == via_pandas[col].data_type
             assert native[col].null_count == via_pandas[col].null_count
             assert native[col].unique_count == via_pandas[col].unique_count
+
+
+class TestOptionErrors:
+    """A bad option value names the parameter, not a conversion internal."""
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            "columns",
+            "metrics",
+            "quality_dimensions",
+            "positive_columns",
+            "identifier_columns",
+            "temporal_columns",
+        ],
+    )
+    def test_a_string_for_a_list_option_suggests_the_list(self, option):
+        options: dict[str, Any] = {option: "amount"}
+        for source in (CSV_FILE, {"amount": [1, 2]}):
+            with pytest.raises(TypeError) as caught:
+                dataprof.profile(source, **options)
+            message = str(caught.value)
+            assert message.startswith(f"{option} must be a list of ")
+            assert "got str; did you mean ['amount']?" in message
+        with pytest.raises(TypeError, match=f"^{option} must be a list of "):
+            dataprof.profile_file(CSV_FILE, **options)
+
+    def test_temporal_pairs_given_as_a_string_or_a_single_pair_is_named(self):
+        with pytest.raises(TypeError, match=r"^temporal_pairs must be a list of \(start, end\)"):
+            dataprof.profile(CSV_FILE, temporal_pairs="ab")  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match=r"got a single pair; did you mean \[\('a', 'b'\)\]"):
+            dataprof.profile(CSV_FILE, temporal_pairs=("a", "b"))  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match=r"entries must be \(start, end\) column pairs"):
+            dataprof.profile(CSV_FILE, temporal_pairs=["ab"])  # ty: ignore[invalid-argument-type]
+
+    def test_a_valid_list_option_is_unchanged(self):
+        report = dataprof.profile(CSV_FILE, columns=("name", "age"))  # ty: ignore[invalid-argument-type]
+        assert list(report.column_profiles) == ["name", "age"]
+
+    @pytest.mark.parametrize(
+        "option", ["max_rows", "chunk_size", "memory_limit_mb", "progress_interval_ms"]
+    )
+    @pytest.mark.parametrize("value", [-1, 2**70])
+    def test_an_unsigned_option_out_of_range_is_a_value_error(self, option, value):
+        sources = [
+            (CSV_FILE, {}),
+            ({"amount": [1, 2]}, {}),
+            ([{"amount": 1}], {}),
+            (b"amount\n1\n", {"format": "csv"}),
+        ]
+        for source, extra in sources:
+            with pytest.raises(ValueError) as caught:
+                dataprof.profile(source, **{option: value}, **extra)
+            assert str(caught.value).startswith(f"{option} must be an integer between 0 and ")
+            assert str(caught.value).endswith(f", got {value}.")
+
+    def test_analyze_structure_rejects_a_negative_row_cap(self):
+        with pytest.raises(ValueError, match="^max_rows must be an integer between 0 and "):
+            dataprof.analyze_structure(CSV_FILE, -1)
+
+    def test_zero_is_still_a_valid_row_cap(self):
+        assert dataprof.profile(CSV_FILE, max_rows=0).rows == 0
 
 
 class TestNamespace:

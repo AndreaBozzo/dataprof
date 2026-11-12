@@ -17,7 +17,7 @@ from collections.abc import Iterator as _Iterator, Mapping as _Mapping, Sequence
 from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any
 
-from ._dataprof import finding_codes as _finding_codes
+from ._dataprof import __version__ as _version, finding_codes as _finding_codes
 from ._report_schema import _QUALITY_DIMENSIONS
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
@@ -207,6 +207,51 @@ class QualityGateResult:
     def to_json(self, indent: int = 2) -> str:
         """The result as a JSON string."""
         return _json.dumps(self.to_dict(), indent=indent)
+
+    def __str__(self) -> str:
+        """The short summary ``python -m dataprof.check`` prints."""
+        return "\n".join(_summary_lines(self, version=_version))
+
+
+def _summary_lines(
+    result: QualityGateResult, *, version: str, baseline_path: object = None
+) -> list[str]:
+    """The lines of the short summary: verdict, counts, then what did not pass.
+
+    The command line prints these to stderr and ``str(result)`` joins them.
+    ``baseline_path`` adds the line naming the baseline file, which only the
+    command line knows.
+    """
+    lines = [
+        f"dataprof {version}: "
+        f"{result.verdict}: {len(result.checks)} checks, "
+        f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
+        f"(scope: {result.scope})"
+    ]
+    if baseline_path is not None:
+        lines.append(f"  baseline: {baseline_path}")
+    for check in result.checks:
+        if check.status != "passed":
+            subject = next(
+                (s for s in (check.column, check.dimension, check.finding) if s is not None),
+                None,
+            )
+            label = f" [{subject}]" if subject is not None else ""
+            lines.append(f"  {check.status}: {check.code}{label}: {check.message}")
+    # Schema changes from the baseline never move the verdict, so a pass can
+    # carry them; without these lines only --json would show them.
+    for diagnostic in (result.baseline or {}).get("diagnostics", []):
+        detail = ""
+        if "data_type" in diagnostic:
+            types = diagnostic["data_type"]
+            detail += f" (baseline {types['a']}, report {types['b']})"
+        if "reason" in diagnostic:
+            detail += f" ({diagnostic['reason']}: {diagnostic['setting']})"
+        lines.append(
+            f"  diagnostic: {diagnostic['code']} [{diagnostic['column']}]: "
+            f"{diagnostic['message']}{detail}"
+        )
+    return lines
 
 
 def _real_number(value: _Any) -> float:

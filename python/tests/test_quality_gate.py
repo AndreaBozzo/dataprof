@@ -532,3 +532,16 @@ def test_a_threshold_at_the_shown_value_passes_live_and_loaded(data, dimensions,
     loaded = dp.ProfileReport.from_json(report.to_json())
     verdicts = (report.check(**policy).verdict, loaded.check(**policy).verdict)
     assert verdicts == ("pass", "pass")
+
+
+def test_a_result_prints_the_summary_the_command_line_prints():
+    result = dp.profile({"x": [None, 1, 2]}).check(min_rows=1, max_null_percentage={"x": 10})
+    lines = str(result).split("\n")
+    assert lines[0] == (
+        f"dataprof {dp.__version__}: fail: 2 checks, 1 violations, 0 unevaluated "
+        "(scope: full_source)"
+    )
+    assert lines[1:] == [
+        "  failed: max_null_percentage [x]: "
+        + next(check.message for check in result if check.status == "failed")
+    ]

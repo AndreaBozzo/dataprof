@@ -267,3 +267,12 @@ def test_a_summary_from_before_0_10_leaves_its_hints_unrecorded():
 
     assert hints["a"] is None
     assert hints["same"] is None
+
+
+@pytest.mark.parametrize("other", ["before.csv", {"id": [1]}, None])
+def test_compare_with_something_that_is_not_a_report_says_how_to_get_one(other):
+    with pytest.raises(TypeError) as caught:
+        dp.profile(CLEAN).compare(other)
+    message = str(caught.value)
+    assert message.startswith(f"other must be a dataprof ProfileReport, got {type(other).__name__}")
+    assert "ProfileReport.load(path)" in message

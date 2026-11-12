@@ -11,6 +11,7 @@ from collections.abc import Callable as _Callable
 from datetime import date as _date
 from typing import Any as _Any
 
+from ._arguments import _check_profile_options
 from ._dataprof import (
     ProfilerConfig,
     ProgressEvent,
@@ -61,6 +62,7 @@ def analyze_structure(
     max_rows: int | None = None,
 ) -> StructureReport:
     """Analyze file structure with a bounded, lightweight pass."""
+    _check_profile_options({"max_rows": max_rows})
     return _analyze_structure(_normalize_existing_file(path), max_rows)
 
 
@@ -208,6 +210,21 @@ def profile_file(
     """
     if jsonl_on_error not in ("skip", "strict"):
         raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
+    _check_profile_options(
+        {
+            "max_rows": max_rows,
+            "chunk_size": chunk_size,
+            "memory_limit_mb": memory_limit_mb,
+            "progress_interval_ms": progress_interval_ms,
+            "quality_dimensions": quality_dimensions,
+            "metrics": metrics,
+            "columns": columns,
+            "positive_columns": positive_columns,
+            "identifier_columns": identifier_columns,
+            "temporal_columns": temporal_columns,
+            "temporal_pairs": temporal_pairs,
+        }
+    )
     _check_source_version(source_version)
     normalized_path = _normalize_existing_file(path, arg_name="path")
     config = ProfilerConfig(
@@ -372,6 +389,21 @@ def profile(
     """
     if jsonl_on_error not in ("skip", "strict"):
         raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
+    _check_profile_options(
+        {
+            "max_rows": max_rows,
+            "chunk_size": chunk_size,
+            "memory_limit_mb": memory_limit_mb,
+            "progress_interval_ms": progress_interval_ms,
+            "quality_dimensions": quality_dimensions,
+            "metrics": metrics,
+            "columns": columns,
+            "positive_columns": positive_columns,
+            "identifier_columns": identifier_columns,
+            "temporal_columns": temporal_columns,
+            "temporal_pairs": temporal_pairs,
+        }
+    )
     _check_source_version(source_version)
 
     # File path — build config and delegate to Rust
