@@ -403,6 +403,101 @@ pub struct AnalysisSettings {
     )]
     #[schemars(with = "Vec<MetricPack>")]
     pub metric_packs: Option<Vec<MetricPack>>,
+    /// The start/end column pairs `temporal_pairs` declared, each once,
+    /// sorted by start then end. Timeliness counts a row whose start date
+    /// falls after its end date in a declared pair, so two runs that pair
+    /// the same columns differently score timeliness differently. The
+    /// calculator compares each pair once whatever order the list gives, so
+    /// the record keeps direction and drops order and repetition. Empty when
+    /// none were declared; absent from a report written before 0.14, which
+    /// recorded only the columns the pairs named.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<TemporalPair>")]
+    pub temporal_pairs: Option<Vec<TemporalPair>>,
+}
+
+/// A start/end column pair declared through `temporal_pairs`.
+///
+/// Read only from its object form, `{"start": ..., "end": ...}`: a derived
+/// reader would also take a two-element list, which the schema and the
+/// Python reader reject.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct TemporalPair {
+    /// The column whose date must not fall after `end`'s.
+    pub start: String,
+    /// The column whose date must not fall before `start`'s.
+    pub end: String,
+}
+
+impl<'de> serde::Deserialize<'de> for TemporalPair {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct PairVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PairVisitor {
+            type Value = TemporalPair;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str(r#"a temporal pair {"start": ..., "end": ...}"#)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<TemporalPair, A::Error> {
+                use serde::de::Error;
+                let (mut start, mut end) = (None, None);
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "start" if start.is_some() => {
+                            return Err(A::Error::duplicate_field("start"));
+                        }
+                        "end" if end.is_some() => return Err(A::Error::duplicate_field("end")),
+                        "start" => start = Some(map.next_value::<String>()?),
+                        "end" => end = Some(map.next_value::<String>()?),
+                        // A later writer may add keys, which this reader ignores.
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(TemporalPair {
+                    start: start.ok_or_else(|| A::Error::missing_field("start"))?,
+                    end: end.ok_or_else(|| A::Error::missing_field("end"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(PairVisitor)
+    }
+}
+
+impl TemporalPair {
+    /// The pair comparing `start` with `end`.
+    pub fn new(start: impl Into<String>, end: impl Into<String>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+
+    /// The pairs `declared` names, each once, sorted: what the calculator
+    /// compares, whatever order or repetition the list was given in.
+    pub fn canonical(declared: &[(String, String)]) -> Vec<Self> {
+        let mut pairs: Vec<Self> = declared
+            .iter()
+            .map(|(start, end)| Self::new(start.clone(), end.clone()))
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
+    }
 }
 
 impl AnalysisSettings {
@@ -412,6 +507,9 @@ impl AnalysisSettings {
             pattern_locale: options.locale().into(),
             columns: ColumnSelection::from_options(options),
             metric_packs: Some(options.selected_metric_packs()),
+            temporal_pairs: Some(TemporalPair::canonical(
+                &options.semantic_hints().temporal_pairs,
+            )),
         }
     }
 }

@@ -1351,8 +1351,10 @@ impl PyProfileReport {
     /// ``{"pattern_locale": "IT", "columns": {"selection": "all"},
     /// "metric_packs": ["schema", "statistics", "patterns", "quality"]}``,
     /// where ``"none"`` means no locale and a ``columns=`` selection reads
-    /// ``{"selection": "listed", "names": [...]}``. ``metric_packs`` is
-    /// absent from a report written before 0.14.
+    /// ``{"selection": "listed", "names": [...]}``. ``temporal_pairs`` lists
+    /// the declared pairs as ``{"start": ..., "end": ...}``, sorted, each
+    /// once. ``metric_packs`` and ``temporal_pairs`` are absent from a report
+    /// written before 0.14.
     ///
     /// None for a report loaded from a document written before dataprof
     /// recorded them: the settings are unknown, not the defaults.
@@ -1386,6 +1388,16 @@ impl PyProfileReport {
         if let Some(packs) = &settings.metric_packs {
             let names: Vec<String> = packs.iter().map(ToString::to_string).collect();
             dict.set_item("metric_packs", names)?;
+        }
+        if let Some(pairs) = &settings.temporal_pairs {
+            let list = pyo3::types::PyList::empty(py);
+            for pair in pairs {
+                let item = PyDict::new(py);
+                item.set_item("start", &pair.start)?;
+                item.set_item("end", &pair.end)?;
+                list.append(item)?;
+            }
+            dict.set_item("temporal_pairs", list)?;
         }
         Ok(Some(dict))
     }

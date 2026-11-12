@@ -376,6 +376,15 @@ class ProfileReport:
         ``metric_packs``. Absent from a report written before 0.14, which
         did not record it.
 
+        ``temporal_pairs`` lists the start/end pairs ``temporal_pairs=``
+        declared, as ``{"start": ..., "end": ...}``, sorted, each once:
+        timeliness compares each pair once whatever order the list gives,
+        but a reversed pair counts the opposite rows. Empty when none were
+        declared. :meth:`compare` lists it under ``configuration``, and a
+        baseline ``check()`` decides a timeliness or overall drop only when
+        both reports declare the same pairs. Absent from a report written
+        before 0.14, which recorded only the columns the pairs named.
+
         ``None`` for a report loaded from a document written before dataprof
         recorded them: the settings are unknown, not the defaults.
         """
@@ -1342,13 +1351,16 @@ class ProfileReport:
           (see :attr:`analysis_settings`), ``timeliness_clock`` (the
           ``clock`` in ``quality.timeliness``), ``columns`` (each side's
           ``columns=`` selection, see :attr:`analysis_settings`; ``same``
-          ignores the order a list gives) and ``metric_packs`` (the packs
-          each side computed, see :attr:`analysis_settings`). Each has
+          ignores the order a list gives), ``metric_packs`` (the packs
+          each side computed, see :attr:`analysis_settings`) and
+          ``temporal_pairs`` (the pairs each side declared, see
+          :attr:`analysis_settings`; ``same`` compares the pairs, not the
+          order or repetition of a list). Each has
           ``a``, ``b`` and ``same``: ``True`` when both sides recorded it
           and agree, ``False`` when they differ, ``None`` when either did
           not record it (weights on a summary saved before 0.12, hints
-          before 0.10, the locale and the selection before 0.13, the clock
-          and the packs before 0.14, the clock also with no timeliness
+          before 0.10, the locale and the selection before 0.13, the clock,
+          the packs and the pairs before 0.14, the clock also with no timeliness
           assessment). Two rolling clocks read on different days differ.
           A score that moved under a different setting may not reflect a change
           in the data.

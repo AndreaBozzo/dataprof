@@ -407,14 +407,31 @@ def _read_column_selection(columns: Any) -> dict[str, Any]:
     )
 
 
+def _read_temporal_pairs(pairs: Any) -> list[dict[str, str]]:
+    """Read `analysis_settings.temporal_pairs` as the Rust `TemporalPair` list."""
+    if isinstance(pairs, list) and all(
+        isinstance(pair, dict)
+        and isinstance(pair.get("start"), str)
+        and isinstance(pair.get("end"), str)
+        for pair in pairs
+    ):
+        return [{"start": pair["start"], "end": pair["end"]} for pair in pairs]
+    raise ValueError(
+        "from_dict(): 'analysis_settings.temporal_pairs' must be a list of "
+        f"{{'start': str, 'end': str}}, got {pairs!r}."
+    )
+
+
 def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
     """Read `analysis_settings` as the Rust reader reads `AnalysisSettings`.
 
     A missing key is a document written before dataprof recorded it, so the
     settings are unknown: None, never the defaults. Unknown settings from a
     later writer are ignored; a malformed or missing `pattern_locale` or
-    `columns` is an error, as it is in Rust. `metric_packs` is absent before
-    0.14 and stays absent; present, it must be a list of pack names.
+    `columns` is an error, as it is in Rust. `metric_packs` and
+    `temporal_pairs` are absent before 0.14 and stay absent; present, the
+    first must be a list of pack names and the second a list of
+    `{"start", "end"}` column pairs.
     """
     if "analysis_settings" not in document:
         return None
@@ -436,6 +453,8 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
                 f"{', '.join(_METRIC_PACKS)}, got {packs!r}."
             )
         read["metric_packs"] = list(packs)
+    if "temporal_pairs" in settings:
+        read["temporal_pairs"] = _read_temporal_pairs(settings["temporal_pairs"])
     return read
 
 

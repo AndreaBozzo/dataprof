@@ -626,17 +626,19 @@ fn order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same() {
     let same = against(&policy, &ordered(&["a", "b"]), &ordered(&["a", "b"]));
     assert_eq!(same.checks[0].status, CheckStatus::Passed);
 
-    // A report records which columns the pairs named, not the pairing.
+    // A report records the pairing itself from 0.14 (#1029);
+    // `temporal_pairs_record.rs` covers pairs that differ and a baseline
+    // written before, which recorded only the columns the pairs named.
     let dates = csv("start,end\n2026-01-01,2026-01-02\n2026-01-03,2026-01-04\n");
     let paired = Profiler::new()
         .temporal_pairs(vec![("start".to_string(), "end".to_string())])
         .analyze_file(dates.path())
         .unwrap();
     let policy = QualityPolicy::new().max_dimension_score_drop(QualityDimension::Timeliness, 100.0);
-    assert!(matches!(
-        reason(&against(&policy, &paired, &paired).checks[0]),
-        Some(NotEvaluated::SettingUnrecorded { setting, .. }) if setting == "temporal_pairs"
-    ));
+    assert_eq!(
+        against(&policy, &paired, &paired).checks[0].status,
+        CheckStatus::Passed
+    );
     let unpaired = Profiler::new().analyze_file(dates.path()).unwrap();
     assert_eq!(
         against(&policy, &unpaired, &unpaired).checks[0].status,

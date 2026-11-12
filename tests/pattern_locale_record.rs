@@ -95,6 +95,7 @@ fn a_document_keeps_the_settings_and_their_absence() {
             "pattern_locale": "IT",
             "columns": {"selection": "all"},
             "metric_packs": ["schema", "statistics", "patterns", "quality"],
+            "temporal_pairs": [],
         })
     );
     let reloaded: ProfileReport = serde_json::from_value(document.clone()).unwrap();
@@ -107,6 +108,7 @@ fn a_document_keeps_the_settings_and_their_absence() {
             "pattern_locale": "IT",
             "columns": {"selection": "all"},
             "metric_packs": ["schema", "statistics", "patterns", "quality"],
+            "temporal_pairs": [],
         })
     );
 

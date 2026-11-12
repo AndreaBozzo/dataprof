@@ -32,7 +32,7 @@
 //! - **Configuration.** `configuration` lists each recorded setting that moves
 //!   a score on unchanged data (the score weights, the semantic hints, the
 //!   pattern locale, the timeliness clock, the column selection, the metric
-//!   packs) on both
+//!   packs, the declared temporal pairs) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
@@ -79,7 +79,7 @@ use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
-    ReportGenerator, SourceIdentity,
+    ReportGenerator, SourceIdentity, TemporalPair,
 };
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
@@ -317,6 +317,16 @@ fn same_selection(a: &ColumnSelection, b: &ColumnSelection) -> bool {
     }
 }
 
+/// Whether two records declare the same pairs. A writer records them sorted
+/// and once each; a document edited by hand may not, and the calculator
+/// compares each pair once in any order, so neither order nor repetition is
+/// compared. Direction is: a reversed pair counts the opposite rows.
+fn same_pairs(a: &[TemporalPair], b: &[TemporalPair]) -> bool {
+    let left: HashSet<&TemporalPair> = a.iter().collect();
+    let right: HashSet<&TemporalPair> = b.iter().collect();
+    left == right
+}
+
 /// The semantic hints a report recorded, by the configuration field that
 /// carries each, read from its hint bindings.
 ///
@@ -334,8 +344,10 @@ pub struct RecordedHints {
     pub identifier_columns: Vec<String>,
     /// Columns named by `temporal_columns`, sorted.
     pub temporal_columns: Vec<String>,
-    /// Columns named by `temporal_pairs`, sorted. A report records which
-    /// columns the pairs named, not which column pairs with which.
+    /// Columns named by `temporal_pairs`, sorted. The bindings record which
+    /// columns the pairs named; which column pairs with which is recorded
+    /// from 0.14 in `analysis_settings` (see
+    /// [`ConfigurationComparison::temporal_pairs`]).
     pub temporal_pair_columns: Vec<String>,
 }
 
@@ -389,6 +401,12 @@ pub struct ConfigurationComparison {
     /// overall score averages the other dimensions. `None` on a side written
     /// before 0.14.
     pub metric_packs: SettingComparison<Vec<MetricPack>>,
+    /// The start/end column pairs each side declared through
+    /// `temporal_pairs`, which timeliness compares. `same` compares the
+    /// pairs, direction included, not the order or repetition of a list.
+    /// `None` on a side written before 0.14, which recorded only the
+    /// columns the pairs named (see [`RecordedHints::temporal_pair_columns`]).
+    pub temporal_pairs: SettingComparison<Vec<TemporalPair>>,
 }
 
 /// Which columns each side has.
@@ -546,6 +564,11 @@ impl ReportDelta {
                     a.metric_packs.clone(),
                     b.metric_packs.clone(),
                 ),
+                temporal_pairs: SettingComparison::new_by(
+                    a.temporal_pairs.clone(),
+                    b.temporal_pairs.clone(),
+                    |left, right| same_pairs(left, right),
+                ),
             },
             schema: SchemaChange {
                 added,
@@ -609,6 +632,9 @@ pub struct ReportSide {
     /// The metric packs the side computed, `None` when it did not record
     /// them.
     metric_packs: Option<Vec<MetricPack>>,
+    /// The temporal pairs the side declared, `None` when it did not record
+    /// them.
+    temporal_pairs: Option<Vec<TemporalPair>>,
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
@@ -793,6 +819,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .and_then(|settings| settings.metric_packs.clone()),
+            temporal_pairs: report
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.temporal_pairs.clone()),
             schema_declared: declares_schema(&report.data_source),
             unlisted_components: unlisted,
         }
@@ -981,6 +1011,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .and_then(|settings| settings.metric_packs.clone()),
+            temporal_pairs: summary
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.temporal_pairs.clone()),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has

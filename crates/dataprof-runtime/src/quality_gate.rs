@@ -56,7 +56,10 @@
 //! - a setting that moves the score on unchanged data, such as the score
 //!   weights or a semantic hint, that differs or that either side did not
 //!   record ([`NotEvaluated::SettingChanged`],
-//!   [`NotEvaluated::SettingUnrecorded`]). The timeliness clock is one: two
+//!   [`NotEvaluated::SettingUnrecorded`]). The declared temporal pairs are
+//!   compared as pairs when both sides record them (0.14+), and otherwise
+//!   agree only when neither side declared any. The timeliness clock is such
+//!   a setting too: two
 //!   reports measured against different reference dates are comparable only
 //!   when the policy declares a rolling clock
 //!   ([`QualityPolicy::timeliness_clock`]);
@@ -3090,18 +3093,22 @@ fn setting_gap(
         Some(false) => Agreement::Changed,
         None => Agreement::Unrecorded,
     };
-    // A report records which columns the pairs named, not which column pairs
-    // with which, so only two empty pair lists are known to agree.
-    let pairs = match hint(|hints| &hints.temporal_pair_columns) {
-        Agreement::Same
-            if hints
-                .a
-                .as_ref()
-                .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
-        {
-            Agreement::Unrecorded
-        }
-        other => other,
+    // Both sides record the pairs themselves from 0.14. A side written before
+    // records only the columns the pairs named, not which pairs with which,
+    // so there only two empty pair lists are known to agree.
+    let pairs = match configuration.temporal_pairs.same {
+        Some(same) => recorded(Some(same)),
+        None => match hint(|hints| &hints.temporal_pair_columns) {
+            Agreement::Same
+                if hints
+                    .a
+                    .as_ref()
+                    .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
+            {
+                Agreement::Unrecorded
+            }
+            other => other,
+        },
     };
     let settings = [
         (

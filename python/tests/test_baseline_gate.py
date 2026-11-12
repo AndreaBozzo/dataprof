@@ -360,14 +360,13 @@ def test_order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same():
     )
     assert same.checks[0].status == "passed"
 
-    # A report records which columns the pairs named, not the pairing.
+    # A report records the pairing itself from 0.14 (#1029);
+    # test_temporal_pairs_record.py covers pairs that differ and a baseline
+    # written before, which recorded only the columns the pairs named.
     dates = {"start": ["2026-01-01", "2026-01-03"], "end": ["2026-01-02", "2026-01-04"]}
     policy = {"max_dimension_score_drops": {"timeliness": 100}}
     paired = dp.profile(dates, temporal_pairs=[("start", "end")])
-    assert paired.check(baseline=paired, **policy).checks[0].reason == {
-        "reason": "setting_unrecorded",
-        "setting": "temporal_pairs",
-    }
+    assert paired.check(baseline=paired, **policy).checks[0].status == "passed"
     unpaired = dp.profile(dates)
     assert unpaired.check(baseline=unpaired, **policy).checks[0].status == "passed"
 
