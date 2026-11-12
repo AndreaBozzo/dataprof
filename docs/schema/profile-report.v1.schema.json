@@ -319,6 +319,22 @@
         }
       ]
     },
+    "ColumnWithoutValueChecks": {
+      "description": "A column whose values no value-level quality check reads (#1134).\n\nIts nulls still count toward completeness, and its values toward the\nwhole-row duplicate count, but consistency, validity, accuracy,\nprecision, timeliness and key uniqueness never read them.",
+      "properties": {
+        "column": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ValueChecksSkipReason"
+        }
+      },
+      "required": [
+        "column",
+        "reason"
+      ],
+      "type": "object"
+    },
     "CompletenessMetrics": {
       "description": "Completeness metrics (ISO 8000-8).",
       "properties": {
@@ -2257,6 +2273,13 @@
           },
           "type": "array"
         },
+        "columns_without_value_checks": {
+          "description": "Columns whose values no value-level check read, each with the reason,\nso a reader of `overall_score` sees which columns those checks never\nread (#1134).\nEmpty when every column was checked. Absent in summaries written\nbefore 0.14, which did not record it.",
+          "items": {
+            "$ref": "#/$defs/ColumnWithoutValueChecks"
+          },
+          "type": "array"
+        },
         "completeness": {
           "anyOf": [
             {
@@ -2583,6 +2606,13 @@
     "QualityAssessment": {
       "description": "Wraps quality metrics with confidence information.",
       "properties": {
+        "columns_without_value_checks": {
+          "description": "The columns the value-level checks skipped, so a reader of the score\ncan see which columns those checks never read (#1134). Empty when\nevery column was checked; absent on documents written before 0.14,\nwhich did not record it.",
+          "items": {
+            "$ref": "#/$defs/ColumnWithoutValueChecks"
+          },
+          "type": "array"
+        },
         "confidence": {
           "$ref": "#/$defs/MetricConfidence"
         },
@@ -3450,6 +3480,16 @@
         "values_checked"
       ],
       "type": "object"
+    },
+    "ValueChecksSkipReason": {
+      "description": "Why the value-level quality checks skip a column.",
+      "oneOf": [
+        {
+          "const": "nested",
+          "description": "A struct, list or map column. Its values reach the checks only as a\nserialisation, which differs by input path, so none reads them (#637).",
+          "type": "string"
+        }
+      ]
     }
   },
   "$id": "https://andreabozzo.github.io/dataprof/schema/profile-report.v1.schema.json",

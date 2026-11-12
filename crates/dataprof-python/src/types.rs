@@ -1187,6 +1187,37 @@ impl PyProfileReport {
             .and_then(QualityAssessment::exact_dimensions)
     }
 
+    /// Columns whose values no value-level quality check read, each a dict
+    /// with ``column`` and ``reason`` (``"nested"``), in column order. Their
+    /// nulls count toward completeness and their values toward duplicate
+    /// rows; no other check reads them (#1134). An empty list means every
+    /// column was checked. None when there is no assessment or the report
+    /// was loaded from a document written before 0.14.
+    #[getter]
+    fn quality_columns_without_value_checks<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Vec<Bound<'py, PyDict>>>> {
+        let Some(columns) = self
+            .inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::columns_without_value_checks)
+        else {
+            return Ok(None);
+        };
+        columns
+            .iter()
+            .map(|entry| {
+                let dict = PyDict::new(py);
+                dict.set_item("column", &entry.column)?;
+                dict.set_item("reason", entry.reason.name())?;
+                Ok(dict)
+            })
+            .collect::<PyResult<Vec<_>>>()
+            .map(Some)
+    }
+
     /// Where the whole-source quality scores lie, when some were computed
     /// over a retained sample of the scanned rows.
     ///

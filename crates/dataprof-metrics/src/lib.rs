@@ -13,10 +13,11 @@ pub use analysis::{
     list_patterns, value_matches_hint,
 };
 pub use quality::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
-    QualityAssessment, QualityMetrics, QualityScores, RowCompletenessSummary, RowDuplicateSummary,
-    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,
+    MetricConfidence, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
+    RowCompletenessSummary, RowDuplicateSummary, ScoreBounds, ScoreInterval, TimelinessClock,
+    TimelinessClockMode, TimelinessClockTimezone, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics, ValueChecksSkipReason, columns_without_value_checks,
 };
 pub use stats::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal, HyperLogLog,
