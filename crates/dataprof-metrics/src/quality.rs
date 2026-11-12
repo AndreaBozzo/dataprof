@@ -181,6 +181,17 @@ pub struct TimelinessMetrics {
     pub clock: Option<TimelinessClock>,
 }
 
+/// Only an absent `columns_without_value_checks` means the report did not
+/// record it; an explicit `null` is malformed.
+fn present_or_missing<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<ColumnWithoutValueChecks>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::deserialize(deserializer).map(Some)
+}
+
 /// Only an absent `clock` means the report did not record one.
 fn present_clock<'de, D>(deserializer: D) -> Result<Option<TimelinessClock>, D::Error>
 where
@@ -921,6 +932,54 @@ impl ScoreBounds {
     }
 }
 
+/// Why the value-level quality checks skip a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ValueChecksSkipReason {
+    /// A struct, list or map column. Its values reach the checks only as a
+    /// serialisation, which differs by input path, so none reads them (#637).
+    Nested,
+}
+
+impl ValueChecksSkipReason {
+    /// The name the report documents carry, such as `"nested"`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nested => "nested",
+        }
+    }
+}
+
+/// A column whose values no value-level quality check reads (#1134).
+///
+/// Its nulls still count toward completeness, and its values toward the
+/// whole-row duplicate count, but consistency, validity, accuracy,
+/// precision, timeliness and key uniqueness never read them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ColumnWithoutValueChecks {
+    pub column: String,
+    pub reason: ValueChecksSkipReason,
+}
+
+/// The columns of `profiles` that the value-level checks skip, in profile
+/// order. Every engine and input path builds its report through this one rule.
+pub fn columns_without_value_checks(profiles: &[ColumnProfile]) -> Vec<ColumnWithoutValueChecks> {
+    profiles
+        .iter()
+        .filter_map(|profile| {
+            let reason = match profile.data_type {
+                dataprof_core::DataType::Nested => ValueChecksSkipReason::Nested,
+                _ => return None,
+            };
+            Some(ColumnWithoutValueChecks {
+                column: profile.name.clone(),
+                reason,
+            })
+        })
+        .collect()
+}
+
 /// Wraps quality metrics with confidence information.
 #[derive(Debug, Clone, schemars::JsonSchema)]
 pub struct QualityAssessment {
@@ -938,6 +997,12 @@ pub struct QualityAssessment {
     score_bounds: Option<ScoreBounds>,
     #[schemars(skip)]
     bounds_inputs: Option<Box<QualityMetrics>>,
+    /// The columns the value-level checks skipped, so a reader of the score
+    /// can see which columns those checks never read (#1134). Empty when
+    /// every column was checked; absent on documents written before 0.14,
+    /// which did not record it.
+    #[schemars(with = "Vec<ColumnWithoutValueChecks>")]
+    columns_without_value_checks: Option<Vec<ColumnWithoutValueChecks>>,
 }
 
 impl Serialize for QualityAssessment {
@@ -949,12 +1014,15 @@ impl Serialize for QualityAssessment {
             scores: QualityScores,
             #[serde(skip_serializing_if = "Option::is_none")]
             score_bounds: Option<&'a ScoreBounds>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            columns_without_value_checks: Option<&'a [ColumnWithoutValueChecks]>,
         }
         Document {
             metrics: &self.metrics,
             confidence: &self.confidence,
             scores: self.scores(),
             score_bounds: self.score_bounds(),
+            columns_without_value_checks: self.columns_without_value_checks(),
         }
         .serialize(serializer)
     }
@@ -970,6 +1038,8 @@ impl<'de> Deserialize<'de> for QualityAssessment {
             scores: Option<QualityScores>,
             #[serde(default)]
             score_bounds: Option<ScoreBounds>,
+            #[serde(default, deserialize_with = "present_or_missing")]
+            columns_without_value_checks: Option<Vec<ColumnWithoutValueChecks>>,
         }
         let document = Document::deserialize(deserializer)?;
         if document
@@ -1030,6 +1100,7 @@ impl<'de> Deserialize<'de> for QualityAssessment {
             score_inputs,
             score_bounds: document.score_bounds,
             bounds_inputs,
+            columns_without_value_checks: document.columns_without_value_checks,
         })
     }
 }
@@ -1063,7 +1134,29 @@ impl QualityAssessment {
             score_inputs: None,
             score_bounds: None,
             bounds_inputs: None,
+            columns_without_value_checks: None,
         }
+    }
+
+    /// Record which columns the value-level checks skipped, as
+    /// [`columns_without_value_checks`] reads them off the column profiles.
+    pub fn with_columns_without_value_checks(
+        mut self,
+        columns: Option<Vec<ColumnWithoutValueChecks>>,
+    ) -> Self {
+        self.columns_without_value_checks = columns;
+        self
+    }
+
+    /// The columns whose values no value-level check read, in column order.
+    ///
+    /// Their nulls count toward completeness and their values toward the
+    /// whole-row duplicate count; every other check skips them, so the
+    /// other dimensions' scores say nothing about their values. Empty when
+    /// every column was checked. `None` when the assessment does not record
+    /// it: a document written before 0.14.
+    pub fn columns_without_value_checks(&self) -> Option<&[ColumnWithoutValueChecks]> {
+        self.columns_without_value_checks.as_deref()
     }
 
     /// Attach bounds on the scores over every scanned row, computed from the same
@@ -1274,6 +1367,17 @@ impl From<QualityMetrics> for QualityAssessment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skip_reason_name_is_its_serialized_spelling() {
+        // A new reason gets its own line here; `name()` will not compile
+        // without an arm for it.
+        let reason = ValueChecksSkipReason::Nested;
+        assert_eq!(
+            serde_json::to_value(reason).unwrap(),
+            serde_json::json!(reason.name())
+        );
+    }
 
     fn sample_bounds() -> ScoreBounds {
         let interval = |lower, upper| Some(ScoreInterval { lower, upper });

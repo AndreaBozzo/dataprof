@@ -1205,3 +1205,24 @@ is `setting_unrecorded` on `temporal_pairs`.
 The field is absent from every report written before 0.14, whose pairs are
 unknown. An explicit `null` or a pair without a string `start` and `end` is
 malformed. Stored v1 reports remain valid.
+
+## v1 additive change: `quality.columns_without_value_checks`
+
+The quality block gains an optional `columns_without_value_checks` list in both
+dialects (#1134): the columns whose values no value-level check read, each as
+`{"column": "...", "reason": "..."}`, in column order. The one reason is
+`"nested"`: a struct, list or map column is counted and nothing more (#637).
+Its nulls count toward completeness and its values toward duplicate rows, but
+consistency, validity, accuracy, precision, timeliness and key uniqueness
+never read them, so those dimensions say nothing about their values. Before
+this, a source whose payload sat in such columns scored 100 with nothing in the
+report saying so.
+
+The list is empty when every column was checked. Every engine and input path
+records the same list for the same columns. The text and HTML renderings in
+Python (`repr()`, `to_markdown()`, `to_html()`, `to_llm_context()`) print a
+note next to the score when it is not empty.
+
+The field is absent from every report written before 0.14, which did not
+record it. An explicit `null` and an unknown reason are malformed. Stored v1
+reports remain valid.

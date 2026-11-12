@@ -44,10 +44,11 @@ pub use dataprof_json::{
     analyze_json_file_with_options, analyze_json_from_reader,
 };
 pub use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
-    PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
-    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
+    AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,
+    MetricConfidence, MetricsCalculator, PatternMetadata, PrecisionMetrics, QualityAssessment,
+    QualityMetrics, QualityScores, ScoreBounds, ScoreInterval, TimelinessClock,
+    TimelinessClockMode, TimelinessClockTimezone, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics, ValueChecksSkipReason, analyze_column, analyze_column_fast,
     analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
     calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, is_null_like_token,
     lexical_class, list_patterns,

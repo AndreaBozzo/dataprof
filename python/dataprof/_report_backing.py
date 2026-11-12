@@ -137,6 +137,20 @@ def _is_finite_number(value: Any) -> bool:
         return False
 
 
+#: Why the value-level quality checks skip a column, as the Rust
+#: `ValueChecksSkipReason` names it. An unknown reason is rejected, as Rust does.
+_VALUE_CHECKS_SKIP_REASONS = ("nested",)
+
+
+def _is_columns_without_value_checks(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("column"), str)
+        and entry.get("reason") in _VALUE_CHECKS_SKIP_REASONS
+        for entry in value
+    )
+
+
 def _is_list_of_mappings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(entry, dict) for entry in value)
 
@@ -691,6 +705,23 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
             None,
         )
         if quality is not None
+        else None
+    )
+    # Absent before 0.14: which columns the value checks skipped is then
+    # unknown, never "none" (#1134). An explicit null is malformed.
+    values["quality_columns_without_value_checks"] = (
+        [
+            {"column": entry["column"], "reason": entry["reason"]}
+            for entry in _read_field(
+                quality,
+                "columns_without_value_checks",
+                "quality.columns_without_value_checks",
+                "a list of {column, reason} mappings",
+                _is_columns_without_value_checks,
+                None,
+            )
+        ]
+        if quality is not None and "columns_without_value_checks" in quality
         else None
     )
     values["quality_status"], values["quality_error"] = _read_quality_status(

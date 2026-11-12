@@ -138,6 +138,8 @@ class ProfileReport:
     """
 
     _MAX_REPR_COLUMNS = 15
+    #: Columns the value-checks note names before it counts the rest.
+    _MAX_NOTE_COLUMNS = 5
 
     def __init__(self, report: _RustProfileReport | _ReportView):
         self._native_report = None if isinstance(report, _ReportView) else report
@@ -327,6 +329,44 @@ class ProfileReport:
         """
         bounds = self._report.quality_score_bounds
         return None if bounds is None else _copy.deepcopy(dict(bounds))
+
+    @property
+    def quality_columns_without_value_checks(self) -> list[dict[str, str]] | None:
+        """Columns whose values no value-level quality check read.
+
+        Each entry is ``{"column": ..., "reason": ...}``, in column order. The
+        one reason today is ``"nested"``: a struct, list or map column, whose
+        values reach the checks only as a serialisation that differs by input
+        path. Its nulls still count toward completeness and its values toward
+        duplicate rows, but consistency, validity, accuracy, precision,
+        timeliness and key uniqueness never read them, so those dimensions
+        of :attr:`quality_score` say nothing about their values.
+
+        An empty list means every column was checked. ``None`` when there is
+        no quality assessment, or the report was loaded from a document
+        written before 0.14, which did not record this.
+        """
+        columns = self._report.quality_columns_without_value_checks
+        return None if columns is None else [dict(entry) for entry in columns]
+
+    def _value_checks_note(self) -> str | None:
+        """One line saying which columns the score's value checks skipped.
+
+        ``None`` when every column was checked or the report does not say.
+        """
+        skipped = self.quality_columns_without_value_checks
+        if not skipped:
+            return None
+        shown = [
+            f"{_bounded(_one_line(entry['column']))} ({entry['reason']})"
+            for entry in skipped[: self._MAX_NOTE_COLUMNS]
+        ]
+        if len(skipped) > len(shown):
+            shown.append(f"+{len(skipped) - len(shown)} more")
+        return (
+            f"the quality score's value checks skipped {len(skipped)} of "
+            f"{self.columns} columns: {', '.join(shown)}"
+        )
 
     @property
     def metric_semantics(self) -> dict[str, str] | None:
@@ -628,6 +668,9 @@ class ProfileReport:
             bounds = self.quality_score_bounds
             if bounds is not None:
                 quality_dict["score_bounds"] = bounds
+            skipped = self.quality_columns_without_value_checks
+            if skipped is not None:
+                quality_dict["columns_without_value_checks"] = skipped
             # The Rust summary always names the weights behind its score
             # (#749). A summary that did not record them keeps them absent:
             # the defaults the loader filled in would be a guess.
@@ -1156,6 +1199,7 @@ class ProfileReport:
             f"**Source:** {esc(self.source)} | **Rows:** {self.rows:,} | "
             f"**Columns:** {self.columns} | **Quality:** {qs_str} | "
             f"**Time:** {self.execution_time_ms}ms",
+            *([f"**Note:** {esc(note)}"] if (note := self._value_checks_note()) else []),
             "",
             "| Column | Type | Count | Null % | Unique | Stats | Pattern |",
             "|---|---|---|---|---|---|---|",
@@ -1235,6 +1279,9 @@ class ProfileReport:
             header.append(f"caveat: scan stopped early ({self.truncation_reason})")
         if self.low_sample_warning:
             header.append("caveat: low sample size, quality metrics are unreliable")
+        note = self._value_checks_note()
+        if note is not None:
+            header.append(f"caveat: {note}")
         # "quality: n/a" reads as a skipped run whatever the reason was. A
         # computation that was asked for and broke is a caveat about the whole
         # report, not a missing number.
@@ -1527,6 +1574,9 @@ class ProfileReport:
             f"rows={self.rows:,}, columns={self.columns}, "
             f"time={self.execution_time_ms}ms, quality={qs_str})"
         ]
+        note = self._value_checks_note()
+        if note is not None:
+            lines.append(f"Note: {note}")
 
         cols = list(self._report.column_profiles)
         show = cols[: self._MAX_REPR_COLUMNS]
@@ -1576,6 +1626,8 @@ class ProfileReport:
             )
         else:
             qs_html = "N/A"
+        note = self._value_checks_note()
+        note_html = f"<p><i>Note: {_html.escape(note)}</i></p>" if note is not None else ""
 
         col_rows = ""
         for i, col in enumerate(self._report.column_profiles):
@@ -1609,6 +1661,7 @@ class ProfileReport:
             f"<b>Columns:</b> {self.columns} | "
             f"<b>Quality:</b> {qs_html} | "
             f"<b>Time:</b> {self.execution_time_ms}ms</p>"
+            f"{note_html}"
             "<table style='border-collapse:collapse;width:100%'>"
             "<tr style='border-bottom:2px solid #e5e7eb'>"
             "<th style='text-align:left;padding:4px 8px'>Column</th>"

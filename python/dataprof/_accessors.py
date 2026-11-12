@@ -280,6 +280,7 @@ class _ReportView(_View):
     quality_exact_dimensions = _Field[list[str] | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
     quality_score_bounds = _Field[dict[str, Any] | None]()
+    quality_columns_without_value_checks = _Field[list[dict[str, str]] | None]()
     quality_status = _Field[str]()
     quality_error = _Field[str | None]()
 

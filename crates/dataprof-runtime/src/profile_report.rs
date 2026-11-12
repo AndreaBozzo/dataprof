@@ -950,6 +950,18 @@ struct PythonQualityDocument {
     /// on documents written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     score_bounds: Option<dataprof_metrics::ScoreBounds>,
+    /// Columns whose values no value-level check read, each with the reason,
+    /// so a reader of `overall_score` sees which columns those checks never
+    /// read (#1134).
+    /// Empty when every column was checked. Absent in summaries written
+    /// before 0.14, which did not record it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<dataprof_metrics::ColumnWithoutValueChecks>")]
+    columns_without_value_checks: Option<Vec<dataprof_metrics::ColumnWithoutValueChecks>>,
     /// Weights behind `overall_score`, always written as the canonical
     /// document writes them, default weights included (#749). Summaries
     /// written before 0.13 omitted default weights, and before the field
@@ -1119,6 +1131,9 @@ impl PythonProfileReportDocument {
                 if let Some(bounds) = assessment.score_bounds() {
                     document["score_bounds"] = serde_json::to_value(bounds)?;
                 }
+                if let Some(columns) = assessment.columns_without_value_checks() {
+                    document["columns_without_value_checks"] = serde_json::to_value(columns)?;
+                }
                 // The summary has always included this boolean, even when false.
                 if let Some(uniqueness) = document.get_mut("uniqueness") {
                     uniqueness["duplicate_rows_approximate"] = serde_json::Value::Bool(
@@ -1238,6 +1253,11 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
+        // Written always since 0.14 (#1134), absent before.
+        (
+            "/$defs/QualityAssessment/required",
+            "columns_without_value_checks",
+        ),
         // Written always since 0.13 (#1005), absent before.
         ("/$defs/AccuracyMetrics/required", "rule_values_checked"),
         ("/$defs/AccuracyMetrics/required", "rule_violating_values"),

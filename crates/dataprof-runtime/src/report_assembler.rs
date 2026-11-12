@@ -13,7 +13,8 @@ use dataprof_core::{
 };
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
-    RowDuplicateSummary, analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
+    RowDuplicateSummary, analysis::metrics::BifurcatedResult, columns_without_value_checks,
+    compute_value_hint_bindings,
 };
 
 use crate::{AnalysisSettings, ProfileReport, QualityAnalysisStatus};
@@ -372,7 +373,10 @@ impl ReportAssembler {
                 (
                     Some(
                         QualityAssessment::new(result.metrics, confidence)
-                            .with_score_bounds(result.score_bounds),
+                            .with_score_bounds(result.score_bounds)
+                            .with_columns_without_value_checks(Some(columns_without_value_checks(
+                                &self.columns,
+                            ))),
                     ),
                     QualityAnalysisStatus::Computed,
                 )
@@ -398,7 +402,12 @@ impl ReportAssembler {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
                 (
-                    Some(QualityAssessment::new(metrics, confidence)),
+                    Some(
+                        QualityAssessment::new(metrics, confidence)
+                            .with_columns_without_value_checks(Some(columns_without_value_checks(
+                                &self.columns,
+                            ))),
+                    ),
                     QualityAnalysisStatus::Computed,
                 )
             }
