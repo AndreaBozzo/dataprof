@@ -79,8 +79,8 @@ class QualityCheck:
     bounds: dict[str, _Any] | None = None
     #: The baseline's side of a rule about change: its ``observed`` value,
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
-    #: baseline's: in points, or for ``max_distinct_drop`` in percent of the
-    #: baseline's distinct count. ``None`` on every other rule.
+    #: baseline's: in points, or for ``max_distinct_drop`` and the row count
+    #: rules in percent of the baseline's count. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
     #: The findings code a ``forbid_finding`` check concerns. ``None`` on
     #: every other rule.
@@ -295,6 +295,17 @@ def _percentage(
     return number
 
 
+def _growth_percentage(code: str, value: _Any) -> float:
+    """Accept a growth threshold: a percentage of at least 0, with no upper
+    end, since a count can more than double."""
+    number = _real_number(value)
+    if number != number or number == float("inf") or number < 0.0:
+        raise _PolicyFieldError(
+            code, f"{code} threshold must be a percentage of at least 0, got {value!r}"
+        )
+    return number
+
+
 #: The largest count the Rust gate accepts (`usize` on the 64-bit wheels).
 _COUNT_MAX = (1 << 64) - 1
 
@@ -341,6 +352,8 @@ class _Policy:
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
+        max_row_count_drop: float | None = None,
+        max_row_count_growth: float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -461,6 +474,17 @@ class _Policy:
         elif max_distinct_drop is not None:
             self.max_distinct_drop_any = _percentage("max_distinct_drop", None, max_distinct_drop)
 
+        self.max_row_count_drop = (
+            None
+            if max_row_count_drop is None
+            else _percentage("max_row_count_drop", None, max_row_count_drop)
+        )
+        self.max_row_count_growth = (
+            None
+            if max_row_count_growth is None
+            else _growth_percentage("max_row_count_growth", max_row_count_growth)
+        )
+
         # A bare string is a sequence of characters, never a list of columns,
         # and a one-shot iterator would be consumed by the check below.
         if require_columns is not None and (
@@ -505,8 +529,8 @@ class _Policy:
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase, max_distinct_drop, forbid_removed_columns, "
-                "forbid_added_columns) "
+                "max_null_percentage_increase, max_distinct_drop, max_row_count_drop, "
+                "max_row_count_growth, forbid_removed_columns, forbid_added_columns) "
                 "needs a baseline report to compare against",
             )
 
@@ -543,6 +567,8 @@ class _Policy:
             or self.max_null_percentage_increase_any is not None
             or bool(self.max_distinct_drop)
             or self.max_distinct_drop_any is not None
+            or self.max_row_count_drop is not None
+            or self.max_row_count_growth is not None
             or self.forbid_removed_columns
             or self.forbid_added_columns
         )
@@ -582,6 +608,8 @@ class _Policy:
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
                 max_distinct_drop=list(self.max_distinct_drop.items()),
                 max_distinct_drop_any=self.max_distinct_drop_any,
+                max_row_count_drop=self.max_row_count_drop,
+                max_row_count_growth=self.max_row_count_growth,
                 require_columns=self.require_columns,
                 forbid_removed_columns=self.forbid_removed_columns,
                 forbid_added_columns=self.forbid_added_columns,

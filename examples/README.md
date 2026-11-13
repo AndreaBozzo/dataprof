@@ -208,7 +208,11 @@ jobs:
             candidate.json
 ```
 
-The rules about change need dataprof 0.13 or later.
+The rules about change need dataprof 0.13 or later, and the row count
+rules `--max-row-drop 10` and `--max-row-growth 10` need 0.14: they fail a drop
+that lost rows but kept every share, such as a truncated extract, and one
+that gained too many, such as a file published twice. A fixed `--min-rows`
+low enough for a quiet day misses both.
 `quality/policy.json` holds the absolute rules, with the same keys as
 `check()`; the example's `ABSOLUTE` dictionary written as JSON is a working
 one. The step exits 0 on a pass, 1 on a fail and 2 when inconclusive, so the job

@@ -1019,6 +1019,8 @@ if not result.passed:
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
 | `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
+| `max_row_count_drop` | `float` | How far the row count may fall, in percent (0--100) of the baseline's `rows_processed` (0.14+) |
+| `max_row_count_growth` | `float` | How far the row count may grow, in percent of the baseline's, 0 or more (0.14+) |
 | `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
 | `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
@@ -1182,12 +1184,14 @@ when both reports measured the same thing the same way. Otherwise the rule is
 unevaluated, with one of these reasons:
 
 - `not_in_baseline`: the baseline did not assess the score, did not profile
-  the column, or read no values for it;
+  the column, or read no values for it, or, for the row count rules, read no
+  rows or is a summary that does not record `rows_processed`;
 - `approximate_count`, for `max_distinct_drop`, when either side's distinct
   count is an estimate (past a million distinct values the count spills into
   a sketch) or a document does not record whether it is exact;
-- `schema_changed`, for a score, when the two reports profiled different
-  columns. A dataset-level score has the column set as its subject, so a
+- `schema_changed`, for a score or a row count rule, when the two reports
+  profiled different columns. A dataset-level rule has the column set as its
+  subject, so a
   column that appeared or vanished changes what is measured. A column's own
   rule is not affected and still decides the verdict, and a new column gets a
   rule only when the policy names it: `"*"` covers the columns both reports
@@ -1195,7 +1199,8 @@ unevaluated, with one of these reasons:
 - `dimensions_changed`, for the overall score, when a dimension was assessed
   on one side only, since the overall score averages the assessed ones;
 - `definition_not_comparable`, with the `metric_semantics` key the rule
-  depends on (`null_tokens` for every rule, `pattern_match_count` also for
+  depends on (`null_tokens` for every rule but the row count ones,
+  `pattern_match_count` also for
   validity and the overall score, `range_rule_count` also for accuracy and the
   overall score, `key_uniqueness_units` also for uniqueness and the overall
   score, `outlier_units` also for accuracy and the overall score,
@@ -1224,7 +1229,30 @@ unevaluated, with one of these reasons:
   `setting_changed` on `metric_packs` rather than `not_assessed`,
   `not_in_baseline` or `dimensions_changed`;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
-  not cover its whole source.
+  not cover its whole source. The row count rules are decided more often, as
+  the next paragraph describes.
+
+**A row count that falls or grows (0.14+).** `max_row_count_drop=10` fails
+when the row count fell by more than 10% of the baseline's `rows_processed`,
+as a truncated extract that lost one year or one page and kept its header and
+its null shares, which every other rule passes. `max_row_count_growth=10`
+fails when it grew by more than 10%, as a join that matched twice or a file
+published twice. Growth has no upper end, so `150` allows a source to more
+than double. `observed` and the baseline's `observed` are the two row counts,
+and `change` is in percent of the baseline's (`-15.68` for 6,963 rows to
+5,871). A scan that stopped early (`max_rows`, sampling, skipped records)
+read a lower bound of its source's rows, so under `scope="full_source"` it
+still settles the outcome that its unread rows could not reverse, as
+`min_rows` does:
+
+| | `max_row_count_drop` | `max_row_count_growth` |
+|---|---|---|
+| this report's scan incomplete | a pass is decided, a failure is `evidence_incomplete` | a failure is decided, a pass is `evidence_incomplete` |
+| the baseline's scan incomplete | a failure is decided, a pass is `evidence_incomplete` | a pass is decided, a failure is `evidence_incomplete` |
+| both incomplete | `evidence_incomplete` | `evidence_incomplete` |
+
+The one exception is `max_row_count_drop=100`, which passes whatever the scans
+missed, since a count cannot fall by more than all of it.
 
 **A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
 10}` fails when the column's distinct count fell by more than 10% of the
@@ -1268,9 +1296,10 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `max_distinct_drop` is relative
-instead: `change` is in percent of the baseline's distinct count, and
-`expected` is `{"comparison": "relative_change_at_least", "value": -10.0}`. `result.baseline` names both reports
+drop or `change_at_most` for an increase. `max_distinct_drop` and the row
+count rules are relative instead: `change` is in percent of the baseline's
+count, and `expected` is `{"comparison": "relative_change_at_least", "value":
+-10.0}` for a drop or `relative_change_at_most` for growth. `result.baseline` names both reports
 (`a` is the baseline), the `schema` change between them, and the
 `timeliness_clock` rule the score rules read. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
@@ -1526,6 +1555,8 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
 | `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
+| `--max-row-drop PERCENT` | `max_row_count_drop` |
+| `--max-row-growth PERCENT` | `max_row_count_growth` |
 | `--forbid-removed-columns` | `forbid_removed_columns` |
 | `--forbid-added-columns` | `forbid_added_columns` |
 | `--timeliness-clock fixed\|rolling` | `timeliness_clock` |

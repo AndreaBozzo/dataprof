@@ -308,6 +308,8 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "max_null_percentage_increase_any": None,
             "max_distinct_drop": [],
             "max_distinct_drop_any": None,
+            "max_row_count_drop": None,
+            "max_row_count_growth": None,
             "require_columns": [],
             "forbid_removed_columns": False,
             "forbid_added_columns": False,
