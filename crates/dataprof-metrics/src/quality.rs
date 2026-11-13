@@ -942,7 +942,10 @@ pub struct ScoreBounds {
 }
 
 impl ScoreBounds {
-    fn is_valid(&self) -> bool {
+    /// Whether every interval lies in 0..=100 with `lower <= upper`, at a
+    /// confidence level strictly between 0 and 1. A reader refuses bounds
+    /// that are not.
+    pub fn is_valid(&self) -> bool {
         self.confidence_level.is_finite()
             && 0.0 < self.confidence_level
             && self.confidence_level < 1.0

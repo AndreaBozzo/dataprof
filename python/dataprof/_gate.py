@@ -80,7 +80,9 @@ class QualityCheck:
     #: The baseline's side of a rule about change: its ``observed`` value,
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
     #: baseline's: in points, or for ``max_distinct_drop`` and the row count
-    #: rules in percent of the baseline's count. ``None`` on every other rule.
+    #: rules in percent of the baseline's count. A ``full_source`` score drop
+    #: rule decided on a sampled baseline score adds ``bounds``, the
+    #: baseline's interval. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
     #: The findings code a ``forbid_finding`` check concerns. ``None`` on
     #: every other rule.
