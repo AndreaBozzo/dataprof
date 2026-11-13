@@ -680,11 +680,19 @@ impl QualityMetrics {
     /// not a score of zero. Equivalent to
     /// [`assessed_dimensions`](Self::assessed_dimensions) being empty.
     pub fn overall_score(&self) -> Option<f64> {
+        self.overall_score_with(|_| None)
+    }
+
+    /// The overall score with `replace` taking the place of a dimension's
+    /// score wherever it returns one, aggregated as
+    /// [`overall_score`](Self::overall_score) does.
+    fn overall_score_with(&self, replace: impl Fn(QualityDimension) -> Option<f64>) -> Option<f64> {
         let mut total_weight = 0.0;
         let mut score = 0.0;
 
-        for (_, weight, dimension_score) in self.weighted_scores() {
+        for (dimension, weight, dimension_score) in self.weighted_scores() {
             if let Some(value) = dimension_score {
+                let value = replace(dimension).unwrap_or(value);
                 total_weight += weight;
                 score += value * weight;
             }
@@ -860,11 +868,27 @@ fn serialize_dimension_scores<S: serde::Serializer>(
 
 impl QualityScores {
     fn from_metrics(metrics: &QualityMetrics) -> Self {
+        Self::from_metrics_with(metrics, |_| None)
+    }
+
+    /// Scores of `metrics` with `replace` taking the place of an assessed
+    /// dimension's score wherever it returns one, and the overall score
+    /// aggregated from those. A dimension `metrics` did not assess stays
+    /// without a score.
+    pub(crate) fn from_metrics_with(
+        metrics: &QualityMetrics,
+        replace: impl Fn(QualityDimension) -> Option<f64>,
+    ) -> Self {
+        let score = |dimension| {
+            metrics
+                .dimension_score(dimension)
+                .map(|score| replace(dimension).unwrap_or(score))
+        };
         Self {
-            overall_score: metrics.overall_score(),
+            overall_score: metrics.overall_score_with(&replace),
             dimension_scores: QualityDimension::all()
                 .into_iter()
-                .map(|dimension| (dimension.to_string(), metrics.dimension_score(dimension)))
+                .map(|dimension| (dimension.to_string(), score(dimension)))
                 .collect(),
         }
     }
@@ -1164,6 +1188,16 @@ impl QualityAssessment {
     pub fn with_score_bounds(mut self, bounds: Option<ScoreBounds>) -> Self {
         self.bounds_inputs = bounds.as_ref().map(|_| Box::new(self.metrics.clone()));
         self.score_bounds = bounds;
+        self
+    }
+
+    /// Report `scores` in place of the ones `metrics` gives, as long as
+    /// `metrics` stays unchanged: estimates over every scanned row for scores
+    /// a calculator pooled over a retained sample (#1293). `None` keeps the
+    /// scores `metrics` gives.
+    pub fn with_estimated_scores(mut self, scores: Option<QualityScores>) -> Self {
+        self.score_inputs = scores.as_ref().map(|_| Box::new(self.metrics.clone()));
+        self.scores = scores;
         self
     }
 

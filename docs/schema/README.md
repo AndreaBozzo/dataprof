@@ -975,6 +975,35 @@ field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `json_number_reading` is malformed, as for
 `text_length_unit`.
 
+## v1 additive change: `metric_semantics.sampled_score_estimator`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `sampled_score_estimator` | `"population_weighted"` | how a score computed over a retained sample estimates the score over every scanned value |
+
+A column keeps at most 10,000 of its non-null values for the sampled
+dimensions: consistency, accuracy, timeliness, validity and precision.
+Through 0.13 their scores pooled those samples, so a column counted as many
+values as its sample kept, and a sparse column read in full weighed as much
+as a dense one sampled from many more values. The score could then fall
+outside its own `score_bounds` (#1293). Each column's sampled counts are now
+scaled to its non-null values in the source, which is the score the bounds
+cover, so the score lies within its interval. A source whose samples hold
+every value scores as before. Only the scores change: the metric values
+beside them, such as `data_type_consistency` and `format_violations`, still
+describe the sample.
+
+A report that records no `sampled_score_estimator` reads back with it
+unknown, and a quality gate leaves the consistency, accuracy, timeliness,
+validity, precision and overall score rules over it
+`definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data. Regenerate the baseline with the current release to
+have those rules decided again. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for
+`sampled_score_estimator` is malformed, as for `text_length_unit`.
+
 ## v1 additive change: `generator`
 
 Both dialects gain a top-level `generator` object naming the dataprof build

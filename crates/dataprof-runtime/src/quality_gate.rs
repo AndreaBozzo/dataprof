@@ -2927,6 +2927,10 @@ enum Definition {
     /// How a JSON number its `f64` does not hold is read, behind the
     /// consistency, precision, uniqueness and accuracy scores.
     JsonNumberReading,
+    /// How a sampled score estimates the score over every scanned value,
+    /// behind the consistency, accuracy, timeliness, validity and precision
+    /// scores.
+    SampledScoreEstimator,
 }
 
 impl Definition {
@@ -2940,6 +2944,7 @@ impl Definition {
             Self::KeyColumnSource => "key_column_source",
             Self::AccuracyComparison => "accuracy_comparison",
             Self::JsonNumberReading => "json_number_reading",
+            Self::SampledScoreEstimator => "sampled_score_estimator",
         }
     }
 
@@ -2957,6 +2962,9 @@ impl Definition {
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
             Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
             Self::JsonNumberReading => agree(&a.json_number_reading, &b.json_number_reading),
+            Self::SampledScoreEstimator => {
+                agree(&a.sampled_score_estimator, &b.sampled_score_estimator)
+            }
         }
     }
 }
@@ -2974,16 +2982,20 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
         ],
-        Some(QualityDimension::Validity) => {
-            &[Definition::NullTokens, Definition::PatternMatchCount]
-        }
+        Some(QualityDimension::Validity) => &[
+            Definition::NullTokens,
+            Definition::PatternMatchCount,
+            Definition::SampledScoreEstimator,
+        ],
         Some(QualityDimension::Accuracy) => &[
             Definition::NullTokens,
             Definition::RangeRuleCount,
             Definition::OutlierUnits,
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,
@@ -2991,8 +3003,13 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::JsonNumberReading,
         ],
-        Some(QualityDimension::Consistency | QualityDimension::Precision) => {
-            &[Definition::NullTokens, Definition::JsonNumberReading]
+        Some(QualityDimension::Consistency | QualityDimension::Precision) => &[
+            Definition::NullTokens,
+            Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
+        ],
+        Some(QualityDimension::Timeliness) => {
+            &[Definition::NullTokens, Definition::SampledScoreEstimator]
         }
         Some(_) => &[Definition::NullTokens],
     }

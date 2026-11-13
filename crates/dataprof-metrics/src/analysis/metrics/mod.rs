@@ -522,6 +522,7 @@ impl MetricsCalculator {
                 sampled_dimensions: vec![],
                 sample_size: 0,
                 score_bounds: None,
+                estimated_scores: None,
             });
         }
 
@@ -746,7 +747,7 @@ impl MetricsCalculator {
             low_sample_warning: !validation.sufficient_sample,
             score_weights: self.thresholds.score_weights,
         };
-        let score_bounds = bounds::score_bounds(
+        let sampled_scores = bounds::score_bounds(
             &self.thresholds,
             &timeliness_calculator,
             data,
@@ -757,6 +758,10 @@ impl MetricsCalculator {
             &sampled_dimensions,
             row_duplicates,
         )?;
+        let (score_bounds, estimated_scores) = match sampled_scores {
+            Some(scores) => (Some(scores.bounds), scores.estimates),
+            None => (None, None),
+        };
 
         Ok(BifurcatedResult {
             metrics,
@@ -764,6 +769,7 @@ impl MetricsCalculator {
             sampled_dimensions,
             sample_size: sample_rows,
             score_bounds,
+            estimated_scores,
         })
     }
 
@@ -784,6 +790,9 @@ impl MetricsCalculator {
 /// Contains the computed metrics plus provenance information about which
 /// dimensions were computed exactly (from global streaming counters) and
 /// which were computed from a bounded sample.
+///
+/// Only the calculator builds one, and later releases add fields.
+#[non_exhaustive]
 pub struct BifurcatedResult {
     /// The computed quality metrics
     pub metrics: QualityMetrics,
@@ -795,6 +804,12 @@ pub struct BifurcatedResult {
     pub sample_size: usize,
     /// Where the scores over every scanned row lie, when some dimension was sampled.
     pub score_bounds: Option<crate::quality::ScoreBounds>,
+    /// The scores to report in place of the ones `metrics` gives, when a
+    /// sampled dimension's score pooled over the sample differs from its
+    /// estimate over every scanned row: each column's sampled counts weigh
+    /// as many values as the column holds, not as many as its sample kept
+    /// (#1293). `None` when no sample left a column out.
+    pub estimated_scores: Option<crate::quality::QualityScores>,
 }
 
 #[cfg(test)]

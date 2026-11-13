@@ -30,7 +30,7 @@ use super::timeliness::TimelinessCalculator;
 use super::validity::ValidityCalculator;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::quality::{RowDuplicateSummary, ScoreBounds, ScoreInterval};
+use crate::quality::{QualityScores, RowDuplicateSummary, ScoreBounds, ScoreInterval};
 use crate::types::{ColumnProfile, QualityDimension, QualityMetrics};
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -63,6 +63,20 @@ impl ColumnCounts {
         self.sampled >= self.population
     }
 
+    /// How many source values each sampled value stands for: one when the
+    /// sample holds every value, the population over the sample otherwise.
+    /// `None` for a column whose sample is empty while its source is not: it
+    /// showed nothing to scale.
+    fn scale(&self) -> Option<f64> {
+        if self.is_exact() {
+            Some(1.0)
+        } else if self.sampled == 0 {
+            None
+        } else {
+            Some(self.population as f64 / self.sampled as f64)
+        }
+    }
+
     /// How many means this column adds to the union bound.
     fn bounded_means(&self) -> usize {
         match (self.is_exact(), self.max_failures_per_value) {
@@ -77,8 +91,26 @@ impl ColumnCounts {
 /// the columns that took part.
 type Share = Vec<ColumnCounts>;
 
+/// The shares behind one dimension score.
+struct DimensionShares {
+    shares: Vec<Share>,
+    /// False when a share cannot be bounded: start/end ordering compared on
+    /// reservoirs of different sizes. Such a share enters the point estimate
+    /// with its sample counts as they are.
+    bounded: bool,
+}
+
+/// What [`score_bounds`] returns: the intervals, and the point scores they
+/// are intervals for.
+pub(crate) struct SampledScores {
+    pub(crate) bounds: ScoreBounds,
+    /// Scores that replace the calculator's, present when some dimension's
+    /// estimate differs from a score pooled over the sample (#1293).
+    pub(crate) estimates: Option<QualityScores>,
+}
+
 /// Bound the full-source scores of an assessment whose `sampled` components
-/// were computed over the retained sample in `data`.
+/// were computed over the retained sample in `data`, and estimate them.
 ///
 /// `None` when nothing was sampled: every score is then exact already.
 ///
@@ -95,7 +127,7 @@ pub(crate) fn score_bounds(
     metrics: &QualityMetrics,
     sampled: &[String],
     row_duplicates: Option<RowDuplicateSummary>,
-) -> Result<Option<ScoreBounds>, DataProfilerError> {
+) -> Result<Option<SampledScores>, DataProfilerError> {
     if sampled.is_empty() {
         return Ok(None);
     }
@@ -128,7 +160,8 @@ pub(crate) fn score_bounds(
     let bounded_means: usize = shares
         .values()
         .flatten()
-        .flatten()
+        .filter(|dimension| dimension.bounded)
+        .flat_map(|dimension| dimension.shares.iter())
         .flatten()
         .map(ColumnCounts::bounded_means)
         .sum();
@@ -150,10 +183,22 @@ pub(crate) fn score_bounds(
                 uniqueness_interval(metrics, column_profiles, row_duplicates, &is_sampled)
             }
             Some(None) => None,
-            Some(Some(dimension_shares)) => Some(dimension_interval(dimension_shares, log_term)),
+            Some(Some(dimension)) if !dimension.bounded => None,
+            Some(Some(dimension)) => Some(dimension_interval(&dimension.shares, log_term)),
         };
         raw.insert(dimension, interval);
     }
+
+    let estimates: HashMap<QualityDimension, f64> = shares
+        .iter()
+        .filter_map(|(dimension, shares)| {
+            let estimate = dimension_estimate(&shares.as_ref()?.shares)?;
+            Some((*dimension, estimate))
+        })
+        .collect();
+    let estimates = (!estimates.is_empty()).then(|| {
+        QualityScores::from_metrics_with(metrics, |dimension| estimates.get(&dimension).copied())
+    });
 
     let mut overall: Option<(f64, f64)> = Some((0.0, 0.0));
     let mut total_weight = 0.0;
@@ -174,7 +219,7 @@ pub(crate) fn score_bounds(
         .filter(|_| total_weight > 0.0)
         .map(|(lower, upper)| outward(lower / total_weight, (upper / total_weight).min(100.0)));
 
-    Ok(Some(ScoreBounds {
+    let bounds = ScoreBounds {
         confidence_level: SCORE_BOUNDS_CONFIDENCE,
         overall_score,
         dimension_scores: QualityDimension::all()
@@ -188,7 +233,56 @@ pub(crate) fn score_bounds(
                 (dimension.to_string(), interval)
             })
             .collect(),
-    }))
+    };
+    Ok(Some(SampledScores { bounds, estimates }))
+}
+
+/// The score `100 - 100 * sum(share)` with each share estimated over the
+/// whole source, or `None` when every column that counted a value for this
+/// dimension holds all its values in its sample: the calculator's own score
+/// is then that number already, and keeping it keeps the routes that score
+/// every value in agreement to the last digit. A sampled column that counted
+/// nothing here, such as a text column beside the floats precision reads,
+/// weighs nothing either way.
+///
+/// The calculator pools each share over the sample, so a column weighs as
+/// many values as its sample kept, at most the reservoir size. The bounds
+/// cover the share over the source, where a column weighs its non-null
+/// values. Scaling each column's sampled counts by how many source values a
+/// sampled one stands for estimates that share, and lies within the bounds:
+/// per column, the scaled counts lie between the sampled counts and the
+/// sampled counts plus every unseen value, and within the statistical
+/// interval around the sample mean (#1293).
+fn dimension_estimate(shares: &[Share]) -> Option<f64> {
+    if shares
+        .iter()
+        .flatten()
+        .filter(|column| column.checked > 0 || column.failures > 0)
+        .all(ColumnCounts::is_exact)
+    {
+        return None;
+    }
+    let total: f64 = shares.iter().map(|share| share_estimate(share)).sum();
+    Some((100.0 - 100.0 * total).clamp(0.0, 100.0))
+}
+
+/// The whole-source share `sum(failures) / sum(checked)`, each column's
+/// sampled counts scaled to its population.
+fn share_estimate(share: &[ColumnCounts]) -> f64 {
+    let (failures, checked) = share
+        .iter()
+        .filter_map(|column| Some((column, column.scale()?)))
+        .fold((0.0, 0.0), |(failures, checked), (column, scale)| {
+            (
+                failures + column.failures as f64 * scale,
+                checked + column.checked as f64 * scale,
+            )
+        });
+    if checked > 0.0 {
+        failures / checked
+    } else {
+        0.0
+    }
 }
 
 /// An interval for the uniqueness score that holds with certainty, or `None`
@@ -427,7 +521,7 @@ fn collect_shares(
     column_profiles: &[ColumnProfile],
     semantic_hints: &SemanticHints,
     temporal_columns: &[String],
-) -> Result<HashMap<QualityDimension, Option<Vec<Share>>>, DataProfilerError> {
+) -> Result<HashMap<QualityDimension, Option<DimensionShares>>, DataProfilerError> {
     let wants = |dimension: QualityDimension| wanted.contains(&dimension);
     let positive_columns = &semantic_hints.positive_columns;
     let accuracy = AccuracyCalculator::new(thresholds);
@@ -520,7 +614,16 @@ fn collect_shares(
         }
     }
 
-    let mut timeliness_shares = Some(vec![stale, date_failures]);
+    let bounded = |shares| {
+        Some(DimensionShares {
+            shares,
+            bounded: true,
+        })
+    };
+    let mut timeliness_shares = DimensionShares {
+        shares: vec![stale, date_failures],
+        bounded: true,
+    };
     if wants(QualityDimension::Timeliness) {
         match temporal_pairs(
             timeliness,
@@ -530,23 +633,25 @@ fn collect_shares(
             &semantic_hints.temporal_pairs,
         )? {
             Pairs::None => {}
-            Pairs::Aligned(pairs) => {
-                if let Some(shares) = timeliness_shares.as_mut() {
-                    shares.push(vec![pairs]);
-                }
+            Pairs::Aligned(pairs) => timeliness_shares.shares.push(vec![pairs]),
+            Pairs::Unaligned(pairs) => {
+                timeliness_shares.shares.push(pairs);
+                timeliness_shares.bounded = false;
             }
-            Pairs::Unaligned => timeliness_shares = None,
         }
     }
     let mut dimension_shares = HashMap::from([
         (
             QualityDimension::Consistency,
-            Some(vec![types, formats, encodings]),
+            bounded(vec![types, formats, encodings]),
         ),
-        (QualityDimension::Accuracy, Some(vec![outliers, violations])),
-        (QualityDimension::Timeliness, timeliness_shares),
-        (QualityDimension::Validity, Some(vec![invalid])),
-        (QualityDimension::Precision, Some(vec![imprecise])),
+        (
+            QualityDimension::Accuracy,
+            bounded(vec![outliers, violations]),
+        ),
+        (QualityDimension::Timeliness, Some(timeliness_shares)),
+        (QualityDimension::Validity, bounded(vec![invalid])),
+        (QualityDimension::Precision, bounded(vec![imprecise])),
     ]);
     Ok(wanted
         .iter()
@@ -561,6 +666,69 @@ fn collect_shares(
         .collect())
 }
 
+/// The ordering counts of every compared pair as one exact column: the share
+/// as the calculator pooled it, with nothing to scale.
+fn pooled_pairs(metrics: &super::timeliness::TimelinessMetrics) -> ColumnCounts {
+    ColumnCounts {
+        failures: metrics.temporal_violations,
+        checked: metrics.temporal_pairs_checked,
+        max_failures_per_value: metrics.temporal_column_pairs,
+        max_checked_per_value: metrics.temporal_column_pairs,
+        sampled: 0,
+        population: 0,
+    }
+}
+
+/// Each compared pair's ordering counts, as a column of rows: the pair's
+/// rows held over the rows it was drawn from. Pairs held at different sample
+/// sizes stand for their rows at different rates, so pooling their counts
+/// weighs each by its sample (#1293). Each pair is counted alone, declared
+/// as itself; when those counts do not add up to the joint ones, the pooled
+/// counts are kept instead.
+fn per_pair_counts(
+    calculator: &TimelinessCalculator<'_>,
+    data: &HashMap<String, Vec<String>>,
+    column_profiles: &[ColumnProfile],
+    metrics: &super::timeliness::TimelinessMetrics,
+) -> Result<Vec<ColumnCounts>, DataProfilerError> {
+    let mut pairs = Vec::new();
+    for (start, end) in &metrics.compared_pairs {
+        let (Some(start_values), Some(end_values), Some(profile)) = (
+            data.get(start),
+            data.get(end),
+            column_profiles
+                .iter()
+                .find(|profile| &profile.name == start),
+        ) else {
+            return Ok(vec![pooled_pairs(metrics)]);
+        };
+        let single = HashMap::from([
+            (start.clone(), start_values.clone()),
+            (end.clone(), end_values.clone()),
+        ]);
+        let names = [start.clone(), end.clone()];
+        let pair = [(start.clone(), end.clone())];
+        let counted = calculator.calculate(&single, &names, &pair, column_profiles)?;
+        let sampled = start_values.len();
+        pairs.push(ColumnCounts {
+            failures: counted.temporal_violations,
+            checked: counted.temporal_pairs_checked,
+            max_failures_per_value: 1,
+            max_checked_per_value: 1,
+            sampled,
+            population: profile.total_count.max(sampled),
+        });
+    }
+    let adds_up = pairs.iter().map(|pair| pair.failures).sum::<usize>()
+        == metrics.temporal_violations
+        && pairs.iter().map(|pair| pair.checked).sum::<usize>() == metrics.temporal_pairs_checked;
+    Ok(if adds_up {
+        pairs
+    } else {
+        vec![pooled_pairs(metrics)]
+    })
+}
+
 enum Pairs {
     /// No start/end ordering was compared.
     None,
@@ -569,8 +737,9 @@ enum Pairs {
     Aligned(ColumnCounts),
     /// Ordering was compared on pairs that each line up by row but hold
     /// samples of different sizes, so their counts cannot be pooled as one
-    /// sample.
-    Unaligned,
+    /// sample. Nothing bounds the share; the point estimate scales each
+    /// pair's counts by its own rows, as it scales a column's values.
+    Unaligned(Vec<ColumnCounts>),
 }
 
 /// Counts for the start/end ordering share, treating each sampled row as one
@@ -604,10 +773,10 @@ fn temporal_pairs(
         })
         .collect();
     let Some(&(sampled, population)) = sizes.first() else {
-        return Ok(Pairs::Unaligned);
+        return Ok(Pairs::Unaligned(vec![pooled_pairs(&metrics)]));
     };
     if sizes.iter().any(|&size| size != (sampled, population)) {
-        return Ok(Pairs::Unaligned);
+        return per_pair_counts(calculator, data, column_profiles, &metrics).map(Pairs::Unaligned);
     }
     Ok(Pairs::Aligned(ColumnCounts {
         failures: metrics.temporal_violations,
@@ -758,6 +927,8 @@ mod tests {
         // out, or one counted differently, moves the interval off the score.
         let (data, profiles) = every_dimension();
         let result = bifurcated(&data, &profiles);
+        // Nothing was left out of any sample, so the pooled scores stand.
+        assert!(result.estimated_scores.is_none());
         let bounds = result.score_bounds.unwrap();
 
         for dimension in [
@@ -889,6 +1060,112 @@ mod tests {
         assert!((sampled - 75.0).abs() < 1e-9, "{sampled}");
         assert!(contains(bound, exact), "{exact} outside {bound:?}");
         assert!(bound.lower > sampled, "{bound:?} should exclude {sampled}");
+
+        // The reported score weighs each column by its size in the source
+        // (#1293): 500 failures over 21,000 values, the dense sample clean.
+        let reported = bifurcated(&retained, &profiles)
+            .estimated_scores
+            .expect("a column was sampled")
+            .dimension_scores["consistency"]
+            .expect("consistency assessed");
+        assert!(contains(bound, reported), "{reported} outside {bound:?}");
+        assert!(
+            (reported - (100.0 - 100.0 * 500.0 / 21_000.0)).abs() < 1e-9,
+            "{reported}"
+        );
+        assert!(
+            (reported - exact).abs() < 0.01,
+            "{reported} against {exact}"
+        );
+    }
+
+    #[test]
+    fn a_sampled_column_outside_a_dimension_leaves_its_score_as_calculated() {
+        // `amount` is read in full: 97 values at two decimals, 63 at one.
+        // `note` is sampled but holds no float, so precision counts nothing
+        // in it. Precision must keep the calculator's own figure, as a route
+        // that scores every value reports it: the estimate's arithmetic
+        // differs in the last bits here, and on other counts it moves the
+        // serialized value (60.63 against 60.62 for 97 and 63 values).
+        let amount: Vec<String> = (0..160)
+            .map(|index| {
+                if index < 97 {
+                    format!("{}.{:02}", index % 40, 11 + index % 80)
+                } else {
+                    format!("{}.{}", index % 40, 1 + index % 9)
+                }
+            })
+            .collect();
+        let note = strings((0..2_000).map(|index| format!("note {index}")));
+        let data = HashMap::from([("amount".to_string(), amount), ("note".to_string(), note)]);
+        let profiles = vec![
+            profile("amount", DataType::Float, 20_000, 19_840),
+            profile("note", DataType::String, 20_000, 0),
+        ];
+        let result = bifurcated(&data, &profiles);
+        let calculated = result
+            .metrics
+            .precision_score()
+            .expect("precision assessed");
+        let reported = result
+            .estimated_scores
+            .map_or(
+                Some(calculated),
+                |scores| scores.dimension_scores["precision"],
+            )
+            .expect("precision assessed");
+        assert_eq!(reported, calculated, "{reported} against {calculated}");
+    }
+
+    #[test]
+    fn unaligned_ordering_pairs_each_weigh_their_own_rows() {
+        // Two pairs over the same 20,000 rows, held at different sample
+        // sizes, so their compared rows cannot pool as one sample and
+        // timeliness has no bound. `start_date`/`end_date` keeps 2,000 rows,
+        // every one inverted; `valid_from`/`valid_to` keeps 10,000, only its
+        // first inverted. Pooled, the inverted pair weighs a sixth of the
+        // compared rows; over the source it is half of them.
+        let (inverted_starts, inverted_ends) = date_pairs(2_000, 1);
+        let (clean_starts, clean_ends) = date_pairs(10_000, 20_000);
+        let retained = HashMap::from([
+            ("start_date".to_string(), inverted_starts),
+            ("end_date".to_string(), inverted_ends),
+            ("valid_from".to_string(), clean_starts),
+            ("valid_to".to_string(), clean_ends),
+        ]);
+        let profiles = vec![
+            profile("start_date", DataType::Date, 20_000, 0),
+            profile("end_date", DataType::Date, 20_000, 0),
+            profile("valid_from", DataType::Date, 20_000, 0),
+            profile("valid_to", DataType::Date, 20_000, 0),
+        ];
+        let hints = SemanticHints::default().with_temporal_pairs(vec![
+            ("start_date".to_string(), "end_date".to_string()),
+            ("valid_from".to_string(), "valid_to".to_string()),
+        ]);
+        let result = MetricsCalculator::new()
+            .calculate_bifurcated_metrics_with_hints(&retained, &profiles, None, &hints, None)
+            .unwrap();
+        let timeliness = result.metrics.timeliness.as_ref().unwrap();
+        assert_eq!(timeliness.temporal_violations, 2_001);
+        assert_eq!(timeliness.temporal_pairs_checked, 12_000);
+        assert!(
+            result.score_bounds.unwrap().dimension_scores["timeliness"].is_none(),
+            "unaligned pairs are not bounded"
+        );
+
+        let estimate = result
+            .estimated_scores
+            .expect("a column was sampled")
+            .dimension_scores["timeliness"]
+            .unwrap();
+        // No date is stale, future or invalid, so the ordering share is the
+        // whole penalty: 2,000 x 10 + 1 x 2 inverted rows of 40,000.
+        let expected = 100.0 - 100.0 * 20_002.0 / 40_000.0;
+        assert!(
+            (estimate - expected).abs() < 1e-9,
+            "{estimate} against {expected}"
+        );
     }
 
     #[test]

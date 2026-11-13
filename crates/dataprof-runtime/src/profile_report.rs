@@ -4,7 +4,8 @@ use dataprof_core::{
     AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
     ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, Locale,
     MetricPack, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
-    SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
+    SampledScoreEstimator, SemanticHintBinding, ShapeMomentEstimator, StatisticRounding,
+    TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -206,6 +207,18 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "JsonNumberReading")]
     pub json_number_reading: Option<JsonNumberReading>,
+    /// How a score computed over a retained sample estimates the score over
+    /// every scanned value.
+    ///
+    /// Absent means not recorded: through 0.13 a sampled score pooled the
+    /// column samples, so it could fall outside its own `score_bounds`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "SampledScoreEstimator")]
+    pub sampled_score_estimator: Option<SampledScoreEstimator>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -233,6 +246,7 @@ impl MetricSemantics {
             key_column_source: Some(KeyColumnSource::Declared),
             accuracy_comparison: Some(AccuracyComparison::ExactValues),
             json_number_reading: Some(JsonNumberReading::LiteralDigits),
+            sampled_score_estimator: Some(SampledScoreEstimator::PopulationWeighted),
         }
     }
 
@@ -253,6 +267,7 @@ impl MetricSemantics {
             key_column_source,
             accuracy_comparison,
             json_number_reading,
+            sampled_score_estimator,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -265,6 +280,7 @@ impl MetricSemantics {
             && key_column_source.is_some()
             && accuracy_comparison.is_some()
             && json_number_reading.is_some()
+            && sampled_score_estimator.is_some()
     }
 }
 
@@ -1734,6 +1750,7 @@ mod tests {
             "key_column_source": "declared",
             "accuracy_comparison": "exact_values",
             "json_number_reading": "literal_digits",
+            "sampled_score_estimator": "population_weighted",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
