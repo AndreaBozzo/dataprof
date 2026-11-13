@@ -790,6 +790,9 @@ impl MetricsCalculator {
 /// Contains the computed metrics plus provenance information about which
 /// dimensions were computed exactly (from global streaming counters) and
 /// which were computed from a bounded sample.
+///
+/// Only the calculator builds one, and later releases add fields.
+#[non_exhaustive]
 pub struct BifurcatedResult {
     /// The computed quality metrics
     pub metrics: QualityMetrics,
