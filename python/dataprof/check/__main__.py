@@ -25,6 +25,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage": None,
     "max_null_count": None,
     "max_duplicate_rows": None,
+    "max_date_age": None,
     "require_metrics": None,
     "require_columns": None,
     "scope": "full_source",
@@ -49,6 +50,16 @@ def _named_percentage(text: str) -> tuple[str, float]:
         return name, float(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
+
+
+def _named_days(text: str) -> tuple[str, int]:
+    name, separator, value = text.rpartition("=")
+    if not separator or not name:
+        raise argparse.ArgumentTypeError("expected COLUMN=DAYS")
+    try:
+        return name, int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected COLUMN=DAYS") from exc
 
 
 def _named_count(text: str) -> tuple[str, int]:
@@ -270,6 +281,14 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     )
     parser.add_argument("--max-duplicate-rows", type=int, help="maximum duplicate-row count")
     parser.add_argument(
+        "--max-date-age",
+        dest="max_date_age",
+        type=_named_days,
+        action="append",
+        metavar="COLUMN=DAYS",
+        help="how many days the column's newest date may lie before today; repeatable",
+    )
+    parser.add_argument(
         "--require-metric",
         dest="require_metrics",
         action="append",
@@ -449,6 +468,7 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
                 "min_dimension_scores",
                 "max_null_percentage",
                 "max_null_count",
+                "max_date_age",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
                 "max_distinct_drop",

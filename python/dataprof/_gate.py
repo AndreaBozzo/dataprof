@@ -308,6 +308,21 @@ def _growth_percentage(code: str, value: _Any) -> float:
     return number
 
 
+#: The largest age in days the Rust gate accepts (`u32`).
+_DAYS_MAX = (1 << 32) - 1
+
+
+def _days(code: str, value: _Any, subject: str) -> int:
+    """Accept an age in whole days the Rust gate can take."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _DAYS_MAX:
+        raise _PolicyFieldError(
+            code,
+            f"{code} for `{subject}` must be a whole number of days between 0 and "
+            f"{_DAYS_MAX}, got {value!r}",
+        )
+    return value
+
+
 #: The largest count the Rust gate accepts (`usize` on the 64-bit wheels).
 _COUNT_MAX = (1 << 64) - 1
 
@@ -349,6 +364,7 @@ class _Policy:
         require_metrics: _Sequence[str] | None,
         scope: str,
         max_null_count: _Mapping[str, int] | int | None = None,
+        max_date_age: _Mapping[str, int] | None = None,
         baseline: _RustProfileReport | str | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
@@ -425,6 +441,23 @@ class _Policy:
         self.max_duplicate_rows = (
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
+
+        if max_date_age is not None and not isinstance(max_date_age, _Mapping):
+            raise _PolicyFieldError(
+                "max_date_age",
+                f"max_date_age must map column names to days, got {max_date_age!r}",
+            )
+        if "*" in (max_date_age or {}):
+            # The null rules read "*" as every column; a freshness ceiling
+            # names its date columns, so "*" would only match a column of
+            # that name and leave the rule unevaluated.
+            raise _PolicyFieldError(
+                "max_date_age", "max_date_age names date columns; it has no '*' form"
+            )
+        self.max_date_age: dict[str, int] = {
+            str(column): _days("max_date_age", value, str(column))
+            for column, value in (max_date_age or {}).items()
+        }
 
         self.max_quality_score_drop = (
             None
@@ -553,6 +586,7 @@ class _Policy:
             or self.max_null_count
             or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
+            or self.max_date_age
             or self.require_quality
             or self.require_dimensions
             or self.require_columns
@@ -600,6 +634,7 @@ class _Policy:
                 max_null_count=list(self.max_null_count.items()),
                 max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
+                max_date_age=list(self.max_date_age.items()),
                 require_quality=self.require_quality,
                 require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,

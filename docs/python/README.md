@@ -1012,6 +1012,7 @@ if not result.passed:
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
 | `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
+| `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
 | `baseline` | `ProfileReport` | A saved report to measure change from; the rules about change below need one |
@@ -1037,6 +1038,22 @@ no-null rule on a key or required column, use `max_null_count={"column": 0}`,
 which compares the exact count and needs no rounding. Like `max_duplicate_rows`,
 it fails a truncated or sampled scan that already counted more nulls than
 allowed, and otherwise leaves a full-source rule unevaluated on such a scan.
+
+`max_date_age` reads the column's `max_datetime` against the reference date
+the report's timeliness clock recorded: the `reference_date=` of the profiling
+call, or the run's date when none was given. The age is counted in calendar
+days, a date after the reference date is fresh, and a saved report decides as
+the run did. A newest date read on part of a source can only be overtaken by
+a newer one, so under `"full_source"` a fresh date passes on any scan, and a
+stale one fails only when every row was read and the column's date statistics
+saw every value. Slash dates (`01/10/2026`) are the exception: their day and
+month order is decided from the column's values, so a fresh one read on part
+of a column is `evidence_incomplete` while the unread values could still
+change that order. On a file larger than the retained sample those statistics
+read a sample, so a stale date there is `evidence_incomplete`
+(`quality_sampled`). A column not typed as a date, or with no dates, is
+`not_assessed`; the clock is recorded with the quality assessment, so a run
+without quality is `quality_unavailable`.
 A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
@@ -1527,6 +1544,8 @@ any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
 `--require-metric NAME`, `--require-column NAME`,
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
+`--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
+today's date, since the command line takes no reference date.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
