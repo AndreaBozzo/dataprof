@@ -440,3 +440,159 @@ fn the_checks_follow_the_duplicate_rule_in_column_order() {
         .evaluate(&report);
     assert_eq!(alone.unwrap().verdict, Verdict::Pass);
 }
+
+/// Each outcome's message is fixed prose, free of numbers, so a log reader
+/// and a caller matching on it see the same sentence on every route.
+#[test]
+fn each_outcome_carries_its_own_message() {
+    let profile = |text: &str, reference: &str, cap: Option<u64>| {
+        let source = file(".csv", text);
+        let mut profiler = Profiler::new().reference_date(day(reference));
+        if let Some(cap) = cap {
+            profiler = profiler.stop_when(StopCondition::MaxRows(cap));
+        }
+        profiler.analyze_file(source.path()).unwrap()
+    };
+    let csv = csv_text(&DATES);
+    let fresh = profile(&csv, "2025-12-18", None);
+    let truncated = profile(&csv, "2026-09-30", Some(2));
+    // A date column with no date recorded, as statistics on no parsed value
+    // leave it.
+    let mut document = serde_json::to_value(&fresh).unwrap();
+    document["column_profiles"][0]["stats"]["DateTime"]["max_datetime"] = json!("");
+    let no_date: ProfileReport = serde_json::from_value(document).unwrap();
+    let mut document = serde_json::to_value(&fresh).unwrap();
+    document["quality"]["metrics"]["timeliness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("clock");
+    let no_clock: ProfileReport = serde_json::from_value(document).unwrap();
+    let cases = [
+        (
+            &fresh,
+            "published_at",
+            "this column's newest date is within the allowed age",
+        ),
+        (
+            &truncated,
+            "published_at",
+            "the newest date read in this column is older than the allowed age, and the \
+             values that were not read may hold a newer one",
+        ),
+        (
+            &fresh,
+            "x",
+            "this column is not typed as a date, so it has no newest date",
+        ),
+        (
+            &no_date,
+            "published_at",
+            "no newest date was recorded for this column",
+        ),
+        (
+            &no_clock,
+            "published_at",
+            "the report records no timeliness clock to measure the age against",
+        ),
+        (
+            &fresh,
+            "missing",
+            "this column has no profile in the report",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (report, column, expected) in cases {
+        let message = check_of(&evaluate(report, column, 3)).message.clone();
+        if message != expected {
+            wrong.push(format!("{column}: {message}"));
+        }
+    }
+    assert!(wrong.is_empty(), "wrong messages:\n{}", wrong.join("\n"));
+}
+
+/// Slash dates are read in an order the column's values decide (#811), so on
+/// a partial read a fresh date passes only when the unread values cannot
+/// change how the dates read are read. Each case is decided on a capped scan
+/// and on the whole column; a capped pass must agree with the whole column.
+#[test]
+fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
+    let cases = [
+        (
+            "no value decided the order: a later month-first value turns 01/10 into January",
+            &["01/10/2026", "12/31/2025"][..],
+            1,
+            "2026-10-02",
+            "evidence_incomplete",
+            "failed",
+        ),
+        (
+            "month-first: a later day-first value makes it mixed and turns 10/01 into January",
+            &["12/31/2025", "10/01/2026", "31/12/2025"][..],
+            2,
+            "2026-10-02",
+            "evidence_incomplete",
+            "failed",
+        ),
+        (
+            "day-first: a later month-first value leaves 10/01 read day-first",
+            &["31/12/2025", "10/01/2026", "12/31/2025"][..],
+            2,
+            "2026-01-12",
+            "passed",
+            "passed",
+        ),
+        (
+            "no slash dates",
+            &["2026-10-01", "2020-01-01"][..],
+            1,
+            "2026-10-02",
+            "passed",
+            "passed",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (case, dates, cap, reference, capped, whole) in cases {
+        let source = file(".csv", &csv_text(dates));
+        let profile = |cap: Option<u64>| {
+            let mut profiler = Profiler::new().reference_date(day(reference));
+            if let Some(cap) = cap {
+                profiler = profiler.stop_when(StopCondition::MaxRows(cap));
+            }
+            profiler.analyze_file(source.path()).unwrap()
+        };
+        let got = (
+            status(&evaluate(&profile(Some(cap)), "published_at", 3)),
+            status(&evaluate(&profile(None), "published_at", 3)),
+        );
+        if got != (capped.to_string(), whole.to_string()) {
+            wrong.push(format!("{case}: {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "wrong decisions:\n{}", wrong.join("\n"));
+
+    // The retained sample is a partial read too: 30,000 ambiguous dates past
+    // the sample decide no order, so the fresh date stays open.
+    let ambiguous = vec!["01/10/2026"; 30_000];
+    let sampled_source = file(".csv", &csv_text(&ambiguous));
+    let sampled = Profiler::new()
+        .reference_date(day("2026-10-02"))
+        .analyze_file(sampled_source.path())
+        .unwrap();
+    let check = serde_json::to_value(check_of(&evaluate(&sampled, "published_at", 3))).unwrap();
+    assert_eq!(
+        (&check["reason"], &check["gap"]),
+        (&json!("evidence_incomplete"), &json!("quality_sampled"))
+    );
+
+    let source = file(".csv", &csv_text(&["01/10/2026", "12/31/2025"]));
+    let capped = Profiler::new()
+        .reference_date(day("2026-10-02"))
+        .stop_when(StopCondition::MaxRows(1))
+        .analyze_file(source.path())
+        .unwrap();
+    assert_eq!(
+        check_of(&evaluate(&capped, "published_at", 3)).message,
+        "the newest date read in this column is within the allowed age, and the values that \
+         were not read may change the day and month order its slash dates are read in"
+    );
+}

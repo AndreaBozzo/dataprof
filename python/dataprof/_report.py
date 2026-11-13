@@ -922,8 +922,12 @@ class ProfileReport:
                 ``"full_source"`` a fresh date passes on any scan, and a stale
                 one fails only when every row was read and the column's date
                 statistics saw every value; otherwise it is
-                ``evidence_incomplete``. A column with no newest date (not
-                typed as a date, all null) is ``not_assessed``.
+                ``evidence_incomplete``. Slash dates are the exception: their
+                day and month order is decided from the values read, so a
+                fresh one read on part of a column is ``evidence_incomplete``
+                while the unread values could still change that order. A
+                column with no newest date (not typed as a date, all null) is
+                ``not_assessed``.
             require_metrics: Metrics that must have been analyzed at all:
                 ``"quality"`` for the assessment as a whole, or a dimension
                 name. Without this, a report with no assessment leaves the

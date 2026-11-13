@@ -105,7 +105,9 @@
 //! the same rows keep their counts, nulls and scores. A newest date read on
 //! part of a source can only be overtaken by a newer one, so a fresh date
 //! passes on any scan and a stale one fails only when the values behind it
-//! cover the column.
+//! cover the column. Slash dates are the exception: their day and month
+//! order is decided from the values read, so a fresh one read on part of a
+//! column passes only once that order cannot change.
 //!
 //! # Forbidden findings
 //!
@@ -160,6 +162,7 @@ use std::fmt;
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
     ColumnProfile, ColumnStats, DataType, ExecutionMetadata, MetricPack, QualityDimension,
+    SlashDateOrder,
 };
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
@@ -1110,7 +1113,10 @@ impl QualityPolicy {
     /// a fresh date passes whatever the scan missed, and a stale one fails
     /// only when the values behind it cover the column: every row read, and
     /// the retained sample the date statistics are computed from holding
-    /// every non-null value. A column with no newest date (not typed as a
+    /// every non-null value. The exception is a column of slash dates whose
+    /// day and month order the unread values could still change
+    /// (`assumed_day_first` or `month_first`): there a fresh date read on
+    /// part of the column is [`NotEvaluated::EvidenceIncomplete`] too. A column with no newest date (not typed as a
     /// date, all null, or statistics not computed) is
     /// [`NotEvaluated::NotAssessed`], and a report without a recorded clock is
     /// [`NotEvaluated::SettingUnrecorded`] on `timeliness_clock`.
@@ -2178,8 +2184,8 @@ impl QualityPolicy {
             check.message = "this column has no profile in the report".to_string();
             return check;
         };
-        let newest = match newest_date(profile) {
-            NewestDate::Date(date) => date,
+        let (newest, slash_order) = match newest_date(profile) {
+            NewestDate::Date { date, order } => (date, order),
             absent => {
                 check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
                 check.message = match absent {
@@ -2216,17 +2222,26 @@ impl QualityPolicy {
         check.observed = Some(MetricValue::Days(age));
         let fresh = age <= i64::from(max_days);
         // The newest date only moves forward as more values are read, so a
-        // fresh one is a decision whatever the evidence missed.
+        // fresh one is a decision whatever the evidence missed, as long as
+        // the values read keep the reading they were given. Slash dates are
+        // read in an order the column's values decide (#811), and an order
+        // the unread values can still change may move the dates already read.
+        let settled = slash_order_settled(slash_order);
         check.status = match (self.scope, check.evidence.gap()) {
-            _ if fresh => CheckStatus::Passed,
-            (PolicyScope::FullSource, Some(gap)) => {
+            (PolicyScope::FullSource, Some(gap)) if !(fresh && settled) => {
                 CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
             }
+            _ if fresh => CheckStatus::Passed,
             _ => CheckStatus::Failed,
         };
         check.message = match check.status {
             CheckStatus::Passed => "this column's newest date is within the allowed age",
             CheckStatus::Failed => "this column's newest date is older than the allowed age",
+            CheckStatus::NotEvaluated(_) if fresh => {
+                "the newest date read in this column is within the allowed age, and the values \
+                 that were not read may change the day and month order its slash dates are \
+                 read in"
+            }
             CheckStatus::NotEvaluated(_) => {
                 "the newest date read in this column is older than the allowed age, and the \
                  values that were not read may hold a newer one"
@@ -3879,8 +3894,12 @@ fn null_percentage(profile: &ColumnProfile) -> Option<f64> {
 
 /// What a column's date statistics say about its newest date.
 enum NewestDate {
-    /// The newest date, from `max_datetime`.
-    Date(chrono::NaiveDate),
+    /// The newest date, from `max_datetime`, and the order the column's
+    /// slash dates were read in.
+    Date {
+        date: chrono::NaiveDate,
+        order: Option<SlashDateOrder>,
+    },
     /// None was recorded: the column is not typed as a date, no value parsed
     /// as one, or statistics were not computed.
     Absent,
@@ -3895,12 +3914,28 @@ fn newest_date(profile: &ColumnProfile) -> NewestDate {
     match &profile.stats {
         ColumnStats::DateTime(stats) if !stats.max_datetime.is_empty() => {
             match chrono::NaiveDate::parse_from_str(&stats.max_datetime, "%Y-%m-%d") {
-                Ok(date) => NewestDate::Date(date),
+                Ok(date) => NewestDate::Date {
+                    date,
+                    order: stats.slash_date_order,
+                },
                 Err(_) => NewestDate::Malformed,
             }
         }
         _ => NewestDate::Absent,
     }
+}
+
+/// Whether more values could change how the slash dates already read are
+/// read. An order no value decided (`assumed_day_first`) becomes month-first
+/// once a value only parses month-first, and a month-first order becomes
+/// `mixed`, which reads the ambiguous values day-first, once a value only
+/// parses day-first. A day-first or mixed order keeps every value read where
+/// it is, and a column without slash dates has no order to change.
+fn slash_order_settled(order: Option<SlashDateOrder>) -> bool {
+    !matches!(
+        order,
+        Some(SlashDateOrder::AssumedDayFirst | SlashDateOrder::MonthFirst)
+    )
 }
 
 /// Whether a column's date statistics saw every non-null value read. They

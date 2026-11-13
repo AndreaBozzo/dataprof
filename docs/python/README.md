@@ -1046,7 +1046,10 @@ days, a date after the reference date is fresh, and a saved report decides as
 the run did. A newest date read on part of a source can only be overtaken by
 a newer one, so under `"full_source"` a fresh date passes on any scan, and a
 stale one fails only when every row was read and the column's date statistics
-saw every value. On a file larger than the retained sample those statistics
+saw every value. Slash dates (`01/10/2026`) are the exception: their day and
+month order is decided from the column's values, so a fresh one read on part
+of a column is `evidence_incomplete` while the unread values could still
+change that order. On a file larger than the retained sample those statistics
 read a sample, so a stale date there is `evidence_incomplete`
 (`quality_sampled`). A column not typed as a date, or with no dates, is
 `not_assessed`; the clock is recorded with the quality assessment, so a run

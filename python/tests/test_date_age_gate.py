@@ -176,6 +176,26 @@ def test_a_column_without_a_newest_date_is_never_a_pass():
     assert no_clock.reason == {"reason": "setting_unrecorded", "setting": "timeliness_clock"}
 
 
+def test_a_partial_read_leaves_a_fresh_slash_date_open_while_its_order_can_change(
+    tmp_path: Path,
+):
+    # Read alone, 01/10/2026 decides no order and is read day-first (1
+    # October); the unread 12/31/2025 makes the column month-first, and 01/10
+    # becomes 10 January.
+    path = tmp_path / "slash.csv"
+    path.write_bytes(_csv(["01/10/2026", "12/31/2025"]))
+    policy: dict[str, Any] = {"max_date_age": {"published_at": 3}}
+    capped = _check(dp.profile(str(path), reference_date="2026-10-02", max_rows=1).check(**policy))
+    whole = _check(dp.profile(str(path), reference_date="2026-10-02").check(**policy))
+    assert (_status(capped), capped.observed) == ("evidence_incomplete", 1)
+    assert (whole.status, whole.observed) == ("failed", 265)
+
+    # The retained sample of a larger file is a partial read too.
+    path.write_bytes(_csv(["01/10/2026"] * 30_000))
+    sampled = _check(dp.profile(str(path), reference_date="2026-10-02").check(**policy))
+    assert sampled.reason == {"reason": "evidence_incomplete", "gap": "quality_sampled"}
+
+
 def test_the_allowance_must_be_whole_days_in_a_mapping():
     report = dp.profile(_csv(DATES), format="csv", reference_date="2026-09-30")
     for bad in (-1, 1.5, "3", True, 1 << 32):
