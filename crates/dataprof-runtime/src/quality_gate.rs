@@ -70,7 +70,11 @@
 //!   that stopped early read a lower bound of its source's rows, so it still
 //!   settles the outcome that more rows could not reverse, as
 //!   [`QualityPolicy::min_rows`] does (see
-//!   [`QualityPolicy::max_row_count_drop`]).
+//!   [`QualityPolicy::max_row_count_drop`]). A score drop rule reads a score
+//!   computed over a retained sample of a fully read source as its recorded
+//!   whole-source interval, as the minimum score rules do, and decides when
+//!   the change those intervals allow lies wholly on one side of the
+//!   allowance (see [`QualityPolicy::max_quality_score_drop`]).
 //!
 //! A schema change from the baseline is reported as a [`Diagnostic`] in the
 //! result's `baseline.diagnostics`, whatever the policy states: a column added,
@@ -159,7 +163,7 @@ use crate::profile_report::{
 };
 use crate::report_delta::{
     ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportPair,
-    ReportSide, SchemaChange, Sides,
+    ReportSide, SchemaChange, ScoreChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -748,6 +752,11 @@ pub struct BaselineReading {
     /// baseline's value.
     /// `None` when either side has no value.
     pub change: Option<MetricValue>,
+    /// Where the baseline's whole-source score lies, when its score came
+    /// from a retained sample and the baseline bounds it, and a full-source
+    /// score drop rule was decided on it. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<CheckBounds>,
 }
 
 /// The two reports a baseline-relative evaluation compared, and how their
@@ -1087,6 +1096,14 @@ impl QualityPolicy {
 
     /// Allow the overall quality score to drop at most `points` (0..=100)
     /// below the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    ///
+    /// Under [`PolicyScope::FullSource`], a score computed over a retained
+    /// sample on either side is read as its recorded whole-source interval,
+    /// and the drop is decided when every change those intervals allow lies
+    /// on one side of `points` (#1035). Each side's intervals hold together
+    /// with that side's `confidence_level`; when both sides are sampled, the
+    /// two hold together with probability at least the sum of the two levels
+    /// minus one.
     pub fn max_quality_score_drop(mut self, points: f64) -> Self {
         self.max_quality_score_drop = Some(points);
         self
@@ -1094,6 +1111,8 @@ impl QualityPolicy {
 
     /// Allow one dimension's score to drop at most `points` (0..=100) below
     /// the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    /// A sampled score is decided on its interval, as in
+    /// [`max_quality_score_drop`](Self::max_quality_score_drop).
     pub fn max_dimension_score_drop(mut self, dimension: QualityDimension, points: f64) -> Self {
         self.max_dimension_score_drops
             .insert(dimension.to_string(), (dimension, points));
@@ -1379,15 +1398,20 @@ impl QualityPolicy {
             a: baseline.identifier_order(),
             b: current.identifier_order(),
         };
+        let sides = Sides {
+            a: baseline,
+            b: &current,
+        };
         let mut checks = self.absolute_checks(report);
         if let Some(points) = self.max_quality_score_drop {
-            checks.push(self.score_drop_check(report, &delta, &identifiers, None, points));
+            checks.push(self.score_drop_check(report, &delta, &sides, &identifiers, None, points));
         }
         for dimension in QualityDimension::all() {
             if let Some((_, points)) = self.max_dimension_score_drops.get(&dimension.to_string()) {
                 checks.push(self.score_drop_check(
                     report,
                     &delta,
+                    &sides,
                     &identifiers,
                     Some(dimension),
                     *points,
@@ -2078,6 +2102,7 @@ impl QualityPolicy {
         &self,
         report: &ProfileReport,
         delta: &ReportDelta,
+        sides: &Sides<&ReportSide>,
         identifiers: &Sides<Option<&[String]>>,
         dimension: Option<QualityDimension>,
         points: f64,
@@ -2164,8 +2189,49 @@ impl QualityPolicy {
             .expect("a delta has a change whenever both sides have a score");
         // Both sides and their change are at the serialized precision, so the
         // allowance is too: the decision is the one the document shows.
-        check.status =
-            self.decide_change(&change.evidence, change_points >= 0.0 - rounded_2(points));
+        let allowance = 0.0 - rounded_2(points);
+        let bounded = match self.bounded_change(change, sides, dimension) {
+            ChangeReading::Points => None,
+            ChangeReading::Bounded(bounded) => Some(bounded),
+            ChangeReading::Blocked(gap) => {
+                return not_evaluated_change(
+                    check,
+                    NotEvaluated::EvidenceIncomplete { gap },
+                    subject,
+                );
+            }
+        };
+        if let Some(bounded) = bounded {
+            check.bounds = bounded.b;
+            if let Some(baseline) = check.baseline.as_mut() {
+                baseline.bounds = bounded.a;
+            }
+            check.status = if bounded.lower >= allowance {
+                CheckStatus::Passed
+            } else if bounded.upper < allowance {
+                CheckStatus::Failed
+            } else {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
+                    gap: EvidenceGap::QualitySampled,
+                })
+            };
+            check.message = match check.status {
+                CheckStatus::Passed => format!(
+                    "{subject} was computed over a sample on at least one side, and every \
+                     change the whole-source intervals allow is within the permitted drop"
+                ),
+                CheckStatus::Failed => format!(
+                    "{subject} was computed over a sample on at least one side, and every \
+                     change the whole-source intervals allow is a larger drop than permitted"
+                ),
+                CheckStatus::NotEvaluated(_) => format!(
+                    "{subject} was computed over a sample on at least one side, and the \
+                     permitted drop lies within the change the whole-source intervals allow"
+                ),
+            };
+            return check;
+        }
+        check.status = self.decide_change(&change.evidence, change_points >= allowance);
         check.message = match check.status {
             CheckStatus::Passed => {
                 format!("{subject} dropped no more than allowed from the baseline")
@@ -2174,6 +2240,77 @@ impl QualityPolicy {
             CheckStatus::NotEvaluated(_) => evidence_message(subject),
         };
         check
+    }
+
+    /// The interval a full-source score change lies in, when at least one
+    /// side's score came from a retained sample and every such side bounds
+    /// it (#1035). A side whose score covers its whole source is a point.
+    /// The change runs from the current side's lower bound minus the
+    /// baseline's upper bound to the current upper bound minus the baseline
+    /// lower bound, at the serialized precision.
+    ///
+    /// [`ChangeReading::Points`] leaves the decision to
+    /// [`Self::decide_change`]: under [`PolicyScope::Observed`], and when
+    /// both sides cover their whole source. A side with another gap, or a
+    /// sampled score without a recorded interval, blocks the decision with
+    /// its gap, the evaluated report's named first. Stored bounds on a score
+    /// whose coverage is unrecorded are not read, as the minimum score rules
+    /// do not read them: this build cannot tell which components such a
+    /// score weighs, so it cannot tell what the interval vouches for.
+    fn bounded_change(
+        &self,
+        change: &ScoreChange,
+        sides: &Sides<&ReportSide>,
+        dimension: Option<QualityDimension>,
+    ) -> ChangeReading {
+        if self.scope != PolicyScope::FullSource {
+            return ChangeReading::Points;
+        }
+        type SideReading = Result<((f64, f64), Option<CheckBounds>), EvidenceGap>;
+        let interval = |score: f64, evidence: Evidence, side: &ReportSide| -> SideReading {
+            match evidence.gap() {
+                None => Ok(((score, score), None)),
+                Some(EvidenceGap::QualitySampled) => {
+                    let interval = side.score_bounds().and_then(|bounds| {
+                        let interval = match dimension {
+                            None => bounds.overall_score,
+                            Some(dimension) => bounds
+                                .dimension_scores
+                                .get(&dimension.to_string())
+                                .copied()
+                                .flatten(),
+                        };
+                        check_bounds(bounds, interval)
+                    });
+                    match interval {
+                        Some(bounds) => Ok((
+                            (rounded_2(bounds.lower), rounded_2(bounds.upper)),
+                            Some(bounds),
+                        )),
+                        None => Err(EvidenceGap::QualitySampled),
+                    }
+                }
+                Some(gap) => Err(gap),
+            }
+        };
+        let (Some(a_score), Some(b_score)) = (change.a, change.b) else {
+            return ChangeReading::Points;
+        };
+        let b = interval(b_score, change.evidence.b, sides.b);
+        let a = interval(a_score, change.evidence.a, sides.a);
+        let (((b_lower, b_upper), b), ((a_lower, a_upper), a)) = match (b, a) {
+            (Err(gap), _) | (_, Err(gap)) => return ChangeReading::Blocked(gap),
+            (Ok(b), Ok(a)) => (b, a),
+        };
+        if a.is_none() && b.is_none() {
+            return ChangeReading::Points;
+        }
+        ChangeReading::Bounded(BoundedChange {
+            lower: rounded_2(b_lower - a_upper),
+            upper: rounded_2(b_upper - a_lower),
+            a,
+            b,
+        })
     }
 
     /// One check per named column, in name order, then one per other column
@@ -2318,6 +2455,7 @@ impl QualityPolicy {
                 observed: a.rows_processed.map(MetricValue::Count),
                 evidence: a.evidence,
                 change: change.map(MetricValue::Percentage),
+                bounds: None,
             }),
             status: CheckStatus::Passed,
             message: String::new(),
@@ -2490,6 +2628,7 @@ impl QualityPolicy {
                 observed: count_a.map(MetricValue::Count),
                 evidence: evidence.a,
                 change: count_change.map(MetricValue::Percentage),
+                bounds: None,
             }),
             status: CheckStatus::Passed,
             message: String::new(),
@@ -2773,6 +2912,7 @@ impl QualityPolicy {
                 observed: None,
                 evidence: baseline.schema_evidence(),
                 change: None,
+                bounds: None,
             }),
             status,
             message: message.to_string(),
@@ -3078,6 +3218,7 @@ fn baseline_reading(
         observed: observed.map(MetricValue::Percentage),
         evidence,
         change: change.map(MetricValue::Percentage),
+        bounds: None,
     }
 }
 
@@ -3546,6 +3687,25 @@ fn bounded_message(status: &CheckStatus, subject: &str) -> String {
              whole-source interval"
         ),
     }
+}
+
+/// How a full-source score drop rule reads the change between two scores.
+enum ChangeReading {
+    /// Decided on the two point scores.
+    Points,
+    /// Decided on the interval the two sides' recorded intervals allow.
+    Bounded(BoundedChange),
+    /// A side's evidence settles nothing about its whole source.
+    Blocked(EvidenceGap),
+}
+
+/// A score change as an interval, and the side intervals it came from (`None`
+/// for a side whose score is a point).
+struct BoundedChange {
+    lower: f64,
+    upper: f64,
+    a: Option<CheckBounds>,
+    b: Option<CheckBounds>,
 }
 
 /// The interval a check decides on, from the report's bounds.

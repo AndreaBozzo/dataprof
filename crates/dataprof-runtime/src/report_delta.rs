@@ -72,8 +72,9 @@ use dataprof_core::{
     QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
 };
 use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
-    TimelinessClock, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
+    QualityMetrics, ScoreBounds, TimelinessClock, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics,
 };
 use serde::ser::{SerializeMap, Serializer};
 
@@ -617,6 +618,9 @@ pub struct ReportSide {
     quality_score: Option<f64>,
     overall_evidence: Evidence,
     dimensions: Vec<DimensionSide>,
+    /// The recorded intervals for the scores over every scanned row, `None`
+    /// when the side recorded none: nothing was sampled, or it predates them.
+    score_bounds: Option<ScoreBounds>,
     columns: Vec<ColumnSide>,
     metric_semantics: Option<MetricSemantics>,
     score_weights: Option<QualityScoreWeights>,
@@ -776,6 +780,7 @@ impl ReportSide {
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
+            score_bounds: quality.and_then(QualityAssessment::score_bounds).cloned(),
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
                 let pct = (column.total_count > 0)
                     .then(|| column.null_count as f64 / column.total_count as f64 * 100.0);
@@ -843,6 +848,12 @@ impl ReportSide {
     pub fn summary_quality_unlisted_components(quality: &str) -> serde_json::Result<Vec<String>> {
         let quality: SummaryQuality = serde_json::from_str(quality)?;
         Ok(quality.unlisted_components())
+    }
+
+    /// The recorded intervals for the side's scores over every scanned row,
+    /// or `None` when it recorded none.
+    pub(crate) fn score_bounds(&self) -> Option<&ScoreBounds> {
+        self.score_bounds.as_ref()
     }
 
     /// The identifier hint in the order it was given, or `None` when the side
@@ -970,6 +981,7 @@ impl ReportSide {
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
+            score_bounds: quality.and_then(|quality| quality.score_bounds.clone()),
             columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
                 name: column.name,
                 null_pct: at_precision(column.null_percentage),
@@ -1243,6 +1255,26 @@ struct SummaryQuality {
     /// malformed, as in Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
+    /// Written when a score was computed over a retained sample (0.12+).
+    /// Bounds outside 0..=100, reversed, or at an impossible confidence
+    /// level are malformed, as in the full document's reader.
+    #[serde(default, deserialize_with = "summary_score_bounds")]
+    score_bounds: Option<ScoreBounds>,
+}
+
+/// Recorded score bounds, refused when they are not valid bounds.
+fn summary_score_bounds<'de, D>(deserializer: D) -> Result<Option<ScoreBounds>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bounds: Option<ScoreBounds> = serde::Deserialize::deserialize(deserializer)?;
+    if bounds.as_ref().is_some_and(|bounds| !bounds.is_valid()) {
+        return Err(<D::Error as serde::de::Error>::custom(
+            "quality.score_bounds: intervals must lie in 0..=100 with lower <= upper, at a \
+             confidence level between 0 and 1",
+        ));
+    }
+    Ok(bounds)
 }
 
 /// The timeliness facts a comparison reads: the clock its score used.

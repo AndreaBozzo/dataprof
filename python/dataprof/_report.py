@@ -926,7 +926,9 @@ class ProfileReport:
                 ``to_dict()`` summary, which leaves what it did not record
                 unrecorded.
             max_quality_score_drop: How many points the overall score may
-                fall below the baseline's, 0-100.
+                fall below the baseline's, 0-100. Under ``"full_source"``, a
+                score computed over a retained sample is read as its
+                ``quality_score_bounds`` interval on either side.
             max_dimension_score_drops: The same per ISO 25012 dimension.
             max_null_percentage_increase: How many points a column's null
                 percentage may rise above the baseline's, 0-100. A mapping
@@ -1010,7 +1012,11 @@ class ProfileReport:
         depends on; ``setting_changed`` or ``setting_unrecorded`` for a
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
-        side does not cover its whole source. ``result.baseline`` names both
+        side does not cover its whole source. A score drop rule reads a
+        score computed over a retained sample of a fully read source as its
+        recorded interval, and is decided when every change the two sides'
+        intervals allow lies on one side of the allowance; the check records
+        them as ``bounds`` and ``baseline["bounds"]``. ``result.baseline`` names both
         reports and how their columns differ, and its ``diagnostics`` list
         each column added, removed, retyped or now all null, which never move
         the verdict.

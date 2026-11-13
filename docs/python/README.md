@@ -1125,6 +1125,18 @@ next to `evidence`, which still says `quality_sampled`. On a clean column of
 10,000 sampled values the interval is about 0.15 points wide; at 5% failures,
 about 2 points.
 
+A `max_quality_score_drop` or `max_dimension_score_drops` rule reads the
+same intervals (0.14+): a sampled score on either side of a fully read
+comparison stands for its interval, an exact one for its value, and the drop
+is decided when every change the two allow lies on one side of the allowance.
+The check records the report's interval as `bounds` and the baseline's as
+`baseline["bounds"]`. Two sampled runs of the same file still leave an
+allowance of 0 inconclusive, because their intervals overlap; a few points of
+allowance settle it. Each side's intervals hold with its `confidence_level`,
+so a decision over two sampled sides holds with at least the sum of the two
+minus one (0.998). A score whose coverage is unrecorded keeps its gap, and its
+stored bounds are not read, as the minimum score rules do not read them.
+
 Past a million distinct values the key count and the duplicate-row count are
 estimates rather than samples. They are bounded with certainty instead of at
 0.999: when an exact count is dropped, the distinct values it held are a floor
