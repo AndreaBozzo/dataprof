@@ -238,8 +238,12 @@ pub(crate) fn score_bounds(
 }
 
 /// The score `100 - 100 * sum(share)` with each share estimated over the
-/// whole source, or `None` when every column's sample holds all its values:
-/// the calculator's own score is then that number already.
+/// whole source, or `None` when every column that counted a value for this
+/// dimension holds all its values in its sample: the calculator's own score
+/// is then that number already, and keeping it keeps the routes that score
+/// every value in agreement to the last digit. A sampled column that counted
+/// nothing here, such as a text column beside the floats precision reads,
+/// weighs nothing either way.
 ///
 /// The calculator pools each share over the sample, so a column weighs as
 /// many values as its sample kept, at most the reservoir size. The bounds
@@ -250,7 +254,12 @@ pub(crate) fn score_bounds(
 /// sampled counts plus every unseen value, and within the statistical
 /// interval around the sample mean (#1293).
 fn dimension_estimate(shares: &[Share]) -> Option<f64> {
-    if shares.iter().flatten().all(ColumnCounts::is_exact) {
+    if shares
+        .iter()
+        .flatten()
+        .filter(|column| column.checked > 0 || column.failures > 0)
+        .all(ColumnCounts::is_exact)
+    {
         return None;
     }
     let total: f64 = shares.iter().map(|share| share_estimate(share)).sum();
@@ -1013,6 +1022,44 @@ mod tests {
             (reported - exact).abs() < 0.01,
             "{reported} against {exact}"
         );
+    }
+
+    #[test]
+    fn a_sampled_column_outside_a_dimension_leaves_its_score_as_calculated() {
+        // `amount` is read in full: 97 values at two decimals, 63 at one.
+        // `note` is sampled but holds no float, so precision counts nothing
+        // in it. Precision must keep the calculator's own figure, as a route
+        // that scores every value reports it: the estimate's arithmetic
+        // differs in the last bits here, and on other counts it moves the
+        // serialized value (60.63 against 60.62 for 97 and 63 values).
+        let amount: Vec<String> = (0..160)
+            .map(|index| {
+                if index < 97 {
+                    format!("{}.{:02}", index % 40, 11 + index % 80)
+                } else {
+                    format!("{}.{}", index % 40, 1 + index % 9)
+                }
+            })
+            .collect();
+        let note = strings((0..2_000).map(|index| format!("note {index}")));
+        let data = HashMap::from([("amount".to_string(), amount), ("note".to_string(), note)]);
+        let profiles = vec![
+            profile("amount", DataType::Float, 20_000, 19_840),
+            profile("note", DataType::String, 20_000, 0),
+        ];
+        let result = bifurcated(&data, &profiles);
+        let calculated = result
+            .metrics
+            .precision_score()
+            .expect("precision assessed");
+        let reported = result
+            .estimated_scores
+            .map_or(
+                Some(calculated),
+                |scores| scores.dimension_scores["precision"],
+            )
+            .expect("precision assessed");
+        assert_eq!(reported, calculated, "{reported} against {calculated}");
     }
 
     #[test]
