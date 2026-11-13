@@ -31,10 +31,11 @@
 //! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
 //! [`ReportDelta`] between it and the report, and evaluates rules about change:
 //! how far the overall score or a dimension score may drop, and how far a
-//! column's null percentage may rise, in points, and how far a column's
-//! distinct count may fall, in percent of the baseline's (#1026). A change is
-//! decided only when both sides measured the same thing the same way.
-//! Otherwise the rule is left unevaluated, naming what differs:
+//! column's null percentage may rise, in points, how far a column's
+//! distinct count may fall, in percent of the baseline's (#1026), and how far
+//! the row count may fall or grow, in percent of the baseline's (#1291). A
+//! change is decided only when both sides measured the same thing the same
+//! way. Otherwise the rule is left unevaluated, naming what differs:
 //!
 //! - for the validity score, and for the overall score when validity is
 //!   assessed on one side only, pattern detection run on one side only
@@ -44,9 +45,10 @@
 //! - a value the baseline does not carry ([`NotEvaluated::NotInBaseline`]);
 //! - for a distinct count, an estimate on either side, or a count either
 //!   side did not record as exact ([`NotEvaluated::ApproximateCount`]);
-//! - for a score, a different column set ([`NotEvaluated::SchemaChanged`]).
-//!   A dataset-level score has the columns as its subject, so a column that
-//!   appeared or vanished changes what is measured, not how good it is. A
+//! - for a score or the row count, a different column set
+//!   ([`NotEvaluated::SchemaChanged`]). A dataset-level rule has the columns
+//!   as its subject, so a column that appeared or vanished changes what is
+//!   measured, not how good it is. A
 //!   column's own rules stay decisive, and a new column has no baseline rule
 //!   until a policy names it;
 //! - for the overall score, a different set of assessed dimensions
@@ -64,7 +66,11 @@
 //!   when the policy declares a rolling clock
 //!   ([`QualityPolicy::timeliness_clock`]);
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
-//!   cover the whole source.
+//!   cover the whole source. The row count rules are the exception: a scan
+//!   that stopped early read a lower bound of its source's rows, so it still
+//!   settles the outcome that more rows could not reverse, as
+//!   [`QualityPolicy::min_rows`] does (see
+//!   [`QualityPolicy::max_row_count_drop`]).
 //!
 //! A schema change from the baseline is reported as a [`Diagnostic`] in the
 //! result's `baseline.diagnostics`, whatever the policy states: a column added,
@@ -170,7 +176,9 @@ const PERCENTAGE_MAX: f64 = 100.0;
 pub enum PolicyError {
     /// A threshold on the 0..=100 percentage scale fell outside it, or was not
     /// a finite number. Quality scores and null percentages are percentages,
-    /// not 0..1 ratios.
+    /// not 0..1 ratios. A row count growth threshold has no upper end, so for
+    /// [`CheckCode::MaxRowCountGrowth`] only a negative or non-finite value
+    /// is out of range.
     #[non_exhaustive]
     ThresholdOutOfRange {
         /// The requirement that carried it.
@@ -201,10 +209,14 @@ impl fmt::Display for PolicyError {
                 if let Some(subject) = subject {
                     write!(f, "for `{subject}` ")?;
                 }
-                write!(
-                    f,
-                    "must be a percentage between 0 and {PERCENTAGE_MAX}, got {value}"
-                )
+                if *code == CheckCode::MaxRowCountGrowth {
+                    write!(f, "must be a percentage of at least 0, got {value}")
+                } else {
+                    write!(
+                        f,
+                        "must be a percentage between 0 and {PERCENTAGE_MAX}, got {value}"
+                    )
+                }
             }
             Self::NoRequirements => write!(
                 f,
@@ -414,6 +426,12 @@ pub enum CheckCode {
     /// One dimension score may drop at most the threshold's number of points
     /// below the baseline's.
     MaxDimensionScoreDrop,
+    /// The row count may fall at most the threshold's percentage of the
+    /// baseline's.
+    MaxRowCountDrop,
+    /// The row count may grow at most the threshold's percentage of the
+    /// baseline's.
+    MaxRowCountGrowth,
     /// A column's null percentage may rise at most the threshold's number of
     /// points above the baseline's.
     MaxNullPercentageIncrease,
@@ -442,6 +460,8 @@ impl fmt::Display for CheckCode {
             Self::RequireMetric => write!(f, "require_metric"),
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
+            Self::MaxRowCountDrop => write!(f, "max_row_count_drop"),
+            Self::MaxRowCountGrowth => write!(f, "max_row_count_growth"),
             Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
             Self::MaxDistinctDrop => write!(f, "max_distinct_drop"),
             Self::RequireColumn => write!(f, "require_column"),
@@ -517,6 +537,13 @@ pub enum Expectation {
         /// The threshold, in percent of the baseline's value.
         value: MetricValue,
     },
+    /// The change from the baseline as a percentage of the baseline's value
+    /// must be at most `value`.
+    #[non_exhaustive]
+    RelativeChangeAtMost {
+        /// The threshold, in percent of the baseline's value.
+        value: MetricValue,
+    },
     /// The column must be profiled. No number is compared.
     Present,
     /// The column must be one the baseline profiled. No number is compared.
@@ -533,6 +560,9 @@ impl fmt::Display for Expectation {
             Self::ChangeAtMost { value } => write!(f, "a change of at most {value}"),
             Self::RelativeChangeAtLeast { value } => {
                 write!(f, "a relative change of at least {value}%")
+            }
+            Self::RelativeChangeAtMost { value } => {
+                write!(f, "a relative change of at most {value}%")
             }
             Self::Present => write!(f, "present"),
             Self::InBaseline => write!(f, "in the baseline"),
@@ -714,7 +744,8 @@ pub struct BaselineReading {
     pub evidence: Evidence,
     /// The check's `observed` minus the baseline's, at the report's
     /// serialized precision: in points, or, for a rule on a relative change
-    /// such as `max_distinct_drop`, in percent of the baseline's value.
+    /// such as `max_distinct_drop` and the row count rules, in percent of the
+    /// baseline's value.
     /// `None` when either side has no value.
     pub change: Option<MetricValue>,
 }
@@ -961,6 +992,8 @@ pub struct QualityPolicy {
     max_null_percentage_increase_any: Option<f64>,
     max_distinct_drop: BTreeMap<String, f64>,
     max_distinct_drop_any: Option<f64>,
+    max_row_count_drop: Option<f64>,
+    max_row_count_growth: Option<f64>,
     require_columns: BTreeSet<String>,
     forbid_removed_columns: bool,
     forbid_added_columns: bool,
@@ -1108,6 +1141,34 @@ impl QualityPolicy {
         self
     }
 
+    /// Allow the row count to fall at most `percent` (0..=100) of the
+    /// baseline's `rows_processed` (#1291), so a truncated extract that keeps
+    /// its header and its shares fails. Needs
+    /// [`evaluate_against`](Self::evaluate_against).
+    ///
+    /// A scan that stopped early read a lower bound of its source's rows. So
+    /// under [`PolicyScope::FullSource`], an incomplete scan of this report
+    /// still decides a pass and an incomplete baseline still decides a
+    /// failure, and the other outcome is unevaluated: the rows a scan did not
+    /// read could make up the difference. With both scans incomplete the rule
+    /// is unevaluated. A different column set leaves it
+    /// [`NotEvaluated::SchemaChanged`], as for a dataset-level score.
+    pub fn max_row_count_drop(mut self, percent: f64) -> Self {
+        self.max_row_count_drop = Some(percent);
+        self
+    }
+
+    /// Allow the row count to grow at most `percent` (0 or more) of the
+    /// baseline's `rows_processed` (#1291), so a join that fans out or a file
+    /// published twice fails. The mirror of
+    /// [`max_row_count_drop`](Self::max_row_count_drop): an incomplete scan
+    /// of this report still decides a failure, and an incomplete baseline a
+    /// pass. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_row_count_growth(mut self, percent: f64) -> Self {
+        self.max_row_count_growth = Some(percent);
+        self
+    }
+
     /// Require each named column to be profiled. A column missing from the
     /// report fails only when the report shows its source lacks it: the run's
     /// column selection included the column, and the column set covers the
@@ -1222,6 +1283,18 @@ impl QualityPolicy {
         if let Some(percent) = self.max_distinct_drop_any {
             check_percentage(CheckCode::MaxDistinctDrop, None, percent)?;
         }
+        if let Some(percent) = self.max_row_count_drop {
+            check_percentage(CheckCode::MaxRowCountDrop, None, percent)?;
+        }
+        if let Some(percent) = self.max_row_count_growth
+            && !(percent.is_finite() && percent >= 0.0)
+        {
+            return Err(PolicyError::ThresholdOutOfRange {
+                code: CheckCode::MaxRowCountGrowth,
+                subject: None,
+                value: percent,
+            });
+        }
         if self.is_empty() {
             return Err(PolicyError::NoRequirements);
         }
@@ -1251,6 +1324,8 @@ impl QualityPolicy {
             || self.max_null_percentage_increase_any.is_some()
             || !self.max_distinct_drop.is_empty()
             || self.max_distinct_drop_any.is_some()
+            || self.max_row_count_drop.is_some()
+            || self.max_row_count_growth.is_some()
             || self.forbid_removed_columns
             || self.forbid_added_columns
     }
@@ -1284,9 +1359,10 @@ impl QualityPolicy {
     ///
     /// Every requirement is evaluated as [`evaluate`](Self::evaluate) does,
     /// then each rule about change, in a fixed order: the overall score, the
-    /// dimensions in [`QualityDimension::all`] order, then for the null
-    /// increase and then the distinct drop rules the named columns in name
-    /// order and every other shared column in the baseline's order.
+    /// dimensions in [`QualityDimension::all`] order, the row count drop and
+    /// then growth, then for the null increase and then the distinct drop
+    /// rules the named columns in name order and every other shared column in
+    /// the baseline's order.
     /// The baseline may come from a flat summary, which leaves what it did
     /// not record unrecorded. See the [module docs](self) for when a change
     /// is decided.
@@ -1316,6 +1392,12 @@ impl QualityPolicy {
                     *points,
                 ));
             }
+        }
+        if let Some(percent) = self.max_row_count_drop {
+            checks.push(self.row_count_change_check(&delta, RowCountRule::Drop, percent));
+        }
+        if let Some(percent) = self.max_row_count_growth {
+            checks.push(self.row_count_change_check(&delta, RowCountRule::Growth, percent));
         }
         checks.extend(self.null_increase_checks(&delta));
         checks.extend(self.distinct_drop_checks(&delta, baseline, &current));
@@ -2189,6 +2271,134 @@ impl QualityPolicy {
         check
     }
 
+    /// How far the row count may fall or grow from the baseline's, in percent
+    /// of the baseline's `rows_processed` (#1291).
+    fn row_count_change_check(
+        &self,
+        delta: &ReportDelta,
+        rule: RowCountRule,
+        percent: f64,
+    ) -> Check {
+        let (a, b) = (&delta.reports.a, &delta.reports.b);
+        // A baseline that read no rows has no count to take a share of.
+        let baseline_rows = a.rows_processed.filter(|&rows| rows > 0);
+        let change = baseline_rows
+            .zip(b.rows_processed)
+            .map(|(a, b)| relative_change(a as f64, b as f64));
+        let allowed = rounded_2(percent);
+        let (code, expected) = match rule {
+            // `0.0 - percent`, not `-percent`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            RowCountRule::Drop => (
+                CheckCode::MaxRowCountDrop,
+                Expectation::RelativeChangeAtLeast {
+                    value: MetricValue::Percentage(0.0 - percent),
+                },
+            ),
+            RowCountRule::Growth => (
+                CheckCode::MaxRowCountGrowth,
+                Expectation::RelativeChangeAtMost {
+                    value: MetricValue::Percentage(percent),
+                },
+            ),
+        };
+        let check = Check {
+            code,
+            column: None,
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected,
+            observed: b.rows_processed.map(MetricValue::Count),
+            scope: self.scope,
+            evidence: b.evidence,
+            bounds: None,
+            baseline: Some(BaselineReading {
+                observed: a.rows_processed.map(MetricValue::Count),
+                evidence: a.evidence,
+                change: change.map(MetricValue::Percentage),
+            }),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let subject = "the row count";
+        let schema_changed = !delta.schema.added.is_empty() || !delta.schema.removed.is_empty();
+        let reason = if change.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if schema_changed {
+            Some(NotEvaluated::SchemaChanged)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return not_evaluated_change(check, reason, subject);
+        }
+        let change = change.expect("a decided rule has a change");
+        let (satisfied, verb) = match rule {
+            RowCountRule::Drop => (change >= 0.0 - allowed, "fell"),
+            RowCountRule::Growth => (change <= allowed, "grew"),
+        };
+        let mut check = check;
+        check.status = self.decide_row_count_change(
+            rule,
+            &Sides {
+                a: a.evidence,
+                b: b.evidence,
+            },
+            satisfied,
+        );
+        check.message = match check.status {
+            CheckStatus::Passed => {
+                format!("{subject} {verb} no more than allowed from the baseline")
+            }
+            CheckStatus::Failed => format!("{subject} {verb} more than allowed from the baseline"),
+            CheckStatus::NotEvaluated(_) => format!(
+                "{subject} {verb} {} than allowed from the baseline, and the rows a scan did not \
+                 read may reverse that",
+                if satisfied { "no more" } else { "more" }
+            ),
+        };
+        check
+    }
+
+    /// Decide a row count change. Each scan read a lower bound of its
+    /// source's rows, so a gap on one side can move the true change one way
+    /// only: more unread rows in this report make the change larger, more in
+    /// the baseline make it smaller. An outcome the unread rows could not
+    /// reverse stands; the other is unevaluated, naming the gap of the side
+    /// whose unread rows could reverse it. With both sides incomplete, either
+    /// outcome can be reversed.
+    fn decide_row_count_change(
+        &self,
+        rule: RowCountRule,
+        evidence: &Sides<Evidence>,
+        satisfied: bool,
+    ) -> CheckStatus {
+        let outcome = if satisfied {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
+        };
+        if self.scope == PolicyScope::Observed {
+            return outcome;
+        }
+        // A larger true change reverses a drop rule's failure and a growth
+        // rule's pass; a smaller one the opposite.
+        let larger_reverses = match rule {
+            RowCountRule::Drop => !satisfied,
+            RowCountRule::Growth => satisfied,
+        };
+        let gap = if larger_reverses {
+            evidence.b.gap()
+        } else {
+            evidence.a.gap()
+        };
+        match gap {
+            Some(gap) => CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
+            None => outcome,
+        }
+    }
+
     /// One check per named column, in name order, then one per other column
     /// both reports profiled, in the baseline's order, as for
     /// [`null_increase_checks`](Self::null_increase_checks).
@@ -2717,6 +2927,13 @@ fn schema_diagnostics(
 
 /// A delta's columns by name, built once per evaluation so a rule over every
 /// shared column does not rescan the schema for each one.
+/// Which way a row count rule bounds the change from the baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowCountRule {
+    Drop,
+    Growth,
+}
+
 /// What the distinct drop rule reads about one column on one side.
 #[derive(Debug, Clone, Copy)]
 struct DistinctReading {

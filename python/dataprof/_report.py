@@ -861,6 +861,8 @@ class ProfileReport:
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
+        max_row_count_drop: float | None = None,
+        max_row_count_growth: float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -941,6 +943,19 @@ class ProfileReport:
                 percentage of the baseline's share. Decided on exact counts
                 only, so a count either side estimated, or did not record as
                 exact, leaves it ``approximate_count``.
+            max_row_count_drop: How far the row count may fall, in percent
+                (0-100) of the baseline's ``rows_processed``, as a truncated
+                extract. A scan that stopped early read a lower bound of its
+                source's rows, so under ``"full_source"`` an incomplete scan
+                of this report still decides a pass, an incomplete baseline
+                still decides a failure, and the other outcome is
+                ``evidence_incomplete``. A different column set leaves it
+                ``schema_changed``.
+            max_row_count_growth: How far the row count may grow, in percent
+                of the baseline's, 0 or more, as a join that fans out or a
+                file published twice. The mirror of ``max_row_count_drop``:
+                an incomplete scan of this report still decides a failure,
+                and an incomplete baseline a pass.
             require_columns: Columns this report must have; needs no baseline.
                 One check per name, in name order.
             forbid_removed_columns: Require every column the baseline profiled
@@ -1032,6 +1047,8 @@ class ProfileReport:
                 max_dimension_score_drops=max_dimension_score_drops,
                 max_null_percentage_increase=max_null_percentage_increase,
                 max_distinct_drop=max_distinct_drop,
+                max_row_count_drop=max_row_count_drop,
+                max_row_count_growth=max_row_count_growth,
                 require_columns=require_columns,
                 forbid_removed_columns=forbid_removed_columns,
                 forbid_added_columns=forbid_added_columns,

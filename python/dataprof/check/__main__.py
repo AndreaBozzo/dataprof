@@ -32,6 +32,8 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_dimension_score_drops": None,
     "max_null_percentage_increase": None,
     "max_distinct_drop": None,
+    "max_row_count_drop": None,
+    "max_row_count_growth": None,
     "forbid_removed_columns": False,
     "forbid_added_columns": False,
     "forbid_findings": None,
@@ -337,6 +339,20 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         action="append",
         metavar="NAME=POINTS",
         help="how far a dimension score may fall below the baseline's (0-100); repeatable",
+    )
+    parser.add_argument(
+        "--max-row-drop",
+        dest="max_row_count_drop",
+        type=float,
+        metavar="PERCENT",
+        help="how far the row count may fall, in percent of the baseline's (0-100)",
+    )
+    parser.add_argument(
+        "--max-row-growth",
+        dest="max_row_count_growth",
+        type=float,
+        metavar="PERCENT",
+        help="how far the row count may grow, in percent of the baseline's (0 or more)",
     )
     parser.add_argument(
         "--max-null-increase",

@@ -446,6 +446,8 @@ class ProfileReport:
         max_null_percentage_increase_any: float | None = ...,
         max_distinct_drop: list[tuple[str, float]] = ...,
         max_distinct_drop_any: float | None = ...,
+        max_row_count_drop: float | None = ...,
+        max_row_count_growth: float | None = ...,
         require_columns: list[str] = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,
