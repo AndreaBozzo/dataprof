@@ -854,6 +854,7 @@ class ProfileReport:
         max_null_percentage: _Mapping[str, float] | float | None = None,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
+        max_date_age: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
         baseline: ProfileReport | None = None,
@@ -910,6 +911,19 @@ class ProfileReport:
                 exact count. Same mapping shape as ``max_null_percentage``.
                 ``{"customer_id": 0}`` states "no nulls" at any row count.
             max_duplicate_rows: Ceiling for the duplicate-row count.
+            max_date_age: Days a column's newest date (its ``max_datetime``)
+                may lie before the timeliness reference date the report
+                recorded, so a feed that stopped moving fails:
+                ``{"published_at": 3}``. The reference date is the profiling
+                call's ``reference_date``, or the run's date when none was
+                given, and the age is counted in calendar days. A date after
+                the reference date is fresh. A newest date read on part of a
+                source can only be overtaken by a newer one, so under
+                ``"full_source"`` a fresh date passes on any scan, and a stale
+                one fails only when every row was read and the column's date
+                statistics saw every value; otherwise it is
+                ``evidence_incomplete``. A column with no newest date (not
+                typed as a date, all null) is ``not_assessed``.
             require_metrics: Metrics that must have been analyzed at all:
                 ``"quality"`` for the assessment as a whole, or a dimension
                 name. Without this, a report with no assessment leaves the
@@ -1047,6 +1061,7 @@ class ProfileReport:
                 max_null_percentage=max_null_percentage,
                 max_null_count=max_null_count,
                 max_duplicate_rows=max_duplicate_rows,
+                max_date_age=max_date_age,
                 require_metrics=require_metrics,
                 scope=scope,
                 baseline=None if baseline is None else baseline._delta_input(),

@@ -97,6 +97,16 @@
 //! the setting `columns`, [`NotEvaluated::ColumnNotProfiled`] for a required
 //! column the run did not select, or [`NotEvaluated::EvidenceIncomplete`].
 //!
+//! # Freshness
+//!
+//! [`QualityPolicy::max_date_age`] fails a column whose newest date lies too
+//! many days before the timeliness reference date the report recorded
+//! (#1290): a feed that stopped moving keeps passing every rule above, since
+//! the same rows keep their counts, nulls and scores. A newest date read on
+//! part of a source can only be overtaken by a newer one, so a fresh date
+//! passes on any scan and a stale one fails only when the values behind it
+//! cover the column.
+//!
 //! # Forbidden findings
 //!
 //! [`QualityPolicy::forbid_findings`] turns a findings code into a rule: the
@@ -148,7 +158,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, MetricPack, QualityDimension};
+use dataprof_core::{
+    ColumnProfile, ColumnStats, DataType, ExecutionMetadata, MetricPack, QualityDimension,
+};
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
 };
@@ -422,6 +434,9 @@ pub enum CheckCode {
     MaxNullCount,
     /// The duplicate-row count must be at most the threshold.
     MaxDuplicateRows,
+    /// A column's newest date may lie at most the threshold's number of days
+    /// before the timeliness reference date.
+    MaxDateAge,
     /// A metric must have been analyzed at all.
     RequireMetric,
     /// The overall quality score may drop at most the threshold's number of
@@ -461,6 +476,7 @@ impl fmt::Display for CheckCode {
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
             Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
+            Self::MaxDateAge => write!(f, "max_date_age"),
             Self::RequireMetric => write!(f, "require_metric"),
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
@@ -488,6 +504,9 @@ pub enum MetricValue {
     Count(usize),
     /// A 0..=100 percentage or score, or a change in one, in points.
     Percentage(#[serde(serialize_with = "dataprof_core::serde_helpers::round_2")] f64),
+    /// A number of whole days. An age is negative when the date lies after
+    /// the reference date.
+    Days(i64),
 }
 
 impl fmt::Display for MetricValue {
@@ -497,6 +516,7 @@ impl fmt::Display for MetricValue {
         match self {
             Self::Count(count) => write!(f, "{count}"),
             Self::Percentage(value) => write!(f, "{value:.2}"),
+            Self::Days(days) => write!(f, "{days}"),
         }
     }
 }
@@ -994,6 +1014,7 @@ pub struct QualityPolicy {
     max_null_count: BTreeMap<String, usize>,
     max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
+    max_date_age: BTreeMap<String, u32>,
     require_metrics: Vec<RequiredMetric>,
     max_quality_score_drop: Option<f64>,
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
@@ -1073,6 +1094,28 @@ impl QualityPolicy {
     /// Require the report to count at most `max` duplicate rows.
     pub fn max_duplicate_rows(mut self, max: usize) -> Self {
         self.max_duplicate_rows = Some(max);
+        self
+    }
+
+    /// Require the named column's newest date to lie at most `days` days
+    /// before the timeliness reference date (#1290), so a feed that stopped
+    /// moving fails while every other rule still passes it.
+    ///
+    /// The newest date is the column's `max_datetime`, a calendar date, and
+    /// the reference date is the one the report's timeliness clock recorded
+    /// (`reference_date`, or the run's date on a rolling clock), so the age is
+    /// counted in calendar days and a saved report evaluated later decides
+    /// the same. A date after the reference date is fresh. A newest date only
+    /// gets newer as more values are read, so under [`PolicyScope::FullSource`]
+    /// a fresh date passes whatever the scan missed, and a stale one fails
+    /// only when the values behind it cover the column: every row read, and
+    /// the retained sample the date statistics are computed from holding
+    /// every non-null value. A column with no newest date (not typed as a
+    /// date, all null, or statistics not computed) is
+    /// [`NotEvaluated::NotAssessed`], and a report without a recorded clock is
+    /// [`NotEvaluated::SettingUnrecorded`] on `timeliness_clock`.
+    pub fn max_date_age(mut self, column: impl Into<String>, days: u32) -> Self {
+        self.max_date_age.insert(column.into(), days);
         self
     }
 
@@ -1330,6 +1373,7 @@ impl QualityPolicy {
             && self.max_null_count.is_empty()
             && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
+            && self.max_date_age.is_empty()
             && self.require_metrics.is_empty()
             && self.require_columns.is_empty()
             && self.forbid_findings.is_empty()
@@ -1505,6 +1549,13 @@ impl QualityPolicy {
         checks.extend(self.null_count_checks(report, scan));
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
+        }
+        for (column, days) in &self.max_date_age {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.date_age_check(report, column, profile, scan, *days));
         }
         if !self.forbid_findings.is_empty() {
             let input = FindingsInput::from(report);
@@ -2089,6 +2140,96 @@ impl QualityPolicy {
             CheckStatus::NotEvaluated(_) => {
                 "no duplicate above the allowance was observed, and the rows that were not \
                  read may hold more"
+            }
+        }
+        .to_string();
+        check
+    }
+
+    /// How old a column's newest date may be, in days before the timeliness
+    /// reference date. See [`max_date_age`](Self::max_date_age).
+    fn date_age_check(
+        &self,
+        report: &ProfileReport,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+        max_days: u32,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::MaxDateAge,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::AtMost {
+                value: MetricValue::Days(i64::from(max_days)),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let newest = match newest_date(profile) {
+            NewestDate::Date(date) => date,
+            absent => {
+                check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+                check.message = match absent {
+                    NewestDate::Malformed => {
+                        "the newest date recorded for this column is not a YYYY-MM-DD date"
+                    }
+                    _ if profile.data_type == DataType::Date => {
+                        "no newest date was recorded for this column"
+                    }
+                    _ => "this column is not typed as a date, so it has no newest date",
+                }
+                .to_string();
+                return check;
+            }
+        };
+        check.evidence = scan.and(date_sample_evidence(profile));
+        let Some(quality) = report.quality.as_ref() else {
+            return unavailable_quality(check, report);
+        };
+        let Some(clock) = quality
+            .metrics
+            .timeliness
+            .as_ref()
+            .and_then(|timeliness| timeliness.clock)
+        else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded {
+                setting: "timeliness_clock".to_string(),
+            });
+            check.message =
+                "the report records no timeliness clock to measure the age against".to_string();
+            return check;
+        };
+        let age = (clock.reference_date - newest).num_days();
+        check.observed = Some(MetricValue::Days(age));
+        let fresh = age <= i64::from(max_days);
+        // The newest date only moves forward as more values are read, so a
+        // fresh one is a decision whatever the evidence missed.
+        check.status = match (self.scope, check.evidence.gap()) {
+            _ if fresh => CheckStatus::Passed,
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ => CheckStatus::Failed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => "this column's newest date is within the allowed age",
+            CheckStatus::Failed => "this column's newest date is older than the allowed age",
+            CheckStatus::NotEvaluated(_) => {
+                "the newest date read in this column is older than the allowed age, and the \
+                 values that were not read may hold a newer one"
             }
         }
         .to_string();
@@ -3734,6 +3875,50 @@ pub(crate) fn quality_status_name(status: &QualityAnalysisStatus) -> &'static st
 fn null_percentage(profile: &ColumnProfile) -> Option<f64> {
     (profile.total_count > 0)
         .then(|| profile.null_count as f64 / profile.total_count as f64 * PERCENTAGE_MAX)
+}
+
+/// What a column's date statistics say about its newest date.
+enum NewestDate {
+    /// The newest date, from `max_datetime`.
+    Date(chrono::NaiveDate),
+    /// None was recorded: the column is not typed as a date, no value parsed
+    /// as one, or statistics were not computed.
+    Absent,
+    /// `max_datetime` holds text that is not a `YYYY-MM-DD` date, which the
+    /// profiler never writes, so the document was written or edited
+    /// elsewhere. Named apart from [`NewestDate::Absent`] so the check says
+    /// which happened instead of guessing a date.
+    Malformed,
+}
+
+fn newest_date(profile: &ColumnProfile) -> NewestDate {
+    match &profile.stats {
+        ColumnStats::DateTime(stats) if !stats.max_datetime.is_empty() => {
+            match chrono::NaiveDate::parse_from_str(&stats.max_datetime, "%Y-%m-%d") {
+                Ok(date) => NewestDate::Date(date),
+                Err(_) => NewestDate::Malformed,
+            }
+        }
+        _ => NewestDate::Absent,
+    }
+}
+
+/// Whether a column's date statistics saw every non-null value read. They
+/// are computed from the values the profiler retained, the same values its
+/// `type_homogeneity` classifies, so a classified count short of the non-null
+/// count says the retained sample left some out. A report without the
+/// classification does not record which happened.
+fn date_sample_evidence(profile: &ColumnProfile) -> Evidence {
+    let non_null = profile.total_count.saturating_sub(profile.null_count);
+    match &profile.type_homogeneity {
+        Some(forms) if forms.classified_count() >= non_null => Evidence::Complete,
+        Some(_) => Evidence::Incomplete {
+            reason: EvidenceGap::QualitySampled,
+        },
+        None => Evidence::Incomplete {
+            reason: EvidenceGap::CoverageUnrecorded,
+        },
+    }
 }
 
 /// How much of the source the scan itself covered.
