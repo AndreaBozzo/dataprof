@@ -635,7 +635,7 @@ fn collect_shares(
             Pairs::None => {}
             Pairs::Aligned(pairs) => timeliness_shares.shares.push(vec![pairs]),
             Pairs::Unaligned(pairs) => {
-                timeliness_shares.shares.push(vec![pairs]);
+                timeliness_shares.shares.push(pairs);
                 timeliness_shares.bounded = false;
             }
         }
@@ -666,6 +666,69 @@ fn collect_shares(
         .collect())
 }
 
+/// The ordering counts of every compared pair as one exact column: the share
+/// as the calculator pooled it, with nothing to scale.
+fn pooled_pairs(metrics: &super::timeliness::TimelinessMetrics) -> ColumnCounts {
+    ColumnCounts {
+        failures: metrics.temporal_violations,
+        checked: metrics.temporal_pairs_checked,
+        max_failures_per_value: metrics.temporal_column_pairs,
+        max_checked_per_value: metrics.temporal_column_pairs,
+        sampled: 0,
+        population: 0,
+    }
+}
+
+/// Each compared pair's ordering counts, as a column of rows: the pair's
+/// rows held over the rows it was drawn from. Pairs held at different sample
+/// sizes stand for their rows at different rates, so pooling their counts
+/// weighs each by its sample (#1293). Each pair is counted alone, declared
+/// as itself; when those counts do not add up to the joint ones, the pooled
+/// counts are kept instead.
+fn per_pair_counts(
+    calculator: &TimelinessCalculator<'_>,
+    data: &HashMap<String, Vec<String>>,
+    column_profiles: &[ColumnProfile],
+    metrics: &super::timeliness::TimelinessMetrics,
+) -> Result<Vec<ColumnCounts>, DataProfilerError> {
+    let mut pairs = Vec::new();
+    for (start, end) in &metrics.compared_pairs {
+        let (Some(start_values), Some(end_values), Some(profile)) = (
+            data.get(start),
+            data.get(end),
+            column_profiles
+                .iter()
+                .find(|profile| &profile.name == start),
+        ) else {
+            return Ok(vec![pooled_pairs(metrics)]);
+        };
+        let single = HashMap::from([
+            (start.clone(), start_values.clone()),
+            (end.clone(), end_values.clone()),
+        ]);
+        let names = [start.clone(), end.clone()];
+        let pair = [(start.clone(), end.clone())];
+        let counted = calculator.calculate(&single, &names, &pair, column_profiles)?;
+        let sampled = start_values.len();
+        pairs.push(ColumnCounts {
+            failures: counted.temporal_violations,
+            checked: counted.temporal_pairs_checked,
+            max_failures_per_value: 1,
+            max_checked_per_value: 1,
+            sampled,
+            population: profile.total_count.max(sampled),
+        });
+    }
+    let adds_up = pairs.iter().map(|pair| pair.failures).sum::<usize>()
+        == metrics.temporal_violations
+        && pairs.iter().map(|pair| pair.checked).sum::<usize>() == metrics.temporal_pairs_checked;
+    Ok(if adds_up {
+        pairs
+    } else {
+        vec![pooled_pairs(metrics)]
+    })
+}
+
 enum Pairs {
     /// No start/end ordering was compared.
     None,
@@ -674,9 +737,9 @@ enum Pairs {
     Aligned(ColumnCounts),
     /// Ordering was compared on pairs that each line up by row but hold
     /// samples of different sizes, so their counts cannot be pooled as one
-    /// sample. The counts are kept as one exact column, so the point estimate
-    /// reads the share as the calculator did, and nothing bounds it.
-    Unaligned(ColumnCounts),
+    /// sample. Nothing bounds the share; the point estimate scales each
+    /// pair's counts by its own rows, as it scales a column's values.
+    Unaligned(Vec<ColumnCounts>),
 }
 
 /// Counts for the start/end ordering share, treating each sampled row as one
@@ -709,19 +772,11 @@ fn temporal_pairs(
             Some((data.get(name)?.len(), profile.total_count))
         })
         .collect();
-    let unaligned = ColumnCounts {
-        failures: metrics.temporal_violations,
-        checked: metrics.temporal_pairs_checked,
-        max_failures_per_value: metrics.temporal_column_pairs,
-        max_checked_per_value: metrics.temporal_column_pairs,
-        sampled: 0,
-        population: 0,
-    };
     let Some(&(sampled, population)) = sizes.first() else {
-        return Ok(Pairs::Unaligned(unaligned));
+        return Ok(Pairs::Unaligned(vec![pooled_pairs(&metrics)]));
     };
     if sizes.iter().any(|&size| size != (sampled, population)) {
-        return Ok(Pairs::Unaligned(unaligned));
+        return per_pair_counts(calculator, data, column_profiles, &metrics).map(Pairs::Unaligned);
     }
     Ok(Pairs::Aligned(ColumnCounts {
         failures: metrics.temporal_violations,
@@ -1063,18 +1118,20 @@ mod tests {
     }
 
     #[test]
-    fn an_unbounded_ordering_share_enters_the_estimate_as_counted() {
-        // One pair holds every row and the other a sample of them, so their
-        // compared rows cannot pool as one sample and timeliness has no
-        // bound. The sampled pair still makes the estimate differ from the
-        // pooled score, and the ordering share has to stay in it.
-        let (sampled_starts, sampled_ends) = date_pairs(2_000, 40);
-        let (full_starts, full_ends) = date_pairs(20_000, 40);
+    fn unaligned_ordering_pairs_each_weigh_their_own_rows() {
+        // Two pairs over the same 20,000 rows, held at different sample
+        // sizes, so their compared rows cannot pool as one sample and
+        // timeliness has no bound. `start_date`/`end_date` keeps 2,000 rows,
+        // every one inverted; `valid_from`/`valid_to` keeps 10,000, only its
+        // first inverted. Pooled, the inverted pair weighs a sixth of the
+        // compared rows; over the source it is half of them.
+        let (inverted_starts, inverted_ends) = date_pairs(2_000, 1);
+        let (clean_starts, clean_ends) = date_pairs(10_000, 20_000);
         let retained = HashMap::from([
-            ("start_date".to_string(), sampled_starts),
-            ("end_date".to_string(), sampled_ends),
-            ("valid_from".to_string(), full_starts),
-            ("valid_to".to_string(), full_ends),
+            ("start_date".to_string(), inverted_starts),
+            ("end_date".to_string(), inverted_ends),
+            ("valid_from".to_string(), clean_starts),
+            ("valid_to".to_string(), clean_ends),
         ]);
         let profiles = vec![
             profile("start_date", DataType::Date, 20_000, 0),
@@ -1090,24 +1147,24 @@ mod tests {
             .calculate_bifurcated_metrics_with_hints(&retained, &profiles, None, &hints, None)
             .unwrap();
         let timeliness = result.metrics.timeliness.as_ref().unwrap();
-        assert!(timeliness.temporal_violations > 0);
+        assert_eq!(timeliness.temporal_violations, 2_001);
+        assert_eq!(timeliness.temporal_pairs_checked, 12_000);
         assert!(
             result.score_bounds.unwrap().dimension_scores["timeliness"].is_none(),
             "unaligned pairs are not bounded"
         );
 
-        let pooled = result.metrics.timeliness_score().unwrap();
         let estimate = result
             .estimated_scores
             .expect("a column was sampled")
             .dimension_scores["timeliness"]
             .unwrap();
         // No date is stale, future or invalid, so the ordering share is the
-        // whole penalty, read as the calculator counted it.
-        assert!(pooled < 100.0, "{pooled}");
+        // whole penalty: 2,000 x 10 + 1 x 2 inverted rows of 40,000.
+        let expected = 100.0 - 100.0 * 20_002.0 / 40_000.0;
         assert!(
-            (estimate - pooled).abs() < 1e-9,
-            "{estimate} against {pooled}"
+            (estimate - expected).abs() < 1e-9,
+            "{estimate} against {expected}"
         );
     }
 
