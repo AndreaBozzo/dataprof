@@ -1251,6 +1251,9 @@ still settles the outcome that its unread rows could not reverse, as
 | the baseline's scan incomplete | a failure is decided, a pass is `evidence_incomplete` | a pass is decided, a failure is `evidence_incomplete` |
 | both incomplete | `evidence_incomplete` | `evidence_incomplete` |
 
+The one exception is `max_row_count_drop=100`, which passes whatever the scans
+missed, since a count cannot fall by more than all of it.
+
 **A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
 10}` fails when the column's distinct count fell by more than 10% of the
 baseline's, as a key that suddenly repeats. Fewer rows alone are not a

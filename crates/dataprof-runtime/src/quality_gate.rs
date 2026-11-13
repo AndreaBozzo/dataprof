@@ -1151,7 +1151,8 @@ impl QualityPolicy {
     /// still decides a pass and an incomplete baseline still decides a
     /// failure, and the other outcome is unevaluated: the rows a scan did not
     /// read could make up the difference. With both scans incomplete the rule
-    /// is unevaluated. A different column set leaves it
+    /// is unevaluated. An allowance of 100% passes whatever the scans missed,
+    /// since a count cannot fall by more. A different column set leaves it
     /// [`NotEvaluated::SchemaChanged`], as for a dataset-level score.
     pub fn max_row_count_drop(mut self, percent: f64) -> Self {
         self.max_row_count_drop = Some(percent);
@@ -2339,14 +2340,21 @@ impl QualityPolicy {
             RowCountRule::Growth => (change <= allowed, "grew"),
         };
         let mut check = check;
-        check.status = self.decide_row_count_change(
-            rule,
-            &Sides {
-                a: a.evidence,
-                b: b.evidence,
-            },
-            satisfied,
-        );
+        // A count cannot fall by more than all of it, so a drop allowance of
+        // 100% (at the serialized precision) holds whatever a scan did not
+        // read.
+        check.status = if rule == RowCountRule::Drop && allowed >= PERCENTAGE_MAX {
+            CheckStatus::Passed
+        } else {
+            self.decide_row_count_change(
+                rule,
+                &Sides {
+                    a: a.evidence,
+                    b: b.evidence,
+                },
+                satisfied,
+            )
+        };
         check.message = match check.status {
             CheckStatus::Passed => {
                 format!("{subject} {verb} no more than allowed from the baseline")

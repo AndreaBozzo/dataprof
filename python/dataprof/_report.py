@@ -949,8 +949,9 @@ class ProfileReport:
                 source's rows, so under ``"full_source"`` an incomplete scan
                 of this report still decides a pass, an incomplete baseline
                 still decides a failure, and the other outcome is
-                ``evidence_incomplete``. A different column set leaves it
-                ``schema_changed``.
+                ``evidence_incomplete``. An allowance of 100 passes whatever
+                the scans missed, since a count cannot fall by more. A
+                different column set leaves it ``schema_changed``.
             max_row_count_growth: How far the row count may grow, in percent
                 of the baseline's, 0 or more, as a join that fans out or a
                 file published twice. The mirror of ``max_row_count_drop``:

@@ -230,6 +230,13 @@ fn an_incomplete_scan_decides_only_the_outcome_its_unread_rows_cannot_reverse() 
             "passed",
         ),
     ];
+    let truncated = policy()
+        .evaluate_against(&cases[0].1, &ReportSide::from_report(&exact_baseline))
+        .unwrap();
+    assert_eq!(
+        truncated.checks[0].message,
+        "the row count fell more than allowed from the baseline, and the rows a scan did not read may reverse that"
+    );
     let mut wrong = Vec::new();
     for (case, report, baseline, drop, growth) in &cases {
         let side = ReportSide::from_report(baseline);
@@ -264,6 +271,14 @@ fn the_check_carries_both_counts_and_the_relative_change() {
         .map(|check| serde_json::to_value(check).unwrap())
         .collect();
     assert_eq!(checks[0]["code"], "max_row_count_drop");
+    assert_eq!(
+        checks[0]["message"],
+        "the row count fell no more than allowed from the baseline"
+    );
+    assert_eq!(
+        checks[1]["message"],
+        "the row count grew more than allowed from the baseline"
+    );
     assert_eq!(
         checks[0]["expected"],
         json!({"comparison": "relative_change_at_least", "value": -10.0})
@@ -419,4 +434,26 @@ fn the_rules_need_a_baseline_and_a_valid_percentage() {
         .max_row_count_growth(250.0)
         .validate()
         .unwrap();
+}
+
+/// A count cannot fall by more than all of it, so a 100% drop allowance, or
+/// one that rounds to it, passes whatever the scans missed.
+#[test]
+fn a_full_drop_allowance_passes_whatever_the_scans_missed() {
+    let capped_baseline = ReportSide::from_report(&scan(400, Some(100)));
+    let mut wrong = Vec::new();
+    for percent in [100.0, 99.999] {
+        let policy = QualityPolicy::new().max_row_count_drop(percent);
+        for (case, report) in [
+            ("baseline capped", scan(80, None)),
+            ("both capped", scan(400, Some(50))),
+        ] {
+            let result = policy.evaluate_against(&report, &capped_baseline).unwrap();
+            let got = status_of(&result, CheckCode::MaxRowCountDrop);
+            if got != "passed" {
+                wrong.push(format!("{percent}, {case}: {got}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }

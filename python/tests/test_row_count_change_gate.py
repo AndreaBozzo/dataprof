@@ -175,3 +175,21 @@ def test_the_check_entrypoint_flags_and_policy_keys(tmp_path: Path):
     assert entrypoint.main([*common, "--max-row-growth", "10"]) == 1
     assert entrypoint.main([*common, "--policy", str(policy)]) == 1
     assert entrypoint.main([*common, "--max-row-growth", "150"]) == 0
+
+
+def test_a_full_drop_allowance_passes_whatever_the_scans_missed(tmp_path: Path):
+    def scan(rows: int, cap: int | None = None) -> dp.ProfileReport:
+        path = tmp_path / f"rows_{rows}_{cap}.csv"
+        path.write_bytes(_csv(rows))
+        return dp.profile_file(str(path), max_rows=cap)
+
+    capped = scan(400, 100)
+    wrong = []
+    for percent in (100, 99.999):
+        for case, report in (("baseline capped", scan(80)), ("both capped", scan(400, 50))):
+            got = _status(
+                report.check(baseline=capped, max_row_count_drop=percent), "max_row_count_drop"
+            )
+            if got != "passed":
+                wrong.append(f"{percent}, {case}: {got}")
+    assert not wrong, "\n".join(wrong)
