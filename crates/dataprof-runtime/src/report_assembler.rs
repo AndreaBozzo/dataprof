@@ -374,6 +374,7 @@ impl ReportAssembler {
                     Some(
                         QualityAssessment::new(result.metrics, confidence)
                             .with_score_bounds(result.score_bounds)
+                            .with_estimated_scores(result.estimated_scores)
                             .with_columns_without_value_checks(Some(columns_without_value_checks(
                                 &self.columns,
                             ))),

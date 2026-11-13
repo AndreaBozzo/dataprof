@@ -391,6 +391,7 @@ _METRIC_SEMANTICS = {
     "key_column_source": ("declared",),
     "accuracy_comparison": ("exact_values",),
     "json_number_reading": ("literal_digits",),
+    "sampled_score_estimator": ("population_weighted",),
 }
 
 

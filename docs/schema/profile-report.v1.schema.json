@@ -1278,6 +1278,10 @@
           "$ref": "#/$defs/RangeRuleCount",
           "description": "What the range and sign rules behind the accuracy score count.\n\nAbsent means not recorded: through 0.12 every rule failure counted,\nover the numeric values of every column."
         },
+        "sampled_score_estimator": {
+          "$ref": "#/$defs/SampledScoreEstimator",
+          "description": "How a score computed over a retained sample estimates the score over\nevery scanned value.\n\nAbsent means not recorded: through 0.13 a sampled score pooled the\ncolumn samples, so it could fall outside its own `score_bounds`."
+        },
         "shape_moments": {
           "$ref": "#/$defs/ShapeMomentEstimator",
           "description": "The estimator behind every column's `skewness` and `kurtosis`.\n\nAbsent means not recorded: through 0.12 both used a form that matches\nneither the population nor the adjusted estimators."
@@ -2934,6 +2938,16 @@
         "version"
       ],
       "type": "object"
+    },
+    "SampledScoreEstimator": {
+      "description": "How a quality score computed over a retained sample estimates the score\nover every scanned value, as recorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 a sampled score\npooled every column's reservoir, so a column weighed as many values as its\nreservoir kept, at most 10,000, and the score could fall outside its own\n`score_bounds`; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "population_weighted",
+          "description": "Each column's sampled failure and checked counts are scaled to its\nnon-null values in the source before the shares are formed (#1293).\nA source whose samples hold every value scores as before.",
+          "type": "string"
+        }
+      ]
     },
     "ScoreBounds": {
       "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",

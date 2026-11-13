@@ -160,6 +160,24 @@ pub enum JsonNumberReading {
     LiteralDigits,
 }
 
+/// How a quality score computed over a retained sample estimates the score
+/// over every scanned value, as recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 a sampled score
+/// pooled every column's reservoir, so a column weighed as many values as its
+/// reservoir kept, at most 10,000, and the score could fall outside its own
+/// `score_bounds`; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SampledScoreEstimator {
+    /// Each column's sampled failure and checked counts are scaled to its
+    /// non-null values in the source before the shares are formed (#1293).
+    /// A source whose samples hold every value scores as before.
+    PopulationWeighted,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(
     Debug,

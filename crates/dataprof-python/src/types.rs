@@ -6,8 +6,8 @@ use dataprof::{
     AccuracyComparison, ColumnProfile, ColumnStats, DataSource, JsonNumberReading, KeyColumnSource,
     KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount, ProfileReport,
     QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
-    QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
-    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
+    QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval, SemanticHintKind,
+    ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1372,6 +1372,14 @@ impl PyProfileReport {
                 "json_number_reading",
                 match reading {
                     JsonNumberReading::LiteralDigits => "literal_digits",
+                },
+            )?;
+        }
+        if let Some(estimator) = semantics.sampled_score_estimator {
+            dict.set_item(
+                "sampled_score_estimator",
+                match estimator {
+                    SampledScoreEstimator::PopulationWeighted => "population_weighted",
                 },
             )?;
         }
