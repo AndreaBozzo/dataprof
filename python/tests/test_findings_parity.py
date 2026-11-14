@@ -82,10 +82,10 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
     """The fixture is the coverage claim, so state what it must contain.
 
     A parity fixture that quietly lost a rule would still pass on both sides
-    while guarding nothing for it. Three reasons are absent: ``estimated`` and
-    ``sampled`` need more rows than a fixture should carry, and ``unrecorded``
-    needs a document from an older release, so the Rust unit tests and
-    ``test_findings.py`` cover them instead.
+    while guarding nothing for it. Two reasons are absent: ``estimated`` and
+    ``sampled`` need more rows than a fixture should carry, so the Rust unit
+    tests and ``test_findings.py`` cover them instead. ``unrecorded`` comes
+    from the capped CSV case, whose quote state was never checked (#1306).
     """
     codes = {finding["code"] for case in cases for finding in case["expected"]["findings"]}
     assert codes == {
@@ -105,4 +105,10 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
         "unterminated_quote",
     }
     reasons = {entry["reason"] for case in cases for entry in case["expected"]["not_evaluated"]}
-    assert reasons == {"quality_unavailable", "not_assessed", "not_computed", "no_values"}
+    assert reasons == {
+        "quality_unavailable",
+        "not_assessed",
+        "not_computed",
+        "no_values",
+        "unrecorded",
+    }

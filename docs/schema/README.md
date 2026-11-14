@@ -655,6 +655,12 @@ the end of its source (a row cap, a byte budget), or a report written before
 0.12. The quote that swallows the rest of the file is on the last record, so a
 scan that did not reach the end did not read it.
 
+`findings()` and `forbid_findings=["unterminated_quote"]` read that absence by
+the source format (#1306). On a CSV source, or a stream that records no
+format, the rule is not evaluated (`unrecorded`) and the check is
+inconclusive. On a source that is not CSV the rule does not apply and the
+check passes.
+
 Under `csv_flexible=False` such a source is refused instead, as a ragged row is.
 The field is additive and not `required`, so stored v1 reports remain valid.
 It is provenance about the source, not a metric, and every CSV engine and input

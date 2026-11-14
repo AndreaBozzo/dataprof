@@ -971,7 +971,7 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
 | `estimated` | The duplicate count, or the key column's distinct count, is an estimate, which witnesses nothing |
 | `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
-| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage and locale-formatted numbers before 0.12, how the key column was chosen before 0.13 |
+| `unrecorded` | The report does not record what the rule needs. Either the document was written before dataprof recorded it (ragged rows before 0.10, quality sample coverage, locale-formatted numbers and the CSV quote state before 0.12, how the key column was chosen before 0.13), a flat summary omits it (`source_exhausted`, `sampling_applied`, `unterminated_quote`), or a CSV scan stopped before the end of its source, where the quote state is checked. A quote check on a source that is not CSV passes instead: it does not apply |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 

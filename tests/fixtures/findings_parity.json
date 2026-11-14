@@ -530,7 +530,7 @@
     },
     {
       "name": "a_truncated_scan_is_disclosed",
-      "why": "A capped scan reports partial_scan and still reports what the rows it read show.",
+      "why": "A capped scan reports partial_scan and still reports what the rows it read show. It never reached the end of the CSV, so the quote state there is unrecorded.",
       "options": {
         "max_rows": 2
       },
@@ -642,6 +642,10 @@
             "columns": [
               "notes"
             ]
+          },
+          {
+            "code": "unterminated_quote",
+            "reason": "unrecorded"
           }
         ]
       }
