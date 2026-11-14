@@ -29,6 +29,7 @@ pub struct AnalysisOptions {
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
     reference_date: Option<NaiveDate>,
+    duplicate_rows_exact_limit: Option<usize>,
 }
 
 impl AnalysisOptions {
@@ -75,6 +76,19 @@ impl AnalysisOptions {
     /// The report records which one the score used.
     pub fn with_reference_date(mut self, reference_date: Option<NaiveDate>) -> Self {
         self.reference_date = reference_date;
+        self
+    }
+
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    ///
+    /// `None` (the default) keeps the built-in limit of one million distinct
+    /// rows, past which the count is an estimate and the memory budget may
+    /// end the exact count earlier. A limit set here is a row count, so the
+    /// verdict does not depend on the machine: the row tracker keeps its exact
+    /// set up to the limit whatever `memory_limit_mb` says, at 10 to 20 bytes
+    /// per distinct row, and that set is not counted against the budget.
+    pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
+        self.duplicate_rows_exact_limit = limit;
         self
     }
 
@@ -136,6 +150,11 @@ impl AnalysisOptions {
     /// The fixed timeliness reference date, or `None` to read today's.
     pub fn reference_date(&self) -> Option<NaiveDate> {
         self.reference_date
+    }
+
+    /// The duplicate-row exact limit the caller set, or `None` for the default.
+    pub fn duplicate_rows_exact_limit(&self) -> Option<usize> {
+        self.duplicate_rows_exact_limit
     }
 
     /// The requested quality dimensions, if the caller narrowed them.

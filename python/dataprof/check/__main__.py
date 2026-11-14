@@ -117,6 +117,16 @@ def _non_negative_int(value: str) -> int:
     return result
 
 
+def _positive_int(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value!r}") from None
+    if result < 1:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value!r}")
+    return result
+
+
 def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
     """Detect --json (or an unambiguous abbreviation) using argparse's own rules.
 
@@ -339,6 +349,15 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--max-rows",
         type=_non_negative_int,
         help="cap the number of profiled rows",
+    )
+    parser.add_argument(
+        "--duplicate-rows-exact-limit",
+        type=_positive_int,
+        metavar="ROWS",
+        help=(
+            "count duplicate rows exactly up to ROWS distinct rows (default: 1000000), so "
+            "--max-duplicate-rows can decide on a larger source; costs 10-20 bytes per row"
+        ),
     )
     parser.add_argument(
         "--metric",
@@ -607,6 +626,7 @@ def main(argv: list[str] | None = None) -> int:
             format=args.format,
             max_rows=args.max_rows,
             metrics=args.metrics,
+            duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
             source_version=args.source_version,
         )
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:

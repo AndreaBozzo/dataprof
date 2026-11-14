@@ -67,6 +67,10 @@ pub struct ProfilerConfig {
     /// reproducible. The report records which one it used, under
     /// `quality.timeliness.clock`.
     pub reference_date: Option<chrono::NaiveDate>,
+    /// Distinct rows counted exactly for `duplicate_rows` before the count
+    /// becomes an estimate. `None` (the default) keeps one million. See
+    /// [`Profiler::duplicate_rows_exact_limit`].
+    pub duplicate_rows_exact_limit: Option<usize>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
@@ -98,6 +102,7 @@ impl Default for ProfilerConfig {
             columns: None,
             locale: None,
             reference_date: None,
+            duplicate_rows_exact_limit: None,
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
             temporal_columns: Vec::new(),
@@ -317,6 +322,31 @@ impl Profiler {
     /// ```
     pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
         self.config.reference_date = Some(date);
+        self
+    }
+
+    /// Count duplicate rows exactly up to `limit` distinct rows.
+    ///
+    /// Past one million distinct rows the duplicate-row count is an estimate
+    /// by default, and an estimate cannot fail `max_duplicate_rows`: it
+    /// witnesses no duplicate. A raised limit keeps the count exact on a
+    /// larger source, at 10 to 20 bytes per distinct row, and the row tracker
+    /// keeps that memory even past `memory_limit_mb`, so the verdict does not
+    /// depend on the machine. The report records the limit under
+    /// `quality.metrics.uniqueness.duplicate_rows_exact_limit`.
+    ///
+    /// The exact count compares 64-bit fingerprints of the rows, so two
+    /// different rows read as one duplicate with probability about
+    /// `n^2 / 2^65` over `n` distinct rows: 2e-5 at 27 million.
+    ///
+    /// ```
+    /// use dataprof::Profiler;
+    ///
+    /// let profiler = Profiler::new().duplicate_rows_exact_limit(30_000_000);
+    /// # let _ = profiler;
+    /// ```
+    pub fn duplicate_rows_exact_limit(mut self, limit: usize) -> Self {
+        self.config.duplicate_rows_exact_limit = Some(limit);
         self
     }
 
@@ -623,6 +653,7 @@ impl Profiler {
             .with_quality_dimensions(self.config.quality_dimensions.clone())
             .with_locale(self.config.locale)
             .with_reference_date(self.config.reference_date)
+            .with_duplicate_rows_exact_limit(self.config.duplicate_rows_exact_limit)
             .with_semantic_hints(hints)
     }
 

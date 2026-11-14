@@ -176,6 +176,11 @@ impl AdaptiveProfiler {
         self.update_options(|options| options.with_reference_date(Some(date)))
     }
 
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    pub fn duplicate_rows_exact_limit(self, limit: usize) -> Self {
+        self.update_options(|options| options.with_duplicate_rows_exact_limit(Some(limit)))
+    }
+
     pub fn semantic_hints(self, hints: SemanticHints) -> Self {
         self.update_options(|options| options.with_semantic_hints(hints))
     }

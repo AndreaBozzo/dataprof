@@ -351,6 +351,15 @@ pub(crate) struct BatchRowTracker {
 }
 
 impl BatchRowTracker {
+    /// A tracker that counts duplicate rows exactly up to `limit` distinct
+    /// rows. See [`RowUniquenessTracker::with_exact_limit`].
+    pub(crate) fn with_exact_limit(limit: Option<usize>) -> Self {
+        Self {
+            tracker: RowUniquenessTracker::with_exact_limit(limit),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
         self.observe_batch_with_container_markers(batch, &[]);
     }
@@ -375,9 +384,11 @@ impl BatchRowTracker {
         }
     }
 
-    /// Heap held by the exact set of row signatures.
+    /// Heap the exact set of row signatures holds against the memory budget:
+    /// none when the caller set the limit (#1292). See
+    /// [`RowUniquenessTracker::budgeted_exact_bytes`].
     pub(crate) fn exact_bytes(&self) -> usize {
-        self.tracker.exact_bytes()
+        self.tracker.budgeted_exact_bytes()
     }
 
     /// Keep the exact sets, the columns' and then the row tracker's, within
@@ -388,7 +399,7 @@ impl BatchRowTracker {
         columns: &mut [&mut CardinalityEstimator],
         budget: usize,
     ) {
-        let rows = self.tracker.exact_bytes();
+        let rows = self.tracker.budgeted_exact_bytes();
         let held = spill_largest_exact_sets(columns, budget.saturating_sub(rows)) + rows;
         if held > budget {
             self.tracker.spill();
@@ -717,6 +728,13 @@ impl RecordBatchAnalyzer {
 
     pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
         self.semantic_hints = hints.clone();
+        self
+    }
+
+    /// Count duplicate rows exactly up to `limit` distinct rows, before any
+    /// batch is processed. See [`RowUniquenessTracker::with_exact_limit`].
+    pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
+        self.row_tracker = BatchRowTracker::with_exact_limit(limit);
         self
     }
 

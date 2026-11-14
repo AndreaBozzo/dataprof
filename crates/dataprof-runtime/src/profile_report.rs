@@ -1051,6 +1051,8 @@ struct PythonUniquenessDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key_values_checked: Option<usize>,
     duplicate_rows_approximate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duplicate_rows_exact_limit: Option<usize>,
 }
 
 impl PythonProfileReportDocument {

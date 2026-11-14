@@ -213,6 +213,11 @@ impl ArrowProfiler {
         self.update_options(|options| options.with_reference_date(Some(date)))
     }
 
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    pub fn duplicate_rows_exact_limit(self, limit: usize) -> Self {
+        self.update_options(|options| options.with_duplicate_rows_exact_limit(Some(limit)))
+    }
+
     pub fn semantic_hints(self, hints: SemanticHints) -> Self {
         self.update_options(|options| options.with_semantic_hints(hints))
     }
@@ -374,7 +379,9 @@ impl ArrowProfiler {
             memory_sampler.sample_now();
             return Ok(CsvDecodeOutcome {
                 column_analyzers: std::collections::HashMap::new(),
-                row_tracker: BatchRowTracker::default(),
+                row_tracker: BatchRowTracker::with_exact_limit(
+                    self.options.duplicate_rows_exact_limit(),
+                ),
                 hint_bindings: ValueHintBindingAccumulator::new(self.options.semantic_hints()),
                 total_rows: 0,
                 padded_rows: 0,
@@ -424,7 +431,8 @@ impl ArrowProfiler {
         // reservoirs are misaligned (any column with nulls) would silently
         // skip the duplicate component of the uniqueness dimension, breaking
         // cross-engine score parity with the incremental engine.
-        let mut row_tracker = BatchRowTracker::default();
+        let mut row_tracker =
+            BatchRowTracker::with_exact_limit(self.options.duplicate_rows_exact_limit());
         let mut hint_bindings = ValueHintBindingAccumulator::new(self.options.semantic_hints());
 
         let mut memory_sampler = PeakMemorySampler::new();

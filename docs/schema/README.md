@@ -1303,3 +1303,17 @@ Absence means no value parsed as a date, the column's dates span more than
 past that), or the report predates 0.14. The flat summary carries no date
 statistics and so no gap. The field is additive and not `required`, so stored
 v1 reports remain valid.
+
+## v1 additive change: `duplicate_rows_exact_limit`
+
+`quality.metrics.uniqueness` gains an optional `duplicate_rows_exact_limit`
+(#1292): the distinct rows the full-stream row tracker counts exactly before
+`duplicate_rows` becomes an estimate. It is `1000000` unless the caller set
+`duplicate_rows_exact_limit` when profiling, and the flat summary carries it
+under the same name in `quality.uniqueness`. A limit the caller set is kept
+under memory pressure, so `duplicate_rows_approximate` is false whenever the
+source has no more distinct rows than the limit.
+
+Absence means no row tracker counted the rows (the duplicate count came from
+the retained sample), or the report predates 0.14. The field is additive and
+not `required`, so stored v1 reports remain valid.

@@ -290,6 +290,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             })
         } else {
             None
@@ -420,6 +421,7 @@ impl MetricsCalculator {
                     key_column: None,
                     key_values_checked: None,
                     duplicate_rows_approximate: false,
+                    duplicate_rows_exact_limit: None,
                 })
             } else {
                 None
@@ -604,6 +606,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             };
             if let Some(key) = metrics
                 .key_column
@@ -773,6 +776,48 @@ impl MetricsCalculator {
         })
     }
 
+    /// Score bounds, and the estimates that replace pooled scores, for an
+    /// assessment whose `sampled` components are estimates although `data`
+    /// holds every row: the uniform path's estimated duplicate-row or key
+    /// count (#1292). These are the bounds the bifurcated path attaches, so
+    /// retaining every row loses no decision the estimator bounds can make.
+    /// `(None, None)` when nothing is sampled.
+    #[allow(clippy::type_complexity)]
+    pub fn score_bounds_for(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        semantic_hints: &SemanticHints,
+        metrics: &QualityMetrics,
+        sampled: &[String],
+        row_duplicates: Option<RowDuplicateSummary>,
+    ) -> Result<
+        (
+            Option<crate::quality::ScoreBounds>,
+            Option<crate::quality::QualityScores>,
+        ),
+        DataProfilerError,
+    > {
+        let timeliness_calculator = self.timeliness_calculator();
+        let temporal_columns = Self::effective_temporal_columns(column_profiles, semantic_hints);
+        Ok(
+            match bounds::score_bounds(
+                &self.thresholds,
+                &timeliness_calculator,
+                data,
+                column_profiles,
+                semantic_hints,
+                &temporal_columns,
+                metrics,
+                sampled,
+                row_duplicates,
+            )? {
+                Some(scores) => (Some(scores.bounds), scores.estimates),
+                None => (None, None),
+            },
+        )
+    }
+
     /// Calculate sample size across data column arrays (using max inner length heuristic)
     fn calculate_sample_size(
         data: &HashMap<String, Vec<String>>,
@@ -852,6 +897,7 @@ mod tests {
                     duplicate_rows: 0,
                     rows_checked: 1_000,
                     approximate: false,
+                    exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
                     max_duplicate_rows: 0,
                 }),
             )

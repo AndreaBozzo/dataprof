@@ -21,6 +21,7 @@ _UNSIGNED_LIMITS = {
     "chunk_size": _USIZE_MAX,
     "memory_limit_mb": _USIZE_MAX,
     "progress_interval_ms": _U64_MAX,
+    "duplicate_rows_exact_limit": _USIZE_MAX,
 }
 
 # Option name -> what its list holds, for the error message.

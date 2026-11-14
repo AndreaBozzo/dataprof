@@ -586,6 +586,12 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                if let Some(limit) = u.duplicate_rows_exact_limit {
+                    m.insert(
+                        "duplicate_rows_exact_limit".into(),
+                        limit.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 Ok(m)
             })
             .transpose()

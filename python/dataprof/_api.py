@@ -110,6 +110,7 @@ def profile_file(
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: _date | str | None = None,
+    duplicate_rows_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
@@ -199,6 +200,14 @@ def profile_file(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        duplicate_rows_exact_limit: Distinct rows counted exactly for
+            duplicate rows before the count becomes an estimate. None keeps
+            one million. An estimated count witnesses no duplicate, so
+            ``max_duplicate_rows`` cannot fail on it; raise the limit to the
+            source's row count to make the check decide. It costs 10 to 20
+            bytes per distinct row, kept even past ``memory_limit_mb`` so the
+            verdict does not depend on the machine. The report records it under
+            ``quality.metrics.uniqueness["duplicate_rows_exact_limit"]``.
         source_version: The version of the source being profiled, recorded
             verbatim as ``report.source_identity["version"]``: a table
             snapshot ID, a commit version, a load or batch ID. dataprof neither
@@ -223,6 +232,7 @@ def profile_file(
             "identifier_columns": identifier_columns,
             "temporal_columns": temporal_columns,
             "temporal_pairs": temporal_pairs,
+            "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
         }
     )
     _check_source_version(source_version)
@@ -249,6 +259,7 @@ def profile_file(
         temporal_columns=temporal_columns,
         temporal_pairs=temporal_pairs,
         reference_date=reference_date,
+        duplicate_rows_exact_limit=duplicate_rows_exact_limit,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)._record_source_version(source_version)
@@ -279,6 +290,7 @@ def profile(
     temporal_columns: list[str] | None = None,
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: _date | str | None = None,
+    duplicate_rows_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
@@ -378,6 +390,14 @@ def profile(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        duplicate_rows_exact_limit: Distinct rows counted exactly for
+            duplicate rows before the count becomes an estimate. None keeps
+            one million. An estimated count witnesses no duplicate, so
+            ``max_duplicate_rows`` cannot fail on it; raise the limit to the
+            source's row count to make the check decide. It costs 10 to 20
+            bytes per distinct row, kept even past ``memory_limit_mb`` so the
+            verdict does not depend on the machine. The report records it under
+            ``quality.metrics.uniqueness["duplicate_rows_exact_limit"]``.
         source_version: The version of the source being profiled, recorded
             verbatim as ``report.source_identity["version"]``: a table
             snapshot ID, a commit version, a load or batch ID. dataprof neither
@@ -402,6 +422,7 @@ def profile(
             "identifier_columns": identifier_columns,
             "temporal_columns": temporal_columns,
             "temporal_pairs": temporal_pairs,
+            "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
         }
     )
     _check_source_version(source_version)
@@ -431,6 +452,7 @@ def profile(
             temporal_columns=temporal_columns,
             temporal_pairs=temporal_pairs,
             reference_date=reference_date,
+            duplicate_rows_exact_limit=duplicate_rows_exact_limit,
             source_version=source_version,
         )
 
@@ -450,6 +472,7 @@ def profile(
                 temporal_columns,
                 temporal_pairs,
                 reference_date,
+                duplicate_rows_exact_limit,
             )
         ):
             return ProfilerConfig(
@@ -463,6 +486,7 @@ def profile(
                 temporal_columns=temporal_columns,
                 temporal_pairs=temporal_pairs,
                 reference_date=reference_date,
+                duplicate_rows_exact_limit=duplicate_rows_exact_limit,
             )
         return None
 
