@@ -1280,3 +1280,26 @@ note next to the score when it is not empty.
 The field is absent from every report written before 0.14, which did not
 record it. An explicit `null` and an unknown reason are malformed. Stored v1
 reports remain valid.
+
+## v1 additive change: `largest_gap`
+
+The Rust dialect's `DateTime` statistics gain an optional `largest_gap`
+(#1300): the longest stretch between two consecutive distinct days of the
+column, as `{"days": 30, "from": "2024-01-31", "to": "2024-03-01"}`. `from` is
+the last day before the gap and `to` the first day after it. A contiguous daily
+column has a gap of `1`, and a column holding a single distinct day a gap of `0`
+from that day to itself. When several gaps are equally long, the earliest is
+reported. A datetime counts on its UTC day, as in the other date statistics,
+and ambiguous slash dates are read in the column's order.
+
+The gap is computed over every value read, as `metric_semantics.date_statistics`
+records for the other date statistics, so every engine and input path reports
+the same gap for the same values. A daily file that loses a period from the
+middle of its range keeps its newest date and most of its rows; this is where
+it shows, and the `max_date_gap` gate rule reads it.
+
+Absence means no value parsed as a date, the column's dates span more than
+10,000 distinct years (the profiler keeps one bitmap of days per year and stops
+past that), or the report predates 0.14. The flat summary carries no date
+statistics and so no gap. The field is additive and not `required`, so stored
+v1 reports remain valid.

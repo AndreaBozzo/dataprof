@@ -209,6 +209,23 @@ fn the_oracle_holds_the_values_past_the_sample() {
     assert_eq!(expected[0]["year_distribution"]["2026"], 1);
     assert_eq!(expected[1]["slash_date_order"], "month_first");
     assert_eq!(expected[2]["hour_distribution"]["23"], 1);
+    // The newest date opens the largest gap (#1300), so a route that read
+    // the sample alone would report a shorter one.
+    let last_cycle_day =
+        chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap() + chrono::Duration::days(499);
+    let newest = chrono::NaiveDate::from_ymd_opt(2026, 9, 29).unwrap();
+    assert_eq!(
+        expected[0]["largest_gap"],
+        serde_json::json!({
+            "days": (newest - last_cycle_day).num_days(),
+            "from": last_cycle_day.to_string(),
+            "to": "2026-09-29",
+        })
+    );
+    assert_eq!(
+        expected[1]["largest_gap"],
+        serde_json::json!({ "days": 20, "from": "2024-01-12", "to": "2024-02-01" })
+    );
 }
 
 #[test]

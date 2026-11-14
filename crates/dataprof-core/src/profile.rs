@@ -426,6 +426,52 @@ pub struct DateTimeStats {
     /// holds no slash dates, or the report predates the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slash_date_order: Option<SlashDateOrder>,
+    /// The longest stretch between two consecutive distinct days of the
+    /// column (#1300), over every value read.
+    ///
+    /// A daily file that lost a period from the middle of its range keeps its
+    /// newest date and most of its rows, and shows here: the gap grows from 1
+    /// to the length of the hole. `None` when no value parsed as a date, the
+    /// column's dates span more than 10,000 distinct years (the profiler
+    /// stops tracking days past that), or the report predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub largest_gap: Option<DateGap>,
+}
+
+/// How many distinct years a date column may span before the profiler stops
+/// tracking its distinct days, and reports no [`DateTimeStats::largest_gap`].
+///
+/// The days are kept as one 48-byte bitmap per year, about 60 bytes with its
+/// key and tree overhead, so one set at the limit holds about 0.6 MB. The
+/// limit applies to each set: a column keeps one for the values whose reading
+/// is settled and one for each reading of its ambiguous slash dates, so a
+/// column holding both at the limit retains about 1.8 MB, and finishing its
+/// statistics copies one set more while it merges them.
+pub const DATE_GAP_YEAR_LIMIT: usize = 10_000;
+
+/// Two consecutive distinct days of a date column, and the days between
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
+pub struct DateGap {
+    /// Days from `from` to `to`: `1` for consecutive days, `0` for a column
+    /// holding a single distinct day.
+    pub days: i64,
+    /// The last day before the gap, `YYYY-MM-DD`.
+    pub from: String,
+    /// The first day after the gap, `YYYY-MM-DD`.
+    pub to: String,
+}
+
+impl DateGap {
+    /// The gap from `from` to `to`, both written `YYYY-MM-DD`.
+    pub fn new(from: chrono::NaiveDate, to: chrono::NaiveDate) -> Self {
+        Self {
+            days: (to - from).num_days(),
+            from: from.format("%Y-%m-%d").to_string(),
+            to: to.format("%Y-%m-%d").to_string(),
+        }
+    }
 }
 
 /// The day/month order a column's slash dates were read in.
@@ -459,6 +505,7 @@ impl DateTimeStats {
             day_of_week_distribution: HashMap::new(),
             hour_distribution: None,
             slash_date_order: None,
+            largest_gap: None,
         }
     }
 }

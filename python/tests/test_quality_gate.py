@@ -299,6 +299,7 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "max_null_count_any": None,
             "max_duplicate_rows": None,
             "max_date_age": [],
+            "max_date_gap": [],
             "require_quality": False,
             "require_dimensions": [],
             "scope": "full_source",

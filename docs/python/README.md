@@ -1013,6 +1013,7 @@ if not result.passed:
 | `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
 | `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
+| `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
 | `baseline` | `ProfileReport` | A saved report to measure change from; the rules about change below need one |
@@ -1056,6 +1057,17 @@ retained sample, and on a file larger than the sample a stale date there is
 `evidence_incomplete` (`quality_sampled`). A column not typed as a date, or with no dates, is
 `not_assessed`; the clock is recorded with the quality assessment, so a run
 without quality is `quality_unavailable`.
+
+`max_date_gap` reads the column's `largest_gap`: the longest stretch between
+two consecutive distinct days among every value read, in calendar days, with
+the days on either side (`1` on a contiguous daily column, `0` on one holding a
+single day). A datetime counts on its UTC day. The rows that were not read can
+fill a gap or open a longer one at either edge of the range, so under
+`"full_source"` the rule decides only on a complete scan whose date statistics
+saw every value, and is `evidence_incomplete` otherwise, whichever way the
+dates read point. A column not typed as a date, with no dates, profiled before
+0.14, or whose dates span more than 10,000 distinct years (where the profiler
+stops tracking days) is `not_assessed`. The rule needs no quality assessment.
 A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
@@ -1548,6 +1560,7 @@ any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
 today's date, since the command line takes no reference date.
+`--max-date-gap COLUMN=DAYS` (0.14+) is repeatable as well.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).

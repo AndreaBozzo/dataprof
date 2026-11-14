@@ -29,17 +29,17 @@ pub use profiler::{
 pub use chrono::NaiveDate;
 pub use dataprof_core::{
     AccuracyComparison, AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema,
-    ColumnStats, CountMethod, CsvSourceMetadata, DataFrameLibrary, DataProfilerError, DataSource,
-    DataType, DateStatistics, DateTimeStats, DelimiterDetection, ExactNumericStats,
-    ExecutionMetadata, FileFormat, FrequencyItem, IsoQualityConfig, JsonNumberReading,
-    KeyColumnSource, KeyUniquenessUnits, LexicalClass, Locale, MetricPack, NULL_MARKERS,
-    NativeType, NullTokenSet, NumericStats, OutlierUnits, ParquetMetadata, Pattern,
-    PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink, QualityDimension,
-    QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent, RecoveryKind,
-    RowCountEstimate, SampledScoreEstimator, SamplingStrategy, SchemaResult, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder, StatisticRounding,
-    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit,
-    TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
+    ColumnStats, CountMethod, CsvSourceMetadata, DATE_GAP_YEAR_LIMIT, DataFrameLibrary,
+    DataProfilerError, DataSource, DataType, DateGap, DateStatistics, DateTimeStats,
+    DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat, FrequencyItem,
+    IsoQualityConfig, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, LexicalClass, Locale,
+    MetricPack, NULL_MARKERS, NativeType, NullTokenSet, NumericStats, OutlierUnits,
+    ParquetMetadata, Pattern, PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink,
+    QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent,
+    RecoveryKind, RowCountEstimate, SampledScoreEstimator, SamplingStrategy, SchemaResult,
+    SemanticHintBinding, SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder,
+    StatisticRounding, StopCondition, StopEvaluator, StructureColumnSummary, StructureReport,
+    TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
 };
 pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{
