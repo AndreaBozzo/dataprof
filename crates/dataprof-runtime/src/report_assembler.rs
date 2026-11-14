@@ -405,9 +405,30 @@ impl ReportAssembler {
                     .confidence
                     .clone()
                     .unwrap_or_else(|| self.uniform_confidence(&metrics, data));
+                // An estimated component is bounded as the bifurcated path
+                // bounds it, so the scores it reaches still decide (#1292).
+                let bounds = match &confidence {
+                    MetricConfidence::Mixed {
+                        sampled_dimensions, ..
+                    } if self.confidence.is_none() => calculator.score_bounds_for(
+                        data,
+                        &self.columns,
+                        &self.semantic_hints,
+                        &metrics,
+                        sampled_dimensions,
+                        self.row_duplicates,
+                    ),
+                    _ => Ok((None, None)),
+                };
+                let (score_bounds, estimated_scores) = match bounds {
+                    Ok(bounds) => bounds,
+                    Err(error) => return Self::failed(error),
+                };
                 (
                     Some(
                         QualityAssessment::new(metrics, confidence)
+                            .with_score_bounds(score_bounds)
+                            .with_estimated_scores(estimated_scores)
                             .with_columns_without_value_checks(Some(columns_without_value_checks(
                                 &self.columns,
                             ))),

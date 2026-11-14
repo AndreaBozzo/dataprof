@@ -188,6 +188,28 @@ fn wrong_routes(limit: Option<usize>, approximate: bool) -> Vec<String> {
                 check.status, check.message
             ));
         }
+        // The estimate is bounded, so a score requirement any source meets
+        // still passes rather than turning inconclusive.
+        let floor = QualityPolicy::new()
+            .min_quality_score(0.0)
+            .evaluate(&report)
+            .unwrap()
+            .checks
+            .remove(0);
+        if floor.status != CheckStatus::Passed {
+            wrong.push(format!(
+                "{label}: min_quality_score(0) {:?}: {}",
+                floor.status, floor.message
+            ));
+        }
+        let bounded = report
+            .quality
+            .as_ref()
+            .and_then(|quality| quality.score_bounds())
+            .is_some();
+        if approximate && !bounded {
+            wrong.push(format!("{label}: no score bounds for the estimate"));
+        }
         if metrics.duplicate_rows_exact_limit != Some(recorded) {
             wrong.push(format!(
                 "{label}: recorded {:?}",

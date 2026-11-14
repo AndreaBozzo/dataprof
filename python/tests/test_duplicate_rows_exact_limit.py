@@ -127,6 +127,12 @@ def _wrong_routes(tmp_path: Path, limit: int | None, approximate: bool) -> list[
         status = report.check(max_duplicate_rows=0).checks[0].status
         if (status == "failed") is approximate:
             wrong.append((name, "gate", status))
+        # The estimate is bounded, so a requirement any source meets passes.
+        floor = report.check(min_quality_score=0).verdict
+        if floor != "pass":
+            wrong.append((name, "min_quality_score=0", floor))
+        if approximate and report.quality_score_bounds is None:
+            wrong.append((name, "no score bounds for the estimate"))
         summary = report.to_dict()["quality"]["uniqueness"].get("duplicate_rows_exact_limit")
         document = json.loads(report.to_json())["quality"]["metrics"]["uniqueness"].get(
             "duplicate_rows_exact_limit"
