@@ -1,4 +1,4 @@
-//! Local, deterministic data profiling and quality assessment.
+//! Local data profiling and quality assessment.
 //!
 //! The `dataprof` crate is the user-facing facade for profiling CSV, JSON,
 //! JSONL, Parquet, database queries, and supported async byte sources.

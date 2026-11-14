@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dataprof"
-description = "Local, deterministic data profiling and quality assessment library"
+description = "Local data profiling and quality assessment library"
 authors = [{name = "Andrea Bozzo", email = "andreabozzo92@gmail.com"}]
 # Kept in agreement with .github/python-interpreters.json by the release gate.
 requires-python = ">=3.11,<3.16"

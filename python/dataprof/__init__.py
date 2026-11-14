@@ -1,4 +1,4 @@
-"""dataprof - local, deterministic data profiling and quality assessment."""
+"""dataprof - local data profiling and quality assessment."""
 
 from __future__ import annotations as _annotations
 
