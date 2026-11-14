@@ -607,6 +607,18 @@ impl RowUniquenessTracker {
         self.distinct.exact_bytes()
     }
 
+    /// The part of [`Self::exact_bytes`] a memory budget answers for: all of
+    /// it, unless the caller set the limit. That set is the caller's choice
+    /// of memory and stays outside the budget, so it neither spills the
+    /// column sets nor shrinks the reservoirs on every chunk (#1292).
+    pub fn budgeted_exact_bytes(&self) -> usize {
+        if self.limit_requested {
+            0
+        } else {
+            self.exact_bytes()
+        }
+    }
+
     /// Answer the duplicate count from the sketch from here on, freeing the
     /// exact set. For memory pressure; the count is then reported approximate.
     /// Returns the bytes freed.
@@ -889,7 +901,15 @@ impl StreamingColumnCollection {
     }
 
     pub fn is_memory_pressure(&self) -> bool {
-        self.memory_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
+        self.budgeted_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
+    }
+
+    /// [`Self::memory_usage_bytes`] less a row-tracker exact set the caller's
+    /// limit keeps outside the budget. See
+    /// [`RowUniquenessTracker::budgeted_exact_bytes`].
+    fn budgeted_usage_bytes(&self) -> usize {
+        self.memory_usage_bytes() - self.row_tracker.exact_bytes()
+            + self.row_tracker.budgeted_exact_bytes()
     }
 
     pub fn reduce_memory_usage(&mut self) {
@@ -908,7 +928,7 @@ impl StreamingColumnCollection {
         // Usage is measured once and each spill subtracts what it frees:
         // measuring walks every reservoir, too slow to repeat per column.
         let limit = self.memory_limit_bytes * 80 / 100;
-        let mut usage = self.memory_usage_bytes();
+        let mut usage = self.budgeted_usage_bytes();
         if usage <= limit {
             return;
         }

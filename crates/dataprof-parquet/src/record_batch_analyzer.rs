@@ -384,9 +384,11 @@ impl BatchRowTracker {
         }
     }
 
-    /// Heap held by the exact set of row signatures.
+    /// Heap the exact set of row signatures holds against the memory budget:
+    /// none when the caller set the limit (#1292). See
+    /// [`RowUniquenessTracker::budgeted_exact_bytes`].
     pub(crate) fn exact_bytes(&self) -> usize {
-        self.tracker.exact_bytes()
+        self.tracker.budgeted_exact_bytes()
     }
 
     /// Keep the exact sets, the columns' and then the row tracker's, within
@@ -397,7 +399,7 @@ impl BatchRowTracker {
         columns: &mut [&mut CardinalityEstimator],
         budget: usize,
     ) {
-        let rows = self.tracker.exact_bytes();
+        let rows = self.tracker.budgeted_exact_bytes();
         let held = spill_largest_exact_sets(columns, budget.saturating_sub(rows)) + rows;
         if held > budget {
             self.tracker.spill();

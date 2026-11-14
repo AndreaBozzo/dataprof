@@ -292,11 +292,24 @@ fn a_database_query_honours_the_limit() {
 
 /// The memory budget spills the row tracker on the engines that hold one; a
 /// limit the caller set is kept past it, so the verdict does not depend on
-/// the machine's memory.
+/// the machine's memory. The kept set is outside the budget, so it does not
+/// spill a column set the budget holds either.
 #[test]
 fn a_set_limit_survives_the_memory_budget() {
-    // 120,000 distinct rows hold about 2 MB of fingerprints, over a 1 MB budget.
-    let csv = file(".csv", &csv_text(120_000, 9));
+    // 400,000 distinct rows hold about 6 MB of fingerprints, over a 2 MB
+    // budget; column `c` has 20,000 values, which the budget holds alone.
+    let mut text = "a,b,c\n".to_string();
+    for row in (0..400_000).chain(0..9) {
+        text.push_str(&format!("{},{},{}\n", row % 400, row / 400, row % 20_000));
+    }
+    let csv = file(".csv", &text);
+    let c_estimated = |report: &ProfileReport| {
+        report
+            .column_profiles
+            .iter()
+            .find(|profile| profile.name == "c")
+            .and_then(|profile| profile.unique_count_is_approximate)
+    };
     let mut engines = vec![EngineType::Incremental];
     #[cfg(feature = "arrow")]
     engines.push(EngineType::Columnar);
@@ -305,7 +318,7 @@ fn a_set_limit_survives_the_memory_budget() {
         let run = |limit: Option<usize>| {
             profiler(limit)
                 .engine(engine)
-                .memory_limit_mb(1)
+                .memory_limit_mb(2)
                 .analyze_file(csv.path())
                 .unwrap_or_else(|e| panic!("[{engine:?}] {e}"))
         };
@@ -315,12 +328,23 @@ fn a_set_limit_survives_the_memory_budget() {
                 "{engine:?}: the budget no longer spills; test reaches nothing"
             ));
         }
-        let kept = run(Some(200_000));
+        if c_estimated(&spilled) != Some(true) {
+            wrong.push(format!(
+                "{engine:?}: column c no longer spills; test reaches nothing"
+            ));
+        }
+        let kept = run(Some(500_000));
         let metrics = uniqueness(&kept);
         if metrics.duplicate_rows_approximate || metrics.duplicate_rows != 9 {
             wrong.push(format!(
                 "{engine:?}: approximate {} count {}",
                 metrics.duplicate_rows_approximate, metrics.duplicate_rows
+            ));
+        }
+        if c_estimated(&kept) != Some(false) {
+            wrong.push(format!(
+                "{engine:?}: the kept row set spilled column c: {:?}",
+                c_estimated(&kept)
             ));
         }
     }

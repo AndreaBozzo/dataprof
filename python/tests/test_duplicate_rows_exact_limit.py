@@ -160,23 +160,30 @@ def test_without_a_limit_every_route_records_the_default(tmp_path: Path) -> None
 
 
 def test_a_set_limit_survives_the_memory_budget(tmp_path: Path) -> None:
-    # 120,000 distinct rows hold about 2 MB of fingerprints, over a 1 MB budget.
+    # 400,000 distinct rows hold about 6 MB of fingerprints, over a 2 MB budget;
+    # column `c` has 20,000 values, which the budget holds alone. The kept row
+    # set is outside the budget, so it does not spill `c` either.
     csv = tmp_path / "big.csv"
-    csv.write_text("id,label\n" + "".join(f"{i},row-{i}\n" for i in [*range(120_000), *range(9)]))
+    rows = [*range(400_000), *range(9)]
+    csv.write_text("a,b,c\n" + "".join(f"{r % 400},{r // 400},{r % 20_000}\n" for r in rows))
 
-    def uniqueness(**options: Any) -> dict[str, Any]:
-        quality = dp.profile(csv, memory_limit_mb=1, **options).quality
-        assert quality is not None and quality.uniqueness is not None
-        return quality.uniqueness
+    def run(**options: Any) -> tuple[dict[str, Any], Any]:
+        report = dp.profile(csv, memory_limit_mb=2, **options)
+        assert report.quality is not None and report.quality.uniqueness is not None
+        document = json.loads(report.to_json())
+        (c,) = [p for p in document["column_profiles"] if p["name"] == "c"]
+        return report.quality.uniqueness, c.get("unique_count_is_approximate")
 
     wrong = []
     for engine in ("incremental", "columnar"):
-        spilled = uniqueness(engine=engine)
-        if not spilled["duplicate_rows_approximate"]:
+        spilled, c_spilled = run(engine=engine)
+        if not spilled["duplicate_rows_approximate"] or c_spilled is not True:
             wrong.append((engine, "the budget no longer spills; the test reaches nothing"))
-        kept = uniqueness(engine=engine, duplicate_rows_exact_limit=200_000)
+        kept, c_kept = run(engine=engine, duplicate_rows_exact_limit=500_000)
         if kept["duplicate_rows_approximate"] or kept["duplicate_rows"] != 9:
             wrong.append((engine, kept))
+        if c_kept is not False:
+            wrong.append((engine, "the kept row set spilled column c", c_kept))
     assert not wrong, wrong
 
 

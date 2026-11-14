@@ -86,7 +86,7 @@ impl AnalysisOptions {
     /// end the exact count earlier. A limit set here is a row count, so the
     /// verdict does not depend on the machine: the row tracker keeps its exact
     /// set up to the limit whatever `memory_limit_mb` says, at 10 to 20 bytes
-    /// per distinct row, and the column sets are spilled around it instead.
+    /// per distinct row, and that set is not counted against the budget.
     pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
         self.duplicate_rows_exact_limit = limit;
         self
