@@ -763,6 +763,16 @@
         }
       ]
     },
+    "DateStatistics": {
+      "description": "Which values a date column's statistics are computed over, as recorded\nin a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 the engines that\nretain a bounded sample of each column computed `min_datetime`,\n`max_datetime`, `duration_days`, the year, month, weekday and hour\ndistributions and `slash_date_order` from that sample, so on a source\nlarger than the sample they described the sample; those releases recorded\nno definition.",
+      "oneOf": [
+        {
+          "const": "every_value",
+          "description": "Every non-null value the scan read, on every engine (#1297).",
+          "type": "string"
+        }
+      ]
+    },
     "DateTimeStats": {
       "description": "Statistics for date/datetime columns.",
       "properties": {
@@ -1249,6 +1259,10 @@
         "accuracy_comparison": {
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
+        },
+        "date_statistics": {
+          "$ref": "#/$defs/DateStatistics",
+          "description": "Which values a date column's `min_datetime`, `max_datetime`,\n`duration_days`, distributions and `slash_date_order` are computed\nover.\n\nAbsent means not recorded: through 0.13 an engine that retained a\nbounded sample computed them from it, so on a source larger than the\nsample a date outside it was missing."
         },
         "json_number_reading": {
           "$ref": "#/$defs/JsonNumberReading",

@@ -12,7 +12,7 @@ use dataprof_core::{
     TextStats,
 };
 use dataprof_metrics::{
-    ParsedNumber,
+    DateTimeAccumulator, ParsedNumber,
     analysis::column::stats_over_values,
     analysis::inference::{
         classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_inferred_date_token,
@@ -65,6 +65,13 @@ pub struct ColumnProfileInput<'a> {
     /// Number of values over the full stream accepted by the temporal parser.
     /// `None` means `sample_values` is the complete in-memory column.
     pub exact_date_matches: Option<usize>,
+    /// Date statistics over every value the engine streamed (#1297).
+    ///
+    /// When present, a date column's statistics come from here rather than
+    /// from `sample_values`, so its extremes, distributions and slash order
+    /// cover the full stream. `None` means `sample_values` is the complete
+    /// in-memory column.
+    pub exact_dates: Option<&'a DateTimeAccumulator>,
     /// The samples render a column typed as a decimal (an Arrow decimal of
     /// any width, 32 to 256 bits), which no float wrote, so they are read with
     /// `ParsedNumber::parse_decimal` and kept exact from fewer digits than
@@ -197,7 +204,9 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                         .saturating_sub(input.null_count)
                         .saturating_sub(parsed_dates),
                 );
-                if !input.sample_values.is_empty() {
+                if let Some(dates) = input.exact_dates {
+                    ColumnStats::DateTime(dates.finish())
+                } else if !input.sample_values.is_empty() {
                     calculate_datetime_stats(input.sample_values)
                 } else if let Some(tl) = &input.text_lengths {
                     ColumnStats::Text(TextStats::from_lengths(
@@ -450,6 +459,7 @@ pub fn profile_from_stats_with_hints(
         locale,
         exact_numeric: stats.exact_numeric_aggregates(),
         exact_date_matches: Some(stats.date_match_count()),
+        exact_dates: Some(stats.date_statistics()),
         decimal_values: false,
     })
 }
@@ -592,6 +602,7 @@ mod tests {
             skip_patterns: true,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -643,6 +654,7 @@ mod tests {
                     locale: None,
                     exact_numeric: None,
                     exact_date_matches: None,
+                    exact_dates: None,
                     decimal_values: false,
                 });
 
@@ -689,6 +701,7 @@ mod tests {
                     max_value: None,
                 }),
                 exact_date_matches: None,
+                exact_dates: None,
                 decimal_values: false,
             });
 
@@ -741,6 +754,7 @@ mod tests {
                 max_value: None,
             }),
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
         });
 
@@ -775,6 +789,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -811,6 +826,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -843,6 +859,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -869,6 +886,7 @@ mod tests {
             skip_patterns: true,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -900,6 +918,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });
@@ -925,6 +944,7 @@ mod tests {
             skip_patterns: false,
             exact_numeric: None,
             exact_date_matches: None,
+            exact_dates: None,
             decimal_values: false,
             locale: None,
         });

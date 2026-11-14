@@ -105,9 +105,10 @@
 //! the same rows keep their counts, nulls and scores. A newest date read on
 //! part of a source can only be overtaken by a newer one, so a fresh date
 //! passes on any scan and a stale one fails only when the values behind it
-//! cover the column. Slash dates are the exception: their day and month
-//! order is decided from the values read, so a fresh one read on part of a
-//! column passes only once that order cannot change.
+//! cover the column, which a report computing its date statistics over every
+//! value read does on a complete scan (#1297). Slash dates are the exception:
+//! their day and month order is decided from the values read, so a fresh one
+//! read on part of a column passes only once that order cannot change.
 //!
 //! # Forbidden findings
 //!
@@ -161,8 +162,8 @@ use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    ColumnProfile, ColumnStats, DataType, ExecutionMetadata, MetricPack, QualityDimension,
-    SlashDateOrder,
+    ColumnProfile, ColumnStats, DataType, DateStatistics, ExecutionMetadata, MetricPack,
+    QualityDimension, SlashDateOrder,
 };
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
@@ -1112,8 +1113,10 @@ impl QualityPolicy {
     /// gets newer as more values are read, so under [`PolicyScope::FullSource`]
     /// a fresh date passes whatever the scan missed, and a stale one fails
     /// only when the values behind it cover the column: every row read, and
-    /// the retained sample the date statistics are computed from holding
-    /// every non-null value. The exception is a column of slash dates whose
+    /// the date statistics computed over every value read. A report that
+    /// records `metric_semantics.date_statistics` computed them so (#1297);
+    /// for an older one the retained sample they came from must hold every
+    /// non-null value. The exception is a column of slash dates whose
     /// day and month order the unread values could still change
     /// (`assumed_day_first` or `month_first`): there a fresh date read on
     /// part of the column is [`NotEvaluated::EvidenceIncomplete`] too. A column with no newest date (not typed as a
@@ -2201,7 +2204,7 @@ impl QualityPolicy {
                 return check;
             }
         };
-        check.evidence = scan.and(date_sample_evidence(profile));
+        check.evidence = scan.and(date_statistics_evidence(report, profile));
         let Some(quality) = report.quality.as_ref() else {
             return unavailable_quality(check, report);
         };
@@ -3938,12 +3941,23 @@ fn slash_order_settled(order: Option<SlashDateOrder>) -> bool {
     )
 }
 
-/// Whether a column's date statistics saw every non-null value read. They
-/// are computed from the values the profiler retained, the same values its
-/// `type_homogeneity` classifies, so a classified count short of the non-null
-/// count says the retained sample left some out. A report without the
-/// classification does not record which happened.
-fn date_sample_evidence(profile: &ColumnProfile) -> Evidence {
+/// Whether a column's date statistics saw every non-null value read.
+///
+/// A report that records `date_statistics: every_value` computed them over
+/// every value read (#1297). One that records nothing computed them from the
+/// values the profiler retained, the same values its `type_homogeneity`
+/// classifies, so a classified count short of the non-null count says the
+/// retained sample left some out. A report without the classification does
+/// not record which happened.
+fn date_statistics_evidence(report: &ProfileReport, profile: &ColumnProfile) -> Evidence {
+    let every_value = report
+        .metric_semantics
+        .as_ref()
+        .and_then(|semantics| semantics.date_statistics)
+        == Some(DateStatistics::EveryValue);
+    if every_value {
+        return Evidence::Complete;
+    }
     let non_null = profile.total_count.saturating_sub(profile.null_count);
     match &profile.type_homogeneity {
         Some(forms) if forms.classified_count() >= non_null => Evidence::Complete,

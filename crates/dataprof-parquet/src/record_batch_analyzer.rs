@@ -10,7 +10,8 @@ use dataprof_core::{
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, NumericAccumulator, ParsedNumber, spill_largest_exact_sets,
+    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+    spill_largest_exact_sets,
 };
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
@@ -942,6 +943,9 @@ pub struct ColumnAnalyzer {
     positive_matched_values: usize,
     temporal_matched_values: usize,
     date_matched_values: usize,
+    /// Date statistics over every non-null value, independent of the
+    /// sample (#1297).
+    dates: DateTimeAccumulator,
 }
 
 impl ColumnAnalyzer {
@@ -975,6 +979,7 @@ impl ColumnAnalyzer {
             positive_matched_values: 0,
             temporal_matched_values: 0,
             date_matched_values: 0,
+            dates: DateTimeAccumulator::new(),
         }
     }
 
@@ -984,6 +989,9 @@ impl ColumnAnalyzer {
                 && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Temporal);
             if matches_date {
                 self.date_matched_values += 1;
+            }
+            if self.should_track_date_matches() {
+                self.dates.update(value);
             }
             if self.positive_hint || self.temporal_hint {
                 self.hint_checked_values += 1;
@@ -1787,6 +1795,7 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
+            exact_dates: Some(&self.dates),
             decimal_values: matches!(
                 self.data_type,
                 arrow::datatypes::DataType::Decimal32(_, _)

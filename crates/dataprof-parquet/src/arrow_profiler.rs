@@ -9,7 +9,9 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, ParsedNumber};
+use dataprof_metrics::{
+    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
     StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
@@ -738,6 +740,9 @@ struct ColumnAnalyzer {
     // Reservoir sample for pattern detection and order statistics
     sample_values: StreamReservoirSampler,
     date_matched_values: usize,
+    /// Date statistics over every non-null value, independent of the
+    /// sample (#1297).
+    dates: DateTimeAccumulator,
 }
 
 impl ColumnAnalyzer {
@@ -752,6 +757,7 @@ impl ColumnAnalyzer {
             total_length: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
             date_matched_values: 0,
+            dates: DateTimeAccumulator::new(),
         }
     }
 
@@ -759,6 +765,7 @@ impl ColumnAnalyzer {
         if dataprof_metrics::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
+        self.dates.update(value);
         self.sample_values.offer(value);
     }
 
@@ -869,6 +876,7 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
+            exact_dates: Some(&self.dates),
             decimal_values: false,
         })
     }

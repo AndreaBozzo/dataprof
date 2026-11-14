@@ -3,11 +3,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, JsonNumberReading, KeyColumnSource,
-    KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
-    QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval, SemanticHintKind,
-    ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateStatistics, JsonNumberReading,
+    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount,
+    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
+    QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval,
+    SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit,
+    TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1380,6 +1381,14 @@ impl PyProfileReport {
                 "sampled_score_estimator",
                 match estimator {
                     SampledScoreEstimator::PopulationWeighted => "population_weighted",
+                },
+            )?;
+        }
+        if let Some(statistics) = semantics.date_statistics {
+            dict.set_item(
+                "date_statistics",
+                match statistics {
+                    DateStatistics::EveryValue => "every_value",
                 },
             )?;
         }

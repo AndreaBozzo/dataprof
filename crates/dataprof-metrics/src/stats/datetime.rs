@@ -69,36 +69,82 @@ fn parses_slash(value: &str, format_date: &str, format_datetime: &str) -> bool {
 /// instead read every ambiguous value of a US column day-first, so half its
 /// dates were wrong by months with nothing in the report to say so (#811).
 pub fn resolve_slash_order<S: AsRef<str>>(values: &[S]) -> Option<SlashDateOrder> {
-    let mut slash_dates = 0usize;
-    let mut day_only = 0usize;
-    let mut month_only = 0usize;
+    let mut tally = SlashTally::default();
     for value in values {
-        let trimmed = value.as_ref().trim();
-        // Most values of most columns carry no slash; skip the four parses.
-        if !trimmed.contains('/') {
-            continue;
-        }
-        let day_first = parses_slash(trimmed, SLASH_DATE_DAY_FIRST, SLASH_DATETIME_DAY_FIRST);
-        let month_first = parses_slash(trimmed, SLASH_DATE_MONTH_FIRST, SLASH_DATETIME_MONTH_FIRST);
-        match (day_first, month_first) {
-            (true, true) => slash_dates += 1,
-            (true, false) => {
-                slash_dates += 1;
-                day_only += 1;
-            }
-            (false, true) => {
-                slash_dates += 1;
-                month_only += 1;
-            }
-            (false, false) => {}
-        }
+        tally.observe(value.as_ref().trim());
     }
-    match (slash_dates, day_only, month_only) {
-        (0, _, _) => None,
-        (_, 0, 0) => Some(SlashDateOrder::AssumedDayFirst),
-        (_, _, 0) => Some(SlashDateOrder::DayFirst),
-        (_, 0, _) => Some(SlashDateOrder::MonthFirst),
-        _ => Some(SlashDateOrder::Mixed),
+    tally.order()
+}
+
+/// How a value reads as a slash date: in which orders it parses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlashReading {
+    /// Not a slash date in either order.
+    None,
+    /// Only day-first (`31/12/2024`).
+    DayOnly,
+    /// Only month-first (`12/31/2024`).
+    MonthOnly,
+    /// Both ways (`01/02/2024`): the column's order decides it.
+    Ambiguous,
+}
+
+fn slash_reading(trimmed: &str) -> SlashReading {
+    // Most values of most columns carry no slash; skip the four parses.
+    if !trimmed.contains('/') {
+        return SlashReading::None;
+    }
+    let day_first = parses_slash(trimmed, SLASH_DATE_DAY_FIRST, SLASH_DATETIME_DAY_FIRST);
+    let month_first = parses_slash(trimmed, SLASH_DATE_MONTH_FIRST, SLASH_DATETIME_MONTH_FIRST);
+    match (day_first, month_first) {
+        (true, true) => SlashReading::Ambiguous,
+        (true, false) => SlashReading::DayOnly,
+        (false, true) => SlashReading::MonthOnly,
+        (false, false) => SlashReading::None,
+    }
+}
+
+/// The evidence [`resolve_slash_order`] decides from, counted value by value
+/// so a stream can decide it over every value it read.
+#[derive(Debug, Clone, Copy, Default)]
+struct SlashTally {
+    slash_dates: usize,
+    day_only: usize,
+    month_only: usize,
+}
+
+impl SlashTally {
+    fn observe(&mut self, trimmed: &str) -> SlashReading {
+        let reading = slash_reading(trimmed);
+        match reading {
+            SlashReading::None => {}
+            SlashReading::Ambiguous => self.slash_dates += 1,
+            SlashReading::DayOnly => {
+                self.slash_dates += 1;
+                self.day_only += 1;
+            }
+            SlashReading::MonthOnly => {
+                self.slash_dates += 1;
+                self.month_only += 1;
+            }
+        }
+        reading
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.slash_dates += other.slash_dates;
+        self.day_only += other.day_only;
+        self.month_only += other.month_only;
+    }
+
+    fn order(&self) -> Option<SlashDateOrder> {
+        match (self.slash_dates, self.day_only, self.month_only) {
+            (0, _, _) => None,
+            (_, 0, 0) => Some(SlashDateOrder::AssumedDayFirst),
+            (_, _, 0) => Some(SlashDateOrder::DayFirst),
+            (_, 0, _) => Some(SlashDateOrder::MonthFirst),
+            _ => Some(SlashDateOrder::Mixed),
+        }
     }
 }
 
@@ -116,49 +162,218 @@ pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
 
 /// Compute datetime stats and return the inner struct directly.
 pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
-    let slash_date_order = resolve_slash_order(data);
-    let month_first = reads_month_first(slash_date_order);
-    let parsed: Vec<ParsedDateTime> = data
-        .iter()
-        .filter_map(|s| parse_flexible_full(s, month_first))
-        .collect();
+    let mut accumulator = DateTimeAccumulator::new();
+    for value in data {
+        accumulator.update(value);
+    }
+    accumulator.finish()
+}
 
-    if parsed.is_empty() {
-        return DateTimeStats::empty();
+/// Date statistics over every value a column streams, independent of the
+/// values an engine retains (#1297).
+///
+/// The earliest and latest dates, the duration between them, the year, month,
+/// weekday and hour distributions and the slash order are all decided over
+/// every value offered, so an engine that keeps only a bounded sample reports
+/// what an in-memory source holding every value reports.
+///
+/// A slash date that parses both ways (`01/02/2024`) is read in an order the
+/// whole column decides, which is known only once every value is in. Those
+/// values are therefore tallied under both readings, and [`finish`] keeps the
+/// one the column's order selects. Every other value reads the same in
+/// either order.
+///
+/// [`finish`]: DateTimeAccumulator::finish
+#[derive(Debug, Clone, Default)]
+pub struct DateTimeAccumulator {
+    slash: SlashTally,
+    /// Values whose reading does not depend on the column's slash order.
+    settled: DateTally,
+    /// Ambiguous slash dates read day-first.
+    ambiguous_day_first: DateTally,
+    /// Ambiguous slash dates read month-first.
+    ambiguous_month_first: DateTally,
+}
+
+impl DateTimeAccumulator {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    // Extract dates for date-based calculations
-    let dates: Vec<NaiveDate> = parsed.iter().map(|p| p.date).collect();
+    /// Offer one value. A value that does not parse as a date is ignored, as
+    /// the statistics over a retained sample ignore it.
+    pub fn update(&mut self, value: &str) {
+        let trimmed = value.trim();
+        if !may_parse_as_date(trimmed) {
+            return;
+        }
+        match self.slash.observe(trimmed) {
+            SlashReading::Ambiguous => {
+                if let Some(parsed) = parse_flexible_full(trimmed, false) {
+                    self.ambiguous_day_first.add(&parsed);
+                }
+                if let Some(parsed) = parse_flexible_full(trimmed, true) {
+                    self.ambiguous_month_first.add(&parsed);
+                }
+            }
+            _ => {
+                if let Some(parsed) = parse_flexible_full(trimmed, false) {
+                    self.settled.add(&parsed);
+                }
+            }
+        }
+    }
 
-    // Calculate min/max and duration
-    let min_date = dates.iter().min().unwrap();
-    let max_date = dates.iter().max().unwrap();
-    let duration_days = (*max_date - *min_date).num_days() as f64;
+    pub fn merge(&mut self, other: &Self) {
+        self.slash.merge(&other.slash);
+        self.settled.merge(&other.settled);
+        self.ambiguous_day_first.merge(&other.ambiguous_day_first);
+        self.ambiguous_month_first
+            .merge(&other.ambiguous_month_first);
+    }
 
-    // Build distributions from dates
-    let year_distribution = build_year_distribution(&dates);
-    let month_distribution = build_month_distribution(&dates);
-    let day_of_week_distribution = build_day_of_week_distribution(&dates);
+    /// The statistics over every value offered.
+    pub fn finish(&self) -> DateTimeStats {
+        let slash_date_order = self.slash.order();
+        let mut tally = self.settled.clone();
+        tally.merge(if reads_month_first(slash_date_order) {
+            &self.ambiguous_month_first
+        } else {
+            &self.ambiguous_day_first
+        });
+        let (Some(min_date), Some(max_date)) = (tally.min, tally.max) else {
+            return DateTimeStats::empty();
+        };
+        let present = |counts: &[usize], first: u32| -> HashMap<u32, usize> {
+            counts
+                .iter()
+                .zip(first..)
+                .filter(|(count, _)| **count > 0)
+                .map(|(count, key)| (key, *count))
+                .collect()
+        };
+        let day_of_week_distribution = tally
+            .weekdays
+            .iter()
+            .zip(WEEKDAYS_FROM_MONDAY)
+            .filter(|(count, _)| **count > 0)
+            .map(|(count, day)| (weekday_name(day).to_string(), *count))
+            .collect();
+        DateTimeStats {
+            min_datetime: min_date.format("%Y-%m-%d").to_string(),
+            max_datetime: max_date.format("%Y-%m-%d").to_string(),
+            duration_days: (max_date - min_date).num_days() as f64,
+            month_distribution: present(&tally.months, 1),
+            hour_distribution: (tally.datetimes > 0).then(|| present(&tally.hours, 0)),
+            year_distribution: tally.years,
+            day_of_week_distribution,
+            slash_date_order,
+        }
+    }
+}
 
-    // Build hour distribution from datetimes (if any have time components)
-    let datetimes: Vec<NaiveDateTime> = parsed.iter().filter_map(|p| p.datetime).collect();
+const WEEKDAYS_FROM_MONDAY: [Weekday; 7] = [
+    Weekday::Mon,
+    Weekday::Tue,
+    Weekday::Wed,
+    Weekday::Thu,
+    Weekday::Fri,
+    Weekday::Sat,
+    Weekday::Sun,
+];
 
-    let hour_distribution = if datetimes.is_empty() {
-        None
-    } else {
-        Some(build_hour_distribution(&datetimes))
+/// The dates of a set of values: their extremes and how they distribute.
+#[derive(Debug, Clone, Default)]
+struct DateTally {
+    min: Option<NaiveDate>,
+    max: Option<NaiveDate>,
+    years: HashMap<i32, usize>,
+    /// Indexed by month, January first.
+    months: [usize; 12],
+    /// Indexed by weekday, Monday first.
+    weekdays: [usize; 7],
+    /// Indexed by hour, over the values that carry a time.
+    hours: [usize; 24],
+    /// Values that carry a time.
+    datetimes: usize,
+}
+
+impl DateTally {
+    fn add(&mut self, parsed: &ParsedDateTime) {
+        let date = parsed.date;
+        self.min = Some(self.min.map_or(date, |min| min.min(date)));
+        self.max = Some(self.max.map_or(date, |max| max.max(date)));
+        *self.years.entry(date.year()).or_insert(0) += 1;
+        self.months[date.month0() as usize] += 1;
+        self.weekdays[date.weekday().num_days_from_monday() as usize] += 1;
+        if let Some(datetime) = parsed.datetime {
+            self.hours[datetime.hour() as usize] += 1;
+            self.datetimes += 1;
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.min = match (self.min, other.min) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        self.max = match (self.max, other.max) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        for (year, count) in &other.years {
+            *self.years.entry(*year).or_insert(0) += count;
+        }
+        for (mine, theirs) in self.months.iter_mut().zip(other.months) {
+            *mine += theirs;
+        }
+        for (mine, theirs) in self.weekdays.iter_mut().zip(other.weekdays) {
+            *mine += theirs;
+        }
+        for (mine, theirs) in self.hours.iter_mut().zip(other.hours) {
+            *mine += theirs;
+        }
+        self.datetimes += other.datetimes;
+    }
+}
+
+/// Whether a trimmed value can parse as any form [`parse_flexible_full`]
+/// reads, so the formats are tried only on values that might.
+///
+/// Every form starts with its date, and every date reads as a number (a year
+/// may carry a sign), a separator (`-`, `/` or `.`), a field of one or two
+/// digits (`%m` or `%d`), the same separator again, and a digit. The
+/// accumulator is offered every value of every column, so this shape check
+/// keeps the formats away from integers, decimals, free text and codes such
+/// as UUIDs, which used to cost most of the time on a wide file.
+fn may_parse_as_date(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let digits = |from: usize| {
+        bytes[from.min(bytes.len())..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
     };
-
-    DateTimeStats {
-        min_datetime: min_date.format("%Y-%m-%d").to_string(),
-        max_datetime: max_date.format("%Y-%m-%d").to_string(),
-        duration_days,
-        year_distribution,
-        month_distribution,
-        day_of_week_distribution,
-        hour_distribution,
-        slash_date_order,
+    let leading = digits(at);
+    if leading == 0 {
+        return false;
     }
+    at += leading;
+    let Some(separator) = bytes
+        .get(at)
+        .copied()
+        .filter(|byte| matches!(byte, b'-' | b'/' | b'.'))
+    else {
+        return false;
+    };
+    at += 1;
+    let middle = digits(at);
+    if !(1..=2).contains(&middle) {
+        return false;
+    }
+    at += middle;
+    bytes.get(at) == Some(&separator) && bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
 }
 
 /// Parse one value, reading an ambiguous slash date month-first when
@@ -298,31 +513,6 @@ fn looks_like_raw_datetime_candidate(s: &str) -> bool {
     (year_first || year_last) && s.trim().len() == s.len()
 }
 
-fn build_year_distribution(dates: &[NaiveDate]) -> HashMap<i32, usize> {
-    let mut dist = HashMap::new();
-    for date in dates {
-        *dist.entry(date.year()).or_insert(0) += 1;
-    }
-    dist
-}
-
-fn build_month_distribution(dates: &[NaiveDate]) -> HashMap<u32, usize> {
-    let mut dist = HashMap::new();
-    for date in dates {
-        *dist.entry(date.month()).or_insert(0) += 1;
-    }
-    dist
-}
-
-fn build_day_of_week_distribution(dates: &[NaiveDate]) -> HashMap<String, usize> {
-    let mut dist = HashMap::new();
-    for date in dates {
-        let day_name = weekday_name(date.weekday());
-        *dist.entry(day_name.to_string()).or_insert(0) += 1;
-    }
-    dist
-}
-
 fn weekday_name(weekday: Weekday) -> &'static str {
     match weekday {
         Weekday::Mon => "Monday",
@@ -333,14 +523,6 @@ fn weekday_name(weekday: Weekday) -> &'static str {
         Weekday::Sat => "Saturday",
         Weekday::Sun => "Sunday",
     }
-}
-
-fn build_hour_distribution(datetimes: &[NaiveDateTime]) -> HashMap<u32, usize> {
-    let mut dist = HashMap::new();
-    for dt in datetimes {
-        *dist.entry(dt.hour()).or_insert(0) += 1;
-    }
-    dist
 }
 
 #[cfg(test)]
@@ -395,40 +577,96 @@ mod tests {
         assert_eq!(parse_raw_datetime_year("ordinary text value"), None);
     }
 
-    #[test]
-    fn test_year_distribution() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2023, 6, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
-        ];
-        let dist = build_year_distribution(&dates);
-        assert_eq!(dist.get(&2023), Some(&2));
-        assert_eq!(dist.get(&2024), Some(&1));
+    fn stats_of(items: &[&str]) -> DateTimeStats {
+        compute_datetime_stats(&values(items))
     }
 
     #[test]
-    fn test_month_distribution() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2023, 1, 1).unwrap(),
-            NaiveDate::from_ymd_opt(2023, 1, 15).unwrap(),
-            NaiveDate::from_ymd_opt(2023, 2, 1).unwrap(),
-        ];
-        let dist = build_month_distribution(&dates);
-        assert_eq!(dist.get(&1), Some(&2));
-        assert_eq!(dist.get(&2), Some(&1));
+    fn test_year_month_and_weekday_distributions() {
+        // 2023-01-02 and 2023-01-09 are Mondays, 2024-01-02 a Tuesday.
+        let stats = stats_of(&["2023-01-02", "2023-01-09", "2023-06-01", "2024-01-02"]);
+        assert_eq!(stats.year_distribution.get(&2023), Some(&3));
+        assert_eq!(stats.year_distribution.get(&2024), Some(&1));
+        assert_eq!(stats.month_distribution.get(&1), Some(&3));
+        assert_eq!(stats.month_distribution.get(&6), Some(&1));
+        assert_eq!(stats.month_distribution.len(), 2);
+        assert_eq!(stats.day_of_week_distribution.get("Monday"), Some(&2));
+        assert_eq!(stats.day_of_week_distribution.get("Tuesday"), Some(&1));
+        assert_eq!(stats.day_of_week_distribution.get("Thursday"), Some(&1));
+        assert_eq!(stats.day_of_week_distribution.len(), 3);
+        assert!(stats.hour_distribution.is_none());
     }
 
     #[test]
-    fn test_day_of_week_distribution() {
-        let dates = vec![
-            NaiveDate::from_ymd_opt(2023, 1, 2).unwrap(), // Monday
-            NaiveDate::from_ymd_opt(2023, 1, 3).unwrap(), // Tuesday
-            NaiveDate::from_ymd_opt(2023, 1, 9).unwrap(), // Monday again
-        ];
-        let dist = build_day_of_week_distribution(&dates);
-        assert_eq!(dist.get("Monday"), Some(&2));
-        assert_eq!(dist.get("Tuesday"), Some(&1));
+    fn values_that_cannot_be_dates_skip_the_formats() {
+        let stats = stats_of(&["12", "-3.5", "1e5", "text", "2024-01-15"]);
+        assert_eq!(stats.min_datetime, "2024-01-15");
+        assert_eq!(stats.year_distribution.values().sum::<usize>(), 1);
+        // The pre-filter never drops a value the formats would read.
+        for value in [
+            "2024-01-15",
+            "15/01/2024",
+            "1/2/2024",
+            "15-01-2024",
+            "15.01.2024",
+            "2024/01/15",
+            "2024-01-15T10:30:00",
+            "2024-01-15 10:30:00",
+            "2024-01-15T10:30:00.125",
+            "2024-01-15T10:30:00+02:00",
+            "01/15/2024 10:30:00",
+            "+2024-01-15",
+        ] {
+            assert!(parse_flexible_full(value, false).is_some(), "{value}");
+            assert!(may_parse_as_date(value), "{value}");
+        }
+        for value in [
+            "20240115",
+            "2024",
+            "1.5e3",
+            "-1.5e3",
+            "12.5",
+            "a1b2-c3d4-e5",
+            "12345678-1a2b-3c4d-5e6f-7a8b9c0d1e2f",
+            "00000012-0012-x",
+            "2024-01/15",
+        ] {
+            assert!(!may_parse_as_date(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn split_and_merged_streams_give_the_one_stream_statistics() {
+        // The month-first evidence arrives in the second half, after the
+        // ambiguous value it decides has already been read.
+        let first = ["01/02/2024", "2023-05-06T07:08:09", "05/06/2024 10:00:00"];
+        let second = ["12/31/2024", "2022-01-01"];
+        let whole = stats_of(&[&first[..], &second[..]].concat());
+
+        let mut left = DateTimeAccumulator::new();
+        first.iter().for_each(|value| left.update(value));
+        let mut right = DateTimeAccumulator::new();
+        second.iter().for_each(|value| right.update(value));
+        left.merge(&right);
+        let merged = left.finish();
+
+        assert_eq!(whole.slash_date_order, Some(SlashDateOrder::MonthFirst));
+        assert_eq!(merged.slash_date_order, whole.slash_date_order);
+        assert_eq!(merged.min_datetime, "2022-01-01");
+        assert_eq!(merged.max_datetime, "2024-12-31");
+        assert_eq!(merged.min_datetime, whole.min_datetime);
+        assert_eq!(merged.max_datetime, whole.max_datetime);
+        assert_eq!(merged.duration_days, whole.duration_days);
+        assert_eq!(merged.year_distribution, whole.year_distribution);
+        // 01/02/2024 month-first is 2 January; day-first it would be February.
+        assert_eq!(whole.month_distribution.get(&2), None);
+        assert_eq!(merged.month_distribution, whole.month_distribution);
+        assert_eq!(
+            merged.day_of_week_distribution,
+            whole.day_of_week_distribution
+        );
+        assert_eq!(merged.hour_distribution, whole.hour_distribution);
+        assert_eq!(whole.hour_distribution.as_ref().unwrap().len(), 2);
     }
 
     #[test]

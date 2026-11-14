@@ -1004,6 +1004,31 @@ have those rules decided again. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for
 `sampled_score_estimator` is malformed, as for `text_length_unit`.
 
+## v1 additive change: `metric_semantics.date_statistics`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `date_statistics` | `"every_value"` | which values a date column's `min_datetime`, `max_datetime`, `duration_days`, year, month, weekday and hour distributions and `slash_date_order` are computed over |
+
+The file, Arrow and streaming engines keep at most 10,000 values of each
+column. Through 0.13 they computed a date column's statistics from those
+values, so on a larger source a date outside them was missing from
+`min_datetime` and `max_datetime`, the distributions counted the sample, and
+the slash order was decided from it, while the same data profiled in memory
+reported every value (#1297). The statistics are now computed over every
+non-null value read, on every engine. A source whose sample held every value
+reports as before.
+
+A `max_date_age` rule reads the record: with it, the newest date covers every
+value read, so a stale one fails on a complete scan. A report that records no
+`date_statistics` reads back with it unknown, and the rule keeps its earlier
+reading, `evidence_incomplete` (`quality_sampled`) for a stale date on a
+column larger than its sample. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for `date_statistics` is
+malformed, as for `text_length_unit`.
+
 ## v1 additive change: `generator`
 
 Both dialects gain a top-level `generator` object naming the dataprof build

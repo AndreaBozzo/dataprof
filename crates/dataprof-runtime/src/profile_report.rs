@@ -2,10 +2,10 @@ use std::sync::OnceLock;
 
 use dataprof_core::{
     AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
-    ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, Locale,
-    MetricPack, NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
-    SampledScoreEstimator, SemanticHintBinding, ShapeMomentEstimator, StatisticRounding,
-    TextLengthUnit,
+    DateStatistics, ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource,
+    KeyUniquenessUnits, Locale, MetricPack, NullTokenSet, OutlierUnits, PatternMatchCount,
+    QualityScoreWeights, RangeRuleCount, SampledScoreEstimator, SemanticHintBinding,
+    ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -219,6 +219,20 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "SampledScoreEstimator")]
     pub sampled_score_estimator: Option<SampledScoreEstimator>,
+    /// Which values a date column's `min_datetime`, `max_datetime`,
+    /// `duration_days`, distributions and `slash_date_order` are computed
+    /// over.
+    ///
+    /// Absent means not recorded: through 0.13 an engine that retained a
+    /// bounded sample computed them from it, so on a source larger than the
+    /// sample a date outside it was missing.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "DateStatistics")]
+    pub date_statistics: Option<DateStatistics>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -247,6 +261,7 @@ impl MetricSemantics {
             accuracy_comparison: Some(AccuracyComparison::ExactValues),
             json_number_reading: Some(JsonNumberReading::LiteralDigits),
             sampled_score_estimator: Some(SampledScoreEstimator::PopulationWeighted),
+            date_statistics: Some(DateStatistics::EveryValue),
         }
     }
 
@@ -268,6 +283,7 @@ impl MetricSemantics {
             accuracy_comparison,
             json_number_reading,
             sampled_score_estimator,
+            date_statistics,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -281,6 +297,7 @@ impl MetricSemantics {
             && accuracy_comparison.is_some()
             && json_number_reading.is_some()
             && sampled_score_estimator.is_some()
+            && date_statistics.is_some()
     }
 }
 
@@ -1751,6 +1768,7 @@ mod tests {
             "accuracy_comparison": "exact_values",
             "json_number_reading": "literal_digits",
             "sampled_score_estimator": "population_weighted",
+            "date_statistics": "every_value",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
