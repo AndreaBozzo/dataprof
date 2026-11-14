@@ -13,7 +13,15 @@
 //! of every option. `python/tests/test_request_resolution.py` is the Python
 //! twin.
 
+#[cfg(feature = "async-streaming")]
+use std::io::Read;
 use std::io::Write;
+#[cfg(feature = "async-streaming")]
+use std::net::TcpListener;
+#[cfg(feature = "async-streaming")]
+use std::thread::{self, JoinHandle};
+#[cfg(feature = "async-streaming")]
+use std::time::Duration;
 
 use dataprof::{
     ColumnStats, EngineType, Locale, MetricPack, NaiveDate, ProfileReport, Profiler,
@@ -150,7 +158,17 @@ fn fixtures() -> Vec<(&'static str, NamedTempFile)> {
 /// A profiler with every analysis option set to something other than its
 /// default, each one observable in the report.
 fn configured() -> Profiler {
-    Profiler::new()
+    configured_with_semantic_hints(true)
+}
+
+/// Database profiling currently rejects semantic hints, so query coverage
+/// exercises the rest of the same selection.
+fn configured_without_semantic_hints() -> Profiler {
+    configured_with_semantic_hints(false)
+}
+
+fn configured_with_semantic_hints(include_hints: bool) -> Profiler {
+    let profiler = Profiler::new()
         .columns(SELECTED.iter().map(|name| name.to_string()).collect())
         .metric_packs(vec![
             MetricPack::Schema,
@@ -162,13 +180,18 @@ fn configured() -> Profiler {
             dataprof::QualityDimension::Timeliness,
         ])
         .locale(Locale::It)
-        .reference_date(NaiveDate::parse_from_str(REFERENCE, "%Y-%m-%d").unwrap())
-        .temporal_columns(vec!["created".into()])
-        .identifier_columns(vec!["n0".into()])
+        .reference_date(NaiveDate::parse_from_str(REFERENCE, "%Y-%m-%d").unwrap());
+    if include_hints {
+        profiler
+            .temporal_columns(vec!["created".into()])
+            .identifier_columns(vec!["n0".into()])
+    } else {
+        profiler
+    }
 }
 
 /// Every option the report does not reflect, for one route.
-fn missed_options(report: &ProfileReport) -> Vec<String> {
+fn missed_options(report: &ProfileReport, expect_semantic_hints: bool) -> Vec<String> {
     let mut missed = Vec::new();
 
     let names: Vec<&str> = report
@@ -220,26 +243,37 @@ fn missed_options(report: &ProfileReport) -> Vec<String> {
         missed.push(format!("reference_date: clock {clock}"));
     }
 
-    let mut bindings: Vec<(String, SemanticHintKind)> = report
-        .semantic_hint_bindings
-        .iter()
-        .map(|b| (b.column.clone(), b.kind))
-        .collect();
-    bindings.sort_by(|a, b| a.0.cmp(&b.0));
-    let expected = vec![
-        ("created".to_string(), SemanticHintKind::Temporal),
-        ("n0".to_string(), SemanticHintKind::Identifier),
-    ];
-    if bindings != expected {
-        missed.push(format!("semantic hints: bindings {bindings:?}"));
+    if expect_semantic_hints {
+        let mut bindings: Vec<(String, SemanticHintKind)> = report
+            .semantic_hint_bindings
+            .iter()
+            .map(|b| (b.column.clone(), b.kind))
+            .collect();
+        bindings.sort_by(|a, b| a.0.cmp(&b.0));
+        let expected = vec![
+            ("created".to_string(), SemanticHintKind::Temporal),
+            ("n0".to_string(), SemanticHintKind::Identifier),
+        ];
+        if bindings != expected {
+            missed.push(format!("semantic hints: bindings {bindings:?}"));
+        }
     }
     missed
 }
 
 fn check(wrong: &mut Vec<String>, route: &str, result: Result<ProfileReport, impl ToString>) {
+    check_with_hint_expectation(wrong, route, result, true);
+}
+
+fn check_with_hint_expectation(
+    wrong: &mut Vec<String>,
+    route: &str,
+    result: Result<ProfileReport, impl ToString>,
+    expect_semantic_hints: bool,
+) {
     match result {
         Ok(report) => {
-            for missed in missed_options(&report) {
+            for missed in missed_options(&report, expect_semantic_hints) {
                 wrong.push(format!("{route}: {missed}"));
             }
         }
@@ -345,5 +379,200 @@ fn every_async_route_honours_every_analysis_option() {
             runtime.block_on(configured().profile_stream(source)),
         );
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[cfg(feature = "async-streaming")]
+struct StaticHttpServer {
+    url: String,
+    handle: JoinHandle<()>,
+}
+
+#[cfg(feature = "async-streaming")]
+impl StaticHttpServer {
+    fn join(self) {
+        self.handle.join().unwrap();
+    }
+}
+
+/// Serve one fixture as a plain HTTP object, including byte ranges for Parquet.
+#[cfg(feature = "async-streaming")]
+fn spawn_static_http_server(
+    path: &str,
+    body: Vec<u8>,
+    request_limit: Option<usize>,
+) -> StaticHttpServer {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!(
+        "http://127.0.0.1:{}/{}",
+        listener.local_addr().unwrap().port(),
+        path
+    );
+    let handle = thread::spawn(move || {
+        let mut served = 0;
+        let mut idle = 0;
+        loop {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if request_limit.is_none() && idle >= 50 {
+                        return;
+                    }
+                    idle += 1;
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                Err(error) => panic!("HTTP fixture accept failed: {error}"),
+            };
+            idle = 0;
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            let head = request.starts_with("HEAD ");
+            let range = request.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("range")
+                    .then(|| value.trim().strip_prefix("bytes="))
+                    .flatten()
+            });
+            let response = if let Some(range) = range {
+                let (start, end) = range.split_once('-').unwrap();
+                let start: usize = start.parse().unwrap();
+                let end: usize = end.parse().unwrap();
+                let chunk = &body[start..=end.min(body.len() - 1)];
+                let actual_end = start + chunk.len() - 1;
+                format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{actual_end}/{}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nETag: \"static-v1\"\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                    chunk.len()
+                )
+            } else {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nETag: \"static-v1\"\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+            };
+            stream.write_all(response.as_bytes()).unwrap();
+            if !head {
+                if let Some(range) = range {
+                    let (start, end) = range.split_once('-').unwrap();
+                    let start: usize = start.parse().unwrap();
+                    let end: usize = end.parse().unwrap();
+                    stream
+                        .write_all(&body[start..=end.min(body.len() - 1)])
+                        .unwrap();
+                } else {
+                    stream.write_all(&body).unwrap();
+                }
+            }
+            served += 1;
+            if request_limit.is_some_and(|limit| served >= limit) {
+                return;
+            }
+        }
+    });
+    StaticHttpServer { url, handle }
+}
+
+#[cfg(feature = "async-streaming")]
+#[test]
+fn every_http_stream_route_honours_every_analysis_option() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut wrong = Vec::new();
+    for (label, file) in fixtures()
+        .into_iter()
+        .filter(|(label, _)| *label != "parquet")
+    {
+        let extension = file.path().extension().unwrap().to_str().unwrap();
+        let server = spawn_static_http_server(
+            &format!("data.{extension}"),
+            std::fs::read(file.path()).unwrap(),
+            Some(1),
+        );
+        check(
+            &mut wrong,
+            &format!("profile_url {label}"),
+            runtime.block_on(configured().profile_url(&server.url)),
+        );
+        server.join();
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[cfg(feature = "parquet-async")]
+#[test]
+fn remote_parquet_url_honours_every_analysis_option() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let file = fixtures()
+        .into_iter()
+        .find(|(label, _)| *label == "parquet")
+        .unwrap()
+        .1;
+    let server =
+        spawn_static_http_server("data.parquet", std::fs::read(file.path()).unwrap(), None);
+    let mut wrong = Vec::new();
+    check(
+        &mut wrong,
+        "profile_url parquet",
+        runtime.block_on(configured().profile_url(&server.url)),
+    );
+    server.join();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[cfg(feature = "sqlite")]
+#[tokio::test]
+async fn analyze_query_honours_every_supported_analysis_option() {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("request-resolution.db");
+    std::fs::File::create(&db_path).unwrap();
+    let connection_string = format!("sqlite://{}", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&connection_string)
+        .await
+        .unwrap();
+    sqlx::query("CREATE TABLE data (id INTEGER, cap TEXT, created TEXT, n0 INTEGER)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (index, (cap, created)) in CAPS.iter().zip(CREATED).enumerate() {
+        sqlx::query("INSERT INTO data (id, cap, created, n0) VALUES (?, ?, ?, ?)")
+            .bind(index as i64 + 1)
+            .bind(cap)
+            .bind(created)
+            .bind(index as i64 * 7 + 3)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    pool.close().await;
+
+    let report = configured_without_semantic_hints()
+        .connection_string(&connection_string)
+        .analyze_query("SELECT * FROM data ORDER BY id")
+        .await;
+    let mut wrong = Vec::new();
+    check_with_hint_expectation(&mut wrong, "analyze_query", report, false);
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

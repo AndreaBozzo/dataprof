@@ -14,7 +14,10 @@ show the effect of every option.
 from __future__ import annotations
 
 import asyncio
+import http.server
 import json
+import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,12 @@ OPTIONS: dict[str, Any] = {
     "reference_date": REFERENCE,
     "temporal_columns": ["created"],
     "identifier_columns": ["n0"],
+}
+
+QUERY_OPTIONS = {
+    key: value
+    for key, value in OPTIONS.items()
+    if key not in {"temporal_columns", "identifier_columns"}
 }
 
 
@@ -100,7 +109,70 @@ def sources(tmp_path: Path) -> dict[str, tuple[Path, str]]:
     return paths
 
 
-def _missed(report: dp.ProfileReport) -> list[str]:
+@pytest.fixture
+def url_sources(
+    sources: dict[str, tuple[Path, str]],
+) -> Any:
+    """Serve each request-resolution fixture locally, supporting Parquet ranges."""
+    payloads = {path.name: path.read_bytes() for path, _ in sources.values()}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, head: bool) -> None:
+            data = payloads.get(Path(self.path).name)
+            if data is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", '"static-v1"')
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if not head:
+                self.wfile.write(data)
+
+        def do_HEAD(self) -> None:
+            self._send(head=True)
+
+        def do_GET(self) -> None:
+            data = payloads.get(Path(self.path).name)
+            if data is None:
+                self.send_error(404)
+                return
+            range_header = self.headers.get("Range")
+            if range_header is None:
+                self._send(head=False)
+                return
+            start, _, end = range_header.removeprefix("bytes=").partition("-")
+            start = int(start)
+            end = int(end) if end else len(data) - 1
+            chunk = data[start : end + 1]
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+            self.send_header("Content-Length", str(len(chunk)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", '"static-v1"')
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(chunk)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    urls = {label: f"{base}/{path.name}" for label, (path, _) in sources.items()}
+    try:
+        yield urls
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _missed(report: dp.ProfileReport, *, expect_semantic_hints: bool = True) -> list[str]:
     """Every option the report does not reflect."""
     summary = report.to_dict()
     missed = []
@@ -127,19 +199,29 @@ def _missed(report: dp.ProfileReport) -> list[str]:
     clock = (quality.get("timeliness") or {}).get("clock") or {}
     if clock.get("reference_date") != REFERENCE:
         missed.append(f"reference_date: clock {clock}")
-    bindings = sorted((b["column"], b["kind"]) for b in summary["semantic_hint_bindings"])
-    if bindings != [("created", "temporal"), ("n0", "identifier")]:
-        missed.append(f"semantic hints: bindings {bindings}")
+    if expect_semantic_hints:
+        bindings = sorted((b["column"], b["kind"]) for b in summary["semantic_hint_bindings"])
+        if bindings != [("created", "temporal"), ("n0", "identifier")]:
+            missed.append(f"semantic hints: bindings {bindings}")
     return missed
 
 
-def _check(wrong: list[str], route: str, run: Any) -> None:
+def _check(
+    wrong: list[str],
+    route: str,
+    run: Any,
+    *,
+    expect_semantic_hints: bool = True,
+) -> None:
     try:
         report = run()
     except Exception as error:  # noqa: BLE001 - every failure is a finding here
         wrong.append(f"{route}: failed: {error}")
         return
-    wrong.extend(f"{route}: {missed}" for missed in _missed(report))
+    wrong.extend(
+        f"{route}: {missed}"
+        for missed in _missed(report, expect_semantic_hints=expect_semantic_hints)
+    )
 
 
 def test_every_file_route_honours_every_analysis_option(
@@ -201,3 +283,67 @@ def test_every_bytes_and_memory_route_honours_every_analysis_option(
         lambda: dp.profile(_records(), **OPTIONS),
     )
     assert not wrong, "\n".join(wrong)
+
+
+def test_every_http_stream_route_honours_every_analysis_option(
+    sources: dict[str, tuple[Path, str]],
+    url_sources: dict[str, str],
+) -> None:
+    if not dpa._HAS_URL:
+        pytest.skip("URL profiling is not compiled")
+    wrong: list[str] = []
+    for label, (_, fmt) in sources.items():
+        if fmt == "parquet":
+            continue
+        url = url_sources[label]
+        _check(
+            wrong,
+            f"asyncio.profile_url {label}",
+            lambda url=url: asyncio.run(dpa.profile_url(url, **OPTIONS)),
+        )
+    assert not wrong, "\n".join(wrong)
+
+
+def test_remote_parquet_url_honours_every_analysis_option(
+    url_sources: dict[str, str],
+) -> None:
+    if not dp.capabilities().remote_parquet:
+        pytest.skip("Remote Parquet profiling requires the parquet-async feature")
+    wrong: list[str] = []
+    _check(
+        wrong,
+        "asyncio.profile_url parquet",
+        lambda: asyncio.run(dpa.profile_url(url_sources["parquet"], **OPTIONS)),
+    )
+    assert not wrong, "\n".join(wrong)
+
+
+def test_analyze_query_honours_every_supported_analysis_option(tmp_path: Path) -> None:
+    try:
+        from dataprof._dataprof import ProfilerConfig, analyze_database_async
+    except ImportError:
+        pytest.skip("Database features are not compiled")
+
+    db_path = tmp_path / "request-resolution.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE data (id INTEGER, cap TEXT, created TEXT, n0 INTEGER)")
+        connection.executemany(
+            "INSERT INTO data (id, cap, created, n0) VALUES (?, ?, ?, ?)",
+            [
+                (index + 1, cap, created, index * 7 + 3)
+                for index, (cap, created) in enumerate(zip(CAPS, CREATED, strict=True))
+            ],
+        )
+
+    async def run_query() -> Any:
+        return await analyze_database_async(
+            str(db_path),
+            "SELECT * FROM data ORDER BY id",
+            10000,
+            None,
+            ProfilerConfig(**QUERY_OPTIONS),
+        )
+
+    report = dp.ProfileReport(asyncio.run(run_query()))
+    missed = _missed(report, expect_semantic_hints=False)
+    assert not missed, "\n".join(missed)
