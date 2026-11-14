@@ -440,8 +440,13 @@ pub struct DateTimeStats {
 
 /// How many distinct years a date column may span before the profiler stops
 /// tracking its distinct days, and reports no [`DateTimeStats::largest_gap`].
-/// The days are kept as one bitmap per year, so this bounds that memory at
-/// about 0.5 MB per column.
+///
+/// The days are kept as one 48-byte bitmap per year, about 60 bytes with its
+/// key and tree overhead, so one set at the limit holds about 0.6 MB. The
+/// limit applies to each set: a column keeps one for the values whose reading
+/// is settled and one for each reading of its ambiguous slash dates, so a
+/// column holding both at the limit retains about 1.8 MB, and finishing its
+/// statistics copies one set more while it merges them.
 pub const DATE_GAP_YEAR_LIMIT: usize = 10_000;
 
 /// Two consecutive distinct days of a date column, and the days between
