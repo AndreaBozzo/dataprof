@@ -167,7 +167,8 @@ pub fn profile_columns(
         // through the same `RowSignature` encoding the file engines use, so
         // files and ad-hoc inputs holding the same data agree on duplicate
         // counts. Null cells contribute an empty value.
-        let mut row_tracker = RowUniquenessTracker::default();
+        let mut row_tracker =
+            RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
         let mut completeness_tracker = RowCompletenessTracker::default();
         if num_cols > 0 {
             for row_index in 0..num_rows {

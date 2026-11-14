@@ -290,6 +290,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             })
         } else {
             None
@@ -420,6 +421,7 @@ impl MetricsCalculator {
                     key_column: None,
                     key_values_checked: None,
                     duplicate_rows_approximate: false,
+                    duplicate_rows_exact_limit: None,
                 })
             } else {
                 None
@@ -604,6 +606,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             };
             if let Some(key) = metrics
                 .key_column
@@ -852,6 +855,7 @@ mod tests {
                     duplicate_rows: 0,
                     rows_checked: 1_000,
                     approximate: false,
+                    exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
                     max_duplicate_rows: 0,
                 }),
             )

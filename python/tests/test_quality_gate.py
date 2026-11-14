@@ -508,9 +508,14 @@ def test_an_estimated_duplicate_count_names_the_estimate_as_the_gap(report):
 
     assert result.verdict == "inconclusive"
     (check,) = result.checks
+    # It names the limit the count was made under and the one that would
+    # count every row exactly (#1292).
+    rows = document["quality"]["metrics"]["uniqueness"]["rows_checked"]
     assert check.message == (
         "the duplicate-row count is an estimate, which can neither witness "
-        "duplicates above the allowance nor rule them out"
+        "duplicates above the allowance nor rule them out. It was counted under a "
+        "duplicate_rows_exact_limit of 1000000 distinct rows; "
+        f"a limit of {rows}, the rows checked, counts every row exactly"
     )
 
 

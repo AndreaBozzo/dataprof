@@ -2531,6 +2531,14 @@
         "duplicate_rows_approximate": {
           "type": "boolean"
         },
+        "duplicate_rows_exact_limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "high_cardinality_warning": {
           "type": "boolean"
         },
@@ -3477,6 +3485,15 @@
         "duplicate_rows_approximate": {
           "description": "True when `duplicate_rows` comes from the full-stream distinct-count\nestimator after it spilled to its HLL sketch (~1% relative error on\nthe distinct count), rather than an exact count.",
           "type": "boolean"
+        },
+        "duplicate_rows_exact_limit": {
+          "description": "Distinct rows the full-stream row tracker counts exactly before its\ncount becomes an estimate: the limit `duplicate_rows` was counted\nunder (#1292). One million unless the caller raised it. Absent when no\nrow tracker counted the rows, and on documents written before 0.14.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "high_cardinality_warning": {
           "type": "boolean"

@@ -442,7 +442,9 @@ pub fn profile_dataframe(
     let semantic_hints = options.semantic_hints().clone();
 
     // Process using existing RecordBatchAnalyzer
-    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
+    let mut analyzer = RecordBatchAnalyzer::new()
+        .with_semantic_hints(&semantic_hints)
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
     let mut row_offset = 0;
     for batch in &batches {
         let end = row_offset + batch.num_rows();
@@ -603,7 +605,9 @@ pub fn profile_arrow(
         .ok();
 
     // Process using existing RecordBatchAnalyzer
-    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
+    let mut analyzer = RecordBatchAnalyzer::new()
+        .with_semantic_hints(&semantic_hints)
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
     for batch in &batches {
         analyze_imported_batch(&mut analyzer, batch, &[])?;
     }

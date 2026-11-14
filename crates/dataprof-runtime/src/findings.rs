@@ -1462,6 +1462,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: true,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -1583,6 +1584,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             timeliness: Some(TimelinessMetrics {
                 future_dates_count: future_dates,
@@ -1929,6 +1931,7 @@ mod tests {
                 key_column: Some("order_id".to_string()),
                 key_values_checked: Some(values),
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };

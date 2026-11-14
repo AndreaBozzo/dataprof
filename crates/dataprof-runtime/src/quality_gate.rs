@@ -178,7 +178,8 @@ use dataprof_metrics::{
 use serde::Serialize;
 
 use crate::findings::{
-    Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, UnevaluatedRule,
+    Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, NotEvaluatedReason,
+    UnevaluatedRule,
 };
 use crate::profile_report::{
     ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus, ReportGenerator,
@@ -1617,7 +1618,7 @@ impl QualityPolicy {
                 } else {
                     Evidence::Complete
                 };
-                checks.push(self.forbid_finding_check(&findings, scan.and(sample), code));
+                checks.push(self.forbid_finding_check(report, &findings, scan.and(sample), code));
             }
         }
         checks
@@ -1634,6 +1635,7 @@ impl QualityPolicy {
     /// or the scope is [`PolicyScope::Observed`].
     fn forbid_finding_check(
         &self,
+        report: &ProfileReport,
         result: &FindingsResult,
         scan: Evidence,
         code: FindingCode,
@@ -1650,6 +1652,12 @@ impl QualityPolicy {
             .filter(|rule| rule.code == code)
             .cloned()
             .collect();
+        // A duplicate-row rule skipped over an estimate says what would let
+        // it look (#1292).
+        let estimated_duplicates = code == FindingCode::DuplicateRows
+            && skipped
+                .iter()
+                .any(|rule| rule.reason == NotEvaluatedReason::Estimated);
         let reach = FindingReach::of(code);
         let evidence = match reach {
             FindingReach::Read => Evidence::Complete,
@@ -1718,7 +1726,7 @@ impl QualityPolicy {
             baseline: None,
             findings: found,
             status,
-            message: message.to_string(),
+            message: with_exact_count_hint(message, report, estimated_duplicates),
         }
     }
 
@@ -2174,7 +2182,7 @@ impl QualityPolicy {
             _ if exceeded => CheckStatus::Failed,
             _ => CheckStatus::Passed,
         };
-        check.message = match check.status {
+        let message = match check.status {
             CheckStatus::Passed => "the duplicate-row count is within the allowance",
             CheckStatus::Failed if estimated => {
                 "the estimated duplicate-row count is above the allowance"
@@ -2190,8 +2198,9 @@ impl QualityPolicy {
                 "no duplicate above the allowance was observed, and the rows that were not \
                  read may hold more"
             }
-        }
-        .to_string();
+        };
+        let undecided_estimate = estimated && matches!(check.status, CheckStatus::NotEvaluated(_));
+        check.message = with_exact_count_hint(message, report, undecided_estimate);
         check
     }
 
@@ -3423,6 +3432,31 @@ impl<'a> ColumnIndex<'a> {
     }
 }
 
+/// `message`, followed when `estimated` by what would make the report's
+/// duplicate-row count exact: the setting, the limit the count was made
+/// under, and a value that covers every row it was made over (#1292).
+fn with_exact_count_hint(message: &str, report: &ProfileReport, estimated: bool) -> String {
+    let uniqueness = report
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.metrics.uniqueness.as_ref())
+        .filter(|uniqueness| estimated && uniqueness.duplicate_rows_approximate);
+    let Some(uniqueness) = uniqueness else {
+        return message.to_string();
+    };
+    let rows = uniqueness.rows_checked;
+    match uniqueness.duplicate_rows_exact_limit {
+        Some(limit) => format!(
+            "{message}. It was counted under a duplicate_rows_exact_limit of {limit} distinct \
+             rows; a limit of {rows}, the rows checked, counts every row exactly"
+        ),
+        None => format!(
+            "{message}. A duplicate_rows_exact_limit of {rows}, the rows checked, counts every \
+             row exactly"
+        ),
+    }
+}
+
 /// The message of a `forbid_finding` check whose rule could not look.
 const FINDING_NOT_EVALUATED: &str =
     "the finding's rule could not look at the whole report, and found no finding";
@@ -4446,6 +4480,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: approximate,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -5153,11 +5188,14 @@ mod tests {
             })
         );
         // The gap is the estimate, not unread rows: the message said "the rows
-        // that were not read" on a source read to the end (#819).
+        // that were not read" on a source read to the end (#819). It names
+        // the setting that would count every row exactly (#1292); this
+        // report records no limit, as one written before 0.14.
         assert_eq!(
             check.message,
             "the duplicate-row count is an estimate, which can neither witness \
-             duplicates above the allowance nor rule them out"
+             duplicates above the allowance nor rule them out. A \
+             duplicate_rows_exact_limit of 5, the rows checked, counts every row exactly"
         );
     }
 

@@ -21,6 +21,8 @@ pub(crate) struct UniquenessMetrics {
     /// Non-null values of `key_column`, the units of `key_uniqueness`.
     pub key_values_checked: Option<usize>,
     pub duplicate_rows_approximate: bool,
+    /// The row tracker's exact limit, when a tracker counted the rows.
+    pub duplicate_rows_exact_limit: Option<usize>,
 }
 
 /// The key uniqueness component: its share, the column it describes and the
@@ -65,17 +67,20 @@ impl<'a> UniquenessCalculator<'a> {
         identifier_columns: &[String],
         row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<UniquenessMetrics, DataProfilerError> {
-        let (duplicate_rows, rows_checked, duplicate_rows_approximate) = match row_duplicates {
-            Some(summary) if summary.rows_checked > 0 => (
-                summary.duplicate_rows,
-                summary.rows_checked,
-                summary.approximate,
-            ),
-            _ => {
-                let (duplicates, rows) = Self::count_exact_duplicate_rows(data, column_profiles)?;
-                (duplicates, rows, false)
-            }
-        };
+        let (duplicate_rows, rows_checked, duplicate_rows_approximate, duplicate_rows_exact_limit) =
+            match row_duplicates {
+                Some(summary) if summary.rows_checked > 0 => (
+                    summary.duplicate_rows,
+                    summary.rows_checked,
+                    summary.approximate,
+                    Some(summary.exact_limit),
+                ),
+                _ => {
+                    let (duplicates, rows) =
+                        Self::count_exact_duplicate_rows(data, column_profiles)?;
+                    (duplicates, rows, false, None)
+                }
+            };
         let key = Self::calculate_key_uniqueness(column_profiles, identifier_columns)?;
         let high_cardinality_warning =
             self.check_high_cardinality(column_profiles, total_rows, identifier_columns);
@@ -88,6 +93,7 @@ impl<'a> UniquenessCalculator<'a> {
             key_column: key.column,
             key_values_checked: key.values_checked,
             duplicate_rows_approximate,
+            duplicate_rows_exact_limit,
         })
     }
 
@@ -472,6 +478,7 @@ mod tests {
             duplicate_rows: 40,
             rows_checked: 1000,
             approximate: true,
+            exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
             max_duplicate_rows: 40,
         };
         let with = calculator

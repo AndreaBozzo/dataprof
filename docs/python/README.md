@@ -119,6 +119,7 @@ dp.profile(
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
     reference_date=None,             # datetime.date | "YYYY-MM-DD" -- the date timeliness measures against
+    duplicate_rows_exact_limit=None, # int -- distinct rows counted exactly for duplicate rows (default 1,000,000)
     source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
@@ -1177,6 +1178,18 @@ its rows), and the overall score is bounded again. A `max_duplicate_rows`
 requirement on an estimated count stays unevaluated, since the estimate can
 neither witness duplicates nor rule them out.
 
+To let `max_duplicate_rows` decide on a larger source, raise the exact limit
+when profiling: `profile(path, duplicate_rows_exact_limit=30_000_000)`, or
+`--duplicate-rows-exact-limit 30000000` on `python -m dataprof.check`. The
+limit is a row count, so the verdict does not depend on the machine: the row
+tracker keeps its exact set up to the limit even past `memory_limit_mb`, at 10
+to 20 bytes per distinct row (about 400 MB for 27 million rows). The report
+records the limit as `quality.uniqueness["duplicate_rows_exact_limit"]`, and a
+check left unevaluated by an estimate names the limit that would decide it.
+The exact count compares 64-bit fingerprints of the rows, so two different
+rows read as one duplicate with probability about `n^2 / 2^65` over `n`
+distinct rows: 3e-8 at one million, 2e-5 at 27 million.
+
 `min_rows` reads the report's `execution.rows_processed`. Rows already read do
 not go away when more are read, so a scan that read at least `min_rows` rows
 passes even when it stopped early or sampled. One that read fewer fails when it
@@ -1565,8 +1578,8 @@ today's date, since the command line takes no reference date.
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
 
-`--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through
-to `profile_file()`. As with the library, capped or sampled evidence may leave a
+`--engine`, `--format`, `--max-rows`, `--duplicate-rows-exact-limit ROWS`
+(0.14+), and repeatable `--metric PACK` pass through to `profile_file()`. As with the library, capped or sampled evidence may leave a
 full-source requirement inconclusive. `--scope observed` explicitly limits the
 claim to the analyzed population. A threshold on an unavailable metric stays
 unevaluated; an explicit `--require-metric` requirement fails if it is absent.

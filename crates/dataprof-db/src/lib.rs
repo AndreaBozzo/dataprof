@@ -299,7 +299,8 @@ pub async fn analyze_database_with_options(
     // and in-memory inputs use. The sample scan the assembler would fall back
     // to cannot run here once a column is nested: its values are withheld
     // from value-level checks, and the columns no longer line up.
-    let mut uniqueness = RowUniquenessTracker::default();
+    let mut uniqueness =
+        RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
     if !aligned.is_empty() {
         let container_rows: Vec<&[usize]> = columns.container_rows().collect();
         for row_index in 0..actual_rows_processed {

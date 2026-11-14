@@ -67,6 +67,12 @@ pub struct UniquenessMetrics {
     /// the distinct count), rather than an exact count.
     #[serde(default, skip_serializing_if = "is_false")]
     pub duplicate_rows_approximate: bool,
+    /// Distinct rows the full-stream row tracker counts exactly before its
+    /// count becomes an estimate: the limit `duplicate_rows` was counted
+    /// under (#1292). One million unless the caller raised it. Absent when no
+    /// row tracker counted the rows, and on documents written before 0.14.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_rows_exact_limit: Option<usize>,
 }
 
 /// Full-stream row-duplicate counts produced by an engine's row tracker.
@@ -81,6 +87,8 @@ pub struct RowDuplicateSummary {
     pub duplicate_rows: usize,
     pub rows_checked: usize,
     pub approximate: bool,
+    /// Distinct rows the tracker counts exactly before estimating (#1292).
+    pub exact_limit: usize,
     /// The most duplicate rows there can be: `rows_checked` minus the distinct
     /// rows the tracker's exact set held when it was dropped. Equal to
     /// `duplicate_rows` while the count is exact (#819).
@@ -455,6 +463,7 @@ impl QualityMetrics {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -1578,6 +1587,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -1921,6 +1931,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -2057,6 +2068,7 @@ mod tests {
                 key_column: Some("id".to_string()),
                 key_values_checked: Some(10),
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -2133,6 +2145,7 @@ mod tests {
                         key_column: Some("user_id".to_string()),
                         key_values_checked: Some(25),
                         duplicate_rows_approximate: false,
+                        duplicate_rows_exact_limit: None,
                     }),
                     ..QualityMetrics::default()
                 },

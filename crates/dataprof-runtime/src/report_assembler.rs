@@ -401,7 +401,10 @@ impl ReportAssembler {
             self.row_duplicates,
         ) {
             Ok(metrics) => {
-                let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
+                let confidence = self
+                    .confidence
+                    .clone()
+                    .unwrap_or_else(|| self.uniform_confidence(&metrics, data));
                 (
                     Some(
                         QualityAssessment::new(metrics, confidence)
@@ -413,6 +416,52 @@ impl ReportAssembler {
                 )
             }
             Err(error) => Self::failed(error),
+        }
+    }
+
+    /// Exact, unless a count the uniform path read is an estimate.
+    ///
+    /// The quality sample holds every row here, but two counts come from
+    /// estimators rather than the sample: the row tracker's duplicate rows
+    /// and the key column's distinct values. Either becomes an estimate past
+    /// its exact limit or under memory pressure, which a low
+    /// `duplicate_rows_exact_limit` reaches on a small source (#1292).
+    /// Declaring the assessment exact then let the gate read an estimated
+    /// duplicate count as a witnessed failure; the estimated component is
+    /// listed as sampled instead, as the streaming path lists it.
+    fn uniform_confidence(
+        &self,
+        metrics: &dataprof_metrics::QualityMetrics,
+        data: &HashMap<String, Vec<String>>,
+    ) -> MetricConfidence {
+        let mut estimated = Vec::new();
+        if let Some(uniqueness) = metrics.uniqueness.as_ref() {
+            if uniqueness.rows_checked > 0 && uniqueness.duplicate_rows_approximate {
+                estimated.push("duplicate_rows".to_string());
+            }
+            let key_estimated = uniqueness
+                .key_column
+                .as_deref()
+                .filter(|_| uniqueness.key_measured())
+                .and_then(|key| self.columns.iter().find(|profile| profile.name == key))
+                .is_some_and(|profile| profile.unique_count_is_approximate == Some(true));
+            if key_estimated {
+                estimated.push("key_uniqueness".to_string());
+            }
+        }
+        if estimated.is_empty() {
+            return MetricConfidence::Exact;
+        }
+        let exact = QualityAssessment::new(metrics.clone(), MetricConfidence::Exact)
+            .exact_dimensions()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|component| !estimated.contains(component))
+            .collect();
+        MetricConfidence::Mixed {
+            exact_dimensions: exact,
+            sampled_dimensions: estimated,
+            sample_size: data.values().map(Vec::len).max().unwrap_or(0),
         }
     }
 
@@ -662,6 +711,7 @@ mod tests {
                 duplicate_rows: 25,
                 rows_checked: 1000,
                 approximate: false,
+                exact_limit: dataprof_metrics::EXACT_CARDINALITY_THRESHOLD,
                 max_duplicate_rows: 25,
             }))
             .build();
@@ -694,6 +744,7 @@ mod tests {
                 duplicate_rows: 500,
                 rows_checked: 20_000,
                 approximate: true,
+                exact_limit: dataprof_metrics::EXACT_CARDINALITY_THRESHOLD,
                 max_duplicate_rows: 500,
             }))
             .build();

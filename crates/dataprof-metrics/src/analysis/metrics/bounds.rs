@@ -1339,6 +1339,7 @@ mod tests {
                 key_column: key.map(|(name, _)| name.to_string()),
                 key_values_checked: key.map(|_| rows),
                 duplicate_rows_approximate: approximate,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         }
@@ -1358,6 +1359,7 @@ mod tests {
             duplicate_rows: 6_063,
             rows_checked: 1_200_000,
             approximate: true,
+            exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
             max_duplicate_rows: 199_999,
         };
 
@@ -1385,6 +1387,7 @@ mod tests {
             duplicate_rows: 6_000,
             rows_checked: 1_200_000,
             approximate: false,
+            exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
             max_duplicate_rows: 6_000,
         };
 
