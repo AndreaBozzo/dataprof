@@ -232,6 +232,20 @@ impl DateTimeAccumulator {
             .merge(&other.ambiguous_month_first);
     }
 
+    /// Heap held beyond the struct itself: the year maps, the only part that
+    /// grows with the data (one entry per distinct year). The month, weekday
+    /// and hour counts are fixed arrays inside the struct.
+    pub fn heap_bytes(&self) -> usize {
+        [
+            &self.settled,
+            &self.ambiguous_day_first,
+            &self.ambiguous_month_first,
+        ]
+        .iter()
+        .map(|tally| tally.heap_bytes())
+        .sum()
+    }
+
     /// The statistics over every value offered.
     pub fn finish(&self) -> DateTimeStats {
         let slash_date_order = self.slash.order();
@@ -299,6 +313,12 @@ struct DateTally {
 }
 
 impl DateTally {
+    /// Heap held by the year map: its slots, each a key, a count and a
+    /// control byte.
+    fn heap_bytes(&self) -> usize {
+        self.years.capacity() * (std::mem::size_of::<(i32, usize)>() + 1)
+    }
+
     fn add(&mut self, parsed: &ParsedDateTime) {
         let date = parsed.date;
         self.min = Some(self.min.map_or(date, |min| min.min(date)));
@@ -340,22 +360,27 @@ impl DateTally {
 /// Whether a trimmed value can parse as any form [`parse_flexible_full`]
 /// reads, so the formats are tried only on values that might.
 ///
-/// Every form starts with its date, and every date reads as a number (a year
-/// may carry a sign), a separator (`-`, `/` or `.`), a field of one or two
-/// digits (`%m` or `%d`), the same separator again, and a digit. The
-/// accumulator is offered every value of every column, so this shape check
-/// keeps the formats away from integers, decimals, free text and codes such
-/// as UUIDs, which used to cost most of the time on a wide file.
+/// Every form starts with its date, and every date reads as a number, a
+/// separator (`-`, `/` or `.`), a field of one or two digits (`%m` or `%d`),
+/// the same separator again, and a number. A year may carry a sign, first or
+/// last (`12/31/+2024`). Chrono skips
+/// whitespace before a numeric field (`2025- 1-01` is a date), so this does
+/// too. The accumulator is offered every value of every column, so this
+/// shape check keeps the formats away from integers, decimals, free text and
+/// codes such as UUIDs, which used to cost most of the time on a wide file.
 fn may_parse_as_date(trimmed: &str) -> bool {
     let bytes = trimmed.as_bytes();
-    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
-    let digits = |from: usize| {
+    let count = |from: usize, accept: fn(&u8) -> bool| {
         bytes[from.min(bytes.len())..]
             .iter()
-            .take_while(|byte| byte.is_ascii_digit())
+            .take_while(|byte| accept(byte))
             .count()
     };
-    let leading = digits(at);
+    // The start of the next numeric field, past any whitespace before it.
+    let field = |at: usize| at + count(at, u8::is_ascii_whitespace);
+
+    let mut at = field(usize::from(matches!(bytes.first(), Some(b'+' | b'-'))));
+    let leading = count(at, u8::is_ascii_digit);
     if leading == 0 {
         return false;
     }
@@ -367,13 +392,19 @@ fn may_parse_as_date(trimmed: &str) -> bool {
     else {
         return false;
     };
-    at += 1;
-    let middle = digits(at);
+    at = field(at + 1);
+    let middle = count(at, u8::is_ascii_digit);
     if !(1..=2).contains(&middle) {
         return false;
     }
     at += middle;
-    bytes.get(at) == Some(&separator) && bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+    if bytes.get(at) != Some(&separator) {
+        return false;
+    }
+    // The last field is a year when the date ends with it, and may be signed.
+    let last = field(at + 1);
+    let digits_from = field(last + usize::from(matches!(bytes.get(last), Some(b'+' | b'-'))));
+    bytes.get(digits_from).is_some_and(u8::is_ascii_digit)
 }
 
 /// Parse one value, reading an ambiguous slash date month-first when
@@ -633,6 +664,86 @@ mod tests {
         ] {
             assert!(!may_parse_as_date(value), "{value}");
         }
+    }
+
+    /// The parser is the reference: every padded variant it reads, the
+    /// pre-filter must keep. Chrono skips whitespace before a numeric field,
+    /// so `2025- 1-01` is a date (Codex review on #1301).
+    #[test]
+    fn the_pre_filter_keeps_every_padded_value_the_parser_reads() {
+        let forms = [
+            "2025-01-05",
+            "2025/01/05",
+            "05/01/2025",
+            "05-01-2025",
+            "05.01.2025",
+            "2025-01-05T10:30:00",
+            "2025-01-05 10:30:00",
+            "05/01/2025 10:30:00",
+            "+2025-01-05",
+            // A signed year in the last field (Copilot review on #1301).
+            "05/01/+2025",
+            "05-01/-2025",
+            "05.01.+2025",
+            "05-01-+2025",
+            "05/01/+2025 10:30:00",
+        ];
+        let mut parsed = 0;
+        let mut dropped = Vec::new();
+        for form in forms {
+            // Every position right after a separator or a sign, where a
+            // numeric field starts.
+            let starts: Vec<usize> = form
+                .char_indices()
+                .filter(|(_, c)| matches!(c, '-' | '/' | '.' | '+' | ' ' | 'T' | ':'))
+                .map(|(i, _)| i + 1)
+                .collect();
+            for start in starts {
+                for (pad, unpadded) in [(" ", false), ("  ", false), ("\t", false), ("", true)] {
+                    let field = &form[start..];
+                    let single = field.strip_prefix('0').filter(|_| unpadded);
+                    let value = match single {
+                        Some(rest) => format!("{}{rest}", &form[..start]),
+                        None => format!("{}{pad}{field}", &form[..start]),
+                    };
+                    for month_first in [false, true] {
+                        if parse_flexible_full(&value, month_first).is_some() {
+                            parsed += 1;
+                            if !may_parse_as_date(value.trim()) {
+                                dropped.push(value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(parsed > 50, "only {parsed} variants parsed");
+        let stats = stats_of(
+            &["2024-01-01"; 4]
+                .iter()
+                .copied()
+                .chain(["2025- 1-01"])
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(stats.max_datetime, "2025-01-01");
+        let stats = stats_of(&["01/02/2024", "12/31/+2024"]);
+        assert_eq!(stats.slash_date_order, Some(SlashDateOrder::MonthFirst));
+        assert_eq!(stats.min_datetime, "2024-01-02");
+        assert_eq!(stats.max_datetime, "2024-12-31");
+        dropped.dedup();
+        assert!(dropped.is_empty(), "dropped: {dropped:?}");
+    }
+
+    #[test]
+    fn the_year_maps_report_the_heap_they_hold() {
+        let mut accumulator = DateTimeAccumulator::new();
+        assert_eq!(accumulator.heap_bytes(), 0);
+        for year in 1000..3000 {
+            accumulator.update(&format!("{year}-01-05"));
+            accumulator.update(&format!("01/02/{year}"));
+        }
+        // Three maps of 2,000 years each: at least the entries themselves.
+        assert!(accumulator.heap_bytes() >= 3 * 2000 * std::mem::size_of::<(i32, usize)>());
     }
 
     #[test]

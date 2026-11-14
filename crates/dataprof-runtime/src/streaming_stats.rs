@@ -432,8 +432,11 @@ impl StreamingStatistics {
         let struct_size = std::mem::size_of::<Self>();
         let distinct_size = self.distinct.memory_usage_bytes();
         let reservoir_size = self.sampler.memory_usage_bytes();
+        // The year maps behind the date statistics (#1297): one entry per
+        // distinct year, so small on real dates but counted all the same.
+        let dates_size = self.dates.heap_bytes();
 
-        struct_size + distinct_size + reservoir_size
+        struct_size + distinct_size + reservoir_size + dates_size
     }
 }
 
@@ -1027,6 +1030,25 @@ mod row_tracker_tests {
             .row_completeness_summary()
             .expect("rows were observed");
         (summary.complete_rows, summary.rows_checked)
+    }
+
+    /// The date statistics' year maps count toward the memory the incremental
+    /// and async engines limit (Copilot review on #1301).
+    #[test]
+    fn memory_usage_counts_the_date_statistics() {
+        let mut stats = StreamingStatistics::new();
+        for year in 1000..3000 {
+            stats.update(&format!("{year}-01-05"));
+        }
+        let dates = stats.date_statistics().heap_bytes();
+        assert!(dates > 0);
+        assert!(
+            stats.memory_usage_bytes()
+                >= std::mem::size_of::<StreamingStatistics>()
+                    + stats.distinct.memory_usage_bytes()
+                    + stats.sampler.memory_usage_bytes()
+                    + dates
+        );
     }
 
     #[test]
