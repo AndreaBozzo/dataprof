@@ -130,6 +130,20 @@ def test_a_summary_lists_the_quote_check_only_where_it_could_apply(tmp_path):
     assert wrong == []
 
 
+def test_a_versioned_summary_without_its_ragged_count_lists_ragged_rows(tmp_path):
+    # Every versioned summary writes the count, so a missing one is not a
+    # zero (#1306 review).
+    path = tmp_path / "ragged.csv"
+    path.write_text("a,b\n1,2\n3\n4,5\n")
+    summary = dp.profile(str(path)).to_dict()
+    assert summary["execution"]["ragged_row_count"] == 1
+    recorded = dp.ProfileReport.from_dict(summary).findings()
+    assert [f.code for f in recorded.findings if f.code == "ragged_rows"] == ["ragged_rows"]
+    result = _summary_without(summary, "ragged_row_count").findings()
+    assert [f.code for f in result.findings if f.code == "ragged_rows"] == []
+    assert _skipped(result, "ragged_rows") == ["unrecorded"]
+
+
 def test_a_pre_versioning_summary_lists_ragged_rows(tmp_path):
     summary = dp.profile({"x": [1, 2]}).to_dict()
     legacy = {key: value for key, value in summary.items() if key != "schema_version"}

@@ -312,3 +312,26 @@ fn the_profiled_csv_fails_on_its_quote_and_the_deleted_field_is_inconclusive() {
         Verdict::Inconclusive
     );
 }
+
+#[test]
+fn a_versioned_report_without_its_ragged_count_still_reads_as_zero() {
+    // Pins current behaviour, which #1310 changes: `ExecutionMetadata`
+    // defaults an omitted count to 0, so the document has lost the absence
+    // before findings read it. The deletion test above uses a report with no
+    // ragged row for this reason.
+    let csv = file(".csv", b"a,b\n1,2\n3\n4,5\n");
+    let mut document = document(&Profiler::new().analyze_file(csv.path()).unwrap());
+    let ragged = |report: &ProfileReport| {
+        QualityPolicy::new()
+            .forbid_findings([FindingCode::RaggedRows])
+            .evaluate(report)
+            .unwrap()
+            .verdict
+    };
+    assert_eq!(ragged(&load(&document)), Verdict::Fail);
+    document["execution"]
+        .as_object_mut()
+        .unwrap()
+        .remove("ragged_row_count");
+    assert_eq!(ragged(&load(&document)), Verdict::Pass);
+}

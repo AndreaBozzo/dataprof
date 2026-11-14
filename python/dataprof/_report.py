@@ -582,6 +582,20 @@ class ProfileReport:
         return self._report.schema_version
 
     @property
+    def _ragged_row_count_recorded(self) -> bool:
+        """Whether ``ragged_row_count`` is a count the writer recorded.
+
+        Private, like ``_schema_version``: a document from before 0.10 did not
+        count ragged rows, and a summary that omits the field records none
+        either. Both read back as 0 through the public accessor.
+        """
+        if self._schema_version == 0:
+            return False
+        if self._native_report is not None:
+            return True
+        return bool(self._report._accessor.get("ragged_row_count_recorded"))
+
+    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 
