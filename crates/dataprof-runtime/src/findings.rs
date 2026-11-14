@@ -324,7 +324,9 @@ pub enum NotEvaluatedReason {
     /// The report does not record what the rule needs to tell a zero from an
     /// unmeasured value: a document written before dataprof recorded it
     /// (ragged rows before 0.10, quality sample coverage before 0.12, how the
-    /// key column was chosen before 0.13).
+    /// key column was chosen before 0.13), a flat summary that omits it, or a
+    /// CSV scan that stopped before the end of its source, where the quote
+    /// state at the end was never checked.
     Unrecorded,
     /// The metric the rule reads was not computed for these columns: the
     /// metric pack was not selected, or the column type does not carry it.
@@ -384,18 +386,33 @@ pub struct FindingsResult {
 /// [`FindingsInput::from_json`], so both kinds of report go through one set
 /// of rules. A count the summary does not carry reads as zero, as the rules
 /// read an absent count.
+///
+/// A fact about how the source was read is `None` when the report does not
+/// record it (#1306). The rule that reads it then lists itself as not
+/// evaluated, so an unrecorded fact never reads as a clean one.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[non_exhaustive]
 pub struct FindingsInput {
-    /// 0 for a document written before 0.10, which did not count ragged rows.
-    schema_version: u32,
     rows_processed: usize,
-    source_exhausted: bool,
+    /// `None` only for a flat summary that omits it.
+    source_exhausted: Option<bool>,
     /// Whether the report records a truncation reason.
     truncated: bool,
-    sampling_applied: bool,
-    ragged_row_count: usize,
-    unterminated_quote: bool,
+    /// `None` only for a flat summary that omits it.
+    sampling_applied: Option<bool>,
+    /// `None` for a document written before 0.10, which did not count ragged
+    /// rows and reads back with a zero that was never measured.
+    ragged_row_count: Option<usize>,
+    /// `None` where the quote state was not checked: a source that is not
+    /// CSV, a scan that stopped before the end of its source, or a report
+    /// written before 0.12; or where a flat summary omits it.
+    unterminated_quote: Option<bool>,
+    /// Whether the source was read as CSV, the only format with quoted
+    /// fields. `None` when the report does not record the source format, so
+    /// an unchecked quote state cannot be told apart from one that does not
+    /// apply.
+    #[serde(default)]
+    csv_source: Option<bool>,
     error_count: usize,
     /// What delimiter detection saw, when the report records that it ran.
     /// A flat summary records no source metadata, so it reads as absent.
@@ -520,13 +537,15 @@ impl From<&ProfileReport> for FindingsInput {
     fn from(report: &ProfileReport) -> Self {
         let execution = &report.execution;
         Self {
-            schema_version: report.schema_version,
             rows_processed: execution.rows_processed,
-            source_exhausted: execution.source_exhausted,
+            source_exhausted: Some(execution.source_exhausted),
             truncated: execution.truncation_reason.is_some(),
-            sampling_applied: execution.sampling_applied,
-            ragged_row_count: execution.ragged_row_count,
-            unterminated_quote: execution.unterminated_quote == Some(true),
+            sampling_applied: Some(execution.sampling_applied),
+            // Ragged rows were first counted by the release that introduced
+            // schema versioning (0.10, #452).
+            ragged_row_count: (report.schema_version != 0).then_some(execution.ragged_row_count),
+            unterminated_quote: execution.unterminated_quote,
+            csv_source: csv_source(&report.data_source),
             error_count: execution.error_count,
             delimiter_detection: report
                 .data_source
@@ -908,44 +927,52 @@ impl ProfileReport {
 }
 
 fn scan_findings(input: &FindingsInput, out: &mut Collector) {
-    let partial = if !input.source_exhausted || input.truncated {
+    // A recorded stop or sample witnesses a partial scan even when the other
+    // fact is unrecorded; only "read everything" needs both.
+    let partial = if input.source_exhausted == Some(false) || input.truncated {
         Some("truncated")
-    } else if input.sampling_applied {
+    } else if input.sampling_applied == Some(true) {
         Some("sampled")
     } else {
         None
     };
-    if let Some(reason) = partial {
-        out.report(
+    match partial {
+        Some(reason) => out.report(
             FindingCode::PartialScan,
             [
                 ("reason", EvidenceValue::Text(reason.to_string())),
                 ("rows_processed", EvidenceValue::Count(input.rows_processed)),
             ],
-        );
+        ),
+        None if input.source_exhausted.is_none() || input.sampling_applied.is_none() => {
+            out.skip_report(FindingCode::PartialScan, NotEvaluatedReason::Unrecorded);
+        }
+        None => {}
     }
-    if input.schema_version == 0 {
-        // Ragged rows were first counted by the release that introduced
-        // schema versioning (0.10, #452). An older document reads back with a
-        // defaulted zero that was never measured.
-        out.skip_report(FindingCode::RaggedRows, NotEvaluatedReason::Unrecorded);
-    } else if input.ragged_row_count > 0 {
-        out.report(
+    match input.ragged_row_count {
+        None => out.skip_report(FindingCode::RaggedRows, NotEvaluatedReason::Unrecorded),
+        Some(0) => {}
+        Some(ragged_row_count) => out.report(
             FindingCode::RaggedRows,
             [
-                (
-                    "ragged_row_count",
-                    EvidenceValue::Count(input.ragged_row_count),
-                ),
+                ("ragged_row_count", EvidenceValue::Count(ragged_row_count)),
                 ("rows_processed", EvidenceValue::Count(input.rows_processed)),
             ],
-        );
+        ),
     }
-    if input.unterminated_quote {
-        out.report(
+    match (input.unterminated_quote, input.csv_source) {
+        (Some(true), _) => out.report(
             FindingCode::UnterminatedQuote,
             [("rows_processed", EvidenceValue::Count(input.rows_processed))],
-        );
+        ),
+        (Some(false), _) => {}
+        // Not applicable: a source without quoted fields ends inside none.
+        // Decided from the recorded format, never from the absence.
+        (None, Some(false)) => {}
+        (None, _) => out.skip_report(
+            FindingCode::UnterminatedQuote,
+            NotEvaluatedReason::Unrecorded,
+        ),
     }
     if input.error_count > 0 {
         out.report(
@@ -984,6 +1011,16 @@ fn scan_findings(input: &FindingsInput, out: &mut Collector) {
                 [("unlisted_delimiter", EvidenceValue::Text(unlisted.clone()))],
             );
         }
+    }
+}
+
+/// Whether `source` was read as CSV, `None` for a stream that records no
+/// format (written before 0.14, #1042). A query or dataframe source has no
+/// text to quote.
+fn csv_source(source: &DataSource) -> Option<bool> {
+    match source {
+        DataSource::Stream { format: None, .. } => None,
+        _ => Some(matches!(source.format(), Some(FileFormat::Csv))),
     }
 }
 

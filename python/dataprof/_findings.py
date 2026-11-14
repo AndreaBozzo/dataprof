@@ -178,14 +178,24 @@ def _count(value: _Any) -> int:
 def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
     """What ``dataprof_runtime::FindingsInput`` reads, from a summary's accessors."""
     quality = report.quality
+    # The summary as it would be written: it omits a sampling_applied the
+    # loaded document did not record (#1236).
+    summary = report._legacy_summary()
     return {
-        "schema_version": report._schema_version,
         "rows_processed": _count(report.rows),
-        "source_exhausted": bool(report.source_exhausted),
+        # A fact the summary does not record crosses as null, so the rule
+        # that reads it lists itself as not evaluated (#1306, #1240). A
+        # malformed value crosses as written and the Rust reader rejects it.
+        "source_exhausted": report.source_exhausted,
         "truncated": report.truncation_reason is not None,
-        "sampling_applied": bool(report.sampling_applied),
-        "ragged_row_count": _count(report.ragged_row_count),
-        "unterminated_quote": bool(report.unterminated_quote),
+        "sampling_applied": summary["execution"].get("sampling_applied"),
+        # A summary written before 0.10 did not count ragged rows, and one that
+        # omits the field records none; the loader fills in a zero for both.
+        "ragged_row_count": _count(report.ragged_row_count)
+        if report._ragged_row_count_recorded
+        else None,
+        "unterminated_quote": report.unterminated_quote,
+        "csv_source": _csv_source(report),
         "error_count": _count(report.error_count),
         # A flat summary records no source format, so a missing entry cannot
         # be told from a source that is not CSV: nothing is listed for it.
@@ -215,12 +225,25 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
             "sampled_dimensions": report.quality_sampled_dimensions,
             # Read by the rule compare() applies to the summary: empty when
             # the summary records no exact list (#1027).
-            "unlisted_components": _summary_unlisted_components(
-                _json.dumps(report._legacy_summary()["quality"])
-            ),
+            "unlisted_components": _summary_unlisted_components(_json.dumps(summary["quality"])),
         },
         "columns": [_column_facts(column) for column in report.profiles],
     }
+
+
+def _csv_source(report: ProfileReport) -> bool | None:
+    """Whether the summarized source was read as CSV, ``None`` when unknown.
+
+    A summary written before 0.14 records no format for a file, bytes or
+    stream source, so whether a quote check applies cannot be told. A query
+    or dataframe source has no text to quote.
+    """
+    source_format = report.source_format
+    if source_format is not None:
+        return source_format == "csv"
+    if report.source_type in ("dataframe", "query"):
+        return False
+    return None
 
 
 def _metric_facts(
