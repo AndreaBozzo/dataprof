@@ -125,12 +125,14 @@ def _wrong_routes(tmp_path: Path, limit: int | None, approximate: bool) -> list[
             wrong.append((name, "count", uniqueness["duplicate_rows"]))
         # An estimate decides nothing; an exact count fails on what it saw.
         status = report.check(max_duplicate_rows=0).checks[0].status
-        if (status == "failed") is approximate:
+        if status != ("not_evaluated" if approximate else "failed"):
             wrong.append((name, "gate", status))
-        # The estimate is bounded, so a requirement any source meets passes.
-        floor = report.check(min_quality_score=0).verdict
-        if floor != "pass":
-            wrong.append((name, "min_quality_score=0", floor))
+        # The estimate is bounded, so requirements its bounds settle still
+        # pass. The duplicate floor keeps uniqueness above 32 here: 1,001 of
+        # 3,040 rows are distinct.
+        scores = report.check(min_quality_score=0, min_dimension_scores={"uniqueness": 30})
+        if scores.verdict != "pass":
+            wrong.append((name, "score checks", [c.status for c in scores.checks]))
         if approximate and report.quality_score_bounds is None:
             wrong.append((name, "no score bounds for the estimate"))
         summary = report.to_dict()["quality"]["uniqueness"].get("duplicate_rows_exact_limit")

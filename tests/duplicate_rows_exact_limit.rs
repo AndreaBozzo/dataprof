@@ -12,7 +12,8 @@
 use std::io::Write;
 
 use dataprof::{
-    CheckStatus, EngineType, FindingCode, ProfileReport, Profiler, QualityPolicy, UniquenessMetrics,
+    CheckStatus, EngineType, FindingCode, ProfileReport, Profiler, QualityDimension, QualityPolicy,
+    UniquenessMetrics,
 };
 use tempfile::NamedTempFile;
 
@@ -181,26 +182,32 @@ fn wrong_routes(limit: Option<usize>, approximate: bool) -> Vec<String> {
             .unwrap()
             .checks
             .remove(0);
-        let decided = check.status == CheckStatus::Failed;
-        if decided == approximate {
+        let expected = if approximate {
+            check.not_evaluated().is_some()
+        } else {
+            check.status == CheckStatus::Failed
+        };
+        if !expected {
             wrong.push(format!(
                 "{label}: gate {:?}: {}",
                 check.status, check.message
             ));
         }
-        // The estimate is bounded, so a score requirement any source meets
-        // still passes rather than turning inconclusive.
-        let floor = QualityPolicy::new()
+        // The estimate is bounded, so score requirements its bounds settle
+        // still pass rather than turning inconclusive. The duplicate floor
+        // keeps uniqueness above 32 here: 1,001 of 3,040 rows are distinct.
+        let scores = QualityPolicy::new()
             .min_quality_score(0.0)
+            .min_dimension_score(QualityDimension::Uniqueness, 30.0)
             .evaluate(&report)
-            .unwrap()
-            .checks
-            .remove(0);
-        if floor.status != CheckStatus::Passed {
-            wrong.push(format!(
-                "{label}: min_quality_score(0) {:?}: {}",
-                floor.status, floor.message
-            ));
+            .unwrap();
+        for score in &scores.checks {
+            if score.status != CheckStatus::Passed {
+                wrong.push(format!(
+                    "{label}: {:?} {:?}: {}",
+                    score.code, score.status, score.message
+                ));
+            }
         }
         let bounded = report
             .quality
