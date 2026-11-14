@@ -144,14 +144,14 @@ fn subnormals_written_with_17_digits_stay_floats() {
     let mode = |cells: &str| {
         column(&profile(&format!("id,v\n{cells}"), ".csv"))["stats"]["Numeric"]["mode"].clone()
     };
-    assert_eq!(
-        mode("1,4.9406564584124654e-324\n2,5e-324\n3,7\n"),
-        mode("1,5e-324\n2,5e-324\n3,7\n")
-    );
-    assert_eq!(
-        mode("1,0.10000000000000001\n2,0.1\n3,7\n"),
-        mode("1,0.1\n2,0.1\n3,7\n")
-    );
+    // Each side has to report a mode as well: two profiles with none would
+    // be equal too. The report rounds 5e-324 to 0.0, as it does `min`.
+    let padded = mode("1,4.9406564584124654e-324\n2,5e-324\n3,7\n");
+    assert_eq!(padded.as_f64(), Some(0.0), "{padded}");
+    assert_eq!(padded, mode("1,5e-324\n2,5e-324\n3,7\n"));
+    let padded = mode("1,0.10000000000000001\n2,0.1\n3,7\n");
+    assert_eq!(padded.as_f64(), Some(0.1), "{padded}");
+    assert_eq!(padded, mode("1,0.1\n2,0.1\n3,7\n"));
 }
 
 /// `1e00000000000000000000` is 1, which the `f64` holds, so it stays the
