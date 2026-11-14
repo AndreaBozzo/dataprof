@@ -426,6 +426,35 @@ pub struct DateTimeStats {
     /// holds no slash dates, or the report predates the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slash_date_order: Option<SlashDateOrder>,
+    /// The longest stretch between two consecutive distinct days of the
+    /// column (#1300), over every value read.
+    ///
+    /// A daily file that lost a period from the middle of its range keeps its
+    /// newest date and most of its rows, and shows here: the gap grows from 1
+    /// to the length of the hole. `None` when no value parsed as a date, the
+    /// column's dates span more than 10,000 distinct years (the profiler
+    /// stops tracking days past that), or the report predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub largest_gap: Option<DateGap>,
+}
+
+/// How many distinct years a date column may span before the profiler stops
+/// tracking its distinct days, and reports no [`DateTimeStats::largest_gap`].
+/// The days are kept as one bitmap per year, so this bounds that memory at
+/// about 0.5 MB per column.
+pub const DATE_GAP_YEAR_LIMIT: usize = 10_000;
+
+/// Two consecutive distinct days of a date column, and the days between
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DateGap {
+    /// Days from `from` to `to`: `1` for consecutive days, `0` for a column
+    /// holding a single distinct day.
+    pub days: i64,
+    /// The last day before the gap, `YYYY-MM-DD`.
+    pub from: String,
+    /// The first day after the gap, `YYYY-MM-DD`.
+    pub to: String,
 }
 
 /// The day/month order a column's slash dates were read in.
@@ -459,6 +488,7 @@ impl DateTimeStats {
             day_of_week_distribution: HashMap::new(),
             hour_distribution: None,
             slash_date_order: None,
+            largest_gap: None,
         }
     }
 }

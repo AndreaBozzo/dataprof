@@ -323,6 +323,20 @@ def _days(code: str, value: _Any, subject: str) -> int:
     return value
 
 
+def _date_columns(code: str, value: _Any) -> dict[str, int]:
+    """Accept a mapping of date column names to whole days.
+
+    The null rules read "*" as every column; the date rules name their date
+    columns, so "*" would only match a column of that name and leave the rule
+    unevaluated.
+    """
+    if value is not None and not isinstance(value, _Mapping):
+        raise _PolicyFieldError(code, f"{code} must map column names to days, got {value!r}")
+    if "*" in (value or {}):
+        raise _PolicyFieldError(code, f"{code} names date columns; it has no '*' form")
+    return {str(column): _days(code, days, str(column)) for column, days in (value or {}).items()}
+
+
 #: The largest count the Rust gate accepts (`usize` on the 64-bit wheels).
 _COUNT_MAX = (1 << 64) - 1
 
@@ -365,6 +379,7 @@ class _Policy:
         scope: str,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_date_age: _Mapping[str, int] | None = None,
+        max_date_gap: _Mapping[str, int] | None = None,
         baseline: _RustProfileReport | str | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
@@ -442,22 +457,8 @@ class _Policy:
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
 
-        if max_date_age is not None and not isinstance(max_date_age, _Mapping):
-            raise _PolicyFieldError(
-                "max_date_age",
-                f"max_date_age must map column names to days, got {max_date_age!r}",
-            )
-        if "*" in (max_date_age or {}):
-            # The null rules read "*" as every column; a freshness ceiling
-            # names its date columns, so "*" would only match a column of
-            # that name and leave the rule unevaluated.
-            raise _PolicyFieldError(
-                "max_date_age", "max_date_age names date columns; it has no '*' form"
-            )
-        self.max_date_age: dict[str, int] = {
-            str(column): _days("max_date_age", value, str(column))
-            for column, value in (max_date_age or {}).items()
-        }
+        self.max_date_age = _date_columns("max_date_age", max_date_age)
+        self.max_date_gap = _date_columns("max_date_gap", max_date_gap)
 
         self.max_quality_score_drop = (
             None
@@ -587,6 +588,7 @@ class _Policy:
             or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
             or self.max_date_age
+            or self.max_date_gap
             or self.require_quality
             or self.require_dimensions
             or self.require_columns
@@ -635,6 +637,7 @@ class _Policy:
                 max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
                 max_date_age=list(self.max_date_age.items()),
+                max_date_gap=list(self.max_date_gap.items()),
                 require_quality=self.require_quality,
                 require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,

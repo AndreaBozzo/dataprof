@@ -100,6 +100,7 @@ class _Policy:
         scope: str,
         max_null_count: Mapping[str, int] | int | None = ...,
         max_date_age: Mapping[str, int] | None = ...,
+        max_date_gap: Mapping[str, int] | None = ...,
         baseline: Any = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,

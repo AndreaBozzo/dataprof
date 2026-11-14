@@ -855,6 +855,7 @@ class ProfileReport:
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
         max_date_age: _Mapping[str, int] | None = None,
+        max_date_gap: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
         baseline: ProfileReport | None = None,
@@ -928,6 +929,17 @@ class ProfileReport:
                 while the unread values could still change that order. A
                 column with no newest date (not typed as a date, all null) is
                 ``not_assessed``.
+            max_date_gap: Days the largest gap between a column's
+                consecutive distinct dates may span, so a daily file that lost
+                a period from the middle of its range fails:
+                ``{"published_at": 1}`` allows no missing day. The gap is the
+                column's ``largest_gap``, read over every value profiled.
+                Unread rows can fill a gap or open a new one at either edge,
+                so under ``"full_source"`` the rule decides only when every
+                row was read and the column's date statistics saw every
+                value; otherwise it is ``evidence_incomplete`` either way. A
+                column with no gap recorded (not typed as a date, all null, a
+                report from before 0.14) is ``not_assessed``.
             require_metrics: Metrics that must have been analyzed at all:
                 ``"quality"`` for the assessment as a whole, or a dimension
                 name. Without this, a report with no assessment leaves the
@@ -1066,6 +1078,7 @@ class ProfileReport:
                 max_null_count=max_null_count,
                 max_duplicate_rows=max_duplicate_rows,
                 max_date_age=max_date_age,
+                max_date_gap=max_date_gap,
                 require_metrics=require_metrics,
                 scope=scope,
                 baseline=None if baseline is None else baseline._delta_input(),

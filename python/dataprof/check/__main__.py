@@ -26,6 +26,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_count": None,
     "max_duplicate_rows": None,
     "max_date_age": None,
+    "max_date_gap": None,
     "require_metrics": None,
     "require_columns": None,
     "scope": "full_source",
@@ -289,6 +290,15 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="how many days the column's newest date may lie before today; repeatable",
     )
     parser.add_argument(
+        "--max-date-gap",
+        dest="max_date_gap",
+        type=_named_days,
+        action="append",
+        metavar="COLUMN=DAYS",
+        help="the longest gap allowed between the column's consecutive dates "
+        "(1 allows no missing day); repeatable",
+    )
+    parser.add_argument(
         "--require-metric",
         dest="require_metrics",
         action="append",
@@ -469,6 +479,7 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
                 "max_null_percentage",
                 "max_null_count",
                 "max_date_age",
+                "max_date_gap",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
                 "max_distinct_drop",

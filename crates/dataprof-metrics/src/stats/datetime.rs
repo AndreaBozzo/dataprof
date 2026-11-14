@@ -36,9 +36,9 @@
 //! was written. Mixing the two in one column mixes local wall clocks with UTC
 //! instants; that is a property of the data, not something this module can fix.
 
-use crate::types::{ColumnStats, DateTimeStats, SlashDateOrder};
+use crate::types::{ColumnStats, DATE_GAP_YEAR_LIMIT, DateGap, DateTimeStats, SlashDateOrder};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Parse result containing both date and optional time component
 struct ParsedDateTime {
@@ -173,8 +173,9 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 /// values an engine retains (#1297).
 ///
 /// The earliest and latest dates, the duration between them, the year, month,
-/// weekday and hour distributions and the slash order are all decided over
-/// every value offered, so an engine that keeps only a bounded sample reports
+/// weekday and hour distributions, the slash order and the largest gap
+/// between consecutive distinct days (#1300) are all decided over every value
+/// offered, so an engine that keeps only a bounded sample reports
 /// what an in-memory source holding every value reports.
 ///
 /// A slash date that parses both ways (`01/02/2024`) is read in an order the
@@ -232,9 +233,10 @@ impl DateTimeAccumulator {
             .merge(&other.ambiguous_month_first);
     }
 
-    /// Heap held beyond the struct itself: the year maps, the only part that
-    /// grows with the data (one entry per distinct year). The month, weekday
-    /// and hour counts are fixed arrays inside the struct.
+    /// Heap held beyond the struct itself: the year maps and the day
+    /// bitmaps, the only parts that grow with the data (one entry each per
+    /// distinct year). The month, weekday and hour counts are fixed arrays
+    /// inside the struct.
     pub fn heap_bytes(&self) -> usize {
         [
             &self.settled,
@@ -282,6 +284,7 @@ impl DateTimeAccumulator {
             year_distribution: tally.years,
             day_of_week_distribution,
             slash_date_order,
+            largest_gap: tally.days.largest_gap(),
         }
     }
 }
@@ -310,13 +313,121 @@ struct DateTally {
     hours: [usize; 24],
     /// Values that carry a time.
     datetimes: usize,
+    /// The distinct days, for the largest gap between them.
+    days: DaySet,
+}
+
+/// Words in a year's day bitmap: 366 days fit in six.
+const DAY_WORDS: usize = 6;
+
+/// The distinct days of a column, one bitmap per year indexed by the day of
+/// the year, so the memory follows the distinct years as the year map does,
+/// and the days come out in order for [`DaySet::largest_gap`].
+#[derive(Debug, Clone)]
+enum DaySet {
+    Tracked(BTreeMap<i32, [u64; DAY_WORDS]>),
+    /// The column spans more than [`DATE_GAP_YEAR_LIMIT`] distinct years, so
+    /// its days are no longer kept and it reports no gap.
+    OverLimit,
+}
+
+impl Default for DaySet {
+    fn default() -> Self {
+        Self::Tracked(BTreeMap::new())
+    }
+}
+
+impl DaySet {
+    fn add(&mut self, date: NaiveDate) {
+        let Self::Tracked(years) = self else {
+            return;
+        };
+        let day = date.ordinal0() as usize;
+        years.entry(date.year()).or_insert([0; DAY_WORDS])[day / 64] |= 1 << (day % 64);
+        self.check_limit();
+    }
+
+    fn merge(&mut self, other: &Self) {
+        match (&mut *self, other) {
+            (Self::Tracked(mine), Self::Tracked(theirs)) => {
+                for (year, words) in theirs {
+                    let entry = mine.entry(*year).or_insert([0; DAY_WORDS]);
+                    for (mine, theirs) in entry.iter_mut().zip(words) {
+                        *mine |= theirs;
+                    }
+                }
+                self.check_limit();
+            }
+            _ => *self = Self::OverLimit,
+        }
+    }
+
+    /// A set past the limit stops tracking. The decision reads the distinct
+    /// years of every value offered, so a split stream merged decides as the
+    /// whole stream does.
+    fn check_limit(&mut self) {
+        if matches!(self, Self::Tracked(years) if years.len() > DATE_GAP_YEAR_LIMIT) {
+            *self = Self::OverLimit;
+        }
+    }
+
+    /// Heap held by the bitmaps: each entry's key and words, and about a
+    /// pointer of tree overhead.
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Tracked(years) => {
+                years.len()
+                    * (std::mem::size_of::<(i32, [u64; DAY_WORDS])>()
+                        + std::mem::size_of::<usize>())
+            }
+            Self::OverLimit => 0,
+        }
+    }
+
+    /// The longest stretch between consecutive distinct days, the earliest
+    /// one when several are as long. A single day is a gap of zero from
+    /// itself.
+    fn largest_gap(&self) -> Option<DateGap> {
+        let Self::Tracked(years) = self else {
+            return None;
+        };
+        let days = years.iter().flat_map(|(year, words)| {
+            words.iter().enumerate().flat_map(move |(index, word)| {
+                let mut word = *word;
+                std::iter::from_fn(move || {
+                    (word != 0).then(|| {
+                        let bit = word.trailing_zeros();
+                        word &= word - 1;
+                        let ordinal = (index * 64) as u32 + bit + 1;
+                        NaiveDate::from_yo_opt(*year, ordinal)
+                            .expect("only days of real dates are set")
+                    })
+                })
+            })
+        });
+        let mut previous: Option<NaiveDate> = None;
+        let mut largest: Option<(i64, NaiveDate, NaiveDate)> = None;
+        for day in days {
+            let from = previous.unwrap_or(day);
+            let length = (day - from).num_days();
+            if largest.is_none_or(|(longest, _, _)| length > longest) {
+                largest = Some((length, from, day));
+            }
+            previous = Some(day);
+        }
+        largest.map(|(days, from, to)| DateGap {
+            days,
+            from: from.format("%Y-%m-%d").to_string(),
+            to: to.format("%Y-%m-%d").to_string(),
+        })
+    }
 }
 
 impl DateTally {
-    /// Heap held by the year map: its slots, each a key, a count and a
-    /// control byte.
+    /// Heap held by the year map (its slots, each a key, a count and a
+    /// control byte) and the day bitmaps.
     fn heap_bytes(&self) -> usize {
-        self.years.capacity() * (std::mem::size_of::<(i32, usize)>() + 1)
+        self.years.capacity() * (std::mem::size_of::<(i32, usize)>() + 1) + self.days.heap_bytes()
     }
 
     fn add(&mut self, parsed: &ParsedDateTime) {
@@ -324,6 +435,7 @@ impl DateTally {
         self.min = Some(self.min.map_or(date, |min| min.min(date)));
         self.max = Some(self.max.map_or(date, |max| max.max(date)));
         *self.years.entry(date.year()).or_insert(0) += 1;
+        self.days.add(date);
         self.months[date.month0() as usize] += 1;
         self.weekdays[date.weekday().num_days_from_monday() as usize] += 1;
         if let Some(datetime) = parsed.datetime {
@@ -354,6 +466,7 @@ impl DateTally {
             *mine += theirs;
         }
         self.datetimes += other.datetimes;
+        self.days.merge(&other.days);
     }
 }
 
@@ -778,6 +891,116 @@ mod tests {
         );
         assert_eq!(merged.hour_distribution, whole.hour_distribution);
         assert_eq!(whole.hour_distribution.as_ref().unwrap().len(), 2);
+    }
+
+    fn gap(items: &[&str]) -> Option<(i64, String, String)> {
+        stats_of(items)
+            .largest_gap
+            .map(|gap| (gap.days, gap.from, gap.to))
+    }
+
+    fn some_gap(days: i64, from: &str, to: &str) -> Option<(i64, String, String)> {
+        Some((days, from.to_string(), to.to_string()))
+    }
+
+    #[test]
+    fn the_largest_gap_is_between_consecutive_distinct_days() {
+        let daily: Vec<String> = (0..400)
+            .map(|day| {
+                (NaiveDate::from_ymd_opt(2023, 12, 1).unwrap() + chrono::Days::new(day)).to_string()
+            })
+            .collect();
+        let daily: Vec<&str> = daily.iter().map(String::as_str).collect();
+        // Contiguous across a year end and a leap day, with duplicates.
+        let mut repeated = daily.clone();
+        repeated.extend(&daily[..50]);
+        assert_eq!(gap(&repeated), some_gap(1, "2023-12-01", "2023-12-02"));
+        // An interior month removed: 2024-02-01 to 2024-02-29 missing.
+        let holed: Vec<&str> = daily
+            .iter()
+            .copied()
+            .filter(|day| !day.starts_with("2024-02"))
+            .collect();
+        assert_eq!(gap(&holed), some_gap(30, "2024-01-31", "2024-03-01"));
+        // The earliest of two equal gaps.
+        assert_eq!(
+            gap(&["2024-01-01", "2024-01-03", "2024-01-05"]),
+            some_gap(2, "2024-01-01", "2024-01-03")
+        );
+        // One distinct day, read any number of times.
+        assert_eq!(
+            gap(&["2024-05-06", "2024-05-06T10:00:00"]),
+            some_gap(0, "2024-05-06", "2024-05-06")
+        );
+        // No date at all.
+        assert_eq!(gap(&["", "junk"]), None);
+        assert_eq!(gap(&[]), None);
+    }
+
+    #[test]
+    fn the_gap_reads_days_as_the_other_statistics_do() {
+        // An offset moves the instant to the next UTC day (module docs).
+        assert_eq!(
+            gap(&["2024-01-15", "2024-01-15T23:00:00-05:00"]),
+            some_gap(1, "2024-01-15", "2024-01-16")
+        );
+        // The month-first evidence comes last: 01/02/2024 is 2 January, so
+        // the days are 1, 2 January and 31 December.
+        assert_eq!(
+            gap(&["01/01/2024", "01/02/2024", "12/31/2024"]),
+            some_gap(364, "2024-01-02", "2024-12-31")
+        );
+        // Day-first, 01/02/2024 is 1 February.
+        assert_eq!(
+            gap(&["01/01/2024", "01/02/2024", "31/12/2024"]),
+            some_gap(334, "2024-02-01", "2024-12-31")
+        );
+    }
+
+    #[test]
+    fn a_split_stream_gives_the_one_stream_gap() {
+        let values: Vec<String> = (0..300)
+            .filter(|day| !(100..140).contains(day))
+            .map(|day| {
+                (NaiveDate::from_ymd_opt(2022, 6, 1).unwrap() + chrono::Days::new(day)).to_string()
+            })
+            .collect();
+        let whole = compute_datetime_stats(&values).largest_gap;
+        assert_eq!(whole.as_ref().map(|gap| gap.days), Some(41));
+        // Interleaved halves, so neither half sees the hole alone.
+        let mut left = DateTimeAccumulator::new();
+        let mut right = DateTimeAccumulator::new();
+        for (index, value) in values.iter().enumerate() {
+            if index % 2 == 0 {
+                left.update(value);
+            } else {
+                right.update(value);
+            }
+        }
+        left.merge(&right);
+        assert_eq!(left.finish().largest_gap, whole);
+    }
+
+    #[test]
+    fn past_the_year_limit_no_gap_is_reported() {
+        // Years 0 to 9999, the limit exactly.
+        let mut within = DateTimeAccumulator::new();
+        for year in 0..DATE_GAP_YEAR_LIMIT {
+            within.update(&format!("{year:04}-01-05"));
+        }
+        assert_eq!(within.finish().largest_gap.map(|gap| gap.days), Some(366));
+        assert!(within.heap_bytes() >= DATE_GAP_YEAR_LIMIT * 52);
+        // One more year, offered to a separate half and merged.
+        let mut other = DateTimeAccumulator::new();
+        other.update("+12000-01-05");
+        assert_eq!(other.finish().max_datetime, "+12000-01-05");
+        let mut over = within.clone();
+        over.merge(&other);
+        assert_eq!(over.finish().largest_gap, None);
+        // Every other statistic stays.
+        assert_eq!(over.finish().min_datetime, "0000-01-05");
+        within.update("+12000-01-05");
+        assert_eq!(within.finish().largest_gap, None);
     }
 
     #[test]

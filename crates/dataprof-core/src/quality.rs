@@ -192,7 +192,8 @@ pub enum SampledScoreEstimator {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DateStatistics {
-    /// Every non-null value the scan read, on every engine (#1297).
+    /// Every non-null value the scan read, on every engine (#1297). The
+    /// `largest_gap` added in 0.14 (#1300) is computed over them too.
     EveryValue,
 }
 

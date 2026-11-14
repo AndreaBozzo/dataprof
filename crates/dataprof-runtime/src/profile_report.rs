@@ -220,8 +220,8 @@ pub struct MetricSemantics {
     #[schemars(with = "SampledScoreEstimator")]
     pub sampled_score_estimator: Option<SampledScoreEstimator>,
     /// Which values a date column's `min_datetime`, `max_datetime`,
-    /// `duration_days`, distributions and `slash_date_order` are computed
-    /// over.
+    /// `duration_days`, distributions, `slash_date_order` and `largest_gap`
+    /// are computed over.
     ///
     /// Absent means not recorded: through 0.13 an engine that retained a
     /// bounded sample computed them from it, so on a source larger than the

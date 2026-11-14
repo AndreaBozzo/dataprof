@@ -110,6 +110,13 @@
 //! their day and month order is decided from the values read, so a fresh one
 //! read on part of a column passes only once that order cannot change.
 //!
+//! [`QualityPolicy::max_date_gap`] fails a column whose dates hold a hole
+//! inside their range (#1300): a daily file that lost a period from its
+//! middle keeps its newest date and most of its rows. The values that were
+//! not read can fill a hole the read ones show, or open one at the edge of
+//! the range, so under [`PolicyScope::FullSource`] the rule decides only on a
+//! scan that covered the column.
+//!
 //! # Forbidden findings
 //!
 //! [`QualityPolicy::forbid_findings`] turns a findings code into a rule: the
@@ -441,6 +448,9 @@ pub enum CheckCode {
     /// A column's newest date may lie at most the threshold's number of days
     /// before the timeliness reference date.
     MaxDateAge,
+    /// The largest gap between a column's consecutive distinct days may be
+    /// at most the threshold's number of days.
+    MaxDateGap,
     /// A metric must have been analyzed at all.
     RequireMetric,
     /// The overall quality score may drop at most the threshold's number of
@@ -481,6 +491,7 @@ impl fmt::Display for CheckCode {
             Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
             Self::MaxDateAge => write!(f, "max_date_age"),
+            Self::MaxDateGap => write!(f, "max_date_gap"),
             Self::RequireMetric => write!(f, "require_metric"),
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
@@ -1019,6 +1030,7 @@ pub struct QualityPolicy {
     max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
     max_date_age: BTreeMap<String, u32>,
+    max_date_gap: BTreeMap<String, u32>,
     require_metrics: Vec<RequiredMetric>,
     max_quality_score_drop: Option<f64>,
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
@@ -1125,6 +1137,26 @@ impl QualityPolicy {
     /// [`NotEvaluated::SettingUnrecorded`] on `timeliness_clock`.
     pub fn max_date_age(mut self, column: impl Into<String>, days: u32) -> Self {
         self.max_date_age.insert(column.into(), days);
+        self
+    }
+
+    /// Require the largest gap between the named column's consecutive
+    /// distinct days to be at most `days` (#1300), so a daily file that lost
+    /// a period from the middle of its range fails while its newest date,
+    /// schema and most of its rows stay normal. `1` allows no missing day.
+    ///
+    /// The gap is the column's `largest_gap`, counted in whole calendar days
+    /// over every value the profiler read. Under [`PolicyScope::FullSource`]
+    /// the rule decides only when those values cover the column: the values
+    /// that were not read can fill a hole the read ones show, or open a new
+    /// one at either edge of the range, so a partial scan is
+    /// [`NotEvaluated::EvidenceIncomplete`] whichever way the read values
+    /// point. A column with no gap recorded (not typed as a date, all null, a
+    /// report from before 0.14, or dates spanning more than
+    /// [`DATE_GAP_YEAR_LIMIT`](dataprof_core::DATE_GAP_YEAR_LIMIT) distinct
+    /// years) is [`NotEvaluated::NotAssessed`].
+    pub fn max_date_gap(mut self, column: impl Into<String>, days: u32) -> Self {
+        self.max_date_gap.insert(column.into(), days);
         self
     }
 
@@ -1383,6 +1415,7 @@ impl QualityPolicy {
             && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
             && self.max_date_age.is_empty()
+            && self.max_date_gap.is_empty()
             && self.require_metrics.is_empty()
             && self.require_columns.is_empty()
             && self.forbid_findings.is_empty()
@@ -1565,6 +1598,13 @@ impl QualityPolicy {
                 .iter()
                 .find(|candidate| &candidate.name == column);
             checks.push(self.date_age_check(report, column, profile, scan, *days));
+        }
+        for (column, days) in &self.max_date_gap {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.date_gap_check(report, column, profile, scan, *days));
         }
         if !self.forbid_findings.is_empty() {
             let input = FindingsInput::from(report);
@@ -2251,6 +2291,90 @@ impl QualityPolicy {
             }
         }
         .to_string();
+        check
+    }
+
+    /// How long a hole a column's dates may hold. See
+    /// [`max_date_gap`](Self::max_date_gap).
+    fn date_gap_check(
+        &self,
+        report: &ProfileReport,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+        max_days: u32,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::MaxDateGap,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::AtMost {
+                value: MetricValue::Days(i64::from(max_days)),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let gap = match &profile.stats {
+            ColumnStats::DateTime(stats) => stats.largest_gap.as_ref().ok_or(
+                if stats.max_datetime.is_empty() {
+                    "no date was recorded for this column"
+                } else {
+                    "no largest gap was recorded for this column: the report predates it, or                      the column's dates span more years than the profiler tracks days for"
+                },
+            ),
+            _ if profile.data_type == DataType::Date => Err("no date was recorded for this column"),
+            _ => Err("this column is not typed as a date, so it has no gap between dates"),
+        };
+        let gap = match gap {
+            Ok(gap) => gap,
+            Err(message) => {
+                check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+                check.message = message.to_string();
+                return check;
+            }
+        };
+        check.evidence = scan.and(date_statistics_evidence(report, profile));
+        check.observed = Some(MetricValue::Days(gap.days));
+        let within = gap.days <= i64::from(max_days);
+        // Unread values can both fill a hole and open one past either edge,
+        // so neither reading is a decision on part of the column.
+        check.status = match (self.scope, check.evidence.gap()) {
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ if within => CheckStatus::Passed,
+            _ => CheckStatus::Failed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => format!(
+                "this column's largest gap between dates, {} days from {} to {}, is within the                  allowance",
+                gap.days, gap.from, gap.to
+            ),
+            CheckStatus::Failed => format!(
+                "this column's dates hold a gap of {} days from {} to {}, longer than allowed",
+                gap.days, gap.from, gap.to
+            ),
+            CheckStatus::NotEvaluated(_) if within => format!(
+                "the largest gap between the dates read in this column, {} days, is within the                  allowance, and the values that were not read may open a longer one",
+                gap.days
+            ),
+            CheckStatus::NotEvaluated(_) => format!(
+                "the dates read in this column hold a gap of {} days from {} to {}, and the                  values that were not read may fill it",
+                gap.days, gap.from, gap.to
+            ),
+        };
         check
     }
 

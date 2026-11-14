@@ -40,9 +40,9 @@ pub use partial::{
 };
 pub use pattern::{Pattern, PatternMatchCount};
 pub use profile::{
-    BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, ExactNumericStats, FrequencyItem,
-    NativeType, NumericStats, Quartiles, ShapeMomentEstimator, SlashDateOrder, StatisticRounding,
-    TextStats,
+    BooleanStats, ColumnProfile, ColumnStats, DATE_GAP_YEAR_LIMIT, DateGap, DateTimeStats,
+    ExactNumericStats, FrequencyItem, NativeType, NumericStats, Quartiles, ShapeMomentEstimator,
+    SlashDateOrder, StatisticRounding, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{

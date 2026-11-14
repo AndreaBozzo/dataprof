@@ -437,6 +437,7 @@ class ProfileReport:
         max_null_count_any: int | None = ...,
         max_duplicate_rows: int | None = ...,
         max_date_age: list[tuple[str, int]] = ...,
+        max_date_gap: list[tuple[str, int]] = ...,
         require_quality: bool = ...,
         require_dimensions: list[str] = ...,
         scope: str = ...,
