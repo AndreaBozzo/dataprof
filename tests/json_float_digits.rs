@@ -108,6 +108,52 @@ fn a_single_object_keeps_the_digits() {
     assert_eq!(column(&report), column(&expected));
 }
 
+/// 1e-400 and 2e-400 both read as 0.0, so a CSV column of them beside 5 and
+/// 7 reported three values and a mode of 0, which no cell holds (#1182).
+#[test]
+fn literals_below_the_f64_range_stay_distinct() {
+    let csv = column(&profile("id,v\n1,1e-400\n2,2e-400\n3,5\n4,7\n", ".csv"));
+    let json = column(&profile(
+        r#"[{"id":1,"v":1e-400},{"id":2,"v":2e-400},{"id":3,"v":5},{"id":4,"v":7}]"#,
+        ".json",
+    ));
+    assert_eq!(csv, json);
+    // 4 before the fix too, so this does not guard #1182 on its own.
+    assert_eq!(csv["unique_count"], 4, "{csv}");
+    // No value repeats, so there is no mode: before, the mode was 0.0.
+    assert_eq!(csv["stats"]["Numeric"].get("mode"), None, "{csv}");
+}
+
+/// `pandas.DataFrame.to_csv(float_format='%.17g')` pads 5e-324 and 1.5e-320
+/// past their shortest form, as it does 0.1. A float wrote them, so they read
+/// as those floats, and the column profiles as the shortest-form CSV of the
+/// same floats does (#783, #1182).
+#[test]
+fn subnormals_written_with_17_digits_stay_floats() {
+    let padded = column(&profile(
+        "id,v\n1,4.9406564584124654e-324\n2,1.4999833007740245e-320\n3,0.10000000000000001\n",
+        ".csv",
+    ));
+    let shortest = column(&profile("id,v\n1,5e-324\n2,1.5e-320\n3,0.1\n", ".csv"));
+    assert_eq!(padded, shortest);
+
+    // No value repeats there, so nothing tells a held literal from its float.
+    // `mode` counts values, not cell text (`unique_count` keeps the two
+    // spellings of 0.1 apart too): 5e-324 written both ways is its mode, as
+    // 0.1 written both ways is.
+    let mode = |cells: &str| {
+        column(&profile(&format!("id,v\n{cells}"), ".csv"))["stats"]["Numeric"]["mode"].clone()
+    };
+    assert_eq!(
+        mode("1,4.9406564584124654e-324\n2,5e-324\n3,7\n"),
+        mode("1,5e-324\n2,5e-324\n3,7\n")
+    );
+    assert_eq!(
+        mode("1,0.10000000000000001\n2,0.1\n3,7\n"),
+        mode("1,0.1\n2,0.1\n3,7\n")
+    );
+}
+
 /// `1e00000000000000000000` is 1, which the `f64` holds, so it stays the
 /// number 1.0, as `1e0` does.
 #[test]

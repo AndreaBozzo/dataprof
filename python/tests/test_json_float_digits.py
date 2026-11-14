@@ -81,6 +81,27 @@ def test_every_route_profiles_float_digits_as_csv_does(tmp_path: Path) -> None:
     assert not wrong, wrong
 
 
+def test_literals_below_the_float_range_stay_distinct_on_every_route(tmp_path: Path) -> None:
+    # #1182: 1e-400 and 2e-400 both read as 0.0, so the mode was 0.0, which
+    # no cell holds. The CSV is checked on the in-memory routes too, since the
+    # CASES above compare each route against a CSV that shares the parsing.
+    # unique_count was already 4 before the fix; the mode is what guards it.
+    data = b"id,v\n1,1e-400\n2,2e-400\n3,5\n4,7\n"
+    records = [b'{"id":1,"v":1e-400}', b'{"id":2,"v":2e-400}', b'{"id":3,"v":5}', b'{"id":4,"v":7}']
+    documents = {
+        "csv": data,
+        "json": b"[" + b",".join(records) + b"]",
+        "jsonl": b"\n".join(records) + b"\n",
+    }
+    wrong = {}
+    for fmt, document in documents.items():
+        for route, column in _routes(tmp_path, fmt, document).items():
+            mode = column.get("stats", {}).get("mode")
+            if column["unique_count"] != 4 or mode is not None:
+                wrong[f"{fmt} {route}"] = (column["unique_count"], mode)
+    assert not wrong, wrong
+
+
 def test_a_zero_padded_exponent_is_held_on_every_route(tmp_path: Path) -> None:
     # 1e00000000000000000000 is 1 and the f64 holds it, so it reads as the
     # number 1.0, as 1e0 does. The routes agree on two distinct values; a CSV
