@@ -249,6 +249,7 @@ pub fn profile_columns(
                 // are already exact.
                 exact_numeric: None,
                 exact_date_matches: None,
+                exact_dates: None,
                 decimal_values: false,
             }));
 

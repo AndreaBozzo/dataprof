@@ -178,6 +178,24 @@ pub enum SampledScoreEstimator {
     PopulationWeighted,
 }
 
+/// Which values a date column's statistics are computed over, as recorded
+/// in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 the engines that
+/// retain a bounded sample of each column computed `min_datetime`,
+/// `max_datetime`, `duration_days`, the year, month, weekday and hour
+/// distributions and `slash_date_order` from that sample, so on a source
+/// larger than the sample they described the sample; those releases recorded
+/// no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DateStatistics {
+    /// Every non-null value the scan read, on every engine (#1297).
+    EveryValue,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(
     Debug,

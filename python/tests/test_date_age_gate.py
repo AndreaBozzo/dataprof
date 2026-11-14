@@ -117,7 +117,14 @@ def test_the_issue_case_fails_where_every_other_rule_passes():
     }
 
 
-def test_a_sampled_newest_date_decides_only_what_unread_values_cannot_reverse(
+def _without_date_statistics(report: dp.ProfileReport) -> dp.ProfileReport:
+    """The report as a release before ``date_statistics`` was recorded wrote it."""
+    document = json.loads(report.to_json())
+    assert document["metric_semantics"].pop("date_statistics") == "every_value"
+    return dp.ProfileReport.from_json(json.dumps(document))
+
+
+def test_a_newest_date_past_the_sample_is_decided_on_a_complete_scan(
     tmp_path: Path,
 ):
     start = dt.date(2020, 1, 1)
@@ -126,11 +133,16 @@ def test_a_sampled_newest_date_decides_only_what_unread_values_cannot_reverse(
     path.write_bytes(_csv(stale))
     report = dp.profile(str(path), reference_date="2026-09-30")
     full = _check(report.check(max_date_age={"published_at": 3}))
+    assert (full.status, full.evidence) == ("failed", {"coverage": "complete"})
+
+    # A report saved before the record computed its dates from the sample.
+    saved = _without_date_statistics(report)
+    full = _check(saved.check(max_date_age={"published_at": 3}))
     assert (_status(full), full.evidence) == (
         "evidence_incomplete",
         {"coverage": "incomplete", "reason": "quality_sampled"},
     )
-    observed = _check(report.check(max_date_age={"published_at": 3}, scope="observed"))
+    observed = _check(saved.check(max_date_age={"published_at": 3}, scope="observed"))
     assert observed.status == "failed"
 
     path.write_bytes(_csv(["2026-09-29"] * 30_000))
@@ -190,9 +202,13 @@ def test_a_partial_read_leaves_a_fresh_slash_date_open_while_its_order_can_chang
     assert (_status(capped), capped.observed) == ("evidence_incomplete", 1)
     assert (whole.status, whole.observed) == ("failed", 265)
 
-    # The retained sample of a larger file is a partial read too.
+    # Past the retained sample the order is decided over every value read, so
+    # a complete scan settles it; a report saved before that record decided
+    # it from the sample, a partial read too.
     path.write_bytes(_csv(["01/10/2026"] * 30_000))
-    sampled = _check(dp.profile(str(path), reference_date="2026-10-02").check(**policy))
+    report = dp.profile(str(path), reference_date="2026-10-02")
+    assert _check(report.check(**policy)).status == "passed"
+    sampled = _check(_without_date_statistics(report).check(**policy))
     assert sampled.reason == {"reason": "evidence_incomplete", "gap": "quality_sampled"}
 
 

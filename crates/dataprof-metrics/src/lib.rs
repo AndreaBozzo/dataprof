@@ -20,7 +20,7 @@ pub use quality::{
     ValidityMetrics, ValueChecksSkipReason, columns_without_value_checks,
 };
 pub use stats::{
-    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal, HyperLogLog,
-    NumericAccumulator, ParsedNumber, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, spill_largest_exact_sets,
+    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal,
+    HyperLogLog, NumericAccumulator, ParsedNumber, calculate_datetime_stats,
+    calculate_numeric_stats, calculate_text_stats, spill_largest_exact_sets,
 };

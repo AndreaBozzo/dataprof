@@ -7,8 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, NumericAccumulator, ParsedNumber, RowCompletenessSummary,
-    RowDuplicateSummary, value_matches_hint,
+    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+    RowCompletenessSummary, RowDuplicateSummary, value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -264,6 +264,9 @@ pub struct StreamingStatistics {
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
     date_match_count: usize,
+    /// Date statistics over every non-null value, independent of the
+    /// reservoir (#1297).
+    dates: DateTimeAccumulator,
 }
 
 impl StreamingStatistics {
@@ -278,6 +281,7 @@ impl StreamingStatistics {
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
             date_match_count: 0,
+            dates: DateTimeAccumulator::new(),
         }
     }
 
@@ -303,6 +307,7 @@ impl StreamingStatistics {
         if value_matches_hint(value, SemanticHintKind::Temporal) {
             self.date_match_count += 1;
         }
+        self.dates.update(value);
 
         if let Some(number) = ParsedNumber::parse(value) {
             self.welford.update_number(number);
@@ -327,6 +332,7 @@ impl StreamingStatistics {
         self.sampler.merge(&other.sampler);
         self.text_length_tracker.merge(&other.text_length_tracker);
         self.date_match_count += other.date_match_count;
+        self.dates.merge(&other.dates);
     }
 
     pub fn mean(&self) -> f64 {
@@ -381,6 +387,11 @@ impl StreamingStatistics {
         self.date_match_count
     }
 
+    /// Date statistics over every non-null value this column has streamed.
+    pub fn date_statistics(&self) -> &DateTimeAccumulator {
+        &self.dates
+    }
+
     /// Exact aggregates over every numeric value this column has streamed,
     /// or `None` when no value parsed as a finite number.
     ///
@@ -421,8 +432,11 @@ impl StreamingStatistics {
         let struct_size = std::mem::size_of::<Self>();
         let distinct_size = self.distinct.memory_usage_bytes();
         let reservoir_size = self.sampler.memory_usage_bytes();
+        // The year maps behind the date statistics (#1297): one entry per
+        // distinct year, so small on real dates but counted all the same.
+        let dates_size = self.dates.heap_bytes();
 
-        struct_size + distinct_size + reservoir_size
+        struct_size + distinct_size + reservoir_size + dates_size
     }
 }
 
@@ -1016,6 +1030,25 @@ mod row_tracker_tests {
             .row_completeness_summary()
             .expect("rows were observed");
         (summary.complete_rows, summary.rows_checked)
+    }
+
+    /// The date statistics' year maps count toward the memory the incremental
+    /// and async engines limit (Copilot review on #1301).
+    #[test]
+    fn memory_usage_counts_the_date_statistics() {
+        let mut stats = StreamingStatistics::new();
+        for year in 1000..3000 {
+            stats.update(&format!("{year}-01-05"));
+        }
+        let dates = stats.date_statistics().heap_bytes();
+        assert!(dates > 0);
+        assert!(
+            stats.memory_usage_bytes()
+                >= std::mem::size_of::<StreamingStatistics>()
+                    + stats.distinct.memory_usage_bytes()
+                    + stats.sampler.memory_usage_bytes()
+                    + dates
+        );
     }
 
     #[test]

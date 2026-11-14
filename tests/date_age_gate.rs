@@ -208,7 +208,7 @@ fn a_saved_report_decides_as_the_run_did() {
     }
 }
 
-/// 30,000 dates, past the retained sample the date statistics read.
+/// 30,000 dates, past the retained sample of 10,000 values per column.
 fn large(newest: &str) -> String {
     let start = day("2020-01-01");
     let mut dates: Vec<String> = (0..29_999)
@@ -219,15 +219,31 @@ fn large(newest: &str) -> String {
     csv_text(&refs)
 }
 
-/// A newest date can only be overtaken by a newer one. So a fresh date read
-/// in the sample passes, and a stale one over a sample is a decision only
-/// under the observed scope.
+/// The report as a release before `metric_semantics.date_statistics` wrote
+/// it: the same document without the record.
+fn without_date_statistics(report: &ProfileReport) -> ProfileReport {
+    let mut document = serde_json::to_value(report).unwrap();
+    let removed = document["metric_semantics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("date_statistics");
+    assert_eq!(removed, Some(json!("every_value")));
+    serde_json::from_value(document).unwrap()
+}
+
+/// The date statistics cover every value read (#1297), so on a complete scan
+/// past the retained sample a stale newest date fails and a fresh one passes.
+/// A report saved before that record computed them from the sample, and
+/// there a stale date is a decision only under the observed scope, since the
+/// values the sample left out may hold a newer one.
 #[test]
-fn a_sampled_newest_date_decides_only_what_unread_values_cannot_reverse() {
+fn a_newest_date_past_the_sample_is_decided_on_a_complete_scan() {
     let reference = day("2026-09-30");
     let stale = file(".csv", &large("2020-06-01"));
     let fresh_values: String = (0..30_000).map(|i| format!("2026-09-29,{i}\n")).collect();
     let fresh = file(".csv", &format!("published_at,x\n{fresh_values}"));
+    let complete = json!({ "coverage": "complete" });
+    let sampled = json!({ "coverage": "incomplete", "reason": "quality_sampled" });
     let mut wrong = Vec::new();
     for engine in [EngineType::Incremental, EngineType::Columnar] {
         let profile = |source: &tempfile::NamedTempFile| {
@@ -239,24 +255,50 @@ fn a_sampled_newest_date_decides_only_what_unread_values_cannot_reverse() {
         };
         let stale_report = profile(&stale);
         let fresh_report = profile(&fresh);
-        for (case, report, scope, expected) in [
+        let stale_saved = without_date_statistics(&stale_report);
+        let fresh_saved = without_date_statistics(&fresh_report);
+        for (case, report, scope, expected, evidence) in [
             (
                 "stale, full source",
                 &stale_report,
                 PolicyScope::FullSource,
-                "evidence_incomplete",
+                "failed",
+                &complete,
             ),
             (
                 "stale, observed",
                 &stale_report,
                 PolicyScope::Observed,
                 "failed",
+                &complete,
             ),
             (
                 "fresh, full source",
                 &fresh_report,
                 PolicyScope::FullSource,
                 "passed",
+                &complete,
+            ),
+            (
+                "unrecorded, stale, full source",
+                &stale_saved,
+                PolicyScope::FullSource,
+                "evidence_incomplete",
+                &sampled,
+            ),
+            (
+                "unrecorded, stale, observed",
+                &stale_saved,
+                PolicyScope::Observed,
+                "failed",
+                &sampled,
+            ),
+            (
+                "unrecorded, fresh, full source",
+                &fresh_saved,
+                PolicyScope::FullSource,
+                "passed",
+                &sampled,
             ),
         ] {
             let result = QualityPolicy::new()
@@ -264,10 +306,9 @@ fn a_sampled_newest_date_decides_only_what_unread_values_cannot_reverse() {
                 .scope(scope)
                 .evaluate(report)
                 .unwrap();
-            let evidence = serde_json::to_value(check_of(&result)).unwrap()["evidence"].clone();
-            let got = (status(&result), evidence);
-            let sampled = json!({ "coverage": "incomplete", "reason": "quality_sampled" });
-            if got != (expected.to_string(), sampled) {
+            let got_evidence = serde_json::to_value(check_of(&result)).unwrap()["evidence"].clone();
+            let got = (status(&result), got_evidence);
+            if got != (expected.to_string(), evidence.clone()) {
                 wrong.push(format!("{case} [{engine:?}]: {got:?}"));
             }
         }
@@ -570,15 +611,19 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
     }
     assert!(wrong.is_empty(), "wrong decisions:\n{}", wrong.join("\n"));
 
-    // The retained sample is a partial read too: 30,000 ambiguous dates past
-    // the sample decide no order, so the fresh date stays open.
+    // 30,000 ambiguous dates past the retained sample: the order is decided
+    // over every value read, so a complete scan settles it. A report saved
+    // before that record decided it from the sample, which is a partial read
+    // too, so there the fresh date stays open.
     let ambiguous = vec!["01/10/2026"; 30_000];
     let sampled_source = file(".csv", &csv_text(&ambiguous));
-    let sampled = Profiler::new()
+    let whole = Profiler::new()
         .reference_date(day("2026-10-02"))
         .analyze_file(sampled_source.path())
         .unwrap();
-    let check = serde_json::to_value(check_of(&evaluate(&sampled, "published_at", 3))).unwrap();
+    assert_eq!(status(&evaluate(&whole, "published_at", 3)), "passed");
+    let saved = without_date_statistics(&whole);
+    let check = serde_json::to_value(check_of(&evaluate(&saved, "published_at", 3))).unwrap();
     assert_eq!(
         (&check["reason"], &check["gap"]),
         (&json!("evidence_incomplete"), &json!("quality_sampled"))
