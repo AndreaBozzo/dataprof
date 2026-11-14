@@ -1,20 +1,22 @@
 //! Data Quality Metrics Calculation Module
 //!
-//! This module implements comprehensive data quality metric calculations following industry standards.
-//! It provides structured assessment across seven key dimensions: Completeness,
+//! This module scores a profile across seven dimensions: Completeness,
 //! Consistency, Uniqueness, Accuracy, Timeliness, Validity, and Precision.
 //!
-//! ## ISO Compliance
+//! ## Relation to ISO 8000 and ISO/IEC 25012
 //!
-//! This module follows:
-//! - **ISO 8000-8**: Data Quality (Completeness, Timeliness)
-//! - **ISO 8000-61**: Master Data Quality (Consistency)
-//! - **ISO 8000-110**: Duplicate Detection (Uniqueness)
-//! - **ISO 25012**: Data Quality Model (Accuracy)
+//! The dimensions are informed by these standards; the module does not claim
+//! conformance to them. Completeness, consistency, accuracy and precision are
+//! ISO/IEC 25012 characteristics, and timeliness stands close to its
+//! currentness; uniqueness and validity are common data-quality terms. The
+//! measures themselves are dataprof's own heuristics, such as Tukey fences for
+//! accuracy and the dominant decimal scale for precision; neither standard
+//! defines them.
 //!
 //! ## TODO: Future ISO 25012 Dimensions
 //!
-//! ISO/IEC 25012 defines 15 data quality characteristics. We currently implement 7.
+//! ISO/IEC 25012 defines 15 data quality characteristics, of which the
+//! dimensions above cover four, plus currentness through timeliness.
 //! Below are candidates for future implementation:
 //!
 //! ### Inherent Data Quality (content-focused)

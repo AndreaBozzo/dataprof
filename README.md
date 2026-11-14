@@ -99,8 +99,8 @@ Minimum supported Rust: 1.96.
 
 ## What you can count on
 
-- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it.
-- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators.
+- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it. One limit for now: above 10,000 non-null values in a column, some routes score a retained sample and others every value, so the accuracy, consistency, precision, timeliness and validity scores, the pattern counts and `type_homogeneity` can differ between routes. The report gives each sampled score an interval in `score_bounds`.
+- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators. The exception is the exact duplicate-row count, which keeps up to `duplicate_rows_exact_limit` distinct rows (default 1,000,000, about 10 to 20 bytes each) outside the memory budget.
 - **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it, such as a row minimum it reached; otherwise the check is inconclusive. Scores carry their confidence interval.
 - **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
 - **Local by default.** Profiling runs on your machine. Reports carry statistics, including numeric minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
