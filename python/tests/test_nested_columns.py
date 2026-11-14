@@ -16,6 +16,7 @@ from pathlib import Path
 import dataprof as dp
 import dataprof.asyncio as dp_async
 import pytest
+from _provenance import without_native_type
 
 pa = pytest.importorskip("pyarrow", reason="pyarrow builds the typed fixtures")
 pq = pytest.importorskip("pyarrow.parquet", reason="pyarrow writes the Parquet fixture")
@@ -37,7 +38,7 @@ def _table() -> pa.Table:
 
 
 def _columns(report: dp.ProfileReport) -> list[dict]:
-    return report.to_dict()["columns"]
+    return without_native_type(report.to_dict()["columns"])
 
 
 def _quality(report: dp.ProfileReport) -> dict:

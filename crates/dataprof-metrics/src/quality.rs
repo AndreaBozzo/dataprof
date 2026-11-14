@@ -67,6 +67,12 @@ pub struct UniquenessMetrics {
     /// the distinct count), rather than an exact count.
     #[serde(default, skip_serializing_if = "is_false")]
     pub duplicate_rows_approximate: bool,
+    /// Distinct rows the full-stream row tracker counts exactly before its
+    /// count becomes an estimate: the limit `duplicate_rows` was counted
+    /// under (#1292). One million unless the caller raised it. Absent when no
+    /// row tracker counted the rows, and on documents written before 0.14.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_rows_exact_limit: Option<usize>,
 }
 
 /// Full-stream row-duplicate counts produced by an engine's row tracker.
@@ -81,6 +87,8 @@ pub struct RowDuplicateSummary {
     pub duplicate_rows: usize,
     pub rows_checked: usize,
     pub approximate: bool,
+    /// Distinct rows the tracker counts exactly before estimating (#1292).
+    pub exact_limit: usize,
     /// The most duplicate rows there can be: `rows_checked` minus the distinct
     /// rows the tracker's exact set held when it was dropped. Equal to
     /// `duplicate_rows` while the count is exact (#819).
@@ -179,6 +187,17 @@ pub struct TimelinessMetrics {
     )]
     #[schemars(with = "TimelinessClock")]
     pub clock: Option<TimelinessClock>,
+}
+
+/// Only an absent `columns_without_value_checks` means the report did not
+/// record it; an explicit `null` is malformed.
+fn present_or_missing<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<ColumnWithoutValueChecks>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::deserialize(deserializer).map(Some)
 }
 
 /// Only an absent `clock` means the report did not record one.
@@ -444,6 +463,7 @@ impl QualityMetrics {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -669,11 +689,19 @@ impl QualityMetrics {
     /// not a score of zero. Equivalent to
     /// [`assessed_dimensions`](Self::assessed_dimensions) being empty.
     pub fn overall_score(&self) -> Option<f64> {
+        self.overall_score_with(|_| None)
+    }
+
+    /// The overall score with `replace` taking the place of a dimension's
+    /// score wherever it returns one, aggregated as
+    /// [`overall_score`](Self::overall_score) does.
+    fn overall_score_with(&self, replace: impl Fn(QualityDimension) -> Option<f64>) -> Option<f64> {
         let mut total_weight = 0.0;
         let mut score = 0.0;
 
-        for (_, weight, dimension_score) in self.weighted_scores() {
+        for (dimension, weight, dimension_score) in self.weighted_scores() {
             if let Some(value) = dimension_score {
+                let value = replace(dimension).unwrap_or(value);
                 total_weight += weight;
                 score += value * weight;
             }
@@ -849,11 +877,27 @@ fn serialize_dimension_scores<S: serde::Serializer>(
 
 impl QualityScores {
     fn from_metrics(metrics: &QualityMetrics) -> Self {
+        Self::from_metrics_with(metrics, |_| None)
+    }
+
+    /// Scores of `metrics` with `replace` taking the place of an assessed
+    /// dimension's score wherever it returns one, and the overall score
+    /// aggregated from those. A dimension `metrics` did not assess stays
+    /// without a score.
+    pub(crate) fn from_metrics_with(
+        metrics: &QualityMetrics,
+        replace: impl Fn(QualityDimension) -> Option<f64>,
+    ) -> Self {
+        let score = |dimension| {
+            metrics
+                .dimension_score(dimension)
+                .map(|score| replace(dimension).unwrap_or(score))
+        };
         Self {
-            overall_score: metrics.overall_score(),
+            overall_score: metrics.overall_score_with(&replace),
             dimension_scores: QualityDimension::all()
                 .into_iter()
-                .map(|dimension| (dimension.to_string(), metrics.dimension_score(dimension)))
+                .map(|dimension| (dimension.to_string(), score(dimension)))
                 .collect(),
         }
     }
@@ -907,7 +951,10 @@ pub struct ScoreBounds {
 }
 
 impl ScoreBounds {
-    fn is_valid(&self) -> bool {
+    /// Whether every interval lies in 0..=100 with `lower <= upper`, at a
+    /// confidence level strictly between 0 and 1. A reader refuses bounds
+    /// that are not.
+    pub fn is_valid(&self) -> bool {
         self.confidence_level.is_finite()
             && 0.0 < self.confidence_level
             && self.confidence_level < 1.0
@@ -919,6 +966,54 @@ impl ScoreBounds {
                 .values()
                 .all(|interval| interval.is_none_or(|interval| interval.is_valid()))
     }
+}
+
+/// Why the value-level quality checks skip a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ValueChecksSkipReason {
+    /// A struct, list or map column. Its values reach the checks only as a
+    /// serialisation, which differs by input path, so none reads them (#637).
+    Nested,
+}
+
+impl ValueChecksSkipReason {
+    /// The name the report documents carry, such as `"nested"`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Nested => "nested",
+        }
+    }
+}
+
+/// A column whose values no value-level quality check reads (#1134).
+///
+/// Its nulls still count toward completeness, and its values toward the
+/// whole-row duplicate count, but consistency, validity, accuracy,
+/// precision, timeliness and key uniqueness never read them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ColumnWithoutValueChecks {
+    pub column: String,
+    pub reason: ValueChecksSkipReason,
+}
+
+/// The columns of `profiles` that the value-level checks skip, in profile
+/// order. Every engine and input path builds its report through this one rule.
+pub fn columns_without_value_checks(profiles: &[ColumnProfile]) -> Vec<ColumnWithoutValueChecks> {
+    profiles
+        .iter()
+        .filter_map(|profile| {
+            let reason = match profile.data_type {
+                dataprof_core::DataType::Nested => ValueChecksSkipReason::Nested,
+                _ => return None,
+            };
+            Some(ColumnWithoutValueChecks {
+                column: profile.name.clone(),
+                reason,
+            })
+        })
+        .collect()
 }
 
 /// Wraps quality metrics with confidence information.
@@ -938,6 +1033,12 @@ pub struct QualityAssessment {
     score_bounds: Option<ScoreBounds>,
     #[schemars(skip)]
     bounds_inputs: Option<Box<QualityMetrics>>,
+    /// The columns the value-level checks skipped, so a reader of the score
+    /// can see which columns those checks never read (#1134). Empty when
+    /// every column was checked; absent on documents written before 0.14,
+    /// which did not record it.
+    #[schemars(with = "Vec<ColumnWithoutValueChecks>")]
+    columns_without_value_checks: Option<Vec<ColumnWithoutValueChecks>>,
 }
 
 impl Serialize for QualityAssessment {
@@ -949,12 +1050,15 @@ impl Serialize for QualityAssessment {
             scores: QualityScores,
             #[serde(skip_serializing_if = "Option::is_none")]
             score_bounds: Option<&'a ScoreBounds>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            columns_without_value_checks: Option<&'a [ColumnWithoutValueChecks]>,
         }
         Document {
             metrics: &self.metrics,
             confidence: &self.confidence,
             scores: self.scores(),
             score_bounds: self.score_bounds(),
+            columns_without_value_checks: self.columns_without_value_checks(),
         }
         .serialize(serializer)
     }
@@ -970,6 +1074,8 @@ impl<'de> Deserialize<'de> for QualityAssessment {
             scores: Option<QualityScores>,
             #[serde(default)]
             score_bounds: Option<ScoreBounds>,
+            #[serde(default, deserialize_with = "present_or_missing")]
+            columns_without_value_checks: Option<Vec<ColumnWithoutValueChecks>>,
         }
         let document = Document::deserialize(deserializer)?;
         if document
@@ -1030,6 +1136,7 @@ impl<'de> Deserialize<'de> for QualityAssessment {
             score_inputs,
             score_bounds: document.score_bounds,
             bounds_inputs,
+            columns_without_value_checks: document.columns_without_value_checks,
         })
     }
 }
@@ -1063,7 +1170,29 @@ impl QualityAssessment {
             score_inputs: None,
             score_bounds: None,
             bounds_inputs: None,
+            columns_without_value_checks: None,
         }
+    }
+
+    /// Record which columns the value-level checks skipped, as
+    /// [`columns_without_value_checks`] reads them off the column profiles.
+    pub fn with_columns_without_value_checks(
+        mut self,
+        columns: Option<Vec<ColumnWithoutValueChecks>>,
+    ) -> Self {
+        self.columns_without_value_checks = columns;
+        self
+    }
+
+    /// The columns whose values no value-level check read, in column order.
+    ///
+    /// Their nulls count toward completeness and their values toward the
+    /// whole-row duplicate count; every other check skips them, so the
+    /// other dimensions' scores say nothing about their values. Empty when
+    /// every column was checked. `None` when the assessment does not record
+    /// it: a document written before 0.14.
+    pub fn columns_without_value_checks(&self) -> Option<&[ColumnWithoutValueChecks]> {
+        self.columns_without_value_checks.as_deref()
     }
 
     /// Attach bounds on the scores over every scanned row, computed from the same
@@ -1071,6 +1200,16 @@ impl QualityAssessment {
     pub fn with_score_bounds(mut self, bounds: Option<ScoreBounds>) -> Self {
         self.bounds_inputs = bounds.as_ref().map(|_| Box::new(self.metrics.clone()));
         self.score_bounds = bounds;
+        self
+    }
+
+    /// Report `scores` in place of the ones `metrics` gives, as long as
+    /// `metrics` stays unchanged: estimates over every scanned row for scores
+    /// a calculator pooled over a retained sample (#1293). `None` keeps the
+    /// scores `metrics` gives.
+    pub fn with_estimated_scores(mut self, scores: Option<QualityScores>) -> Self {
+        self.score_inputs = scores.as_ref().map(|_| Box::new(self.metrics.clone()));
+        self.scores = scores;
         self
     }
 
@@ -1275,6 +1414,17 @@ impl From<QualityMetrics> for QualityAssessment {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_skip_reason_name_is_its_serialized_spelling() {
+        // A new reason gets its own line here; `name()` will not compile
+        // without an arm for it.
+        let reason = ValueChecksSkipReason::Nested;
+        assert_eq!(
+            serde_json::to_value(reason).unwrap(),
+            serde_json::json!(reason.name())
+        );
+    }
+
     fn sample_bounds() -> ScoreBounds {
         let interval = |lower, upper| Some(ScoreInterval { lower, upper });
         ScoreBounds {
@@ -1437,6 +1587,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -1780,6 +1931,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -1916,6 +2068,7 @@ mod tests {
                 key_column: Some("id".to_string()),
                 key_values_checked: Some(10),
                 duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -1992,6 +2145,7 @@ mod tests {
                         key_column: Some("user_id".to_string()),
                         key_values_checked: Some(25),
                         duplicate_rows_approximate: false,
+                        duplicate_rows_exact_limit: None,
                     }),
                     ..QualityMetrics::default()
                 },

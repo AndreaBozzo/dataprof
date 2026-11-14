@@ -37,6 +37,7 @@ pub(super) fn string_profile(name: &str, total: usize, nulls: usize) -> ColumnPr
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,
+        native_type: None,
         stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
         patterns: Some(vec![]),
     }

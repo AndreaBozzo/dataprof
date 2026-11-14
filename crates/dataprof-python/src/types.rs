@@ -3,11 +3,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, JsonNumberReading, KeyColumnSource,
-    KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy,
-    QualityScores, RangeRuleCount, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
-    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateStatistics, JsonNumberReading,
+    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount,
+    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
+    QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval,
+    SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit,
+    TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -84,6 +85,12 @@ pub struct PyColumnProfile {
     /// the count did not run (or the report predates it); `Some(0)` = none.
     #[pyo3(get)]
     pub locale_number_count: Option<usize>,
+    /// The type the source declared for the column, as `{"system": ...,
+    /// "name": ...}`: `{"system": "arrow", "name": "decimal128(12, 2)"}`.
+    /// Provenance, not a measurement. `None` = the source declares no type
+    /// (CSV, JSON, JSONL, Python objects, SQLite), or the report predates it.
+    #[pyo3(get)]
+    pub native_type: Option<std::collections::BTreeMap<String, String>>,
     /// Percentage of null values, or `None` for a zero-row column where the
     /// ratio (`null_count / total_count`) is undefined — absent means "not
     /// measured", never "0% nulls".
@@ -276,6 +283,12 @@ impl From<&ColumnProfile> for PyColumnProfile {
             invalid_count: profile.invalid_count,
             type_homogeneity,
             locale_number_count: profile.locale_number_count,
+            native_type: profile.native_type.as_ref().map(|native_type| {
+                std::collections::BTreeMap::from([
+                    ("system".to_string(), native_type.system.clone()),
+                    ("name".to_string(), native_type.name.clone()),
+                ])
+            }),
             null_percentage,
             uniqueness_ratio,
             min,
@@ -573,6 +586,12 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                if let Some(limit) = u.duplicate_rows_exact_limit {
+                    m.insert(
+                        "duplicate_rows_exact_limit".into(),
+                        limit.into_pyobject(py)?.unbind().into_any(),
+                    );
+                }
                 Ok(m)
             })
             .transpose()
@@ -1175,6 +1194,37 @@ impl PyProfileReport {
             .and_then(QualityAssessment::exact_dimensions)
     }
 
+    /// Columns whose values no value-level quality check read, each a dict
+    /// with ``column`` and ``reason`` (``"nested"``), in column order. Their
+    /// nulls count toward completeness and their values toward duplicate
+    /// rows; no other check reads them (#1134). An empty list means every
+    /// column was checked. None when there is no assessment or the report
+    /// was loaded from a document written before 0.14.
+    #[getter]
+    fn quality_columns_without_value_checks<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Vec<Bound<'py, PyDict>>>> {
+        let Some(columns) = self
+            .inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::columns_without_value_checks)
+        else {
+            return Ok(None);
+        };
+        columns
+            .iter()
+            .map(|entry| {
+                let dict = PyDict::new(py);
+                dict.set_item("column", &entry.column)?;
+                dict.set_item("reason", entry.reason.name())?;
+                Ok(dict)
+            })
+            .collect::<PyResult<Vec<_>>>()
+            .map(Some)
+    }
+
     /// Where the whole-source quality scores lie, when some were computed
     /// over a retained sample of the scanned rows.
     ///
@@ -1332,13 +1382,33 @@ impl PyProfileReport {
                 },
             )?;
         }
+        if let Some(estimator) = semantics.sampled_score_estimator {
+            dict.set_item(
+                "sampled_score_estimator",
+                match estimator {
+                    SampledScoreEstimator::PopulationWeighted => "population_weighted",
+                },
+            )?;
+        }
+        if let Some(statistics) = semantics.date_statistics {
+            dict.set_item(
+                "date_statistics",
+                match statistics {
+                    DateStatistics::EveryValue => "every_value",
+                },
+            )?;
+        }
         Ok(Some(dict))
     }
 
     /// The analysis settings the report was profiled with, as a dict such as
-    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"}}``, where
-    /// ``"none"`` means no locale and a ``columns=`` selection reads
-    /// ``{"selection": "listed", "names": [...]}``.
+    /// ``{"pattern_locale": "IT", "columns": {"selection": "all"},
+    /// "metric_packs": ["schema", "statistics", "patterns", "quality"]}``,
+    /// where ``"none"`` means no locale and a ``columns=`` selection reads
+    /// ``{"selection": "listed", "names": [...]}``. ``temporal_pairs`` lists
+    /// the declared pairs as ``{"start": ..., "end": ...}``, sorted, each
+    /// once. ``metric_packs`` and ``temporal_pairs`` are absent from a report
+    /// written before 0.14.
     ///
     /// None for a report loaded from a document written before dataprof
     /// recorded them: the settings are unknown, not the defaults.
@@ -1368,6 +1438,21 @@ impl PyProfileReport {
             }
         }
         dict.set_item("columns", columns)?;
+        // Absent, as in the document, when the report did not record them.
+        if let Some(packs) = &settings.metric_packs {
+            let names: Vec<String> = packs.iter().map(ToString::to_string).collect();
+            dict.set_item("metric_packs", names)?;
+        }
+        if let Some(pairs) = &settings.temporal_pairs {
+            let list = pyo3::types::PyList::empty(py);
+            for pair in pairs {
+                let item = PyDict::new(py);
+                item.set_item("start", &pair.start)?;
+                item.set_item("end", &pair.end)?;
+                list.append(item)?;
+            }
+            dict.set_item("temporal_pairs", list)?;
+        }
         Ok(Some(dict))
     }
 
@@ -1508,6 +1593,8 @@ impl PyProfileReport {
         max_null_count = Vec::new(),
         max_null_count_any = None,
         max_duplicate_rows = None,
+        max_date_age = Vec::new(),
+        max_date_gap = Vec::new(),
         require_quality = false,
         require_dimensions = Vec::new(),
         scope = "full_source",
@@ -1516,6 +1603,10 @@ impl PyProfileReport {
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
         max_null_percentage_increase_any = None,
+        max_distinct_drop = Vec::new(),
+        max_distinct_drop_any = None,
+        max_row_count_drop = None,
+        max_row_count_growth = None,
         require_columns = Vec::new(),
         forbid_removed_columns = false,
         forbid_added_columns = false,
@@ -1533,6 +1624,8 @@ impl PyProfileReport {
         max_null_count: Vec<(String, usize)>,
         max_null_count_any: Option<usize>,
         max_duplicate_rows: Option<usize>,
+        max_date_age: Vec<(String, u32)>,
+        max_date_gap: Vec<(String, u32)>,
         require_quality: bool,
         require_dimensions: Vec<String>,
         scope: &str,
@@ -1541,6 +1634,10 @@ impl PyProfileReport {
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
         max_null_percentage_increase_any: Option<f64>,
+        max_distinct_drop: Vec<(String, f64)>,
+        max_distinct_drop_any: Option<f64>,
+        max_row_count_drop: Option<f64>,
+        max_row_count_growth: Option<f64>,
         require_columns: Vec<String>,
         forbid_removed_columns: bool,
         forbid_added_columns: bool,
@@ -1576,6 +1673,12 @@ impl PyProfileReport {
         if let Some(max) = max_duplicate_rows {
             policy = policy.max_duplicate_rows(max);
         }
+        for (column, days) in max_date_age {
+            policy = policy.max_date_age(column, days);
+        }
+        for (column, days) in max_date_gap {
+            policy = policy.max_date_gap(column, days);
+        }
         if require_quality {
             policy = policy.require_quality();
         }
@@ -1593,6 +1696,18 @@ impl PyProfileReport {
         }
         if let Some(points) = max_null_percentage_increase_any {
             policy = policy.max_null_percentage_increase_any(points);
+        }
+        for (column, percent) in max_distinct_drop {
+            policy = policy.max_distinct_drop(column, percent);
+        }
+        if let Some(percent) = max_distinct_drop_any {
+            policy = policy.max_distinct_drop_any(percent);
+        }
+        if let Some(percent) = max_row_count_drop {
+            policy = policy.max_row_count_drop(percent);
+        }
+        if let Some(percent) = max_row_count_growth {
+            policy = policy.max_row_count_growth(percent);
         }
         if !require_columns.is_empty() {
             policy = policy.require_columns(require_columns);

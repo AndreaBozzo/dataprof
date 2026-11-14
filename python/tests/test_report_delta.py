@@ -49,6 +49,10 @@ def test_the_shape_is_the_frozen_contract():
         "null_pct_a": 50.0,
         "null_pct_b": 0.0,
         "null_pct_delta": -50.0,
+        "data_type_a": "integer",
+        "data_type_b": "integer",
+        "native_type_a": None,
+        "native_type_b": None,
     }
     assert set(delta["metric_semantics"]) == {"a", "b", "comparable"}
     assert list(delta["configuration"]) == [
@@ -56,6 +60,9 @@ def test_the_shape_is_the_frozen_contract():
         "semantic_hints",
         "pattern_locale",
         "timeliness_clock",
+        "columns",
+        "metric_packs",
+        "temporal_pairs",
     ]
     for setting in delta["configuration"].values():
         assert set(setting) == {"a", "b", "same"}
@@ -66,8 +73,17 @@ def test_the_shape_is_the_frozen_contract():
         "temporal_pair_columns",
     }
     assert set(delta["schema"]) == {"added", "removed", "common"}
-    for side in delta["reports"].values():
-        assert set(side) == {"id", "timestamp", "source", "rows_processed", "evidence"}
+    assert set(delta["reports"]) == {"a", "b", "same_build"}
+    for side in (delta["reports"]["a"], delta["reports"]["b"]):
+        assert set(side) == {
+            "id",
+            "timestamp",
+            "source",
+            "rows_processed",
+            "evidence",
+            "generator",
+            "source_identity",
+        }
 
 
 def test_every_change_is_b_minus_a():
@@ -251,3 +267,12 @@ def test_a_summary_from_before_0_10_leaves_its_hints_unrecorded():
 
     assert hints["a"] is None
     assert hints["same"] is None
+
+
+@pytest.mark.parametrize("other", ["before.csv", {"id": [1]}, None])
+def test_compare_with_something_that_is_not_a_report_says_how_to_get_one(other):
+    with pytest.raises(TypeError) as caught:
+        dp.profile(CLEAN).compare(other)
+    message = str(caught.value)
+    assert message.startswith(f"other must be a dataprof ProfileReport, got {type(other).__name__}")
+    assert "ProfileReport.load(path)" in message

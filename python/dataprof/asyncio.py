@@ -40,11 +40,13 @@ try:
 except ImportError:
     _HAS_URL = False
 
+from ._arguments import _check_profile_options
 from ._dataprof import (
     ProfilerConfig as _ProfilerConfig,  # type: ignore[import-not-found]
     RowCountEstimate as _RowCountEstimate,
     SchemaResult as _SchemaResult,
 )
+from ._paths import _normalize_existing_file
 from ._report import ProfileReport as _ProfileReport, _check_source_version
 
 __all__ = [
@@ -87,6 +89,7 @@ async def profile_bytes(
     _check_async()
     source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
+    _check_profile_options(kwargs)
     config = _ProfilerConfig(**kwargs) if kwargs else None
     if config is not None and config.engine == "columnar":
         raise ValueError(
@@ -117,12 +120,18 @@ async def profile_file(
 
     Returns:
         ProfileReport with analysis results.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
     """
     _check_async()
     source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
+    _check_profile_options(kwargs)
     config = _ProfilerConfig(**kwargs) if kwargs else None
-    rust_report = await _profile_file_async(str(path), config)
+    # Name a missing file the way the sync API does, not as a Rust I/O error.
+    normalized_path = _normalize_existing_file(path)
+    rust_report = await _profile_file_async(normalized_path, config)
     return _ProfileReport(rust_report)._record_source_version(source_version)
 
 
@@ -160,6 +169,7 @@ async def profile_url(
         )
     source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
+    _check_profile_options(kwargs)
     config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_url_async(url, format, config)
     return _ProfileReport(rust_report)._record_source_version(source_version)

@@ -2,9 +2,10 @@ use std::sync::OnceLock;
 
 use dataprof_core::{
     AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
-    ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, Locale,
-    NullTokenSet, OutlierUnits, PatternMatchCount, QualityScoreWeights, RangeRuleCount,
-    SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
+    DateStatistics, ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource,
+    KeyUniquenessUnits, Locale, MetricPack, NullTokenSet, OutlierUnits, PatternMatchCount,
+    QualityScoreWeights, RangeRuleCount, SampledScoreEstimator, SemanticHintBinding,
+    ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -206,6 +207,32 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "JsonNumberReading")]
     pub json_number_reading: Option<JsonNumberReading>,
+    /// How a score computed over a retained sample estimates the score over
+    /// every scanned value.
+    ///
+    /// Absent means not recorded: through 0.13 a sampled score pooled the
+    /// column samples, so it could fall outside its own `score_bounds`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "SampledScoreEstimator")]
+    pub sampled_score_estimator: Option<SampledScoreEstimator>,
+    /// Which values a date column's `min_datetime`, `max_datetime`,
+    /// `duration_days`, distributions, `slash_date_order` and `largest_gap`
+    /// are computed over.
+    ///
+    /// Absent means not recorded: through 0.13 an engine that retained a
+    /// bounded sample computed them from it, so on a source larger than the
+    /// sample a date outside it was missing.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "DateStatistics")]
+    pub date_statistics: Option<DateStatistics>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -233,6 +260,8 @@ impl MetricSemantics {
             key_column_source: Some(KeyColumnSource::Declared),
             accuracy_comparison: Some(AccuracyComparison::ExactValues),
             json_number_reading: Some(JsonNumberReading::LiteralDigits),
+            sampled_score_estimator: Some(SampledScoreEstimator::PopulationWeighted),
+            date_statistics: Some(DateStatistics::EveryValue),
         }
     }
 
@@ -253,6 +282,8 @@ impl MetricSemantics {
             key_column_source,
             accuracy_comparison,
             json_number_reading,
+            sampled_score_estimator,
+            date_statistics,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -265,6 +296,8 @@ impl MetricSemantics {
             && key_column_source.is_some()
             && accuracy_comparison.is_some()
             && json_number_reading.is_some()
+            && sampled_score_estimator.is_some()
+            && date_statistics.is_some()
     }
 }
 
@@ -390,6 +423,114 @@ pub struct AnalysisSettings {
     /// set as its subject, and a report without a column's profile needs this
     /// to tell a column the source lacks from one that was not selected.
     pub columns: ColumnSelection,
+    /// The metric packs the run computed, `schema` always among them, in a
+    /// fixed order: `schema`, `statistics`, `patterns`, `quality`. Without
+    /// `patterns` no column has detected patterns, so validity is not
+    /// assessed and the overall score averages the other dimensions; an
+    /// empty `quality_dimensions` selection drops `quality`. Absent from a
+    /// report written before 0.14, which did not record them.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<MetricPack>")]
+    pub metric_packs: Option<Vec<MetricPack>>,
+    /// The start/end column pairs `temporal_pairs` declared, each once,
+    /// sorted by start then end. Timeliness counts a row whose start date
+    /// falls after its end date in a declared pair, so two runs that pair
+    /// the same columns differently score timeliness differently. The
+    /// calculator compares each pair once whatever order the list gives, so
+    /// the record keeps direction and drops order and repetition. Empty when
+    /// none were declared; absent from a report written before 0.14, which
+    /// recorded only the columns the pairs named.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<TemporalPair>")]
+    pub temporal_pairs: Option<Vec<TemporalPair>>,
+}
+
+/// A start/end column pair declared through `temporal_pairs`.
+///
+/// Read only from its object form, `{"start": ..., "end": ...}`: a derived
+/// reader would also take a two-element list, which the schema and the
+/// Python reader reject.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct TemporalPair {
+    /// The column whose date must not fall after `end`'s.
+    pub start: String,
+    /// The column whose date must not fall before `start`'s.
+    pub end: String,
+}
+
+impl<'de> serde::Deserialize<'de> for TemporalPair {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct PairVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PairVisitor {
+            type Value = TemporalPair;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str(r#"a temporal pair {"start": ..., "end": ...}"#)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<TemporalPair, A::Error> {
+                use serde::de::Error;
+                let (mut start, mut end) = (None, None);
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "start" if start.is_some() => {
+                            return Err(A::Error::duplicate_field("start"));
+                        }
+                        "end" if end.is_some() => return Err(A::Error::duplicate_field("end")),
+                        "start" => start = Some(map.next_value::<String>()?),
+                        "end" => end = Some(map.next_value::<String>()?),
+                        // A later writer may add keys, which this reader ignores.
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(TemporalPair {
+                    start: start.ok_or_else(|| A::Error::missing_field("start"))?,
+                    end: end.ok_or_else(|| A::Error::missing_field("end"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(PairVisitor)
+    }
+}
+
+impl TemporalPair {
+    /// The pair comparing `start` with `end`.
+    pub fn new(start: impl Into<String>, end: impl Into<String>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+
+    /// The pairs `declared` names, each once, sorted: what the calculator
+    /// compares, whatever order or repetition the list was given in.
+    pub fn canonical(declared: &[(String, String)]) -> Vec<Self> {
+        let mut pairs: Vec<Self> = declared
+            .iter()
+            .map(|(start, end)| Self::new(start.clone(), end.clone()))
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
+    }
 }
 
 impl AnalysisSettings {
@@ -398,6 +539,10 @@ impl AnalysisSettings {
         Self {
             pattern_locale: options.locale().into(),
             columns: ColumnSelection::from_options(options),
+            metric_packs: Some(options.selected_metric_packs()),
+            temporal_pairs: Some(TemporalPair::canonical(
+                &options.semantic_hints().temporal_pairs,
+            )),
         }
     }
 }
@@ -709,6 +854,8 @@ struct PythonColumnDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     locale_number_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    native_type: Option<dataprof_core::NativeType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<PythonColumnStatsDocument>,
     #[serde(skip_serializing_if = "Option::is_none")]
     patterns: Option<Vec<PythonPatternDocument>>,
@@ -836,6 +983,18 @@ struct PythonQualityDocument {
     /// on documents written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     score_bounds: Option<dataprof_metrics::ScoreBounds>,
+    /// Columns whose values no value-level check read, each with the reason,
+    /// so a reader of `overall_score` sees which columns those checks never
+    /// read (#1134).
+    /// Empty when every column was checked. Absent in summaries written
+    /// before 0.14, which did not record it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "Vec<dataprof_metrics::ColumnWithoutValueChecks>")]
+    columns_without_value_checks: Option<Vec<dataprof_metrics::ColumnWithoutValueChecks>>,
     /// Weights behind `overall_score`, always written as the canonical
     /// document writes them, default weights included (#749). Summaries
     /// written before 0.13 omitted default weights, and before the field
@@ -892,6 +1051,8 @@ struct PythonUniquenessDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key_values_checked: Option<usize>,
     duplicate_rows_approximate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duplicate_rows_exact_limit: Option<usize>,
 }
 
 impl PythonProfileReportDocument {
@@ -938,6 +1099,7 @@ impl PythonProfileReportDocument {
                     invalid_count: column.invalid_count,
                     type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
+                    native_type: column.native_type.clone(),
                     stats,
                     patterns: column.patterns.as_ref().map(|patterns| {
                         patterns
@@ -1003,6 +1165,9 @@ impl PythonProfileReportDocument {
                 }
                 if let Some(bounds) = assessment.score_bounds() {
                     document["score_bounds"] = serde_json::to_value(bounds)?;
+                }
+                if let Some(columns) = assessment.columns_without_value_checks() {
+                    document["columns_without_value_checks"] = serde_json::to_value(columns)?;
                 }
                 // The summary has always included this boolean, even when false.
                 if let Some(uniqueness) = document.get_mut("uniqueness") {
@@ -1123,6 +1288,11 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         ("/$defs/PythonQualityDocument/required", "score_weights"),
         // Written only when some score was sampled.
         ("/$defs/QualityAssessment/required", "score_bounds"),
+        // Written always since 0.14 (#1134), absent before.
+        (
+            "/$defs/QualityAssessment/required",
+            "columns_without_value_checks",
+        ),
         // Written always since 0.13 (#1005), absent before.
         ("/$defs/AccuracyMetrics/required", "rule_values_checked"),
         ("/$defs/AccuracyMetrics/required", "rule_violating_values"),
@@ -1599,6 +1769,8 @@ mod tests {
             "key_column_source": "declared",
             "accuracy_comparison": "exact_values",
             "json_number_reading": "literal_digits",
+            "sampled_score_estimator": "population_weighted",
+            "date_statistics": "every_value",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);

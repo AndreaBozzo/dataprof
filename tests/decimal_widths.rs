@@ -160,7 +160,12 @@ fn columns(file: &NamedTempFile) -> Vec<(String, serde_json::Value)> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|column| (column["name"].as_str().unwrap().to_string(), column.clone()))
+        .map(|column| {
+            // The declared type is provenance and names the width (#906).
+            let mut column = column.clone();
+            column.as_object_mut().unwrap().remove("native_type");
+            (column["name"].as_str().unwrap().to_string(), column)
+        })
         .collect()
 }
 

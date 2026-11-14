@@ -40,13 +40,14 @@ pub use partial::{
 };
 pub use pattern::{Pattern, PatternMatchCount};
 pub use profile::{
-    BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, ExactNumericStats, FrequencyItem,
-    NumericStats, Quartiles, ShapeMomentEstimator, SlashDateOrder, StatisticRounding, TextStats,
+    BooleanStats, ColumnProfile, ColumnStats, DATE_GAP_YEAR_LIMIT, DateGap, DateTimeStats,
+    ExactNumericStats, FrequencyItem, NativeType, NumericStats, Quartiles, ShapeMomentEstimator,
+    SlashDateOrder, StatisticRounding, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{
-    AccuracyComparison, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, MetricPack,
-    OutlierUnits, QualityDimension, RangeRuleCount,
+    AccuracyComparison, DateStatistics, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits,
+    MetricPack, OutlierUnits, QualityDimension, RangeRuleCount, SampledScoreEstimator,
 };
 pub use sampling::{ChunkSize, ReservoirSampler, RowSampler, SamplingStrategy};
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};

@@ -7,8 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, NumericAccumulator, ParsedNumber, RowCompletenessSummary,
-    RowDuplicateSummary, value_matches_hint,
+    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, NumericAccumulator,
+    ParsedNumber, RowCompletenessSummary, RowDuplicateSummary, value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -264,6 +264,9 @@ pub struct StreamingStatistics {
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
     date_match_count: usize,
+    /// Date statistics over every non-null value, independent of the
+    /// reservoir (#1297).
+    dates: DateTimeAccumulator,
 }
 
 impl StreamingStatistics {
@@ -278,6 +281,7 @@ impl StreamingStatistics {
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
             date_match_count: 0,
+            dates: DateTimeAccumulator::new(),
         }
     }
 
@@ -303,6 +307,7 @@ impl StreamingStatistics {
         if value_matches_hint(value, SemanticHintKind::Temporal) {
             self.date_match_count += 1;
         }
+        self.dates.update(value);
 
         if let Some(number) = ParsedNumber::parse(value) {
             self.welford.update_number(number);
@@ -327,6 +332,7 @@ impl StreamingStatistics {
         self.sampler.merge(&other.sampler);
         self.text_length_tracker.merge(&other.text_length_tracker);
         self.date_match_count += other.date_match_count;
+        self.dates.merge(&other.dates);
     }
 
     pub fn mean(&self) -> f64 {
@@ -381,6 +387,11 @@ impl StreamingStatistics {
         self.date_match_count
     }
 
+    /// Date statistics over every non-null value this column has streamed.
+    pub fn date_statistics(&self) -> &DateTimeAccumulator {
+        &self.dates
+    }
+
     /// Exact aggregates over every numeric value this column has streamed,
     /// or `None` when no value parsed as a finite number.
     ///
@@ -421,8 +432,11 @@ impl StreamingStatistics {
         let struct_size = std::mem::size_of::<Self>();
         let distinct_size = self.distinct.memory_usage_bytes();
         let reservoir_size = self.sampler.memory_usage_bytes();
+        // The year maps behind the date statistics (#1297): one entry per
+        // distinct year, so small on real dates but counted all the same.
+        let dates_size = self.dates.heap_bytes();
 
-        struct_size + distinct_size + reservoir_size
+        struct_size + distinct_size + reservoir_size + dates_size
     }
 }
 
@@ -500,10 +514,22 @@ impl RowSignature {
 /// (flagged approximate) once it spills to its HLL sketch. Unlike the
 /// per-column reservoirs, this sees whole rows — including null-like values —
 /// so the count is row-aligned by construction.
-#[derive(Debug, Clone, Default)]
+///
+/// The exact set holds 64-bit fingerprints of the signatures. Two different
+/// rows share one with probability about `n^2 / 2^65` over `n` distinct rows:
+/// 3e-8 at the default limit of one million, 2e-5 at 27 million, 2e-3 at 300
+/// million. A shared fingerprint counts one duplicate that is not there, so
+/// on a large raised limit a `max_duplicate_rows 0` failure on a count of one
+/// carries that chance of being wrong (#1292).
+#[derive(Debug, Clone)]
 pub struct RowUniquenessTracker {
     rows_seen: usize,
     distinct: CardinalityEstimator,
+    /// Distinct rows counted exactly before the count becomes an estimate.
+    exact_limit: usize,
+    /// Set when the caller chose `exact_limit`: memory pressure then leaves
+    /// the exact set alone, so the verdict does not depend on the machine.
+    limit_requested: bool,
     /// Set once signatures made under different schemas have been folded in.
     ///
     /// A signature encodes length-prefixed values and nothing else, so a row
@@ -516,7 +542,32 @@ pub struct RowUniquenessTracker {
     incomparable_signatures: bool,
 }
 
+impl Default for RowUniquenessTracker {
+    fn default() -> Self {
+        Self::with_exact_limit(None)
+    }
+}
+
 impl RowUniquenessTracker {
+    /// A tracker that counts exactly up to `limit` distinct rows, or up to
+    /// [`EXACT_CARDINALITY_THRESHOLD`] when `None`. A limit given here is
+    /// kept under memory pressure; see [`Self::spill`].
+    pub fn with_exact_limit(limit: Option<usize>) -> Self {
+        let exact_limit = limit.unwrap_or(EXACT_CARDINALITY_THRESHOLD);
+        Self {
+            rows_seen: 0,
+            distinct: CardinalityEstimator::with_threshold(exact_limit),
+            exact_limit,
+            limit_requested: limit.is_some(),
+            incomparable_signatures: false,
+        }
+    }
+
+    /// Distinct rows this tracker counts exactly before estimating.
+    pub fn exact_limit(&self) -> usize {
+        self.exact_limit
+    }
+
     pub fn observe(&mut self, signature: String) {
         self.rows_seen += 1;
         self.distinct.insert_owned(signature);
@@ -556,10 +607,33 @@ impl RowUniquenessTracker {
         self.distinct.exact_bytes()
     }
 
+    /// The part of [`Self::exact_bytes`] a memory budget answers for: all of
+    /// it, unless the caller set the limit. That set is the caller's choice
+    /// of memory and stays outside the budget, so it neither spills the
+    /// column sets nor shrinks the reservoirs on every chunk (#1292).
+    pub fn budgeted_exact_bytes(&self) -> usize {
+        if self.limit_requested {
+            0
+        } else {
+            self.exact_bytes()
+        }
+    }
+
     /// Answer the duplicate count from the sketch from here on, freeing the
     /// exact set. For memory pressure; the count is then reported approximate.
-    pub fn spill(&mut self) {
+    /// Returns the bytes freed.
+    ///
+    /// A tracker whose limit the caller set keeps its exact set and frees
+    /// nothing: the limit is the caller's choice of memory for an exact
+    /// count, and a count that ended where the machine's budget did would
+    /// make the verdict depend on the machine (#1292).
+    pub fn spill(&mut self) -> usize {
+        if self.limit_requested {
+            return 0;
+        }
+        let freed = self.distinct.exact_bytes();
         self.distinct.spill();
+        freed
     }
 
     /// Summary for quality metrics, or `None` when no rows were observed
@@ -573,6 +647,7 @@ impl RowUniquenessTracker {
             duplicate_rows: self.duplicate_rows(),
             rows_checked: self.rows_seen,
             approximate: self.is_approximate(),
+            exact_limit: self.exact_limit,
             max_duplicate_rows: self
                 .rows_seen
                 .saturating_sub(self.distinct.distinct_lower_bound()),
@@ -679,6 +754,13 @@ impl StreamingColumnCollection {
     /// Configure value-driven semantic hints before records are processed.
     pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
         self.hint_bindings = ValueHintBindingAccumulator::new(hints);
+        self
+    }
+
+    /// Count duplicate rows exactly up to `limit` distinct rows, before any
+    /// record is processed. See [`RowUniquenessTracker::with_exact_limit`].
+    pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
+        self.row_tracker = RowUniquenessTracker::with_exact_limit(limit);
         self
     }
 
@@ -819,7 +901,15 @@ impl StreamingColumnCollection {
     }
 
     pub fn is_memory_pressure(&self) -> bool {
-        self.memory_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
+        self.budgeted_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
+    }
+
+    /// [`Self::memory_usage_bytes`] less a row-tracker exact set the caller's
+    /// limit keeps outside the budget. See
+    /// [`RowUniquenessTracker::budgeted_exact_bytes`].
+    fn budgeted_usage_bytes(&self) -> usize {
+        self.memory_usage_bytes() - self.row_tracker.exact_bytes()
+            + self.row_tracker.budgeted_exact_bytes()
     }
 
     pub fn reduce_memory_usage(&mut self) {
@@ -838,14 +928,13 @@ impl StreamingColumnCollection {
         // Usage is measured once and each spill subtracts what it frees:
         // measuring walks every reservoir, too slow to repeat per column.
         let limit = self.memory_limit_bytes * 80 / 100;
-        let mut usage = self.memory_usage_bytes();
+        let mut usage = self.budgeted_usage_bytes();
         if usage <= limit {
             return;
         }
         usage -= self.spill_distinct_sets(usage - limit);
         if usage > limit {
-            usage -= self.row_tracker.exact_bytes();
-            self.row_tracker.spill();
+            usage -= self.row_tracker.spill();
         }
         if usage > limit {
             for stats in self.columns.values_mut() {
@@ -1016,6 +1105,25 @@ mod row_tracker_tests {
             .row_completeness_summary()
             .expect("rows were observed");
         (summary.complete_rows, summary.rows_checked)
+    }
+
+    /// The date statistics' year maps count toward the memory the incremental
+    /// and async engines limit (Copilot review on #1301).
+    #[test]
+    fn memory_usage_counts_the_date_statistics() {
+        let mut stats = StreamingStatistics::new();
+        for year in 1000..3000 {
+            stats.update(&format!("{year}-01-05"));
+        }
+        let dates = stats.date_statistics().heap_bytes();
+        assert!(dates > 0);
+        assert!(
+            stats.memory_usage_bytes()
+                >= std::mem::size_of::<StreamingStatistics>()
+                    + stats.distinct.memory_usage_bytes()
+                    + stats.sampler.memory_usage_bytes()
+                    + dates
+        );
     }
 
     #[test]

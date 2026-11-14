@@ -105,11 +105,20 @@ def producer(pa, case: dict, evidence: dict):
     raise ValueError(f"unknown producer {kind}")
 
 
+def _without_native_type(columns: list[dict]) -> list[dict]:
+    return [
+        {key: value for key, value in column.items() if key != "native_type"} for column in columns
+    ]
+
+
 def validate(document: dict, expected: list[dict], rows: int) -> None:
     """Reject changed metrics, row counts or quality absence before accepting a sample."""
     if document["execution"]["rows_processed"] != rows:
         raise ValueError("row count mismatch")
-    if document["columns"] != expected:
+    # A column's declared type is provenance, not a metric: each producer
+    # declares its own (pandas its dtype, polars its own string layout), so it
+    # is left out of the comparison (#906).
+    if _without_native_type(document["columns"]) != _without_native_type(expected):
         raise ValueError("serialized column metrics/absence/order mismatch")
     if document["quality"] is not None or document["quality_status"]["state"] != "not_requested":
         raise ValueError("unrequested quality must remain absent")

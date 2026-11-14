@@ -30,6 +30,7 @@ import datetime as dt
 
 import dataprof
 import pytest
+from _provenance import without_native_type
 
 pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
 
@@ -41,7 +42,7 @@ def _table(tz):
 
 
 def _columns(source, name):
-    return dataprof.profile(source, name=name).to_dict()["columns"]
+    return without_native_type(dataprof.profile(source, name=name).to_dict()["columns"])
 
 
 @pytest.mark.parametrize("tz", ["UTC", "Europe/Rome", "America/New_York", "+00:00", None])

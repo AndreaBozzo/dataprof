@@ -119,6 +119,7 @@ dp.profile(
     temporal_columns=None,           # list[str] -- columns assessed for timeliness
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
     reference_date=None,             # datetime.date | "YYYY-MM-DD" -- the date timeliness measures against
+    duplicate_rows_exact_limit=None, # int -- distinct rows counted exactly for duplicate rows (default 1,000,000)
     source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
@@ -335,8 +336,9 @@ Returned by `profile()` and all analysis functions.
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
-| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}}`, where `"none"` means no locale and a `columns=` projection reads `{"selection": "listed", "names": [...]}`; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `quality_columns_without_value_checks` | `list[dict] \| None` | Columns whose values no value-level check read, each `{"column": ..., "reason": "nested"}`: a struct, list or map column counts toward completeness and duplicate rows only. `[]` when every column was checked; `None` when there is no assessment or the report was written before 0.14. `repr()`, `to_markdown()`, `to_html()` and `to_llm_context()` print a note next to the score when it is not empty |
+| `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}, "metric_packs": ["schema", "statistics", "patterns", "quality"], "temporal_pairs": []}`, where `"none"` means no locale, a `columns=` projection reads `{"selection": "listed", "names": [...]}`, `metric_packs` lists the packs the run computed (`"schema"` always), and `temporal_pairs` the declared start/end pairs as `[{"start": ..., "end": ...}]`, sorted, each once, both absent before 0.14; `None` for a report written before 0.13, whose settings are unknown |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits", "sampled_score_estimator": "population_weighted", "date_statistics": "every_value"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
 | `execution_time_ms` | `int` | Total processing time |
@@ -495,8 +497,9 @@ Per-column profiling statistics.
 | `invalid_count` | `int \| None` | Non-null values that did not parse as a finite number (parse failures and non-finite tokens like `inf`/`NaN`) and are excluded from the statistics. `None` = check did not run (non-numeric column, or statistics skipped); `0` = every non-null value parsed |
 | `type_homogeneity` | `dict[str, int] \| None` | Non-null values counted by lexical class: `{"numeric", "date", "boolean", "text"}`. Tells a `string` column of ordinary text from one that defeated type inference, which `data_type` cannot. All four keys are always present; all-zero = classified with nothing to classify (all-null or no rows); `None` = the classification did not run. Counted over the values the profiler retained, so sum them against `total_count - null_count` to tell an exact count from one bounded by the 10k reservoir sample |
 | `locale_number_count` | `int \| None` | Of the `text` values in `type_homogeneity`, how many are numbers written with a decimal comma or digit-group separators (`10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56`). dataprof does not parse them as numbers, so they are in no numeric statistic: a column of them is typed `string`, and a numeric column counts them in `invalid_count`. `None` = the count did not run (a `nested` column, or a report saved before 0.12); `0` = none found |
-| `null_percentage` | `float` | Null ratio (0.0--100.0) |
-| `uniqueness_ratio` | `float` | Unique values / total values |
+| `native_type` | `dict[str, str] \| None` | The type the source declared, as `{"system": ..., "name": ...}`: `arrow` with the name pyarrow prints (`decimal128(12, 2)`, `timestamp[us, tz=UTC]`) for Arrow, polars and Parquet, `pandas` with the dtype for pandas, `postgresql` or `mysql` with the server's type name for databases. Provenance, not a measurement: `data_type` is what dataprof profiled the column as. `None` = the source declares no type (CSV, JSON, JSONL, dicts, lists of records, SQLite), or the report predates 0.14 |
+| `null_percentage` | `float \| None` | Null ratio (0.0--100.0); `None` when no rows were read |
+| `uniqueness_ratio` | `float \| None` | Unique values / total values; `None` when no rows were read or distinct values were not counted |
 | `min` | `float \| None` | Minimum (numeric columns) |
 | `max` | `float \| None` | Maximum (numeric columns) |
 | `mean` | `float \| None` | Mean (numeric columns) |
@@ -509,7 +512,7 @@ Per-column profiling statistics.
 | `coefficient_of_variation` | `float \| None` | CV |
 | `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}`; `iqr` is `None` when `q3 - q1` overflows `f64` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
-| `exact` | `dict \| None` | The order statistics exactly, on an integer or decimal-typed column: `min`, `max`, `median`, `q1`, `q2`, `q3` and `mode` where the float field is present. An integral value of an integer column is an `int`, every other value a `decimal.Decimal`; `to_dict()` and `to_json()` carry them as decimal strings. `None` on a float column |
+| `exact` | `dict \| None` | The order statistics exactly, on an integer or decimal-typed column: `min`, `max`, `median`, `q1`, `q2`, `q3` and `mode` where the float field is present. An integral value of an integer column is an `int`, every other value a `decimal.Decimal`; `to_dict()` and `to_json()` carry them as decimal strings. Declared decimals have public `data_type="float"`; ordinary floating-point columns have `exact=None` |
 | `min_length` | `int \| None` | Shortest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `max_length` | `int \| None` | Longest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `avg_length` | `float \| None` | Mean length, in Unicode scalar values (0.11: UTF-8 bytes) |
@@ -622,7 +625,8 @@ stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
 stop = StopCondition.schema_stable(500) & StopCondition.confidence_threshold(0.95)
 
 # Built-in presets
-StopCondition.schema_inference()   # fast schema-only mode
+StopCondition.schema_inference()   # stop at 10,000 rows or 1,000 stable rows
+# Pass metrics=["schema"] to compute only schema.
 StopCondition.quality_sample()     # enough rows for quality assessment
 StopCondition.never()              # process everything (default)
 
@@ -924,7 +928,7 @@ names; no finding carries a raw cell value.
 | `locale_numbers` | warning | At least half of a column's text values are numbers written with a decimal comma or digit grouping (`locale_number_count`), which no numeric statistic includes. Identifier columns are exempt |
 | `duplicate_rows` | warning | The source holds exact duplicate rows |
 | `key_duplicates` | warning | The declared key column (the first `identifier_columns` entry the source has) holds a non-null value more than once. `repeated_values` is the key's non-null values minus its distinct values, so it sees a key repeated on rows that differ elsewhere, which `duplicate_rows` does not. Nulls are not repeats. Without a declared key the rule is listed as `not_assessed` |
-| `future_dates` | warning | Date values lie after the time the report was produced |
+| `future_dates` | warning | Date values fall after the timeliness reference date recorded in `quality.timeliness["clock"]` |
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
 | `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
 | `unterminated_quote` | warning | A CSV source ended inside a quoted field, so its last record may hold several source rows |
@@ -967,7 +971,7 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
 | `estimated` | The duplicate count, or the key column's distinct count, is an estimate, which witnesses nothing |
 | `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
-| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage and locale-formatted numbers before 0.12, how the key column was chosen before 0.13 |
+| `unrecorded` | The report does not record what the rule needs. Either the document was written before dataprof recorded it (ragged rows before 0.10, quality sample coverage, locale-formatted numbers and the CSV quote state before 0.12, how the key column was chosen before 0.13), a flat summary omits it (`source_exhausted`, `sampling_applied`, `unterminated_quote`), or a CSV scan stopped before the end of its source, where the quote state is checked. A quote check on a source that is not CSV passes instead: it does not apply |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 
@@ -1007,14 +1011,19 @@ if not result.passed:
 | `min_quality_score` | `float` | Floor for the overall score, 0--100 |
 | `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
-| `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.14+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
+| `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
+| `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
+| `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
-| `baseline` | `ProfileReport` | A saved report to measure change from; the three rules below need one |
+| `baseline` | `ProfileReport` | A saved report to measure change from; the rules about change below need one |
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
+| `max_row_count_drop` | `float` | How far the row count may fall, in percent (0--100) of the baseline's `rows_processed` (0.14+) |
+| `max_row_count_growth` | `float` | How far the row count may grow, in percent of the baseline's, 0 or more (0.14+) |
 | `require_columns` | `list[str]` | Columns this report must have; needs no baseline |
 | `forbid_removed_columns` | `bool` | Every column the baseline profiled must still be profiled |
 | `forbid_added_columns` | `bool` | No column the baseline did not profile: a closed schema |
@@ -1031,6 +1040,35 @@ no-null rule on a key or required column, use `max_null_count={"column": 0}`,
 which compares the exact count and needs no rounding. Like `max_duplicate_rows`,
 it fails a truncated or sampled scan that already counted more nulls than
 allowed, and otherwise leaves a full-source rule unevaluated on such a scan.
+
+`max_date_age` reads the column's `max_datetime` against the reference date
+the report's timeliness clock recorded: the `reference_date=` of the profiling
+call, or the run's date when none was given. The age is counted in calendar
+days, a date after the reference date is fresh, and a saved report decides as
+the run did. A newest date read on part of a source can only be overtaken by
+a newer one, so under `"full_source"` a fresh date passes on any scan, and a
+stale one fails only when every row was read and the column's date statistics
+saw every value. Slash dates (`01/10/2026`) are the exception: their day and
+month order is decided from the column's values, so a fresh one read on part
+of a column is `evidence_incomplete` while the unread values could still
+change that order. The date statistics cover every value read
+(`metric_semantics["date_statistics"]`), so a stale date on a complete scan
+fails at any size. A report saved before that record computed them from the
+retained sample, and on a file larger than the sample a stale date there is
+`evidence_incomplete` (`quality_sampled`). A column not typed as a date, or with no dates, is
+`not_assessed`; the clock is recorded with the quality assessment, so a run
+without quality is `quality_unavailable`.
+
+`max_date_gap` reads the column's `largest_gap`: the longest stretch between
+two consecutive distinct days among every value read, in calendar days, with
+the days on either side (`1` on a contiguous daily column, `0` on one holding a
+single day). A datetime counts on its UTC day. The rows that were not read can
+fill a gap or open a longer one at either edge of the range, so under
+`"full_source"` the rule decides only on a complete scan whose date statistics
+saw every value, and is `evidence_incomplete` otherwise, whichever way the
+dates read point. A column not typed as a date, with no dates, profiled before
+0.14, or whose dates span more than 10,000 distinct years (where the profiler
+stops tracking days) is `not_assessed`. The rule needs no quality assessment.
 A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
@@ -1054,6 +1092,14 @@ does not record the provenance the gate decides on.
 `result.passed` is True only for `"pass"`, so an unanswerable gate never reads
 as a green one. `"fail"` wins over `"inconclusive"`: a witnessed violation is a
 decision.
+
+**Which build decided (0.14+).** `result.generator` is the build that wrote
+the report evaluated, the one whose metrics the verdict reads, and
+`result.source_identity` the caller's version of its source; each is `None`
+when the report did not record it, and `to_dict()` writes both keys either
+way. With a baseline, `result.baseline["reports"]` carries the same for both
+reports, and `same_build` as in `compare()`. A stored `verdict.json` then
+says which build passed which version without the report beside it.
 
 A requirement goes unevaluated -- and lands in `result.unevaluated` -- when:
 
@@ -1080,9 +1126,9 @@ being duplicates when more rows are read, so an exact duplicate count above the
 allowance fails conclusively even on a partial scan -- while a count at or
 below it is still not a pass, and an estimated count settles neither direction.
 
-`scope="observed"` states the requirements about whatever the metrics actually
-measured, which is always evaluable and says nothing about the rest of the
-source.
+`scope="observed"` evaluates available evidence over the analyzed population
+and says nothing about the rest of the source. Missing or unassessed metrics
+can still leave requirements unevaluated.
 
 Each check records its own `evidence`, which can be weaker than the scan's:
 `report.quality_sampled_dimensions` names the components computed from a
@@ -1094,7 +1140,10 @@ cannot move the aggregate).
 
 **Sampled scores on a fully read source (0.12+).** Most quality dimensions are
 computed over a uniform sample of up to 10,000 values per column, so on any
-larger source the scores are estimates. The report bounds them:
+larger source the scores are estimates. Each column weighs as many values as
+it holds in the source, not as many as its sample kept, so a score lies within
+its own interval (`metric_semantics.sampled_score_estimator`). The report
+bounds them:
 `report.quality_score_bounds` gives an interval per score that holds, all at
 once, with probability `confidence_level` (0.999). The sample fixes each check
 (a column's type, dominant form, detected pattern, decimal scale and outlier
@@ -1108,6 +1157,18 @@ next to `evidence`, which still says `quality_sampled`. On a clean column of
 10,000 sampled values the interval is about 0.15 points wide; at 5% failures,
 about 2 points.
 
+A `max_quality_score_drop` or `max_dimension_score_drops` rule reads the
+same intervals (0.14+): a sampled score on either side of a fully read
+comparison stands for its interval, an exact one for its value, and the drop
+is decided when every change the two allow lies on one side of the allowance.
+The check records the report's interval as `bounds` and the baseline's as
+`baseline["bounds"]`. Two sampled runs of the same file still leave an
+allowance of 0 inconclusive, because their intervals overlap; a few points of
+allowance settle it. Each side's intervals hold with its `confidence_level`,
+so a decision over two sampled sides holds with at least the sum of the two
+minus one (0.998). A score whose coverage is unrecorded keeps its gap, and its
+stored bounds are not read, as the minimum score rules do not read them.
+
 Past a million distinct values the key count and the duplicate-row count are
 estimates rather than samples. They are bounded with certainty instead of at
 0.999: when an exact count is dropped, the distinct values it held are a floor
@@ -1116,6 +1177,18 @@ floors, wide on a source far past a million rows (the floor is a million of
 its rows), and the overall score is bounded again. A `max_duplicate_rows`
 requirement on an estimated count stays unevaluated, since the estimate can
 neither witness duplicates nor rule them out.
+
+To let `max_duplicate_rows` decide on a larger source, raise the exact limit
+when profiling: `profile(path, duplicate_rows_exact_limit=30_000_000)`, or
+`--duplicate-rows-exact-limit 30000000` on `python -m dataprof.check`. The
+limit is a row count, so the verdict does not depend on the machine: the row
+tracker keeps its exact set up to the limit even past `memory_limit_mb`, at 10
+to 20 bytes per distinct row (about 400 MB for 27 million rows). The report
+records the limit as `quality.uniqueness["duplicate_rows_exact_limit"]`, and a
+check left unevaluated by an estimate names the limit that would decide it.
+The exact count compares 64-bit fingerprints of the rows, so two different
+rows read as one duplicate with probability about `n^2 / 2^65` over `n`
+distinct rows: 3e-8 at one million, 2e-5 at 27 million.
 
 `min_rows` reads the report's `execution.rows_processed`. Rows already read do
 not go away when more are read, so a scan that read at least `min_rows` rows
@@ -1167,9 +1240,14 @@ when both reports measured the same thing the same way. Otherwise the rule is
 unevaluated, with one of these reasons:
 
 - `not_in_baseline`: the baseline did not assess the score, did not profile
-  the column, or read no values for it;
-- `schema_changed`, for a score, when the two reports profiled different
-  columns. A dataset-level score has the column set as its subject, so a
+  the column, or read no values for it, or, for the row count rules, read no
+  rows or is a summary that does not record `rows_processed`;
+- `approximate_count`, for `max_distinct_drop`, when either side's distinct
+  count is an estimate (past a million distinct values the count spills into
+  a sketch) or a document does not record whether it is exact;
+- `schema_changed`, for a score or a row count rule, when the two reports
+  profiled different columns. A dataset-level rule has the column set as its
+  subject, so a
   column that appeared or vanished changes what is measured. A column's own
   rule is not affected and still decides the verdict, and a new column gets a
   rule only when the policy names it: `"*"` covers the columns both reports
@@ -1177,14 +1255,17 @@ unevaluated, with one of these reasons:
 - `dimensions_changed`, for the overall score, when a dimension was assessed
   on one side only, since the overall score averages the assessed ones;
 - `definition_not_comparable`, with the `metric_semantics` key the rule
-  depends on (`null_tokens` for every rule, `pattern_match_count` also for
+  depends on (`null_tokens` for every rule but the row count ones,
+  `pattern_match_count` also for
   validity and the overall score, `range_rule_count` also for accuracy and the
   overall score, `key_uniqueness_units` also for uniqueness and the overall
   score, `outlier_units` also for accuracy and the overall score,
   `key_column_source` also for uniqueness and the overall score,
   `accuracy_comparison` also for accuracy and the overall score,
-  `json_number_reading` also for consistency, precision, uniqueness, accuracy
-  and the overall score), when the two reports do not both record it identically. A
+  `json_number_reading` also for consistency, precision, uniqueness, accuracy,
+  the overall score and the distinct count, `sampled_score_estimator` also for
+  consistency, accuracy, timeliness, validity, precision and the overall
+  score), when the two reports do not both record it identically. A
   baseline saved before 0.13 records neither;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
@@ -1192,14 +1273,54 @@ unevaluated, with one of these reasons:
   given, since the first one present is the uniqueness key) for every score
   but completeness, `positive_columns` for accuracy, `temporal_columns` and
   `temporal_pairs` for timeliness, and `pattern_locale` for validity. The
-  overall score reads them all. A report records which columns the pairs named
-  but not which column pairs with which, so a non-empty `temporal_pairs` reads
-  as `setting_unrecorded`, and so does the locale on a report saved before
-  0.13, which did not record it. Timeliness, and the overall score when both
+  overall score reads them all. From 0.14 a report records the pairs
+  themselves (see `analysis_settings`), compared as pairs with their direction;
+  a report saved before records only the columns the pairs named, so against
+  one a non-empty `temporal_pairs` reads as `setting_unrecorded`, and so does
+  the locale on a report saved before 0.13, which did not record it. Timeliness, and the overall score when both
   sides assessed timeliness, also read `timeliness_clock` (0.14+), as the
-  next paragraph describes;
+  next paragraph describes. When both reports record their `metric_packs`
+  (0.14+) and only one ran the `patterns` pack, the validity score, and the
+  overall score when validity is assessed on one side only, read
+  `setting_changed` on `metric_packs` rather than `not_assessed`,
+  `not_in_baseline` or `dimensions_changed`;
 - `evidence_incomplete`, under `scope="full_source"`, when either side does
-  not cover its whole source.
+  not cover its whole source. The row count rules are decided more often, as
+  the next paragraph describes.
+
+**A row count that falls or grows (0.14+).** `max_row_count_drop=10` fails
+when the row count fell by more than 10% of the baseline's `rows_processed`,
+as a truncated extract that lost one year or one page and kept its header and
+its null shares, which every other rule passes. `max_row_count_growth=10`
+fails when it grew by more than 10%, as a join that matched twice or a file
+published twice. Growth has no upper end, so `150` allows a source to more
+than double. `observed` and the baseline's `observed` are the two row counts,
+and `change` is in percent of the baseline's (`-15.68` for 6,963 rows to
+5,871). A scan that stopped early (`max_rows`, sampling, skipped records)
+read a lower bound of its source's rows, so under `scope="full_source"` it
+still settles the outcome that its unread rows could not reverse, as
+`min_rows` does:
+
+| | `max_row_count_drop` | `max_row_count_growth` |
+|---|---|---|
+| this report's scan incomplete | a pass is decided, a failure is `evidence_incomplete` | a failure is decided, a pass is `evidence_incomplete` |
+| the baseline's scan incomplete | a failure is decided, a pass is `evidence_incomplete` | a pass is decided, a failure is `evidence_incomplete` |
+| both incomplete | `evidence_incomplete` | `evidence_incomplete` |
+
+The one exception is `max_row_count_drop=100`, which passes whatever the scans
+missed, since a count cannot fall by more than all of it.
+
+**A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
+10}` fails when the column's distinct count fell by more than 10% of the
+baseline's, as a key that suddenly repeats. Fewer rows alone are not a
+collapse: 10 distinct keys over 10 rows against 100 over 100 passes, because
+the distinct share of non-null values held. The check fails only when that
+share fell by more than the same percentage of the baseline's share too.
+`observed` and the baseline's `observed` are the two distinct counts, and the
+baseline's `change` is the count's change in percent of the baseline's
+(`-90.0` for 100 to 10). A column with no non-null values in this report is
+`not_assessed`. More rows over the same distinct values is not a fall in
+the count, so this rule does not read it.
 
 **The timeliness clock (0.14+).** Timeliness counts dates later than a
 reference date and dates older than a maximum age, so the same data scores
@@ -1231,7 +1352,10 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `result.baseline` names both reports
+drop or `change_at_most` for an increase. `max_distinct_drop` and the row
+count rules are relative instead: `change` is in percent of the baseline's
+count, and `expected` is `{"comparison": "relative_change_at_least", "value":
+-10.0}` for a drop or `relative_change_at_most` for growth. `result.baseline` names both reports
 (`a` is the baseline), the `schema` change between them, and the
 `timeliness_clock` rule the score rules read. The baseline may be
 loaded from a flat `to_dict()` summary; what it did not record reads as
@@ -1258,14 +1382,14 @@ column for `forbid_removed_columns`, per column of this report for
 without it shows its source lacks it: it recorded its column selection
 (`analysis_settings["columns"]`, from 0.13), the selection included the column,
 and its column set covers the whole source. A CSV header, a Parquet schema, a
-DataFrame or a query result lists every column however few rows were read, so
-a capped CSV run still decides; for JSON, JSONL and `dataprof.asyncio` streams
-the columns are the keys of the records read, so only a scan of every record
-decides under `scope="full_source"`. A flat `to_dict()` summary records the
-kind of source but not a file's format, so a summary baseline of a file
-decides only when its scan was complete. Otherwise the check is unevaluated,
-with `setting_changed` or `setting_unrecorded` on the setting `columns`,
-`column_not_profiled` for a required column the run did not select, or
+DataFrame or a query result lists every column however few rows were read.
+CSV, Parquet and Arrow streams also declare their columns, so capped runs can
+decide column-presence checks. For JSON and JSONL, only a scan of every record
+decides under `scope="full_source"`. Flat `to_dict()` summaries written from
+0.14 record `source_format`, so capped CSV and Parquet baselines can decide
+schema checks. Older file summaries need complete scan coverage. Otherwise the
+check is unevaluated, with `setting_changed` or `setting_unrecorded` on the
+setting `columns`, `column_not_profiled` for a required column the run did not select, or
 `evidence_incomplete`.
 
 `forbid_added_columns` checks the columns this report profiled, so under
@@ -1444,14 +1568,18 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
-`--max-null-count COLUMN=COUNT` (0.14+), `--min-dimension NAME=PERCENT`, `--require-metric NAME`, `--require-column NAME`,
+`--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
+`--require-metric NAME`, `--require-column NAME`,
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
+`--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
+today's date, since the command line takes no reference date.
+`--max-date-gap COLUMN=DAYS` (0.14+) is repeatable as well.
 `--min-rows`, `--min-quality`, `--max-duplicate-rows`, and `--scope` cover the
 other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
 inside dimension or column mappings) are policy errors (exit 3).
 
-`--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through
-to `profile_file()`. As with the library, capped or sampled evidence may leave a
+`--engine`, `--format`, `--max-rows`, `--duplicate-rows-exact-limit ROWS`
+(0.14+), and repeatable `--metric PACK` pass through to `profile_file()`. As with the library, capped or sampled evidence may leave a
 full-source requirement inconclusive. `--scope observed` explicitly limits the
 claim to the analyzed population. A threshold on an unavailable metric stays
 unevaluated; an explicit `--require-metric` requirement fails if it is absent.
@@ -1485,6 +1613,9 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-quality-drop POINTS` | `max_quality_score_drop` |
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
+| `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
+| `--max-row-drop PERCENT` | `max_row_count_drop` |
+| `--max-row-growth PERCENT` | `max_row_count_growth` |
 | `--forbid-removed-columns` | `forbid_removed_columns` |
 | `--forbid-added-columns` | `forbid_added_columns` |
 | `--timeliness-clock fixed\|rolling` | `timeliness_clock` |
@@ -1520,32 +1651,11 @@ The [baseline checkpoint example](../../examples/README.md#4-baseline-checkpoint
 runs this cycle over seven drops, including the ones that must not become the
 baseline, and shows it as a CI job that keeps the baseline in the repository.
 
-For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
-GitHub Actions job runs the gate and retains its result even when it fails:
-
-```yaml
-name: Data quality
-on: [push, pull_request]
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - run: python -m pip install dataprof==0.13.1
-      - name: Check incoming data
-        run: python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: quality-verdict
-          path: verdict.json
-```
-
-This example targets the 0.12 release. Before it is published, build this
-checkout with `uv sync --no-install-project` and `uv run --no-sync maturin develop`, then invoke the module with
+The [file publication CI recipe](../../examples/README.md#check-a-file-before-publishing-it-in-ci)
+uses a pinned 0.13.1 wheel, required columns and a per-column null limit, and
+retains both the profile and verdict on a rejected run. To run the current
+checkout instead, build the extension with `uv sync --no-install-project` and
+`uv run --no-sync maturin develop`, then invoke the module with
 `uv run --no-sync python -m dataprof.check ...`.
 
 ### `compare()`
@@ -1560,10 +1670,14 @@ delta = baseline.compare(dp.profile("orders.csv"))
 
 delta["quality_score"]                  # {"a": 91.2, "b": 88.75, "abs": -2.45, "rel_pct": -2.69, "evidence": {...}}
 delta["dimensions"]["completeness"]     # the same shape, for each of the seven dimensions
-delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5}
+delta["columns"]["email"]               # {"null_pct_a": 1.0, "null_pct_b": 4.5, "null_pct_delta": 3.5,
+                                        #  "data_type_a": "string", "data_type_b": "string",
+                                        #  "native_type_a": None, "native_type_b": None}
 delta["schema"]                         # {"added": [...], "removed": [...], "common": [...]}
 delta["metric_semantics"]["comparable"] # True, False, or None when either side predates the record
-delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence"}
+delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_processed", "evidence",
+                                        #  "generator", "source_identity"}
+delta["reports"]["same_build"]          # True, False, or None when it cannot tell
 ```
 
 - **Signs.** Every change is `b - a`. A positive score change is an
@@ -1573,6 +1687,14 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
 - **No invented numbers.** A score either side did not assess, or a column one
   side lacks or that holds no values, leaves the change `None`. `rel_pct` is
   `None` when `a` is 0.
+- **Types.** `data_type_a` and `data_type_b` are each side's inferred
+  type, `None` on a side that lacks the column or read no value for it that
+  is not null: an all-null column establishes no type, so two different
+  names are exactly what `check()` reports as `column_type_changed`.
+  `native_type_a` and `native_type_b` are the type each source declared
+  (`native_type` on the column), kept for an all-null column too, and `None`
+  where the source declared none. A Parquet column that moved from
+  `decimal128(12, 2)` to `double` shows there while both sides read `float`.
 - **Evidence.** Each score carries the coverage behind it on both sides, with
   the reasons `check()` uses (`truncated`, `sampled`, `records_skipped`,
   `quality_sampled`, `coverage_unrecorded`). A change between an exact
@@ -1582,18 +1704,34 @@ delta["reports"]["b"]                   # {"id", "timestamp", "source", "rows_pr
   across that boundary a changed `max_length` on non-ASCII text can be the
   unit rather than the data. `comparable` covers how dataprof measures, not
   how each report was configured.
+- **Builds (0.14+).** Each side of `reports` names its `generator`, the
+  build that wrote it (see `report.generator`), and its `source_identity`,
+  the caller's version of the source; each is `None` where the side did not
+  record it. `same_build` reads the two builds in order and stops at the
+  first answer: `None` when either side recorded no build; `False` when the
+  versions differ; `None` when either side recorded no commit; `False` when
+  the commits differ; `None` when either side recorded no dirty flag; then
+  `True` when both are clean, `False` when one is dirty, and `None` when
+  both are dirty builds of one commit. A known difference therefore gives
+  `False` even when a later field is missing. A change between two builds can come from a definition that changed between
+  them rather than from the data.
 - **Configuration.** `configuration` lists the recorded settings that move a
   score on unchanged data: `score_weights`, `semantic_hints` (the columns
   named by `positive_columns`, `identifier_columns`, `temporal_columns` and
-  `temporal_pairs`), `pattern_locale` (see `analysis_settings`) and
-  `timeliness_clock` (the `clock` in `quality.timeliness`). Each has `a`, `b`
-  and `same`, which is `None` when a side did not record the setting: weights
-  on a summary saved before 0.12, hints on one saved before 0.10, the locale
-  on one saved before 0.13, the clock on one saved before 0.14 or with no
-  timeliness assessment. Two rolling clocks read on different days differ. A
+  `temporal_pairs`), `pattern_locale` (see `analysis_settings`),
+  `timeliness_clock` (the `clock` in `quality.timeliness`), `columns`
+  (each side's `columns=` selection, as in `analysis_settings`; `same` ignores
+  the order a list gives, and `all` differs from a list naming every column)
+  `metric_packs` (the packs each side computed, as in `analysis_settings`)
+  and `temporal_pairs` (the pairs each side declared, as in
+  `analysis_settings`; `same` compares the pairs with their direction, not the
+  order or repetition of a list). Each has `a`, `b` and `same`, which is `None` when a side did not record the
+  setting: weights on a summary saved before 0.12, hints on one saved before
+  0.10, the locale and the selection on one saved before 0.13, the clock, the
+  packs and the pairs on one saved before 0.14, the clock also with no timeliness assessment. Two rolling clocks read on different days differ. A
   score that moved while `same` is `False` may reflect the setting rather than
-  the data. Settings not recorded here, such as `metrics`, still need the same
-  options on both sides.
+  the data. Settings not recorded here, such as `quality_dimensions`, still need
+  the same options on both sides.
 
 Either side may be a report loaded from a flat `to_dict()` summary, including
 one saved before 0.12; its `id` and `timestamp` are `None`, and coverage it

@@ -185,8 +185,22 @@ fn rust_gate_matches_the_shared_fixture() {
             .evaluate(&report)
             .unwrap_or_else(|e| panic!("{name}: policy is unevaluable: {e}"));
 
+        let mut document = serde_json::to_value(&result).expect("the result serializes");
+        // Provenance, compared on its own: the build differs between the two
+        // sides of the parity check, and is no part of the decision (#1063).
+        let object = document.as_object_mut().expect("the result is an object");
         assert_eq!(
-            serde_json::to_value(&result).expect("the result serializes"),
+            object.remove("generator"),
+            Some(serde_json::to_value(&report.generator).unwrap()),
+            "{name}: generator"
+        );
+        assert_eq!(
+            object.remove("source_identity"),
+            Some(serde_json::Value::Null),
+            "{name}: source_identity"
+        );
+        assert_eq!(
+            document,
             case["expected"],
             "{name}: {}",
             case["why"].as_str().unwrap_or_default()

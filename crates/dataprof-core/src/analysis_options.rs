@@ -29,6 +29,7 @@ pub struct AnalysisOptions {
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
     reference_date: Option<NaiveDate>,
+    duplicate_rows_exact_limit: Option<usize>,
 }
 
 impl AnalysisOptions {
@@ -78,6 +79,19 @@ impl AnalysisOptions {
         self
     }
 
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    ///
+    /// `None` (the default) keeps the built-in limit of one million distinct
+    /// rows, past which the count is an estimate and the memory budget may
+    /// end the exact count earlier. A limit set here is a row count, so the
+    /// verdict does not depend on the machine: the row tracker keeps its exact
+    /// set up to the limit whatever `memory_limit_mb` says, at 10 to 20 bytes
+    /// per distinct row, and that set is not counted against the budget.
+    pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
+        self.duplicate_rows_exact_limit = limit;
+        self
+    }
+
     /// The packs to compute, with an empty quality-dimension selection folded in.
     ///
     /// Resolved on read rather than in the setters so the outcome does not
@@ -87,6 +101,23 @@ impl AnalysisOptions {
             self.metric_packs.as_deref(),
             self.quality_dimensions.as_deref(),
         )
+    }
+
+    /// Every pack the run computes, in [`MetricPack::all`] order: the
+    /// effective selection with the schema pack, which is always computed,
+    /// made explicit. Two requests that compute the same packs return the
+    /// same list, whatever order or repetition they were given in.
+    pub fn selected_metric_packs(&self) -> Vec<MetricPack> {
+        let effective = self.effective_metric_packs();
+        MetricPack::all()
+            .into_iter()
+            .filter(|pack| {
+                *pack == MetricPack::Schema
+                    || effective
+                        .as_deref()
+                        .is_none_or(|selected| selected.contains(pack))
+            })
+            .collect()
     }
 
     /// Whether per-column statistics should be computed.
@@ -119,6 +150,11 @@ impl AnalysisOptions {
     /// The fixed timeliness reference date, or `None` to read today's.
     pub fn reference_date(&self) -> Option<NaiveDate> {
         self.reference_date
+    }
+
+    /// The duplicate-row exact limit the caller set, or `None` for the default.
+    pub fn duplicate_rows_exact_limit(&self) -> Option<usize> {
+        self.duplicate_rows_exact_limit
     }
 
     /// The requested quality dimensions, if the caller narrowed them.
@@ -243,6 +279,31 @@ mod tests {
             packs_first.effective_metric_packs()
         );
         assert!(!dims_first.include_quality());
+    }
+
+    #[test]
+    fn selected_packs_list_what_runs_once_in_a_fixed_order() {
+        use MetricPack::{Patterns, Quality, Schema, Statistics};
+        let selected = |options: AnalysisOptions| options.selected_metric_packs();
+        assert_eq!(
+            selected(AnalysisOptions::default()),
+            vec![Schema, Statistics, Patterns, Quality]
+        );
+        assert_eq!(
+            selected(
+                AnalysisOptions::default()
+                    .with_metric_packs(Some(vec![Quality, Patterns, Quality]))
+            ),
+            vec![Schema, Patterns, Quality]
+        );
+        assert_eq!(
+            selected(AnalysisOptions::default().with_metric_packs(Some(vec![]))),
+            vec![Schema]
+        );
+        assert_eq!(
+            selected(AnalysisOptions::default().with_quality_dimensions(Some(vec![]))),
+            vec![Schema, Statistics, Patterns]
+        );
     }
 
     #[test]

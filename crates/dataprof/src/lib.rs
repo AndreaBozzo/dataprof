@@ -1,7 +1,9 @@
-//! High-performance data profiling and quality assessment.
+//! Local data profiling and quality assessment.
 //!
 //! The `dataprof` crate is the user-facing facade for profiling CSV, JSON,
-//! JSONL, Parquet, database, DataFrame, and Arrow sources. Implementation
+//! JSONL, Parquet, database queries, and supported async byte sources.
+//! Python bindings provide DataFrame and Arrow object profiling; Rust Arrow
+//! batch callers use `dataprof_parquet::RecordBatchAnalyzer`. Implementation
 //! details live in the workspace crates under `crates/`; this package keeps the
 //! public API compact and oriented around [`Profiler`].
 //!
@@ -27,16 +29,17 @@ pub use profiler::{
 pub use chrono::NaiveDate;
 pub use dataprof_core::{
     AccuracyComparison, AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema,
-    ColumnStats, CountMethod, CsvSourceMetadata, DataFrameLibrary, DataProfilerError, DataSource,
-    DataType, DateTimeStats, DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat,
-    FrequencyItem, IsoQualityConfig, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits,
-    LexicalClass, Locale, MetricPack, NULL_MARKERS, NullTokenSet, NumericStats, OutlierUnits,
+    ColumnStats, CountMethod, CsvSourceMetadata, DATE_GAP_YEAR_LIMIT, DataFrameLibrary,
+    DataProfilerError, DataSource, DataType, DateGap, DateStatistics, DateTimeStats,
+    DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat, FrequencyItem,
+    IsoQualityConfig, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, LexicalClass, Locale,
+    MetricPack, NULL_MARKERS, NativeType, NullTokenSet, NumericStats, OutlierUnits,
     ParquetMetadata, Pattern, PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink,
     QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent,
-    RecoveryKind, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder, StatisticRounding,
-    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit,
-    TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
+    RecoveryKind, RowCountEstimate, SampledScoreEstimator, SamplingStrategy, SchemaResult,
+    SemanticHintBinding, SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder,
+    StatisticRounding, StopCondition, StopEvaluator, StructureColumnSummary, StructureReport,
+    TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
 };
 pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{
@@ -44,10 +47,11 @@ pub use dataprof_json::{
     analyze_json_file_with_options, analyze_json_from_reader,
 };
 pub use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
-    PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
-    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
+    AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,
+    MetricConfidence, MetricsCalculator, PatternMetadata, PrecisionMetrics, QualityAssessment,
+    QualityMetrics, QualityScores, ScoreBounds, ScoreInterval, TimelinessClock,
+    TimelinessClockMode, TimelinessClockTimezone, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics, ValueChecksSkipReason, analyze_column, analyze_column_fast,
     analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
     calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, is_null_like_token,
     lexical_class, list_patterns,
@@ -68,11 +72,11 @@ pub use dataprof_runtime::{
     FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult, GateResult,
     MetricSemantics, MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError,
     PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION,
-    ReportGenerator, RequiredMetric, SettingDifference, Severity, SourceIdentity,
+    ReportGenerator, RequiredMetric, SettingDifference, Severity, SourceIdentity, TemporalPair,
     TimelinessClockRule, UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
-    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta,
+    ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta, ReportPair,
     ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
     Sides,
 };

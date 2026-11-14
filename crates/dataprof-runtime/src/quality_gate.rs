@@ -31,14 +31,24 @@
 //! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
 //! [`ReportDelta`] between it and the report, and evaluates rules about change:
 //! how far the overall score or a dimension score may drop, and how far a
-//! column's null percentage may rise, in points. A change is decided only when
-//! both sides measured the same thing the same way. Otherwise the rule is left
-//! unevaluated, naming what differs:
+//! column's null percentage may rise, in points, how far a column's
+//! distinct count may fall, in percent of the baseline's (#1026), and how far
+//! the row count may fall or grow, in percent of the baseline's (#1291). A
+//! change is decided only when both sides measured the same thing the same
+//! way. Otherwise the rule is left unevaluated, naming what differs:
 //!
+//! - for the validity score, and for the overall score when validity is
+//!   assessed on one side only, pattern detection run on one side only
+//!   ([`NotEvaluated::SettingChanged`] on `metric_packs`): validity scores
+//!   the detected patterns. This names the cause ahead of the reasons below
+//!   that name its effect, and needs both sides to record their packs;
 //! - a value the baseline does not carry ([`NotEvaluated::NotInBaseline`]);
-//! - for a score, a different column set ([`NotEvaluated::SchemaChanged`]).
-//!   A dataset-level score has the columns as its subject, so a column that
-//!   appeared or vanished changes what is measured, not how good it is. A
+//! - for a distinct count, an estimate on either side, or a count either
+//!   side did not record as exact ([`NotEvaluated::ApproximateCount`]);
+//! - for a score or the row count, a different column set
+//!   ([`NotEvaluated::SchemaChanged`]). A dataset-level rule has the columns
+//!   as its subject, so a column that appeared or vanished changes what is
+//!   measured, not how good it is. A
 //!   column's own rules stay decisive, and a new column has no baseline rule
 //!   until a policy names it;
 //! - for the overall score, a different set of assessed dimensions
@@ -48,12 +58,23 @@
 //! - a setting that moves the score on unchanged data, such as the score
 //!   weights or a semantic hint, that differs or that either side did not
 //!   record ([`NotEvaluated::SettingChanged`],
-//!   [`NotEvaluated::SettingUnrecorded`]). The timeliness clock is one: two
+//!   [`NotEvaluated::SettingUnrecorded`]). The declared temporal pairs are
+//!   compared as pairs when both sides record them (0.14+), and otherwise
+//!   agree only when neither side declared any. The timeliness clock is such
+//!   a setting too: two
 //!   reports measured against different reference dates are comparable only
 //!   when the policy declares a rolling clock
 //!   ([`QualityPolicy::timeliness_clock`]);
 //! - under [`PolicyScope::FullSource`], evidence on either side that does not
-//!   cover the whole source.
+//!   cover the whole source. The row count rules are the exception: a scan
+//!   that stopped early read a lower bound of its source's rows, so it still
+//!   settles the outcome that more rows could not reverse, as
+//!   [`QualityPolicy::min_rows`] does (see
+//!   [`QualityPolicy::max_row_count_drop`]). A score drop rule reads a score
+//!   computed over a retained sample of a fully read source as its recorded
+//!   whole-source interval, as the minimum score rules do, and decides when
+//!   the change those intervals allow lies wholly on one side of the
+//!   allowance (see [`QualityPolicy::max_quality_score_drop`]).
 //!
 //! A schema change from the baseline is reported as a [`Diagnostic`] in the
 //! result's `baseline.diagnostics`, whatever the policy states: a column added,
@@ -75,6 +96,26 @@
 //! [`NotEvaluated::SettingChanged`] or [`NotEvaluated::SettingUnrecorded`] on
 //! the setting `columns`, [`NotEvaluated::ColumnNotProfiled`] for a required
 //! column the run did not select, or [`NotEvaluated::EvidenceIncomplete`].
+//!
+//! # Freshness
+//!
+//! [`QualityPolicy::max_date_age`] fails a column whose newest date lies too
+//! many days before the timeliness reference date the report recorded
+//! (#1290): a feed that stopped moving keeps passing every rule above, since
+//! the same rows keep their counts, nulls and scores. A newest date read on
+//! part of a source can only be overtaken by a newer one, so a fresh date
+//! passes on any scan and a stale one fails only when the values behind it
+//! cover the column, which a report computing its date statistics over every
+//! value read does on a complete scan (#1297). Slash dates are the exception:
+//! their day and month order is decided from the values read, so a fresh one
+//! read on part of a column passes only once that order cannot change.
+//!
+//! [`QualityPolicy::max_date_gap`] fails a column whose dates hold a hole
+//! inside their range (#1300): a daily file that lost a period from its
+//! middle keeps its newest date and most of its rows. The values that were
+//! not read can fill a hole the read ones show, or open one at the edge of
+//! the range, so under [`PolicyScope::FullSource`] the rule decides only on a
+//! scan that covered the column.
 //!
 //! # Forbidden findings
 //!
@@ -127,21 +168,26 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, QualityDimension};
+use dataprof_core::{
+    ColumnProfile, ColumnStats, DataType, DateStatistics, ExecutionMetadata, MetricPack,
+    QualityDimension, SlashDateOrder,
+};
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
 };
 use serde::Serialize;
 
 use crate::findings::{
-    Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, UnevaluatedRule,
+    Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, NotEvaluatedReason,
+    UnevaluatedRule,
 };
 use crate::profile_report::{
-    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus,
+    ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus, ReportGenerator,
+    SourceIdentity,
 };
 use crate::report_delta::{
-    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportReference,
-    ReportSide, SchemaChange, Sides,
+    ColumnChange, ColumnSide, ConfigurationComparison, RecordedHints, ReportDelta, ReportPair,
+    ReportSide, SchemaChange, ScoreChange, Sides,
 };
 
 /// Scores and percentages in a report live on a 0..=100 scale, and so do the
@@ -158,7 +204,9 @@ const PERCENTAGE_MAX: f64 = 100.0;
 pub enum PolicyError {
     /// A threshold on the 0..=100 percentage scale fell outside it, or was not
     /// a finite number. Quality scores and null percentages are percentages,
-    /// not 0..1 ratios.
+    /// not 0..1 ratios. A row count growth threshold has no upper end, so for
+    /// [`CheckCode::MaxRowCountGrowth`] only a negative or non-finite value
+    /// is out of range.
     #[non_exhaustive]
     ThresholdOutOfRange {
         /// The requirement that carried it.
@@ -189,10 +237,14 @@ impl fmt::Display for PolicyError {
                 if let Some(subject) = subject {
                     write!(f, "for `{subject}` ")?;
                 }
-                write!(
-                    f,
-                    "must be a percentage between 0 and {PERCENTAGE_MAX}, got {value}"
-                )
+                if *code == CheckCode::MaxRowCountGrowth {
+                    write!(f, "must be a percentage of at least 0, got {value}")
+                } else {
+                    write!(
+                        f,
+                        "must be a percentage between 0 and {PERCENTAGE_MAX}, got {value}"
+                    )
+                }
             }
             Self::NoRequirements => write!(
                 f,
@@ -394,6 +446,12 @@ pub enum CheckCode {
     MaxNullCount,
     /// The duplicate-row count must be at most the threshold.
     MaxDuplicateRows,
+    /// A column's newest date may lie at most the threshold's number of days
+    /// before the timeliness reference date.
+    MaxDateAge,
+    /// The largest gap between a column's consecutive distinct days may be
+    /// at most the threshold's number of days.
+    MaxDateGap,
     /// A metric must have been analyzed at all.
     RequireMetric,
     /// The overall quality score may drop at most the threshold's number of
@@ -402,9 +460,18 @@ pub enum CheckCode {
     /// One dimension score may drop at most the threshold's number of points
     /// below the baseline's.
     MaxDimensionScoreDrop,
+    /// The row count may fall at most the threshold's percentage of the
+    /// baseline's.
+    MaxRowCountDrop,
+    /// The row count may grow at most the threshold's percentage of the
+    /// baseline's.
+    MaxRowCountGrowth,
     /// A column's null percentage may rise at most the threshold's number of
     /// points above the baseline's.
     MaxNullPercentageIncrease,
+    /// A column's distinct count may fall at most the threshold's percentage
+    /// of the baseline's, unless its distinct share of non-null values held.
+    MaxDistinctDrop,
     /// A named column must be profiled.
     RequireColumn,
     /// A column the baseline profiled must still be profiled.
@@ -424,10 +491,15 @@ impl fmt::Display for CheckCode {
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
             Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
+            Self::MaxDateAge => write!(f, "max_date_age"),
+            Self::MaxDateGap => write!(f, "max_date_gap"),
             Self::RequireMetric => write!(f, "require_metric"),
             Self::MaxQualityScoreDrop => write!(f, "max_quality_score_drop"),
             Self::MaxDimensionScoreDrop => write!(f, "max_dimension_score_drop"),
+            Self::MaxRowCountDrop => write!(f, "max_row_count_drop"),
+            Self::MaxRowCountGrowth => write!(f, "max_row_count_growth"),
             Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
+            Self::MaxDistinctDrop => write!(f, "max_distinct_drop"),
             Self::RequireColumn => write!(f, "require_column"),
             Self::ForbidRemovedColumn => write!(f, "forbid_removed_column"),
             Self::ForbidAddedColumn => write!(f, "forbid_added_column"),
@@ -448,6 +520,9 @@ pub enum MetricValue {
     Count(usize),
     /// A 0..=100 percentage or score, or a change in one, in points.
     Percentage(#[serde(serialize_with = "dataprof_core::serde_helpers::round_2")] f64),
+    /// A number of whole days. An age is negative when the date lies after
+    /// the reference date.
+    Days(i64),
 }
 
 impl fmt::Display for MetricValue {
@@ -457,6 +532,7 @@ impl fmt::Display for MetricValue {
         match self {
             Self::Count(count) => write!(f, "{count}"),
             Self::Percentage(value) => write!(f, "{value:.2}"),
+            Self::Days(days) => write!(f, "{days}"),
         }
     }
 }
@@ -493,6 +569,21 @@ pub enum Expectation {
         /// The threshold, in points.
         value: MetricValue,
     },
+    /// The change from the baseline as a percentage of the baseline's value,
+    /// `(observed - baseline) / baseline * 100`, must be at least `value`. A
+    /// permitted drop is a negative value.
+    #[non_exhaustive]
+    RelativeChangeAtLeast {
+        /// The threshold, in percent of the baseline's value.
+        value: MetricValue,
+    },
+    /// The change from the baseline as a percentage of the baseline's value
+    /// must be at most `value`.
+    #[non_exhaustive]
+    RelativeChangeAtMost {
+        /// The threshold, in percent of the baseline's value.
+        value: MetricValue,
+    },
     /// The column must be profiled. No number is compared.
     Present,
     /// The column must be one the baseline profiled. No number is compared.
@@ -507,6 +598,12 @@ impl fmt::Display for Expectation {
             Self::Analyzed => write!(f, "analyzed"),
             Self::ChangeAtLeast { value } => write!(f, "a change of at least {value}"),
             Self::ChangeAtMost { value } => write!(f, "a change of at most {value}"),
+            Self::RelativeChangeAtLeast { value } => {
+                write!(f, "a relative change of at least {value}%")
+            }
+            Self::RelativeChangeAtMost { value } => {
+                write!(f, "a relative change of at most {value}%")
+            }
             Self::Present => write!(f, "present"),
             Self::InBaseline => write!(f, "in the baseline"),
         }
@@ -550,6 +647,11 @@ pub enum NotEvaluated {
     /// assess the metric, did not profile the column, or read no values for
     /// it.
     NotInBaseline,
+    /// A distinct count the requirement reads is an estimate on at least one
+    /// side, because the exact set of values spilled into its sketch, or the
+    /// side does not record whether it is exact. An estimate falling is not a
+    /// column collapsing, so the requirement decides on exact counts only.
+    ApproximateCount,
     /// The two reports profiled different column sets, and the requirement
     /// is about a dataset-level score, whose subject is the column set. The
     /// result's `baseline.schema` names the columns that differ.
@@ -680,9 +782,17 @@ pub struct BaselineReading {
     pub observed: Option<MetricValue>,
     /// Whether the data behind the baseline's value covers its whole source.
     pub evidence: Evidence,
-    /// The check's `observed` minus the baseline's, in points, at the
-    /// report's serialized precision. `None` when either side has no value.
+    /// The check's `observed` minus the baseline's, at the report's
+    /// serialized precision: in points, or, for a rule on a relative change
+    /// such as `max_distinct_drop` and the row count rules, in percent of the
+    /// baseline's value.
+    /// `None` when either side has no value.
     pub change: Option<MetricValue>,
+    /// Where the baseline's whole-source score lies, when its score came
+    /// from a retained sample and the baseline bounds it, and a full-source
+    /// score drop rule was decided on it. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<CheckBounds>,
 }
 
 /// The two reports a baseline-relative evaluation compared, and how their
@@ -691,8 +801,8 @@ pub struct BaselineReading {
 #[non_exhaustive]
 pub struct BaselineComparison {
     /// `a` is the baseline and `b` the report evaluated, as in a
-    /// [`ReportDelta`] between them.
-    pub reports: Sides<ReportReference>,
+    /// [`ReportDelta`] between them, with whether one build wrote both.
+    pub reports: ReportPair,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
     /// The schema changes from the baseline, whatever the policy states. A
@@ -861,6 +971,13 @@ pub struct GateResult {
     /// baseline. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<BaselineComparison>,
+    /// The build that wrote the report evaluated, which decided the metrics
+    /// the verdict reads. `None` (serialized as `null`) when the report did
+    /// not record one. The build evaluating the policy can be another.
+    pub generator: Option<ReportGenerator>,
+    /// The caller's version of the source the report describes, `None`
+    /// (serialized as `null`) when none was recorded.
+    pub source_identity: Option<SourceIdentity>,
 }
 
 impl GateResult {
@@ -913,11 +1030,17 @@ pub struct QualityPolicy {
     max_null_count: BTreeMap<String, usize>,
     max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
+    max_date_age: BTreeMap<String, u32>,
+    max_date_gap: BTreeMap<String, u32>,
     require_metrics: Vec<RequiredMetric>,
     max_quality_score_drop: Option<f64>,
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage_increase: BTreeMap<String, f64>,
     max_null_percentage_increase_any: Option<f64>,
+    max_distinct_drop: BTreeMap<String, f64>,
+    max_distinct_drop_any: Option<f64>,
+    max_row_count_drop: Option<f64>,
+    max_row_count_growth: Option<f64>,
     require_columns: BTreeSet<String>,
     forbid_removed_columns: bool,
     forbid_added_columns: bool,
@@ -991,6 +1114,53 @@ impl QualityPolicy {
         self
     }
 
+    /// Require the named column's newest date to lie at most `days` days
+    /// before the timeliness reference date (#1290), so a feed that stopped
+    /// moving fails while every other rule still passes it.
+    ///
+    /// The newest date is the column's `max_datetime`, a calendar date, and
+    /// the reference date is the one the report's timeliness clock recorded
+    /// (`reference_date`, or the run's date on a rolling clock), so the age is
+    /// counted in calendar days and a saved report evaluated later decides
+    /// the same. A date after the reference date is fresh. A newest date only
+    /// gets newer as more values are read, so under [`PolicyScope::FullSource`]
+    /// a fresh date passes whatever the scan missed, and a stale one fails
+    /// only when the values behind it cover the column: every row read, and
+    /// the date statistics computed over every value read. A report that
+    /// records `metric_semantics.date_statistics` computed them so (#1297);
+    /// for an older one the retained sample they came from must hold every
+    /// non-null value. The exception is a column of slash dates whose
+    /// day and month order the unread values could still change
+    /// (`assumed_day_first` or `month_first`): there a fresh date read on
+    /// part of the column is [`NotEvaluated::EvidenceIncomplete`] too. A column with no newest date (not typed as a
+    /// date, all null, or statistics not computed) is
+    /// [`NotEvaluated::NotAssessed`], and a report without a recorded clock is
+    /// [`NotEvaluated::SettingUnrecorded`] on `timeliness_clock`.
+    pub fn max_date_age(mut self, column: impl Into<String>, days: u32) -> Self {
+        self.max_date_age.insert(column.into(), days);
+        self
+    }
+
+    /// Require the largest gap between the named column's consecutive
+    /// distinct days to be at most `days` (#1300), so a daily file that lost
+    /// a period from the middle of its range fails while its newest date,
+    /// schema and most of its rows stay normal. `1` allows no missing day.
+    ///
+    /// The gap is the column's `largest_gap`, counted in whole calendar days
+    /// over every value the profiler read. Under [`PolicyScope::FullSource`]
+    /// the rule decides only when those values cover the column: the values
+    /// that were not read can fill a hole the read ones show, or open a new
+    /// one at either edge of the range, so a partial scan is
+    /// [`NotEvaluated::EvidenceIncomplete`] whichever way the read values
+    /// point. A column with no gap recorded (not typed as a date, all null, a
+    /// report from before 0.14, or dates spanning more than
+    /// [`DATE_GAP_YEAR_LIMIT`](dataprof_core::DATE_GAP_YEAR_LIMIT) distinct
+    /// years) is [`NotEvaluated::NotAssessed`].
+    pub fn max_date_gap(mut self, column: impl Into<String>, days: u32) -> Self {
+        self.max_date_gap.insert(column.into(), days);
+        self
+    }
+
     /// Require the report to carry a quality assessment at all.
     ///
     /// Without this, a report with no assessment leaves quality requirements
@@ -1011,6 +1181,14 @@ impl QualityPolicy {
 
     /// Allow the overall quality score to drop at most `points` (0..=100)
     /// below the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    ///
+    /// Under [`PolicyScope::FullSource`], a score computed over a retained
+    /// sample on either side is read as its recorded whole-source interval,
+    /// and the drop is decided when every change those intervals allow lies
+    /// on one side of `points` (#1035). Each side's intervals hold together
+    /// with that side's `confidence_level`; when both sides are sampled, the
+    /// two hold together with probability at least the sum of the two levels
+    /// minus one.
     pub fn max_quality_score_drop(mut self, points: f64) -> Self {
         self.max_quality_score_drop = Some(points);
         self
@@ -1018,6 +1196,8 @@ impl QualityPolicy {
 
     /// Allow one dimension's score to drop at most `points` (0..=100) below
     /// the baseline's. Needs [`evaluate_against`](Self::evaluate_against).
+    /// A sampled score is decided on its interval, as in
+    /// [`max_quality_score_drop`](Self::max_quality_score_drop).
     pub fn max_dimension_score_drop(mut self, dimension: QualityDimension, points: f64) -> Self {
         self.max_dimension_score_drops
             .insert(dimension.to_string(), (dimension, points));
@@ -1041,6 +1221,56 @@ impl QualityPolicy {
     /// [`evaluate_against`](Self::evaluate_against).
     pub fn max_null_percentage_increase_any(mut self, points: f64) -> Self {
         self.max_null_percentage_increase_any = Some(points);
+        self
+    }
+
+    /// Allow the named column's distinct count to fall at most `percent`
+    /// (0..=100) of the baseline's (#1026). Fewer rows alone do not make a
+    /// collapse, so the check fails only when the column's distinct share of
+    /// non-null values fell by more than `percent` of the baseline's share as
+    /// well. Decided on exact counts only: an estimate on either side leaves
+    /// it [`NotEvaluated::ApproximateCount`]. Takes precedence over
+    /// [`max_distinct_drop_any`](Self::max_distinct_drop_any) for that
+    /// column. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_distinct_drop(mut self, column: impl Into<String>, percent: f64) -> Self {
+        self.max_distinct_drop.insert(column.into(), percent);
+        self
+    }
+
+    /// [`max_distinct_drop`](Self::max_distinct_drop) for every other column
+    /// both reports profiled. A column only the evaluated report has is not
+    /// covered. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_distinct_drop_any(mut self, percent: f64) -> Self {
+        self.max_distinct_drop_any = Some(percent);
+        self
+    }
+
+    /// Allow the row count to fall at most `percent` (0..=100) of the
+    /// baseline's `rows_processed` (#1291), so a truncated extract that keeps
+    /// its header and its shares fails. Needs
+    /// [`evaluate_against`](Self::evaluate_against).
+    ///
+    /// A scan that stopped early read a lower bound of its source's rows. So
+    /// under [`PolicyScope::FullSource`], an incomplete scan of this report
+    /// still decides a pass and an incomplete baseline still decides a
+    /// failure, and the other outcome is unevaluated: the rows a scan did not
+    /// read could make up the difference. With both scans incomplete the rule
+    /// is unevaluated. An allowance of 100% passes whatever the scans missed,
+    /// since a count cannot fall by more. A different column set leaves it
+    /// [`NotEvaluated::SchemaChanged`], as for a dataset-level score.
+    pub fn max_row_count_drop(mut self, percent: f64) -> Self {
+        self.max_row_count_drop = Some(percent);
+        self
+    }
+
+    /// Allow the row count to grow at most `percent` (0 or more) of the
+    /// baseline's `rows_processed` (#1291), so a join that fans out or a file
+    /// published twice fails. The mirror of
+    /// [`max_row_count_drop`](Self::max_row_count_drop): an incomplete scan
+    /// of this report still decides a failure, and an incomplete baseline a
+    /// pass. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_row_count_growth(mut self, percent: f64) -> Self {
+        self.max_row_count_growth = Some(percent);
         self
     }
 
@@ -1152,6 +1382,24 @@ impl QualityPolicy {
         if let Some(points) = self.max_null_percentage_increase_any {
             check_percentage(CheckCode::MaxNullPercentageIncrease, None, points)?;
         }
+        for (column, percent) in &self.max_distinct_drop {
+            check_percentage(CheckCode::MaxDistinctDrop, Some(column.clone()), *percent)?;
+        }
+        if let Some(percent) = self.max_distinct_drop_any {
+            check_percentage(CheckCode::MaxDistinctDrop, None, percent)?;
+        }
+        if let Some(percent) = self.max_row_count_drop {
+            check_percentage(CheckCode::MaxRowCountDrop, None, percent)?;
+        }
+        if let Some(percent) = self.max_row_count_growth
+            && !(percent.is_finite() && percent >= 0.0)
+        {
+            return Err(PolicyError::ThresholdOutOfRange {
+                code: CheckCode::MaxRowCountGrowth,
+                subject: None,
+                value: percent,
+            });
+        }
         if self.is_empty() {
             return Err(PolicyError::NoRequirements);
         }
@@ -1167,6 +1415,8 @@ impl QualityPolicy {
             && self.max_null_count.is_empty()
             && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
+            && self.max_date_age.is_empty()
+            && self.max_date_gap.is_empty()
             && self.require_metrics.is_empty()
             && self.require_columns.is_empty()
             && self.forbid_findings.is_empty()
@@ -1179,6 +1429,10 @@ impl QualityPolicy {
             || !self.max_dimension_score_drops.is_empty()
             || !self.max_null_percentage_increase.is_empty()
             || self.max_null_percentage_increase_any.is_some()
+            || !self.max_distinct_drop.is_empty()
+            || self.max_distinct_drop_any.is_some()
+            || self.max_row_count_drop.is_some()
+            || self.max_row_count_growth.is_some()
             || self.forbid_removed_columns
             || self.forbid_added_columns
     }
@@ -1202,6 +1456,8 @@ impl QualityPolicy {
             evidence: scan_evidence(&report.execution),
             checks,
             baseline: None,
+            generator: report.generator.clone(),
+            source_identity: report.source_identity.clone(),
         })
     }
 
@@ -1210,8 +1466,10 @@ impl QualityPolicy {
     ///
     /// Every requirement is evaluated as [`evaluate`](Self::evaluate) does,
     /// then each rule about change, in a fixed order: the overall score, the
-    /// dimensions in [`QualityDimension::all`] order, then the named columns
-    /// in name order and every other shared column in the baseline's order.
+    /// dimensions in [`QualityDimension::all`] order, the row count drop and
+    /// then growth, then for the null increase and then the distinct drop
+    /// rules the named columns in name order and every other shared column in
+    /// the baseline's order.
     /// The baseline may come from a flat summary, which leaves what it did
     /// not record unrecorded. See the [module docs](self) for when a change
     /// is decided.
@@ -1227,22 +1485,34 @@ impl QualityPolicy {
             a: baseline.identifier_order(),
             b: current.identifier_order(),
         };
+        let sides = Sides {
+            a: baseline,
+            b: &current,
+        };
         let mut checks = self.absolute_checks(report);
         if let Some(points) = self.max_quality_score_drop {
-            checks.push(self.score_drop_check(report, &delta, &identifiers, None, points));
+            checks.push(self.score_drop_check(report, &delta, &sides, &identifiers, None, points));
         }
         for dimension in QualityDimension::all() {
             if let Some((_, points)) = self.max_dimension_score_drops.get(&dimension.to_string()) {
                 checks.push(self.score_drop_check(
                     report,
                     &delta,
+                    &sides,
                     &identifiers,
                     Some(dimension),
                     *points,
                 ));
             }
         }
+        if let Some(percent) = self.max_row_count_drop {
+            checks.push(self.row_count_change_check(&delta, RowCountRule::Drop, percent));
+        }
+        if let Some(percent) = self.max_row_count_growth {
+            checks.push(self.row_count_change_check(&delta, RowCountRule::Growth, percent));
+        }
         checks.extend(self.null_increase_checks(&delta));
+        checks.extend(self.distinct_drop_checks(&delta, baseline, &current));
         // Collected once, so a rule over every column does not rescan the
         // other side's columns for each one.
         let (baseline_names, current_names) = (column_names(baseline), column_names(&current));
@@ -1287,6 +1557,8 @@ impl QualityPolicy {
                 diagnostics,
                 timeliness_clock: self.timeliness_clock,
             }),
+            generator: report.generator.clone(),
+            source_identity: report.source_identity.clone(),
         })
     }
 
@@ -1321,6 +1593,20 @@ impl QualityPolicy {
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
         }
+        for (column, days) in &self.max_date_age {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.date_age_check(report, column, profile, scan, *days));
+        }
+        for (column, days) in &self.max_date_gap {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.date_gap_check(report, column, profile, scan, *days));
+        }
         if !self.forbid_findings.is_empty() {
             let input = FindingsInput::from(report);
             let findings = FindingPolicy::default().collect(&input);
@@ -1332,7 +1618,7 @@ impl QualityPolicy {
                 } else {
                     Evidence::Complete
                 };
-                checks.push(self.forbid_finding_check(&findings, scan.and(sample), code));
+                checks.push(self.forbid_finding_check(report, &findings, scan.and(sample), code));
             }
         }
         checks
@@ -1349,6 +1635,7 @@ impl QualityPolicy {
     /// or the scope is [`PolicyScope::Observed`].
     fn forbid_finding_check(
         &self,
+        report: &ProfileReport,
         result: &FindingsResult,
         scan: Evidence,
         code: FindingCode,
@@ -1365,6 +1652,12 @@ impl QualityPolicy {
             .filter(|rule| rule.code == code)
             .cloned()
             .collect();
+        // A duplicate-row rule skipped over an estimate says what would let
+        // it look (#1292).
+        let estimated_duplicates = code == FindingCode::DuplicateRows
+            && skipped
+                .iter()
+                .any(|rule| rule.reason == NotEvaluatedReason::Estimated);
         let reach = FindingReach::of(code);
         let evidence = match reach {
             FindingReach::Read => Evidence::Complete,
@@ -1433,7 +1726,7 @@ impl QualityPolicy {
             baseline: None,
             findings: found,
             status,
-            message: message.to_string(),
+            message: with_exact_count_hint(message, report, estimated_duplicates),
         }
     }
 
@@ -1889,7 +2182,7 @@ impl QualityPolicy {
             _ if exceeded => CheckStatus::Failed,
             _ => CheckStatus::Passed,
         };
-        check.message = match check.status {
+        let message = match check.status {
             CheckStatus::Passed => "the duplicate-row count is within the allowance",
             CheckStatus::Failed if estimated => {
                 "the estimated duplicate-row count is above the allowance"
@@ -1905,8 +2198,192 @@ impl QualityPolicy {
                 "no duplicate above the allowance was observed, and the rows that were not \
                  read may hold more"
             }
+        };
+        let undecided_estimate = estimated && matches!(check.status, CheckStatus::NotEvaluated(_));
+        check.message = with_exact_count_hint(message, report, undecided_estimate);
+        check
+    }
+
+    /// How old a column's newest date may be, in days before the timeliness
+    /// reference date. See [`max_date_age`](Self::max_date_age).
+    fn date_age_check(
+        &self,
+        report: &ProfileReport,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+        max_days: u32,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::MaxDateAge,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::AtMost {
+                value: MetricValue::Days(i64::from(max_days)),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let (newest, slash_order) = match newest_date(profile) {
+            NewestDate::Date { date, order } => (date, order),
+            absent => {
+                check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+                check.message = match absent {
+                    NewestDate::Malformed => {
+                        "the newest date recorded for this column is not a YYYY-MM-DD date"
+                    }
+                    _ if profile.data_type == DataType::Date => {
+                        "no newest date was recorded for this column"
+                    }
+                    _ => "this column is not typed as a date, so it has no newest date",
+                }
+                .to_string();
+                return check;
+            }
+        };
+        check.evidence = scan.and(date_statistics_evidence(report, profile));
+        let Some(quality) = report.quality.as_ref() else {
+            return unavailable_quality(check, report);
+        };
+        let Some(clock) = quality
+            .metrics
+            .timeliness
+            .as_ref()
+            .and_then(|timeliness| timeliness.clock)
+        else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::SettingUnrecorded {
+                setting: "timeliness_clock".to_string(),
+            });
+            check.message =
+                "the report records no timeliness clock to measure the age against".to_string();
+            return check;
+        };
+        let age = (clock.reference_date - newest).num_days();
+        check.observed = Some(MetricValue::Days(age));
+        let fresh = age <= i64::from(max_days);
+        // The newest date only moves forward as more values are read, so a
+        // fresh one is a decision whatever the evidence missed, as long as
+        // the values read keep the reading they were given. Slash dates are
+        // read in an order the column's values decide (#811), and an order
+        // the unread values can still change may move the dates already read.
+        let settled = slash_order_settled(slash_order);
+        check.status = match (self.scope, check.evidence.gap()) {
+            (PolicyScope::FullSource, Some(gap)) if !(fresh && settled) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ if fresh => CheckStatus::Passed,
+            _ => CheckStatus::Failed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => "this column's newest date is within the allowed age",
+            CheckStatus::Failed => "this column's newest date is older than the allowed age",
+            CheckStatus::NotEvaluated(_) if fresh => {
+                "the newest date read in this column is within the allowed age, and the values \
+                 that were not read may change the day and month order its slash dates are \
+                 read in"
+            }
+            CheckStatus::NotEvaluated(_) => {
+                "the newest date read in this column is older than the allowed age, and the \
+                 values that were not read may hold a newer one"
+            }
         }
         .to_string();
+        check
+    }
+
+    /// How long a hole a column's dates may hold. See
+    /// [`max_date_gap`](Self::max_date_gap).
+    fn date_gap_check(
+        &self,
+        report: &ProfileReport,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+        max_days: u32,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::MaxDateGap,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::AtMost {
+                value: MetricValue::Days(i64::from(max_days)),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let gap = match &profile.stats {
+            ColumnStats::DateTime(stats) => stats.largest_gap.as_ref().ok_or(
+                if stats.max_datetime.is_empty() {
+                    "no date was recorded for this column"
+                } else {
+                    "no largest gap was recorded for this column: the report predates it, or                      the column's dates span more years than the profiler tracks days for"
+                },
+            ),
+            _ if profile.data_type == DataType::Date => Err("no date was recorded for this column"),
+            _ => Err("this column is not typed as a date, so it has no gap between dates"),
+        };
+        let gap = match gap {
+            Ok(gap) => gap,
+            Err(message) => {
+                check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+                check.message = message.to_string();
+                return check;
+            }
+        };
+        check.evidence = scan.and(date_statistics_evidence(report, profile));
+        check.observed = Some(MetricValue::Days(gap.days));
+        let within = gap.days <= i64::from(max_days);
+        // Unread values can both fill a hole and open one past either edge,
+        // so neither reading is a decision on part of the column.
+        check.status = match (self.scope, check.evidence.gap()) {
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ if within => CheckStatus::Passed,
+            _ => CheckStatus::Failed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => format!(
+                "this column's largest gap between dates, {} days from {} to {}, is within the                  allowance",
+                gap.days, gap.from, gap.to
+            ),
+            CheckStatus::Failed => format!(
+                "this column's dates hold a gap of {} days from {} to {}, longer than allowed",
+                gap.days, gap.from, gap.to
+            ),
+            CheckStatus::NotEvaluated(_) if within => format!(
+                "the largest gap between the dates read in this column, {} days, is within the                  allowance, and the values that were not read may open a longer one",
+                gap.days
+            ),
+            CheckStatus::NotEvaluated(_) => format!(
+                "the dates read in this column hold a gap of {} days from {} to {}, and the                  values that were not read may fill it",
+                gap.days, gap.from, gap.to
+            ),
+        };
         check
     }
 
@@ -1917,6 +2394,7 @@ impl QualityPolicy {
         &self,
         report: &ProfileReport,
         delta: &ReportDelta,
+        sides: &Sides<&ReportSide>,
         identifiers: &Sides<Option<&[String]>>,
         dimension: Option<QualityDimension>,
         points: f64,
@@ -1969,7 +2447,9 @@ impl QualityPolicy {
                 .dimensions
                 .iter()
                 .any(|change| change.score.a.is_some() != change.score.b.is_some());
-        let reason = if change.b.is_none() {
+        let reason = if let Some(gap) = pack_gap(delta, dimension) {
+            Some(gap)
+        } else if change.b.is_none() {
             Some(NotEvaluated::NotAssessed)
         } else if change.a.is_none() {
             Some(NotEvaluated::NotInBaseline)
@@ -2001,8 +2481,49 @@ impl QualityPolicy {
             .expect("a delta has a change whenever both sides have a score");
         // Both sides and their change are at the serialized precision, so the
         // allowance is too: the decision is the one the document shows.
-        check.status =
-            self.decide_change(&change.evidence, change_points >= 0.0 - rounded_2(points));
+        let allowance = 0.0 - rounded_2(points);
+        let bounded = match self.bounded_change(change, sides, dimension) {
+            ChangeReading::Points => None,
+            ChangeReading::Bounded(bounded) => Some(bounded),
+            ChangeReading::Blocked(gap) => {
+                return not_evaluated_change(
+                    check,
+                    NotEvaluated::EvidenceIncomplete { gap },
+                    subject,
+                );
+            }
+        };
+        if let Some(bounded) = bounded {
+            check.bounds = bounded.b;
+            if let Some(baseline) = check.baseline.as_mut() {
+                baseline.bounds = bounded.a;
+            }
+            check.status = if bounded.lower >= allowance {
+                CheckStatus::Passed
+            } else if bounded.upper < allowance {
+                CheckStatus::Failed
+            } else {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
+                    gap: EvidenceGap::QualitySampled,
+                })
+            };
+            check.message = match check.status {
+                CheckStatus::Passed => format!(
+                    "{subject} was computed over a sample on at least one side, and every \
+                     change the whole-source intervals allow is within the permitted drop"
+                ),
+                CheckStatus::Failed => format!(
+                    "{subject} was computed over a sample on at least one side, and every \
+                     change the whole-source intervals allow is a larger drop than permitted"
+                ),
+                CheckStatus::NotEvaluated(_) => format!(
+                    "{subject} was computed over a sample on at least one side, and the \
+                     permitted drop lies within the change the whole-source intervals allow"
+                ),
+            };
+            return check;
+        }
+        check.status = self.decide_change(&change.evidence, change_points >= allowance);
         check.message = match check.status {
             CheckStatus::Passed => {
                 format!("{subject} dropped no more than allowed from the baseline")
@@ -2011,6 +2532,77 @@ impl QualityPolicy {
             CheckStatus::NotEvaluated(_) => evidence_message(subject),
         };
         check
+    }
+
+    /// The interval a full-source score change lies in, when at least one
+    /// side's score came from a retained sample and every such side bounds
+    /// it (#1035). A side whose score covers its whole source is a point.
+    /// The change runs from the current side's lower bound minus the
+    /// baseline's upper bound to the current upper bound minus the baseline
+    /// lower bound, at the serialized precision.
+    ///
+    /// [`ChangeReading::Points`] leaves the decision to
+    /// [`Self::decide_change`]: under [`PolicyScope::Observed`], and when
+    /// both sides cover their whole source. A side with another gap, or a
+    /// sampled score without a recorded interval, blocks the decision with
+    /// its gap, the evaluated report's named first. Stored bounds on a score
+    /// whose coverage is unrecorded are not read, as the minimum score rules
+    /// do not read them: this build cannot tell which components such a
+    /// score weighs, so it cannot tell what the interval vouches for.
+    fn bounded_change(
+        &self,
+        change: &ScoreChange,
+        sides: &Sides<&ReportSide>,
+        dimension: Option<QualityDimension>,
+    ) -> ChangeReading {
+        if self.scope != PolicyScope::FullSource {
+            return ChangeReading::Points;
+        }
+        type SideReading = Result<((f64, f64), Option<CheckBounds>), EvidenceGap>;
+        let interval = |score: f64, evidence: Evidence, side: &ReportSide| -> SideReading {
+            match evidence.gap() {
+                None => Ok(((score, score), None)),
+                Some(EvidenceGap::QualitySampled) => {
+                    let interval = side.score_bounds().and_then(|bounds| {
+                        let interval = match dimension {
+                            None => bounds.overall_score,
+                            Some(dimension) => bounds
+                                .dimension_scores
+                                .get(&dimension.to_string())
+                                .copied()
+                                .flatten(),
+                        };
+                        check_bounds(bounds, interval)
+                    });
+                    match interval {
+                        Some(bounds) => Ok((
+                            (rounded_2(bounds.lower), rounded_2(bounds.upper)),
+                            Some(bounds),
+                        )),
+                        None => Err(EvidenceGap::QualitySampled),
+                    }
+                }
+                Some(gap) => Err(gap),
+            }
+        };
+        let (Some(a_score), Some(b_score)) = (change.a, change.b) else {
+            return ChangeReading::Points;
+        };
+        let b = interval(b_score, change.evidence.b, sides.b);
+        let a = interval(a_score, change.evidence.a, sides.a);
+        let (((b_lower, b_upper), b), ((a_lower, a_upper), a)) = match (b, a) {
+            (Err(gap), _) | (_, Err(gap)) => return ChangeReading::Blocked(gap),
+            (Ok(b), Ok(a)) => (b, a),
+        };
+        if a.is_none() && b.is_none() {
+            return ChangeReading::Points;
+        }
+        ChangeReading::Bounded(BoundedChange {
+            lower: rounded_2(b_lower - a_upper),
+            upper: rounded_2(b_upper - a_lower),
+            a,
+            b,
+        })
     }
 
     /// One check per named column, in name order, then one per other column
@@ -2104,6 +2696,290 @@ impl QualityPolicy {
                 format!("{subject} rose no more than allowed above the baseline")
             }
             CheckStatus::Failed => format!("{subject} rose more than allowed above the baseline"),
+            CheckStatus::NotEvaluated(_) => evidence_message(subject),
+        };
+        check
+    }
+
+    /// How far the row count may fall or grow from the baseline's, in percent
+    /// of the baseline's `rows_processed` (#1291).
+    fn row_count_change_check(
+        &self,
+        delta: &ReportDelta,
+        rule: RowCountRule,
+        percent: f64,
+    ) -> Check {
+        let (a, b) = (&delta.reports.a, &delta.reports.b);
+        // A baseline that read no rows has no count to take a share of.
+        let baseline_rows = a.rows_processed.filter(|&rows| rows > 0);
+        let change = baseline_rows
+            .zip(b.rows_processed)
+            .map(|(a, b)| relative_change(a as f64, b as f64));
+        let allowed = rounded_2(percent);
+        let (code, expected) = match rule {
+            // `0.0 - percent`, not `-percent`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            RowCountRule::Drop => (
+                CheckCode::MaxRowCountDrop,
+                Expectation::RelativeChangeAtLeast {
+                    value: MetricValue::Percentage(0.0 - percent),
+                },
+            ),
+            RowCountRule::Growth => (
+                CheckCode::MaxRowCountGrowth,
+                Expectation::RelativeChangeAtMost {
+                    value: MetricValue::Percentage(percent),
+                },
+            ),
+        };
+        let check = Check {
+            code,
+            column: None,
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected,
+            observed: b.rows_processed.map(MetricValue::Count),
+            scope: self.scope,
+            evidence: b.evidence,
+            bounds: None,
+            baseline: Some(BaselineReading {
+                observed: a.rows_processed.map(MetricValue::Count),
+                evidence: a.evidence,
+                change: change.map(MetricValue::Percentage),
+                bounds: None,
+            }),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let subject = "the row count";
+        let schema_changed = !delta.schema.added.is_empty() || !delta.schema.removed.is_empty();
+        let reason = if change.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if schema_changed {
+            Some(NotEvaluated::SchemaChanged)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return not_evaluated_change(check, reason, subject);
+        }
+        let change = change.expect("a decided rule has a change");
+        let (satisfied, verb) = match rule {
+            RowCountRule::Drop => (change >= 0.0 - allowed, "fell"),
+            RowCountRule::Growth => (change <= allowed, "grew"),
+        };
+        let mut check = check;
+        // A count cannot fall by more than all of it, so a drop allowance of
+        // 100% (at the serialized precision) holds whatever a scan did not
+        // read.
+        check.status = if rule == RowCountRule::Drop && allowed >= PERCENTAGE_MAX {
+            CheckStatus::Passed
+        } else {
+            self.decide_row_count_change(
+                rule,
+                &Sides {
+                    a: a.evidence,
+                    b: b.evidence,
+                },
+                satisfied,
+            )
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => {
+                format!("{subject} {verb} no more than allowed from the baseline")
+            }
+            CheckStatus::Failed => format!("{subject} {verb} more than allowed from the baseline"),
+            CheckStatus::NotEvaluated(_) => format!(
+                "{subject} {verb} {} than allowed from the baseline, and the rows a scan did not \
+                 read may reverse that",
+                if satisfied { "no more" } else { "more" }
+            ),
+        };
+        check
+    }
+
+    /// Decide a row count change. Each scan read a lower bound of its
+    /// source's rows, so a gap on one side can move the true change one way
+    /// only: more unread rows in this report make the change larger, more in
+    /// the baseline make it smaller. An outcome the unread rows could not
+    /// reverse stands; the other is unevaluated, naming the gap of the side
+    /// whose unread rows could reverse it. With both sides incomplete, either
+    /// outcome can be reversed.
+    fn decide_row_count_change(
+        &self,
+        rule: RowCountRule,
+        evidence: &Sides<Evidence>,
+        satisfied: bool,
+    ) -> CheckStatus {
+        let outcome = if satisfied {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
+        };
+        if self.scope == PolicyScope::Observed {
+            return outcome;
+        }
+        // A larger true change reverses a drop rule's failure and a growth
+        // rule's pass; a smaller one the opposite.
+        let larger_reverses = match rule {
+            RowCountRule::Drop => !satisfied,
+            RowCountRule::Growth => satisfied,
+        };
+        let gap = if larger_reverses {
+            evidence.b.gap()
+        } else {
+            evidence.a.gap()
+        };
+        match gap {
+            Some(gap) => CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap }),
+            None => outcome,
+        }
+    }
+
+    /// One check per named column, in name order, then one per other column
+    /// both reports profiled, in the baseline's order, as for
+    /// [`null_increase_checks`](Self::null_increase_checks).
+    fn distinct_drop_checks(
+        &self,
+        delta: &ReportDelta,
+        baseline: &ReportSide,
+        current: &ReportSide,
+    ) -> Vec<Check> {
+        if self.max_distinct_drop.is_empty() && self.max_distinct_drop_any.is_none() {
+            return Vec::new();
+        }
+        fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+            side.columns()
+                .iter()
+                .map(|column| (column.name.as_str(), column))
+                .collect()
+        }
+        let sides = Sides {
+            a: by_name(baseline),
+            b: by_name(current),
+        };
+        let mut checks = Vec::new();
+        for (column, percent) in &self.max_distinct_drop {
+            checks.push(self.distinct_drop_check(delta, &sides, column, *percent));
+        }
+        if let Some(percent) = self.max_distinct_drop_any {
+            for column in &delta.schema.common {
+                if !self.max_distinct_drop.contains_key(column) {
+                    checks.push(self.distinct_drop_check(delta, &sides, column, percent));
+                }
+            }
+        }
+        checks
+    }
+
+    /// How far a column's distinct count may fall below the baseline's, in
+    /// percent of the baseline's count (#1026). Distinct counts accumulate
+    /// over every scanned row, so each side's scan coverage is its evidence.
+    /// A count that fell with the rows is not a collapse: the check fails
+    /// only when the distinct share of non-null values fell by more than the
+    /// allowance too. Both changes are compared at the serialized precision.
+    fn distinct_drop_check(
+        &self,
+        delta: &ReportDelta,
+        sides: &Sides<HashMap<&str, &ColumnSide>>,
+        column: &str,
+        percent: f64,
+    ) -> Check {
+        let read = |side: &HashMap<&str, &ColumnSide>| {
+            side.get(column).map(|column| DistinctReading::of(column))
+        };
+        let (a, b) = (read(&sides.a), read(&sides.b));
+        let counted = |reading: Option<DistinctReading>| {
+            reading.and_then(|reading| reading.non_null.filter(|&n| n > 0).and(reading.count))
+        };
+        let (count_a, count_b) = (counted(a), counted(b));
+        let count_change = count_a
+            .zip(count_b)
+            .map(|(a, b)| relative_change(a as f64, b as f64));
+        let evidence = Sides {
+            a: delta.reports.a.evidence,
+            b: delta.reports.b.evidence,
+        };
+        let mut check = Check {
+            code: CheckCode::MaxDistinctDrop,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            // `0.0 - percent`, not `-percent`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            expected: Expectation::RelativeChangeAtLeast {
+                value: MetricValue::Percentage(0.0 - percent),
+            },
+            observed: count_b.map(MetricValue::Count),
+            scope: self.scope,
+            evidence: evidence.b,
+            bounds: None,
+            baseline: Some(BaselineReading {
+                observed: count_a.map(MetricValue::Count),
+                evidence: evidence.a,
+                change: count_change.map(MetricValue::Percentage),
+                bounds: None,
+            }),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let exact = |reading: Option<DistinctReading>| {
+            reading.is_some_and(|reading| reading.approximate == Some(false))
+        };
+        let reason = if b.is_none() {
+            Some(NotEvaluated::ColumnNotProfiled)
+        } else if a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if count_b.is_none() {
+            Some(NotEvaluated::NotAssessed)
+        } else if count_a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if !exact(a) || !exact(b) {
+            Some(NotEvaluated::ApproximateCount)
+        } else {
+            definition_gap(
+                delta.metric_semantics.a.as_ref(),
+                delta.metric_semantics.b.as_ref(),
+                &[Definition::NullTokens, Definition::JsonNumberReading],
+            )
+        };
+        let subject = "this column's distinct count";
+        if let Some(reason) = reason {
+            let mut check = not_evaluated_change(check, reason, subject);
+            // A nested column holds values but has no distinct count.
+            if count_b.is_none()
+                && b.is_some_and(|b| b.count.is_none() && b.non_null.is_some_and(|n| n > 0))
+            {
+                check.message = "the report counted no distinct values for this column".into();
+            }
+            return check;
+        }
+        let (Some(a), Some(b), Some(count_change)) = (a, b, count_change) else {
+            unreachable!("a counted column has a reading and a change on both sides")
+        };
+        let allowed = 0.0 - rounded_2(percent);
+        let count_held = count_change >= allowed;
+        let share_held = || {
+            let share = |reading: DistinctReading| {
+                reading.count.expect("counted") as f64 / reading.non_null.expect("counted") as f64
+            };
+            relative_change(share(a), share(b)) >= allowed
+        };
+        check.status = self.decide_change(&evidence, count_held || share_held());
+        check.message = match check.status {
+            CheckStatus::Passed if count_held => {
+                format!("{subject} fell no more than allowed from the baseline")
+            }
+            CheckStatus::Passed => format!(
+                "{subject} fell more than allowed from the baseline, and its distinct share of \
+                 non-null values fell no more than allowed, so the drop follows fewer values"
+            ),
+            CheckStatus::Failed => format!(
+                "{subject} and its distinct share of non-null values both fell more than allowed \
+                 from the baseline"
+            ),
             CheckStatus::NotEvaluated(_) => evidence_message(subject),
         };
         check
@@ -2328,6 +3204,7 @@ impl QualityPolicy {
                 observed: None,
                 evidence: baseline.schema_evidence(),
                 change: None,
+                bounds: None,
             }),
             status,
             message: message.to_string(),
@@ -2490,6 +3367,41 @@ fn schema_diagnostics(
 
 /// A delta's columns by name, built once per evaluation so a rule over every
 /// shared column does not rescan the schema for each one.
+/// Which way a row count rule bounds the change from the baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowCountRule {
+    Drop,
+    Growth,
+}
+
+/// What the distinct drop rule reads about one column on one side.
+#[derive(Debug, Clone, Copy)]
+struct DistinctReading {
+    /// Distinct non-null values, `None` when not counted or not recorded.
+    count: Option<usize>,
+    /// Whether the count is an estimate, `None` when not recorded.
+    approximate: Option<bool>,
+    /// Non-null values read, `None` when the counts were not recorded.
+    non_null: Option<usize>,
+}
+
+impl DistinctReading {
+    fn of(column: &ColumnSide) -> Self {
+        Self {
+            count: column.unique_count,
+            approximate: column.unique_count_is_approximate,
+            non_null: column
+                .counts
+                .map(|(total, nulls)| total.saturating_sub(nulls)),
+        }
+    }
+}
+
+/// `(b - a) / a` in percent, at the serialized precision. `a` is positive.
+fn relative_change(a: f64, b: f64) -> f64 {
+    rounded_2((b - a) / a * 100.0)
+}
+
 struct ColumnIndex<'a> {
     changes: HashMap<&'a str, &'a ColumnChange>,
     /// Columns the evaluated report profiled.
@@ -2517,6 +3429,31 @@ impl<'a> ColumnIndex<'a> {
             in_report: names([&schema.common, &schema.added]),
             in_baseline: names([&schema.common, &schema.removed]),
         }
+    }
+}
+
+/// `message`, followed when `estimated` by what would make the report's
+/// duplicate-row count exact: the setting, the limit the count was made
+/// under, and a value that covers every row it was made over (#1292).
+fn with_exact_count_hint(message: &str, report: &ProfileReport, estimated: bool) -> String {
+    let uniqueness = report
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.metrics.uniqueness.as_ref())
+        .filter(|uniqueness| estimated && uniqueness.duplicate_rows_approximate);
+    let Some(uniqueness) = uniqueness else {
+        return message.to_string();
+    };
+    let rows = uniqueness.rows_checked;
+    match uniqueness.duplicate_rows_exact_limit {
+        Some(limit) => format!(
+            "{message}. It was counted under a duplicate_rows_exact_limit of {limit} distinct \
+             rows; a limit of {rows}, the rows checked, counts every row exactly"
+        ),
+        None => format!(
+            "{message}. A duplicate_rows_exact_limit of {rows}, the rows checked, counts every \
+             row exactly"
+        ),
     }
 }
 
@@ -2598,6 +3535,7 @@ fn baseline_reading(
         observed: observed.map(MetricValue::Percentage),
         evidence,
         change: change.map(MetricValue::Percentage),
+        bounds: None,
     }
 }
 
@@ -2610,6 +3548,10 @@ fn not_evaluated_change(mut check: Check, reason: NotEvaluated, subject: &str) -
         NotEvaluated::NotAssessed => format!("{subject} was not assessed in this report"),
         NotEvaluated::ColumnNotProfiled => "this column has no profile in the report".to_string(),
         NotEvaluated::NotInBaseline => format!("the baseline carries no value for {subject}"),
+        NotEvaluated::ApproximateCount => format!(
+            "{subject} is an estimate on at least one side, or not recorded as exact, and an \
+             estimate falling is not a column collapsing"
+        ),
         NotEvaluated::SchemaChanged => format!(
             "the two reports profiled different columns, so {subject} has a different subject \
              on each side"
@@ -2668,6 +3610,10 @@ enum Definition {
     /// How a JSON number its `f64` does not hold is read, behind the
     /// consistency, precision, uniqueness and accuracy scores.
     JsonNumberReading,
+    /// How a sampled score estimates the score over every scanned value,
+    /// behind the consistency, accuracy, timeliness, validity and precision
+    /// scores.
+    SampledScoreEstimator,
 }
 
 impl Definition {
@@ -2681,6 +3627,7 @@ impl Definition {
             Self::KeyColumnSource => "key_column_source",
             Self::AccuracyComparison => "accuracy_comparison",
             Self::JsonNumberReading => "json_number_reading",
+            Self::SampledScoreEstimator => "sampled_score_estimator",
         }
     }
 
@@ -2698,6 +3645,9 @@ impl Definition {
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
             Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
             Self::JsonNumberReading => agree(&a.json_number_reading, &b.json_number_reading),
+            Self::SampledScoreEstimator => {
+                agree(&a.sampled_score_estimator, &b.sampled_score_estimator)
+            }
         }
     }
 }
@@ -2715,16 +3665,20 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
         ],
-        Some(QualityDimension::Validity) => {
-            &[Definition::NullTokens, Definition::PatternMatchCount]
-        }
+        Some(QualityDimension::Validity) => &[
+            Definition::NullTokens,
+            Definition::PatternMatchCount,
+            Definition::SampledScoreEstimator,
+        ],
         Some(QualityDimension::Accuracy) => &[
             Definition::NullTokens,
             Definition::RangeRuleCount,
             Definition::OutlierUnits,
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,
@@ -2732,8 +3686,13 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::JsonNumberReading,
         ],
-        Some(QualityDimension::Consistency | QualityDimension::Precision) => {
-            &[Definition::NullTokens, Definition::JsonNumberReading]
+        Some(QualityDimension::Consistency | QualityDimension::Precision) => &[
+            Definition::NullTokens,
+            Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
+        ],
+        Some(QualityDimension::Timeliness) => {
+            &[Definition::NullTokens, Definition::SampledScoreEstimator]
         }
         Some(_) => &[Definition::NullTokens],
     }
@@ -2772,6 +3731,40 @@ fn agreement<T: PartialEq + ?Sized>(a: Option<&T>, b: Option<&T>) -> Agreement {
     }
 }
 
+/// [`NotEvaluated::SettingChanged`] on `metric_packs` when one side ran
+/// pattern detection and the other did not, and the score the rule reads
+/// moved because of it. Validity scores the detected patterns, so a side
+/// without the `patterns` pack assesses no validity, and its overall score
+/// averages the other dimensions. The rule reads the packs only where that
+/// shows: the validity score, and the overall score when validity is
+/// assessed on one side only. No other score reads a pack: without
+/// `quality` a side has no score at all, and `statistics` moves none.
+///
+/// Checked before the reasons that name the effect (`not_assessed`,
+/// `not_in_baseline`, `dimensions_changed`), so the rule names the cause.
+/// A side that did not record its packs (written before 0.14) leaves those
+/// reasons to decide, as they did before: two sides that both assessed
+/// validity both ran pattern detection, so the packs need no record there.
+fn pack_gap(delta: &ReportDelta, dimension: Option<QualityDimension>) -> Option<NotEvaluated> {
+    let packs = &delta.configuration.metric_packs;
+    let patterns = |packs: &Vec<MetricPack>| packs.contains(&MetricPack::Patterns);
+    let differ = packs.a.as_ref().map(patterns)? != packs.b.as_ref().map(patterns)?;
+    let validity_moved = || {
+        delta
+            .dimensions
+            .iter()
+            .find(|change| change.dimension == QualityDimension::Validity)
+            .is_some_and(|change| change.score.a.is_some() != change.score.b.is_some())
+    };
+    let reads = match dimension {
+        Some(dimension) => dimension == QualityDimension::Validity,
+        None => validity_moved(),
+    };
+    (differ && reads).then(|| NotEvaluated::SettingChanged {
+        setting: "metric_packs".to_string(),
+    })
+}
+
 /// The first setting a score reads that the two sides do not both record
 /// identically. The overall score reads every setting. A dimension reads the
 /// identifier hint, which retypes its columns and names the key uniqueness
@@ -2800,18 +3793,22 @@ fn setting_gap(
         Some(false) => Agreement::Changed,
         None => Agreement::Unrecorded,
     };
-    // A report records which columns the pairs named, not which column pairs
-    // with which, so only two empty pair lists are known to agree.
-    let pairs = match hint(|hints| &hints.temporal_pair_columns) {
-        Agreement::Same
-            if hints
-                .a
-                .as_ref()
-                .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
-        {
-            Agreement::Unrecorded
-        }
-        other => other,
+    // Both sides record the pairs themselves from 0.14. A side written before
+    // records only the columns the pairs named, not which pairs with which,
+    // so there only two empty pair lists are known to agree.
+    let pairs = match configuration.temporal_pairs.same {
+        Some(same) => recorded(Some(same)),
+        None => match hint(|hints| &hints.temporal_pair_columns) {
+            Agreement::Same
+                if hints
+                    .a
+                    .as_ref()
+                    .is_some_and(|hints| !hints.temporal_pair_columns.is_empty()) =>
+            {
+                Agreement::Unrecorded
+            }
+            other => other,
+        },
     };
     let settings = [
         (
@@ -3009,6 +4006,25 @@ fn bounded_message(status: &CheckStatus, subject: &str) -> String {
     }
 }
 
+/// How a full-source score drop rule reads the change between two scores.
+enum ChangeReading {
+    /// Decided on the two point scores.
+    Points,
+    /// Decided on the interval the two sides' recorded intervals allow.
+    Bounded(BoundedChange),
+    /// A side's evidence settles nothing about its whole source.
+    Blocked(EvidenceGap),
+}
+
+/// A score change as an interval, and the side intervals it came from (`None`
+/// for a side whose score is a point).
+struct BoundedChange {
+    lower: f64,
+    upper: f64,
+    a: Option<CheckBounds>,
+    b: Option<CheckBounds>,
+}
+
 /// The interval a check decides on, from the report's bounds.
 fn check_bounds(bounds: &ScoreBounds, interval: Option<ScoreInterval>) -> Option<CheckBounds> {
     interval.map(|interval| CheckBounds {
@@ -3035,6 +4051,81 @@ pub(crate) fn quality_status_name(status: &QualityAnalysisStatus) -> &'static st
 fn null_percentage(profile: &ColumnProfile) -> Option<f64> {
     (profile.total_count > 0)
         .then(|| profile.null_count as f64 / profile.total_count as f64 * PERCENTAGE_MAX)
+}
+
+/// What a column's date statistics say about its newest date.
+enum NewestDate {
+    /// The newest date, from `max_datetime`, and the order the column's
+    /// slash dates were read in.
+    Date {
+        date: chrono::NaiveDate,
+        order: Option<SlashDateOrder>,
+    },
+    /// None was recorded: the column is not typed as a date, no value parsed
+    /// as one, or statistics were not computed.
+    Absent,
+    /// `max_datetime` holds text that is not a `YYYY-MM-DD` date, which the
+    /// profiler never writes, so the document was written or edited
+    /// elsewhere. Named apart from [`NewestDate::Absent`] so the check says
+    /// which happened instead of guessing a date.
+    Malformed,
+}
+
+fn newest_date(profile: &ColumnProfile) -> NewestDate {
+    match &profile.stats {
+        ColumnStats::DateTime(stats) if !stats.max_datetime.is_empty() => {
+            match chrono::NaiveDate::parse_from_str(&stats.max_datetime, "%Y-%m-%d") {
+                Ok(date) => NewestDate::Date {
+                    date,
+                    order: stats.slash_date_order,
+                },
+                Err(_) => NewestDate::Malformed,
+            }
+        }
+        _ => NewestDate::Absent,
+    }
+}
+
+/// Whether more values could change how the slash dates already read are
+/// read. An order no value decided (`assumed_day_first`) becomes month-first
+/// once a value only parses month-first, and a month-first order becomes
+/// `mixed`, which reads the ambiguous values day-first, once a value only
+/// parses day-first. A day-first or mixed order keeps every value read where
+/// it is, and a column without slash dates has no order to change.
+fn slash_order_settled(order: Option<SlashDateOrder>) -> bool {
+    !matches!(
+        order,
+        Some(SlashDateOrder::AssumedDayFirst | SlashDateOrder::MonthFirst)
+    )
+}
+
+/// Whether a column's date statistics saw every non-null value read.
+///
+/// A report that records `date_statistics: every_value` computed them over
+/// every value read (#1297). One that records nothing computed them from the
+/// values the profiler retained, the same values its `type_homogeneity`
+/// classifies, so a classified count short of the non-null count says the
+/// retained sample left some out. A report without the classification does
+/// not record which happened.
+fn date_statistics_evidence(report: &ProfileReport, profile: &ColumnProfile) -> Evidence {
+    let every_value = report
+        .metric_semantics
+        .as_ref()
+        .and_then(|semantics| semantics.date_statistics)
+        == Some(DateStatistics::EveryValue);
+    if every_value {
+        return Evidence::Complete;
+    }
+    let non_null = profile.total_count.saturating_sub(profile.null_count);
+    match &profile.type_homogeneity {
+        Some(forms) if forms.classified_count() >= non_null => Evidence::Complete,
+        Some(_) => Evidence::Incomplete {
+            reason: EvidenceGap::QualitySampled,
+        },
+        None => Evidence::Incomplete {
+            reason: EvidenceGap::CoverageUnrecorded,
+        },
+    }
 }
 
 /// How much of the source the scan itself covered.
@@ -3336,6 +4427,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::None,
             patterns: None,
         }
@@ -3388,6 +4480,7 @@ mod tests {
                 key_column: None,
                 key_values_checked: None,
                 duplicate_rows_approximate: approximate,
+                duplicate_rows_exact_limit: None,
             }),
             ..QualityMetrics::default()
         };
@@ -4095,11 +5188,14 @@ mod tests {
             })
         );
         // The gap is the estimate, not unread rows: the message said "the rows
-        // that were not read" on a source read to the end (#819).
+        // that were not read" on a source read to the end (#819). It names
+        // the setting that would count every row exactly (#1292); this
+        // report records no limit, as one written before 0.14.
         assert_eq!(
             check.message,
             "the duplicate-row count is an estimate, which can neither witness \
-             duplicates above the allowance nor rule them out"
+             duplicates above the allowance nor rule them out. A \
+             duplicate_rows_exact_limit of 5, the rows checked, counts every row exactly"
         );
     }
 
@@ -4276,9 +5372,10 @@ mod tests {
     /// carry the report's 2dp convention; counts stay whole.
     #[test]
     fn result_serializes_into_the_documented_shape() {
+        let report = complete_report();
         let result = QualityPolicy::new()
             .max_null_percentage("note", 10.0)
-            .evaluate(&complete_report())
+            .evaluate(&report)
             .unwrap();
 
         assert_eq!(
@@ -4297,6 +5394,9 @@ mod tests {
                     "status": "failed",
                     "message": "this column's null percentage is above the allowance",
                 }],
+                // The report's build and source version, written either way.
+                "generator": serde_json::to_value(&report.generator).unwrap(),
+                "source_identity": null,
             })
         );
     }

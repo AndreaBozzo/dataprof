@@ -76,9 +76,23 @@
           "$ref": "#/$defs/ColumnSelection",
           "description": "The columns the run profiled. A dataset-level score has the column\nset as its subject, and a report without a column's profile needs this\nto tell a column the source lacks from one that was not selected."
         },
+        "metric_packs": {
+          "description": "The metric packs the run computed, `schema` always among them, in a\nfixed order: `schema`, `statistics`, `patterns`, `quality`. Without\n`patterns` no column has detected patterns, so validity is not\nassessed and the overall score averages the other dimensions; an\nempty `quality_dimensions` selection drops `quality`. Absent from a\nreport written before 0.14, which did not record them.",
+          "items": {
+            "$ref": "#/$defs/MetricPack"
+          },
+          "type": "array"
+        },
         "pattern_locale": {
           "$ref": "#/$defs/PatternLocale",
           "description": "The locale detected patterns were ranked with, which the validity\nscore reads."
+        },
+        "temporal_pairs": {
+          "description": "The start/end column pairs `temporal_pairs` declared, each once,\nsorted by start then end. Timeliness counts a row whose start date\nfalls after its end date in a declared pair, so two runs that pair\nthe same columns differently score timeliness differently. The\ncalculator compares each pair once whatever order the list gives, so\nthe record keeps direction and drops order and repetition. Empty when\nnone were declared; absent from a report written before 0.14, which\nrecorded only the columns the pairs named.",
+          "items": {
+            "$ref": "#/$defs/TemporalPair"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -138,6 +152,17 @@
         },
         "name": {
           "type": "string"
+        },
+        "native_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The type the source declared for the column, recorded as provenance\n(#906). `None` when the source declares none, which is every text\ninput (CSV, JSON, JSONL), Python objects and SQLite, and on a report\nwritten before dataprof recorded it. See [`NativeType`] for the\nsources that declare one.\n\n`data_type` is what dataprof profiled the column as, and several\ndeclared types share one: an Arrow `decimal128(12, 2)` profiles as\n`Float` and a `timestamp[us, tz=UTC]` as `Date`. This keeps the\ndeclaration itself, so a reader can tell that a column kept its type.\n\nProvenance, not a metric: two input paths over the same logical data\ndeclare different types, or none, so it stays outside the\nserialized-value parity comparison."
         },
         "null_count": {
           "format": "uint",
@@ -293,6 +318,22 @@
           "type": "object"
         }
       ]
+    },
+    "ColumnWithoutValueChecks": {
+      "description": "A column whose values no value-level quality check reads (#1134).\n\nIts nulls still count toward completeness, and its values toward the\nwhole-row duplicate count, but consistency, validity, accuracy,\nprecision, timeliness and key uniqueness never read them.",
+      "properties": {
+        "column": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ValueChecksSkipReason"
+        }
+      },
+      "required": [
+        "column",
+        "reason"
+      ],
+      "type": "object"
     },
     "CompletenessMetrics": {
       "description": "Completeness metrics (ISO 8000-8).",
@@ -722,6 +763,40 @@
         }
       ]
     },
+    "DateGap": {
+      "description": "Two consecutive distinct days of a date column, and the days between\nthem.",
+      "properties": {
+        "days": {
+          "description": "Days from `from` to `to`: `1` for consecutive days, `0` for a column\nholding a single distinct day.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "from": {
+          "description": "The last day before the gap, `YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The first day after the gap, `YYYY-MM-DD`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "days",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "DateStatistics": {
+      "description": "Which values a date column's statistics are computed over, as recorded\nin a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 the engines that\nretain a bounded sample of each column computed `min_datetime`,\n`max_datetime`, `duration_days`, the year, month, weekday and hour\ndistributions and `slash_date_order` from that sample, so on a source\nlarger than the sample they described the sample; those releases recorded\nno definition.",
+      "oneOf": [
+        {
+          "const": "every_value",
+          "description": "Every non-null value the scan read, on every engine (#1297). The\n`largest_gap` added in 0.14 (#1300) is computed over them too.",
+          "type": "string"
+        }
+      ]
+    },
     "DateTimeStats": {
       "description": "Statistics for date/datetime columns.",
       "properties": {
@@ -749,6 +824,17 @@
             "object",
             "null"
           ]
+        },
+        "largest_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DateGap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The longest stretch between two consecutive distinct days of the\ncolumn (#1300), over every value read.\n\nA daily file that lost a period from the middle of its range keeps its\nnewest date and most of its rows, and shows here: the gap grows from 1\nto the length of the hole. `None` when no value parsed as a date, the\ncolumn's dates span more than 10,000 distinct years (the profiler\nstops tracking days past that), or the report predates the field."
         },
         "max_datetime": {
           "type": "string"
@@ -1177,12 +1263,41 @@
         }
       ]
     },
+    "MetricPack": {
+      "description": "High-level categories of analysis that can be selectively enabled.",
+      "oneOf": [
+        {
+          "const": "schema",
+          "description": "Column names, data types, null counts — always included.",
+          "type": "string"
+        },
+        {
+          "const": "statistics",
+          "description": "Numeric stats (min/max/mean/median/std_dev/quartiles), text lengths.",
+          "type": "string"
+        },
+        {
+          "const": "patterns",
+          "description": "Regex pattern detection (email, phone, UUID, etc.).",
+          "type": "string"
+        },
+        {
+          "const": "quality",
+          "description": "ISO 25012 quality dimensions (completeness, consistency, etc.).",
+          "type": "string"
+        }
+      ]
+    },
     "MetricSemantics": {
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
         "accuracy_comparison": {
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
+        },
+        "date_statistics": {
+          "$ref": "#/$defs/DateStatistics",
+          "description": "Which values a date column's `min_datetime`, `max_datetime`,\n`duration_days`, distributions, `slash_date_order` and `largest_gap`\nare computed over.\n\nAbsent means not recorded: through 0.13 an engine that retained a\nbounded sample computed them from it, so on a source larger than the\nsample a date outside it was missing."
         },
         "json_number_reading": {
           "$ref": "#/$defs/JsonNumberReading",
@@ -1212,6 +1327,10 @@
           "$ref": "#/$defs/RangeRuleCount",
           "description": "What the range and sign rules behind the accuracy score count.\n\nAbsent means not recorded: through 0.12 every rule failure counted,\nover the numeric values of every column."
         },
+        "sampled_score_estimator": {
+          "$ref": "#/$defs/SampledScoreEstimator",
+          "description": "How a score computed over a retained sample estimates the score over\nevery scanned value.\n\nAbsent means not recorded: through 0.13 a sampled score pooled the\ncolumn samples, so it could fall outside its own `score_bounds`."
+        },
         "shape_moments": {
           "$ref": "#/$defs/ShapeMomentEstimator",
           "description": "The estimator behind every column's `skewness` and `kurtosis`.\n\nAbsent means not recorded: through 0.12 both used a form that matches\nneither the population nor the adjusted estimators."
@@ -1225,6 +1344,22 @@
           "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
         }
       },
+      "type": "object"
+    },
+    "NativeType": {
+      "description": "A column type as the source declared it (#906).\n\n`system` names the type system the declaration belongs to, and `name`\nspells the type the way that system does:\n\n- `arrow`: Arrow tables, record batches and streams, polars frames, ADBC\n  results and Parquet files. The name is the one pyarrow prints for the\n  type, such as `decimal128(12, 2)`, `timestamp[us, tz=UTC]` or\n  `dictionary<values=string, indices=int32, ordered=0>`. An extension type\n  is named as the extension (`extension<arrow.uuid>`), not its storage\n  type, and without the parameters pyarrow adds to a parameterized one.\n  A Parquet column\n  carries the Arrow type its reader produced from the file's schema, which\n  keeps the Arrow schema the writer stored with the file.\n- `pandas`: pandas DataFrames. The name is the column's dtype as pandas\n  prints it (`int64`, `object`, `datetime64[ns, UTC]`, `Int64`). An\n  `object` column declares no type for its values; pyarrow infers one from\n  them, which is why the pandas dtype is recorded rather than the Arrow\n  type the profiler read.\n- `postgresql` and `mysql`: the database connectors. The name is the\n  server's type name as the driver reports it (`NUMERIC`, `INT4`,\n  `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED`).\n\nBoth are strings so that a report from a later release, which may record\na system this build does not know, still loads. Build one with\n[`NativeType::new`]: the struct is `non_exhaustive`, as the rest of the\nreport model is to become before 1.0 (#1162).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "system",
+        "name"
+      ],
       "type": "object"
     },
     "NullTokenSet": {
@@ -1670,6 +1805,16 @@
         },
         "name": {
           "type": "string"
+        },
+        "native_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeType"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "null_count": {
           "format": "uint",
@@ -2181,6 +2326,13 @@
           },
           "type": "array"
         },
+        "columns_without_value_checks": {
+          "description": "Columns whose values no value-level check read, each with the reason,\nso a reader of `overall_score` sees which columns those checks never\nread (#1134).\nEmpty when every column was checked. Absent in summaries written\nbefore 0.14, which did not record it.",
+          "items": {
+            "$ref": "#/$defs/ColumnWithoutValueChecks"
+          },
+          "type": "array"
+        },
         "completeness": {
           "anyOf": [
             {
@@ -2379,6 +2531,14 @@
         "duplicate_rows_approximate": {
           "type": "boolean"
         },
+        "duplicate_rows_exact_limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "high_cardinality_warning": {
           "type": "boolean"
         },
@@ -2507,6 +2667,13 @@
     "QualityAssessment": {
       "description": "Wraps quality metrics with confidence information.",
       "properties": {
+        "columns_without_value_checks": {
+          "description": "The columns the value-level checks skipped, so a reader of the score\ncan see which columns those checks never read (#1134). Empty when\nevery column was checked; absent on documents written before 0.14,\nwhich did not record it.",
+          "items": {
+            "$ref": "#/$defs/ColumnWithoutValueChecks"
+          },
+          "type": "array"
+        },
         "confidence": {
           "$ref": "#/$defs/MetricConfidence"
         },
@@ -2829,6 +2996,16 @@
       ],
       "type": "object"
     },
+    "SampledScoreEstimator": {
+      "description": "How a quality score computed over a retained sample estimates the score\nover every scanned value, as recorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 a sampled score\npooled every column's reservoir, so a column weighed as many values as its\nreservoir kept, at most 10,000, and the score could fall outside its own\n`score_bounds`; those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "population_weighted",
+          "description": "Each column's sampled failure and checked counts are scaled to its\nnon-null values in the source before the shares are formed (#1293).\nA source whose samples hold every value scores as before.",
+          "type": "string"
+        }
+      ]
+    },
     "ScoreBounds": {
       "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
       "properties": {
@@ -3025,6 +3202,24 @@
         }
       ],
       "description": "Supported stream source systems"
+    },
+    "TemporalPair": {
+      "description": "A start/end column pair declared through `temporal_pairs`.\n\nRead only from its object form, `{\"start\": ..., \"end\": ...}`: a derived\nreader would also take a two-element list, which the schema and the\nPython reader reject.",
+      "properties": {
+        "end": {
+          "description": "The column whose date must not fall before `start`'s.",
+          "type": "string"
+        },
+        "start": {
+          "description": "The column whose date must not fall after `end`'s.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "type": "object"
     },
     "TextLengthUnit": {
       "description": "The unit a report's text lengths were measured in, as recorded in its\nmetric semantics.\n\nOnly the current unit has a value. Releases that counted UTF-8 bytes\nrecorded no unit at all, and a report from one reads back with the unit\nunknown rather than as a byte count it never declared.",
@@ -3291,6 +3486,15 @@
           "description": "True when `duplicate_rows` comes from the full-stream distinct-count\nestimator after it spilled to its HLL sketch (~1% relative error on\nthe distinct count), rather than an exact count.",
           "type": "boolean"
         },
+        "duplicate_rows_exact_limit": {
+          "description": "Distinct rows the full-stream row tracker counts exactly before its\ncount becomes an estimate: the limit `duplicate_rows` was counted\nunder (#1292). One million unless the caller raised it. Absent when no\nrow tracker counted the rows, and on documents written before 0.14.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "high_cardinality_warning": {
           "type": "boolean"
         },
@@ -3356,6 +3560,16 @@
         "values_checked"
       ],
       "type": "object"
+    },
+    "ValueChecksSkipReason": {
+      "description": "Why the value-level quality checks skip a column.",
+      "oneOf": [
+        {
+          "const": "nested",
+          "description": "A struct, list or map column. Its values reach the checks only as a\nserialisation, which differs by input path, so none reads them (#637).",
+          "type": "string"
+        }
+      ]
     }
   },
   "$id": "https://andreabozzo.github.io/dataprof/schema/profile-report.v1.schema.json",

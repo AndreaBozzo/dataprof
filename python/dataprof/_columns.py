@@ -122,6 +122,12 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
     # not read back as "counted, found none".
     if col.locale_number_count is not None:
         col_data["locale_number_count"] = col.locale_number_count
+    # Omitted when the source declared no type, as the Rust document does.
+    if col.native_type is not None:
+        col_data["native_type"] = {
+            "system": col.native_type["system"],
+            "name": col.native_type["name"],
+        }
     if col.min is not None:
         col_data["stats"] = {
             k: v

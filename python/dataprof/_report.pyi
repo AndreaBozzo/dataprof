@@ -58,6 +58,8 @@ class ProfileReport:
     @property
     def quality_score_bounds(self) -> dict[str, Any] | None: ...
     @property
+    def quality_columns_without_value_checks(self) -> list[dict[str, str]] | None: ...
+    @property
     def metric_semantics(self) -> dict[str, str] | None: ...
     @property
     def analysis_settings(self) -> dict[str, Any] | None: ...
@@ -136,6 +138,8 @@ class ProfileReport:
         ...
     @property
     def _schema_version(self) -> int: ...
+    @property
+    def _ragged_row_count_recorded(self) -> bool: ...
     def _delta_input(self) -> Any: ...
     def _legacy_summary(self) -> dict[str, Any]: ...
     def _records(self) -> list[dict[str, Any]]: ...
@@ -159,12 +163,17 @@ class ProfileReport:
         max_null_percentage: Mapping[str, float] | float | None = ...,
         max_null_count: Mapping[str, int] | int | None = ...,
         max_duplicate_rows: int | None = ...,
+        max_date_age: Mapping[str, int] | None = ...,
+        max_date_gap: Mapping[str, int] | None = ...,
         require_metrics: Sequence[str] | None = ...,
         scope: str = ...,
         baseline: ProfileReport | None = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,
+        max_distinct_drop: Mapping[str, float] | float | None = ...,
+        max_row_count_drop: float | None = ...,
+        max_row_count_growth: float | None = ...,
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,

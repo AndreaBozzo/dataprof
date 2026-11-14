@@ -36,6 +36,7 @@ pub struct PyProfilerConfig {
     pub(crate) columns: Option<Vec<String>>,
     pub(crate) locale: Option<Locale>,
     pub(crate) reference_date: Option<chrono::NaiveDate>,
+    pub(crate) duplicate_rows_exact_limit: Option<usize>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
@@ -67,6 +68,7 @@ impl PyProfilerConfig {
         columns = None,
         temporal_pairs = None,
         reference_date = None,
+        duplicate_rows_exact_limit = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -91,6 +93,7 @@ impl PyProfilerConfig {
         columns: Option<Vec<String>>,
         temporal_pairs: Option<Vec<Vec<String>>>,
         reference_date: Option<&Bound<'_, PyAny>>,
+        duplicate_rows_exact_limit: Option<usize>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -137,6 +140,14 @@ impl PyProfilerConfig {
             .transpose()?;
 
         let reference_date = reference_date.map(parse_reference_date).transpose()?;
+
+        // A limit of zero would estimate every count from the first row, which
+        // no caller asking for an exact count means.
+        if duplicate_rows_exact_limit == Some(0) {
+            return Err(PyValueError::new_err(
+                "duplicate_rows_exact_limit must be at least 1 distinct row",
+            ));
+        }
 
         // Parse the locale tag here rather than storing it raw: an unrecognised
         // tag suppresses every locale-specific pattern, so accepting one would
@@ -185,6 +196,7 @@ impl PyProfilerConfig {
             columns,
             locale,
             reference_date,
+            duplicate_rows_exact_limit,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
             temporal_columns: temporal_columns.unwrap_or_default(),
@@ -263,6 +275,13 @@ impl PyProfilerConfig {
                     .call_method1("fromisoformat", (date.format("%Y-%m-%d").to_string(),))
             })
             .transpose()
+    }
+
+    /// Distinct rows counted exactly for duplicate rows, or `None` for the
+    /// default of one million.
+    #[getter]
+    fn duplicate_rows_exact_limit(&self) -> Option<usize> {
+        self.duplicate_rows_exact_limit
     }
 
     /// Columns selected for profiling, or `None` for every column.
@@ -366,6 +385,9 @@ impl PyProfilerConfig {
         if let Some(date) = self.reference_date {
             profiler = profiler.reference_date(date);
         }
+        if let Some(limit) = self.duplicate_rows_exact_limit {
+            profiler = profiler.duplicate_rows_exact_limit(limit);
+        }
         if !self.positive_columns.is_empty() {
             profiler = profiler.positive_columns(self.positive_columns.clone());
         }
@@ -404,6 +426,7 @@ impl PyProfilerConfig {
             .with_quality_dimensions(self.quality_dimensions.clone())
             .with_locale(self.locale)
             .with_reference_date(self.reference_date)
+            .with_duplicate_rows_exact_limit(self.duplicate_rows_exact_limit)
             .with_semantic_hints(self.semantic_hints())
     }
 }

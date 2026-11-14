@@ -96,9 +96,10 @@ def main() -> None:
         for dimension in ("completeness", "consistency", "uniqueness", "accuracy", "timeliness"):
             print(f"  {dimension:<14} {summary[dimension]:.1f}")
 
-        # A low completeness score is easy to misread. It scores *complete records*
-        # -- rows with no null anywhere -- not the share of populated cells. Two
-        # sparse columns are enough to make almost every row incomplete.
+        # A low completeness score is easy to misread. It averages the share of
+        # populated cells with the share of complete records (rows with no null
+        # anywhere). Two sparse columns make almost every row incomplete, which
+        # pulls the score far below the share of populated cells.
         quality = report.quality
         assert quality is not None and quality.completeness is not None
         completeness = quality.completeness

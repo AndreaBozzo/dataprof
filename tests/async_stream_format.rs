@@ -182,7 +182,9 @@ fn a_csv_stream_without_its_split_leaves_the_delimiter_rules_unevaluated() {
             .map(|rule| rule["code"].as_str().unwrap().to_string())
             .collect::<Vec<_>>()
     };
-    assert_eq!(unevaluated(&report), Vec::<String>::new());
+    // The capped scan never reached the end, so the quote state at the end
+    // was not checked (#1306).
+    assert_eq!(unevaluated(&report), ["unterminated_quote"]);
 
     let mut document = serde_json::to_value(&report).unwrap();
     document["data_source"]
@@ -193,6 +195,10 @@ fn a_csv_stream_without_its_split_leaves_the_delimiter_rules_unevaluated() {
     let stripped: ProfileReport = serde_json::from_value(document).unwrap();
     assert_eq!(
         unevaluated(&stripped),
-        ["delimiter_ambiguous", "header_not_split"]
+        [
+            "delimiter_ambiguous",
+            "header_not_split",
+            "unterminated_quote"
+        ]
     );
 }

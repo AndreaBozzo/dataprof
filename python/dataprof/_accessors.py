@@ -127,6 +127,9 @@ class Pattern(_View):
     category = _Field[str]()
     confidence = _Field[float]()
 
+    def __repr__(self) -> str:
+        return f"Pattern(name={self.name!r}, match_percentage={self.match_percentage!r})"
+
 
 class ColumnProfile(_View):
     """Column statistics, with the same read-only accessors for either backing.
@@ -146,6 +149,7 @@ class ColumnProfile(_View):
     invalid_count = _Field[int | None]()
     type_homogeneity = _Field[dict[str, int] | None]()
     locale_number_count = _Field[int | None]()
+    native_type = _Field[dict[str, str] | None]()
     null_percentage = _Field[float | None]()
     uniqueness_ratio = _Field[float | None]()
     min = _Field[float | None](section="stats")
@@ -279,6 +283,7 @@ class _ReportView(_View):
     quality_exact_dimensions = _Field[list[str] | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
     quality_score_bounds = _Field[dict[str, Any] | None]()
+    quality_columns_without_value_checks = _Field[list[dict[str, str]] | None]()
     quality_status = _Field[str]()
     quality_error = _Field[str | None]()
 

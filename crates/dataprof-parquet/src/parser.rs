@@ -621,7 +621,9 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     })?;
     let arrow_schema = reader.schema();
 
-    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
+    let mut analyzer = RecordBatchAnalyzer::new()
+        .with_semantic_hints(semantic_hints)
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
     analyzer.initialize_schema(arrow_schema.as_ref())?;
     for batch_result in reader {
         let batch = batch_result.map_err(|error| {

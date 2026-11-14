@@ -87,20 +87,23 @@ cargo add dataprof
 ```rust
 use dataprof::{Profiler, QualityPolicy, Verdict};
 
-let report = Profiler::new().analyze_file("orders.csv")?;
-let result = QualityPolicy::new().min_quality_score(90.0).evaluate(&report)?;
-assert_eq!(result.verdict, Verdict::Pass);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let report = Profiler::new().analyze_file("orders.csv")?;
+    let result = QualityPolicy::new().min_quality_score(90.0).evaluate(&report)?;
+    assert_eq!(result.verdict, Verdict::Pass);
+    Ok(())
+}
 ```
 
 Minimum supported Rust: 1.96.
 
 ## What you can count on
 
-- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it.
-- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators.
-- **Honest verdicts.** A sampled or partial scan never passes a claim about the whole file; scores carry their confidence interval.
+- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it. One limit for now: when a column holds more values than its retained sample (10,000 non-null values, fewer under memory pressure), some routes read the sample and others every value. What comes from the sample can then differ between routes: the median, quartiles, mode, skewness, kurtosis and outlier counts, the pattern counts, `type_homogeneity`, and the accuracy, consistency, precision, timeliness and validity scores. The report flags sampled numeric statistics with `is_approximate`.
+- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators. The exact duplicate-row count holds up to 1,000,000 distinct rows by default, about 10 to 20 bytes each, inside the memory budget, and becomes an estimate under memory pressure. A `duplicate_rows_exact_limit` you set yourself is the exception: those rows stay exact and are kept outside the budget.
+- **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it, such as a row minimum it reached; otherwise the check is inconclusive. A sampled score carries an interval in `score_bounds` whenever it can be bounded.
 - **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
-- **Private by default.** Reports and summaries carry counts and patterns, not your values.
+- **Local by default.** Profiling runs on your machine. Reports carry statistics, including numeric minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
 
 ## Status
 
@@ -113,7 +116,7 @@ Found something wrong? [Open an issue](https://github.com/AndreaBozzo/dataprof/i
 - [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md): profiling and quality gates compared with summaries, visual reports and validation tools, including when to pick each
 - [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md): the metrics and how to read them
 - [Python API](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md): every function, the gate and the CI entrypoint
-- [Examples](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md): a messy CSV, an ETL gate, before and after cleaning, a checkpoint against the last accepted run, runnable from a clean checkout
+- [Examples](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md): a messy CSV, an ETL gate, before and after cleaning, a checkpoint against the last accepted run, a collapsing key column, runnable from a clean checkout
 - [Agent workflows](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/agent-workflows.md): AGENTS.md, Cursor rules and Claude Code skills
 - [Report schema](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md): the saved document and its guarantees
 - [Database connectors](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md) and [feature flags](https://docs.rs/dataprof): Rust-side options

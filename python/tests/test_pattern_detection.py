@@ -116,3 +116,16 @@ def test_iso_datetime_requires_complete_valid_values(tmp_path):
 
 def test_slash_date_labels_do_not_assert_an_order(tmp_path):
     check("slash_date_label", tmp_path)
+
+
+def test_a_pattern_reprs_with_its_name_and_match_percentage():
+    report = dp.profile({"mail": ["a@example.com", "b@example.com", "c@example.com", "nope"]})
+    patterns = report.column_profiles["mail"].patterns
+    assert patterns is not None
+    [pattern] = patterns
+    assert repr(pattern) == "Pattern(name='Email', match_percentage=75.0)"
+    restored = dp.ProfileReport.from_json(report.to_json())
+    loaded_patterns = restored.column_profiles["mail"].patterns
+    assert loaded_patterns is not None
+    [loaded] = loaded_patterns
+    assert repr(loaded) == repr(pattern)

@@ -182,6 +182,15 @@ class Profiler:
         self._kwargs["reference_date"] = date
         return self
 
+    def duplicate_rows_exact_limit(self, limit: int) -> Profiler:
+        """Count duplicate rows exactly up to ``limit`` distinct rows, so
+        ``max_duplicate_rows`` can decide on a source past one million rows.
+
+        See :func:`profile` for the memory it costs.
+        """
+        self._kwargs["duplicate_rows_exact_limit"] = limit
+        return self
+
     def metrics(self, packs: list[str]) -> Profiler:
         """Select metric packs to compute.
 

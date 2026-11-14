@@ -229,6 +229,8 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
         ("json_number_reading", "uniqueness", "completeness"),
         ("json_number_reading", "accuracy", "completeness"),
         ("json_number_reading", "consistency", "completeness"),
+        ("sampled_score_estimator", "consistency", "completeness"),
+        ("sampled_score_estimator", "accuracy", "uniqueness"),
     ],
 )
 def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(
@@ -303,7 +305,15 @@ def test_the_document_keeps_the_absolute_shape_and_adds_the_baseline():
     relative = report.check(baseline=report, **DRIFT)
     document = relative.to_dict()
     assert json.loads(relative.to_json()) == document
-    assert list(document) == ["verdict", "scope", "evidence", "checks", "baseline"]
+    assert list(document) == [
+        "verdict",
+        "scope",
+        "evidence",
+        "checks",
+        "baseline",
+        "generator",
+        "source_identity",
+    ]
     assert document["baseline"]["schema"] == {
         "added": [],
         "removed": [],
@@ -352,14 +362,13 @@ def test_order_and_pairing_the_reports_cannot_show_are_not_assumed_the_same():
     )
     assert same.checks[0].status == "passed"
 
-    # A report records which columns the pairs named, not the pairing.
+    # A report records the pairing itself from 0.14 (#1029);
+    # test_temporal_pairs_record.py covers pairs that differ and a baseline
+    # written before, which recorded only the columns the pairs named.
     dates = {"start": ["2026-01-01", "2026-01-03"], "end": ["2026-01-02", "2026-01-04"]}
     policy = {"max_dimension_score_drops": {"timeliness": 100}}
     paired = dp.profile(dates, temporal_pairs=[("start", "end")])
-    assert paired.check(baseline=paired, **policy).checks[0].reason == {
-        "reason": "setting_unrecorded",
-        "setting": "temporal_pairs",
-    }
+    assert paired.check(baseline=paired, **policy).checks[0].status == "passed"
     unpaired = dp.profile(dates)
     assert unpaired.check(baseline=unpaired, **policy).checks[0].status == "passed"
 
@@ -476,3 +485,16 @@ def test_a_type_change_the_identifier_hint_explains_names_the_hint():
     assert (retyped["reason"], retyped["setting"]) == ("setting_changed", "identifier_columns")
     # A data-driven change carries no reason.
     assert "reason" not in _listed(dp.profile(AFTER).check(baseline=dp.profile(BEFORE), **DRIFT))[0]
+
+
+def test_a_change_rule_without_a_baseline_says_how_to_pass_one():
+    report = dp.profile(CLEAN)
+    with pytest.raises(ValueError) as caught:
+        report.check(max_quality_score_drop=5)
+    message = str(caught.value)
+    assert "needs a baseline report to compare against" in message
+    assert message.endswith(": pass baseline=ProfileReport.load('baseline.json')")
+    # Other policy errors keep their own text.
+    with pytest.raises(ValueError, match="states no requirement") as other:
+        report.check()
+    assert "baseline=" not in str(other.value)

@@ -21,6 +21,9 @@ pub struct QueryColumns {
     /// Per column, by position, the rows whose value was a JSON object or array
     /// or a SQL array, ascending. Always as long as `columns`.
     containers: Vec<Vec<usize>>,
+    /// Per column, by position, the type name the driver reported, or `None`
+    /// when none was recorded. Always as long as `columns`.
+    type_names: Vec<Option<String>>,
 }
 
 impl QueryColumns {
@@ -63,6 +66,22 @@ impl QueryColumns {
             }
             data.push(value);
         }
+    }
+
+    /// Record the driver's type name for each column, in query order (#906).
+    ///
+    /// A list of another length than the columns is a caller bug; it records
+    /// nothing rather than file a type under the wrong column.
+    pub fn set_type_names(&mut self, names: Vec<String>) {
+        if names.len() == self.columns.len() {
+            self.type_names = names.into_iter().map(Some).collect();
+        }
+    }
+
+    /// Per column, in query order, the type name the driver reported, or
+    /// `None` when none was recorded.
+    pub fn type_names(&self) -> impl Iterator<Item = Option<&str>> {
+        self.type_names.iter().map(Option::as_deref)
     }
 
     /// Per column name, how many of its values were containers. Columns with
@@ -134,13 +153,17 @@ impl QueryColumns {
             .iter()
             .map(String::as_str)
             .collect::<std::collections::HashSet<_>>();
-        let (columns, containers) = std::mem::take(&mut self.columns)
+        let kept: Vec<_> = std::mem::take(&mut self.columns)
             .into_iter()
             .zip(std::mem::take(&mut self.containers))
-            .filter(|((name, _), _)| names.contains(name.as_str()))
-            .unzip();
-        self.columns = columns;
-        self.containers = containers;
+            .zip(std::mem::take(&mut self.type_names))
+            .filter(|(((name, _), _), _)| names.contains(name.as_str()))
+            .collect();
+        for ((column, containers), type_name) in kept {
+            self.columns.push(column);
+            self.containers.push(containers);
+            self.type_names.push(type_name);
+        }
     }
 
     /// Drop the order and hand back a plain map.
@@ -165,9 +188,11 @@ impl FromIterator<(String, Vec<String>)> for QueryColumns {
     fn from_iter<I: IntoIterator<Item = (String, Vec<String>)>>(iter: I) -> Self {
         let columns: Vec<_> = iter.into_iter().collect();
         let containers = vec![Vec::new(); columns.len()];
+        let type_names = vec![None; columns.len()];
         Self {
             columns,
             containers,
+            type_names,
         }
     }
 }

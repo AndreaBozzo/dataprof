@@ -83,6 +83,22 @@ pub struct ColumnProfile {
     /// written before dataprof recorded it; `Some(0)` means none were found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale_number_count: Option<usize>,
+    /// The type the source declared for the column, recorded as provenance
+    /// (#906). `None` when the source declares none, which is every text
+    /// input (CSV, JSON, JSONL), Python objects and SQLite, and on a report
+    /// written before dataprof recorded it. See [`NativeType`] for the
+    /// sources that declare one.
+    ///
+    /// `data_type` is what dataprof profiled the column as, and several
+    /// declared types share one: an Arrow `decimal128(12, 2)` profiles as
+    /// `Float` and a `timestamp[us, tz=UTC]` as `Date`. This keeps the
+    /// declaration itself, so a reader can tell that a column kept its type.
+    ///
+    /// Provenance, not a metric: two input paths over the same logical data
+    /// declare different types, or none, so it stays outside the
+    /// serialized-value parity comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_type: Option<NativeType>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -91,6 +107,85 @@ pub struct ColumnProfile {
     /// matched. Consumers that gate on sensitivity -- redaction, agent-facing
     /// output -- must treat `None` as "unknown", never as "no sensitive data".
     pub patterns: Option<Vec<Pattern>>,
+}
+
+/// A column type as the source declared it (#906).
+///
+/// `system` names the type system the declaration belongs to, and `name`
+/// spells the type the way that system does:
+///
+/// - `arrow`: Arrow tables, record batches and streams, polars frames, ADBC
+///   results and Parquet files. The name is the one pyarrow prints for the
+///   type, such as `decimal128(12, 2)`, `timestamp[us, tz=UTC]` or
+///   `dictionary<values=string, indices=int32, ordered=0>`. An extension type
+///   is named as the extension (`extension<arrow.uuid>`), not its storage
+///   type, and without the parameters pyarrow adds to a parameterized one.
+///   A Parquet column
+///   carries the Arrow type its reader produced from the file's schema, which
+///   keeps the Arrow schema the writer stored with the file.
+/// - `pandas`: pandas DataFrames. The name is the column's dtype as pandas
+///   prints it (`int64`, `object`, `datetime64[ns, UTC]`, `Int64`). An
+///   `object` column declares no type for its values; pyarrow infers one from
+///   them, which is why the pandas dtype is recorded rather than the Arrow
+///   type the profiler read.
+/// - `postgresql` and `mysql`: the database connectors. The name is the
+///   server's type name as the driver reports it (`NUMERIC`, `INT4`,
+///   `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED`).
+///
+/// Both are strings so that a report from a later release, which may record
+/// a system this build does not know, still loads. Build one with
+/// [`NativeType::new`]: the struct is `non_exhaustive`, as the rest of the
+/// report model is to become before 1.0 (#1162).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
+pub struct NativeType {
+    pub system: String,
+    pub name: String,
+}
+
+impl NativeType {
+    /// The type system of Arrow and the readers built on it.
+    pub const ARROW: &'static str = "arrow";
+    /// pandas dtypes.
+    pub const PANDAS: &'static str = "pandas";
+    /// PostgreSQL type names.
+    pub const POSTGRESQL: &'static str = "postgresql";
+    /// MySQL type names.
+    pub const MYSQL: &'static str = "mysql";
+
+    pub fn new(system: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            system: system.into(),
+            name: name.into(),
+        }
+    }
+
+    /// Whether this declares a decimal, a type whose values no float wrote,
+    /// so they are read as decimals and kept exact (#1268): an Arrow
+    /// `decimal32` to `decimal256`, a pandas column of one
+    /// (`decimal128(12, 2)[pyarrow]`), PostgreSQL `NUMERIC` and MySQL
+    /// `DECIMAL`.
+    ///
+    /// A pandas `object` column declares no type, though pyarrow may read its
+    /// `Decimal` values into a decimal; nor does an Arrow extension type over
+    /// decimal storage, which is named as the extension.
+    pub fn declares_decimal(&self) -> bool {
+        let arrow_decimal = |name: &str| {
+            ["decimal32(", "decimal64(", "decimal128(", "decimal256("]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+        };
+        match self.system.as_str() {
+            Self::ARROW => arrow_decimal(&self.name),
+            Self::PANDAS => self
+                .name
+                .strip_suffix("[pyarrow]")
+                .is_some_and(arrow_decimal),
+            Self::POSTGRESQL => self.name == "NUMERIC",
+            Self::MYSQL => self.name == "DECIMAL",
+            _ => false,
+        }
+    }
 }
 
 /// Quartile statistics for numeric distributions.
@@ -331,6 +426,52 @@ pub struct DateTimeStats {
     /// holds no slash dates, or the report predates the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slash_date_order: Option<SlashDateOrder>,
+    /// The longest stretch between two consecutive distinct days of the
+    /// column (#1300), over every value read.
+    ///
+    /// A daily file that lost a period from the middle of its range keeps its
+    /// newest date and most of its rows, and shows here: the gap grows from 1
+    /// to the length of the hole. `None` when no value parsed as a date, the
+    /// column's dates span more than 10,000 distinct years (the profiler
+    /// stops tracking days past that), or the report predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub largest_gap: Option<DateGap>,
+}
+
+/// How many distinct years a date column may span before the profiler stops
+/// tracking its distinct days, and reports no [`DateTimeStats::largest_gap`].
+///
+/// The days are kept as one 48-byte bitmap per year, about 60 bytes with its
+/// key and tree overhead, so one set at the limit holds about 0.6 MB. The
+/// limit applies to each set: a column keeps one for the values whose reading
+/// is settled and one for each reading of its ambiguous slash dates, so a
+/// column holding both at the limit retains about 1.8 MB, and finishing its
+/// statistics copies one set more while it merges them.
+pub const DATE_GAP_YEAR_LIMIT: usize = 10_000;
+
+/// Two consecutive distinct days of a date column, and the days between
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
+pub struct DateGap {
+    /// Days from `from` to `to`: `1` for consecutive days, `0` for a column
+    /// holding a single distinct day.
+    pub days: i64,
+    /// The last day before the gap, `YYYY-MM-DD`.
+    pub from: String,
+    /// The first day after the gap, `YYYY-MM-DD`.
+    pub to: String,
+}
+
+impl DateGap {
+    /// The gap from `from` to `to`, both written `YYYY-MM-DD`.
+    pub fn new(from: chrono::NaiveDate, to: chrono::NaiveDate) -> Self {
+        Self {
+            days: (to - from).num_days(),
+            from: from.format("%Y-%m-%d").to_string(),
+            to: to.format("%Y-%m-%d").to_string(),
+        }
+    }
 }
 
 /// The day/month order a column's slash dates were read in.
@@ -364,6 +505,7 @@ impl DateTimeStats {
             day_of_week_distribution: HashMap::new(),
             hour_distribution: None,
             slash_date_order: None,
+            largest_gap: None,
         }
     }
 }
@@ -390,6 +532,40 @@ pub enum ColumnStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every declaration that names a decimal, and the neighbours that do
+    /// not: a float, an array of decimals, an extension over one, a pandas
+    /// `object` column, and a system this build does not know (#1268).
+    #[test]
+    fn declares_decimal_names_each_systems_decimal() {
+        let cases = [
+            (NativeType::ARROW, "decimal32(9, 2)", true),
+            (NativeType::ARROW, "decimal64(18, 2)", true),
+            (NativeType::ARROW, "decimal128(12, 2)", true),
+            (NativeType::ARROW, "decimal256(40, -2)", true),
+            (NativeType::PANDAS, "decimal128(12, 2)[pyarrow]", true),
+            (NativeType::POSTGRESQL, "NUMERIC", true),
+            (NativeType::MYSQL, "DECIMAL", true),
+            (NativeType::ARROW, "double", false),
+            (NativeType::ARROW, "list<item: decimal128(12, 2)>", false),
+            (NativeType::ARROW, "extension<example.money>", false),
+            (NativeType::PANDAS, "object", false),
+            (NativeType::PANDAS, "decimal128(12, 2)", false),
+            (NativeType::PANDAS, "Float64", false),
+            (NativeType::POSTGRESQL, "NUMERIC[]", false),
+            (NativeType::POSTGRESQL, "FLOAT8", false),
+            (NativeType::MYSQL, "DOUBLE", false),
+            ("duckdb", "DECIMAL", false),
+        ];
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter(|(system, name, want)| {
+                NativeType::new(*system, *name).declares_decimal() != *want
+            })
+            .map(|(system, name, want)| format!("{system} {name}: expected {want}"))
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
 
     /// `std_dev`, `variance` and `quartiles.iqr` are nullable but required: a
     /// `null` is a spread that overflowed `f64`, a missing key a malformed
@@ -445,6 +621,7 @@ mod tests {
             invalid_count: Some(0),
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -502,6 +679,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,

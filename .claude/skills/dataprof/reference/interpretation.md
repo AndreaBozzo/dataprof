@@ -9,6 +9,7 @@ means and — more importantly — what it does not.
 - The absence rule
 - Quality dimensions, one by one
 - Type homogeneity
+- Declared types
 - Approximation provenance
 - Patterns and sensitive data
 - Comparisons
@@ -154,6 +155,17 @@ Say that the column holds numbers the profile did not read, not that it is
 text. The count does not say which convention applies (`1,234` is a thousand
 in the US and a fraction in Italy), so do not state a converted value. `None`
 means the count did not run, as for `type_homogeneity`.
+
+## Declared types
+
+`data_type` is what dataprof profiled a column as. `native_type` is what the
+source declared, as `{"system": ..., "name": ...}`: the Arrow type for Arrow,
+polars and Parquet (`decimal128(12, 2)`, `timestamp[us, tz=UTC]`), the dtype for
+pandas, the server's type for PostgreSQL and MySQL (`NUMERIC`). A `float` column
+whose `native_type` is a decimal is a decimal column; say so rather than call it
+floating point. `None` means the source declared no type (CSV, JSON, JSONL,
+Python objects, SQLite) or the report predates the field, never that the column
+has no type.
 
 ## Approximation provenance
 

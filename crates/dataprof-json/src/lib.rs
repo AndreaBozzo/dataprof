@@ -843,7 +843,9 @@ fn analyze_json_from_reader_full<R: BufRead>(
     DataProfilerError,
 > {
     let semantic_hints = options.semantic_hints();
-    let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
+    let mut column_stats = StreamingColumnCollection::new()
+        .with_semantic_hints(semantic_hints)
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
     let mut container_counts = HashMap::new();

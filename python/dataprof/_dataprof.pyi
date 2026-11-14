@@ -44,6 +44,7 @@ class ProfilerConfig:
         columns: list[str] | None = None,
         temporal_pairs: list[tuple[str, str]] | None = None,
         reference_date: date | str | None = None,
+        duplicate_rows_exact_limit: int | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -69,6 +70,8 @@ class ProfilerConfig:
     def temporal_pairs(self) -> list[tuple[str, str]]: ...
     @property
     def reference_date(self) -> date | None: ...
+    @property
+    def duplicate_rows_exact_limit(self) -> int | None: ...
     @property
     def jsonl_on_error(self) -> str: ...
 
@@ -177,6 +180,11 @@ class ColumnProfile:
     #: means the count did not run, including a report written before dataprof
     #: recorded it; ``0`` means none were found.
     locale_number_count: int | None
+    #: The type the source declared, as ``{"system": ..., "name": ...}``:
+    #: ``{"system": "arrow", "name": "decimal128(12, 2)"}``. Provenance, not a
+    #: measurement. ``None`` means the source declares no type (CSV, JSON,
+    #: JSONL, Python objects, SQLite), or the report predates the field.
+    native_type: dict[str, str] | None
     null_percentage: float | None
     uniqueness_ratio: float | None
     min: float | None
@@ -404,6 +412,8 @@ class ProfileReport:
     @property
     def quality_score_bounds(self) -> dict[str, Any] | None: ...
     @property
+    def quality_columns_without_value_checks(self) -> list[dict[str, str]] | None: ...
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, Any]]: ...
     @property
     def metric_semantics(self) -> dict[str, str] | None: ...
@@ -429,6 +439,8 @@ class ProfileReport:
         max_null_count: list[tuple[str, int]] = ...,
         max_null_count_any: int | None = ...,
         max_duplicate_rows: int | None = ...,
+        max_date_age: list[tuple[str, int]] = ...,
+        max_date_gap: list[tuple[str, int]] = ...,
         require_quality: bool = ...,
         require_dimensions: list[str] = ...,
         scope: str = ...,
@@ -437,6 +449,10 @@ class ProfileReport:
         max_dimension_score_drops: list[tuple[str, float]] = ...,
         max_null_percentage_increase: list[tuple[str, float]] = ...,
         max_null_percentage_increase_any: float | None = ...,
+        max_distinct_drop: list[tuple[str, float]] = ...,
+        max_distinct_drop_any: float | None = ...,
+        max_row_count_drop: float | None = ...,
+        max_row_count_growth: float | None = ...,
         require_columns: list[str] = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,

@@ -17,6 +17,10 @@
 //! (with the values in strings) and `analyze_column` read the rest as Parquet
 //! does. `python/tests/test_decimal_spread.py` is the Python twin, and adds the
 //! in-memory Arrow, pandas, polars and `Decimal` record routes.
+//!
+//! The mean sums every value's remainder beyond its nearest `f64` (#1262):
+//! the first value's alone made a column of `x` and `-x` by turns report a
+//! mean of 90.28 instead of 0.
 
 use std::io::Write;
 
@@ -45,11 +49,19 @@ fn cell(name: &str, row: usize) -> String {
         "wide_cents" => format!("{WIDE_BASE}.{cents:02}"),
         // `decimal256(76, 0)`: 10^75 plus a multiple of 100, beyond `i128`.
         "unheld" => format!("1{}{:03}", "0".repeat(72), cents * 100),
+        // `decimal128(38, 2)`: one value and its negation by turns, mean 0.
+        "balanced" if row.is_multiple_of(2) => BALANCED.to_string(),
+        "balanced" => format!("-{BALANCED}"),
         _ => unreachable!("{name}"),
     }
 }
 
-const NAMES: [&str; 4] = ["cents", "fifteen", "wide_cents", "unheld"];
+/// 22 digits: its nearest `f64` is 722.25 below it.
+const BALANCED: &str = "12345678901234567890.25";
+
+const NAMES: [&str; 5] = ["cents", "fifteen", "wide_cents", "unheld", "balanced"];
+/// Checked for its mean alone; its spread is not the cents'.
+const MEAN_ONLY: &str = "balanced";
 /// Held exactly only where the source types it as a decimal.
 const TYPED_ONLY: &str = "fifteen";
 /// The routes that read a typed decimal column.
@@ -119,6 +131,7 @@ fn parquet_fixture() -> NamedTempFile {
                 .with_precision_and_scale(76, 0)
                 .unwrap(),
         ) as ArrayRef,
+        decimal128("balanced", 38),
     ];
     let schema = Arc::new(Schema::new(
         NAMES
@@ -225,7 +238,7 @@ fn every_path_keeps_the_spread_of_digits_beyond_f64() {
     let mut wrong = Vec::new();
     for (label, columns) in profiles() {
         for name in NAMES {
-            if name == TYPED_ONLY && !TYPED_ROUTES.contains(&label.as_str()) {
+            if name == MEAN_ONLY || name == TYPED_ONLY && !TYPED_ROUTES.contains(&label.as_str()) {
                 continue;
             }
             let stats = match numeric(&columns, name) {
@@ -256,6 +269,21 @@ fn every_path_keeps_the_spread_of_digits_beyond_f64() {
                     wrong.push(format!("[{label}] {name} {key}: {got:?}, exact {expected}"));
                 }
             }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Every value's remainder beyond its nearest `f64` enters the mean, not the
+/// first value's alone: `[x, -x]` repeated has a mean of exactly 0 (#1262).
+#[test]
+fn every_path_takes_the_mean_of_the_exact_decimals() {
+    let mut wrong = Vec::new();
+    for (label, columns) in profiles() {
+        match numeric(&columns, MEAN_ONLY) {
+            Ok(stats) if stats.mean == 0.0 => {}
+            Ok(stats) => wrong.push(format!("[{label}] mean {}", stats.mean)),
+            Err(error) => wrong.push(format!("[{label}] {error}")),
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");

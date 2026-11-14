@@ -160,8 +160,55 @@ pub enum JsonNumberReading {
     LiteralDigits,
 }
 
+/// How a quality score computed over a retained sample estimates the score
+/// over every scanned value, as recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 a sampled score
+/// pooled every column's reservoir, so a column weighed as many values as its
+/// reservoir kept, at most 10,000, and the score could fall outside its own
+/// `score_bounds`; those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SampledScoreEstimator {
+    /// Each column's sampled failure and checked counts are scaled to its
+    /// non-null values in the source before the shares are formed (#1293).
+    /// A source whose samples hold every value scores as before.
+    PopulationWeighted,
+}
+
+/// Which values a date column's statistics are computed over, as recorded
+/// in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 the engines that
+/// retain a bounded sample of each column computed `min_datetime`,
+/// `max_datetime`, `duration_days`, the year, month, weekday and hour
+/// distributions and `slash_date_order` from that sample, so on a source
+/// larger than the sample they described the sample; those releases recorded
+/// no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DateStatistics {
+    /// Every non-null value the scan read, on every engine (#1297). The
+    /// `largest_gap` added in 0.14 (#1300) is computed over them too.
+    EveryValue,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum MetricPack {
     /// Column names, data types, null counts — always included.

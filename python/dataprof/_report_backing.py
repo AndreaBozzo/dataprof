@@ -137,6 +137,20 @@ def _is_finite_number(value: Any) -> bool:
         return False
 
 
+#: Why the value-level quality checks skip a column, as the Rust
+#: `ValueChecksSkipReason` names it. An unknown reason is rejected, as Rust does.
+_VALUE_CHECKS_SKIP_REASONS = ("nested",)
+
+
+def _is_columns_without_value_checks(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("column"), str)
+        and entry.get("reason") in _VALUE_CHECKS_SKIP_REASONS
+        for entry in value
+    )
+
+
 def _is_list_of_mappings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(entry, dict) for entry in value)
 
@@ -151,6 +165,14 @@ def _is_homogeneity_counts(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     return all(name in value and _is_count(value[name]) for name in _LEXICAL_CLASS_ORDER)
+
+
+def _is_native_type(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("system"), str)
+        and isinstance(value.get("name"), str)
+    )
 
 
 def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
@@ -179,6 +201,19 @@ def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     )
     values["type_homogeneity"] = (
         _homogeneity_counts(homogeneity) if homogeneity is not None else None
+    )
+    native_type = _read_field(
+        document,
+        "native_type",
+        f"{path}.native_type",
+        "a mapping with string 'system' and 'name', or null",
+        lambda value: value is None or _is_native_type(value),
+        None,
+    )
+    values["native_type"] = (
+        {"system": native_type["system"], "name": native_type["name"]}
+        if native_type is not None
+        else None
     )
     patterns = _read_field(
         document,
@@ -356,12 +391,18 @@ _METRIC_SEMANTICS = {
     "key_column_source": ("declared",),
     "accuracy_comparison": ("exact_values",),
     "json_number_reading": ("literal_digits",),
+    "sampled_score_estimator": ("population_weighted",),
+    "date_statistics": ("every_value",),
 }
 
 
 #: The values `analysis_settings.pattern_locale` may hold, as the Rust
 #: `PatternLocale` serializes them: no locale, or a supported locale's code.
 _PATTERN_LOCALES = ("none", "CA", "DE", "FR", "GB", "IT", "US")
+
+#: The names `analysis_settings.metric_packs` may list, as the Rust
+#: `MetricPack` serializes them.
+_METRIC_PACKS = ("schema", "statistics", "patterns", "quality")
 
 
 def _read_column_selection(columns: Any) -> dict[str, Any]:
@@ -382,13 +423,31 @@ def _read_column_selection(columns: Any) -> dict[str, Any]:
     )
 
 
+def _read_temporal_pairs(pairs: Any) -> list[dict[str, str]]:
+    """Read `analysis_settings.temporal_pairs` as the Rust `TemporalPair` list."""
+    if isinstance(pairs, list) and all(
+        isinstance(pair, dict)
+        and isinstance(pair.get("start"), str)
+        and isinstance(pair.get("end"), str)
+        for pair in pairs
+    ):
+        return [{"start": pair["start"], "end": pair["end"]} for pair in pairs]
+    raise ValueError(
+        "from_dict(): 'analysis_settings.temporal_pairs' must be a list of "
+        f"{{'start': str, 'end': str}}, got {pairs!r}."
+    )
+
+
 def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
     """Read `analysis_settings` as the Rust reader reads `AnalysisSettings`.
 
     A missing key is a document written before dataprof recorded it, so the
     settings are unknown: None, never the defaults. Unknown settings from a
     later writer are ignored; a malformed or missing `pattern_locale` or
-    `columns` is an error, as it is in Rust.
+    `columns` is an error, as it is in Rust. `metric_packs` and
+    `temporal_pairs` are absent before 0.14 and stay absent; present, the
+    first must be a list of pack names and the second a list of
+    `{"start", "end"}` column pairs.
     """
     if "analysis_settings" not in document:
         return None
@@ -401,7 +460,18 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
             "from_dict(): 'analysis_settings.pattern_locale' must be one of "
             f"{', '.join(_PATTERN_LOCALES)}, got {locale!r}."
         )
-    return {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
+    read = {"pattern_locale": locale, "columns": _read_column_selection(settings.get("columns"))}
+    if "metric_packs" in settings:
+        packs = settings["metric_packs"]
+        if not isinstance(packs, list) or any(pack not in _METRIC_PACKS for pack in packs):
+            raise ValueError(
+                "from_dict(): 'analysis_settings.metric_packs' must be a list of "
+                f"{', '.join(_METRIC_PACKS)}, got {packs!r}."
+            )
+        read["metric_packs"] = list(packs)
+    if "temporal_pairs" in settings:
+        read["temporal_pairs"] = _read_temporal_pairs(settings["temporal_pairs"])
+    return read
 
 
 def _read_generator(document: dict[str, Any]) -> dict[str, Any] | None:
@@ -562,6 +632,9 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
         _is_count,
         0,
     )
+    # The accessor keeps its 0 default, but findings must not read it as a
+    # count: every versioned summary writes the field (#1306 review).
+    values["ragged_row_count_recorded"] = "ragged_row_count" in execution
     # Absent means a pre-0.10 document, written before versioning. Callers
     # that must not read a defaulted field as a measurement branch on it.
     values["schema_version"] = document.get("schema_version", 0)
@@ -637,6 +710,23 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
             None,
         )
         if quality is not None
+        else None
+    )
+    # Absent before 0.14: which columns the value checks skipped is then
+    # unknown, never "none" (#1134). An explicit null is malformed.
+    values["quality_columns_without_value_checks"] = (
+        [
+            {"column": entry["column"], "reason": entry["reason"]}
+            for entry in _read_field(
+                quality,
+                "columns_without_value_checks",
+                "quality.columns_without_value_checks",
+                "a list of {column, reason} mappings",
+                _is_columns_without_value_checks,
+                None,
+            )
+        ]
+        if quality is not None and "columns_without_value_checks" in quality
         else None
     )
     values["quality_status"], values["quality_error"] = _read_quality_status(

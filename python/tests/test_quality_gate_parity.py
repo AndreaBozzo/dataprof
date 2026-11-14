@@ -69,7 +69,12 @@ def test_python_gate_matches_the_shared_fixture(
     for case in cases:
         report = _profile(csv_paths, case["options"])
         result = report.check(**case["policy"])
-        assert result.to_dict() == case["expected"], f"{case['name']}: {case['why']}"
+        document = result.to_dict()
+        # Provenance, compared on its own: the build differs between the two
+        # sides of the parity check, and is no part of the decision (#1063).
+        assert document.pop("generator") == report.generator, case["name"]
+        assert document.pop("source_identity") is None, case["name"]
+        assert document == case["expected"], f"{case['name']}: {case['why']}"
 
 
 def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):

@@ -190,6 +190,9 @@ re-read and eyeball two files by hand.
   report `total_count` and `null_count` only; the absent distinct count, stats
   and patterns mean "not analyzed", not "none found". Say that the column's
   contents were not profiled rather than reading the absences as findings.
+  `report.quality_columns_without_value_checks` lists them, and the
+  `to_llm_context()` caveat line names them next to the score: a 100 over
+  such a report says nothing about what those columns hold.
 
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).

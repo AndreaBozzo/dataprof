@@ -298,6 +298,8 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "max_null_count": [],
             "max_null_count_any": None,
             "max_duplicate_rows": None,
+            "max_date_age": [],
+            "max_date_gap": [],
             "require_quality": False,
             "require_dimensions": [],
             "scope": "full_source",
@@ -306,6 +308,10 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "max_dimension_score_drops": [],
             "max_null_percentage_increase": [],
             "max_null_percentage_increase_any": None,
+            "max_distinct_drop": [],
+            "max_distinct_drop_any": None,
+            "max_row_count_drop": None,
+            "max_row_count_growth": None,
             "require_columns": [],
             "forbid_removed_columns": False,
             "forbid_added_columns": False,
@@ -502,9 +508,14 @@ def test_an_estimated_duplicate_count_names_the_estimate_as_the_gap(report):
 
     assert result.verdict == "inconclusive"
     (check,) = result.checks
+    # It names the limit the count was made under and the one that would
+    # count every row exactly (#1292).
+    rows = document["quality"]["metrics"]["uniqueness"]["rows_checked"]
     assert check.message == (
         "the duplicate-row count is an estimate, which can neither witness "
-        "duplicates above the allowance nor rule them out"
+        "duplicates above the allowance nor rule them out. It was counted under a "
+        "duplicate_rows_exact_limit of 1000000 distinct rows; "
+        f"a limit of {rows}, the rows checked, counts every row exactly"
     )
 
 
@@ -530,3 +541,16 @@ def test_a_threshold_at_the_shown_value_passes_live_and_loaded(data, dimensions,
     loaded = dp.ProfileReport.from_json(report.to_json())
     verdicts = (report.check(**policy).verdict, loaded.check(**policy).verdict)
     assert verdicts == ("pass", "pass")
+
+
+def test_a_result_prints_the_summary_the_command_line_prints():
+    result = dp.profile({"x": [None, 1, 2]}).check(min_rows=1, max_null_percentage={"x": 10})
+    lines = str(result).split("\n")
+    assert lines[0] == (
+        f"dataprof {dp.__version__}: fail: 2 checks, 1 violations, 0 unevaluated "
+        "(scope: full_source)"
+    )
+    assert lines[1:] == [
+        "  failed: max_null_percentage [x]: "
+        + next(check.message for check in result if check.status == "failed")
+    ]

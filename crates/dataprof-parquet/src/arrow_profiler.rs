@@ -9,7 +9,9 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, ParsedNumber};
+use dataprof_metrics::{
+    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
     StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
@@ -147,13 +149,10 @@ enum CsvDecodeFailure {
 pub struct ArrowProfiler {
     batch_size: usize,
     memory_limit_mb: usize,
-    quality_dimensions: Option<Vec<QualityDimension>>,
-    metric_packs: Option<Vec<MetricPack>>,
-    columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
-    locale: Option<Locale>,
-    reference_date: Option<chrono::NaiveDate>,
-    semantic_hints: SemanticHints,
+    /// The caller's analysis selection, held whole so a new option reaches
+    /// this engine without a field of its own here (#717).
+    options: AnalysisOptions,
 }
 
 impl ArrowProfiler {
@@ -161,14 +160,21 @@ impl ArrowProfiler {
         Self {
             batch_size: 8192, // Default batch size for Arrow
             memory_limit_mb: 512,
-            quality_dimensions: None,
-            metric_packs: None,
-            columns: None,
             csv_config: None,
-            locale: None,
-            reference_date: None,
-            semantic_hints: SemanticHints::default(),
+            options: AnalysisOptions::default(),
         }
+    }
+
+    /// Set the whole analysis selection at once, replacing any selection the
+    /// per-option setters made before it.
+    pub fn analysis_options(mut self, options: AnalysisOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    fn update_options(mut self, update: impl FnOnce(AnalysisOptions) -> AnalysisOptions) -> Self {
+        self.options = update(std::mem::take(&mut self.options));
+        self
     }
 
     pub fn batch_size(mut self, size: usize) -> Self {
@@ -181,19 +187,16 @@ impl ArrowProfiler {
         self
     }
 
-    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
-        self.quality_dimensions = Some(dims);
-        self
+    pub fn quality_dimensions(self, dims: Vec<QualityDimension>) -> Self {
+        self.update_options(|options| options.with_quality_dimensions(Some(dims)))
     }
 
-    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
-        self.metric_packs = Some(packs);
-        self
+    pub fn metric_packs(self, packs: Vec<MetricPack>) -> Self {
+        self.update_options(|options| options.with_metric_packs(Some(packs)))
     }
 
-    pub fn columns(mut self, columns: Vec<String>) -> Self {
-        self.columns = Some(columns);
-        self
+    pub fn columns(self, columns: Vec<String>) -> Self {
+        self.update_options(|options| options.with_columns(Some(columns)))
     }
 
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
@@ -201,20 +204,22 @@ impl ArrowProfiler {
         self
     }
 
-    pub fn locale(mut self, locale: Locale) -> Self {
-        self.locale = Some(locale);
-        self
+    pub fn locale(self, locale: Locale) -> Self {
+        self.update_options(|options| options.with_locale(Some(locale)))
     }
 
     /// Fix the date timeliness measures against; unset, it reads today's.
-    pub fn reference_date(mut self, date: chrono::NaiveDate) -> Self {
-        self.reference_date = Some(date);
-        self
+    pub fn reference_date(self, date: chrono::NaiveDate) -> Self {
+        self.update_options(|options| options.with_reference_date(Some(date)))
     }
 
-    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
-        self.semantic_hints = hints;
-        self
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    pub fn duplicate_rows_exact_limit(self, limit: usize) -> Self {
+        self.update_options(|options| options.with_duplicate_rows_exact_limit(Some(limit)))
+    }
+
+    pub fn semantic_hints(self, hints: SemanticHints) -> Self {
+        self.update_options(|options| options.with_semantic_hints(hints))
     }
 
     /// The `csv`-crate reader configured the way this profile parses the file,
@@ -374,8 +379,10 @@ impl ArrowProfiler {
             memory_sampler.sample_now();
             return Ok(CsvDecodeOutcome {
                 column_analyzers: std::collections::HashMap::new(),
-                row_tracker: BatchRowTracker::default(),
-                hint_bindings: ValueHintBindingAccumulator::new(&self.semantic_hints),
+                row_tracker: BatchRowTracker::with_exact_limit(
+                    self.options.duplicate_rows_exact_limit(),
+                ),
+                hint_bindings: ValueHintBindingAccumulator::new(self.options.semantic_hints()),
                 total_rows: 0,
                 padded_rows: 0,
                 peak_memory_mb: memory_sampler.peak_mb(),
@@ -424,8 +431,9 @@ impl ArrowProfiler {
         // reservoirs are misaligned (any column with nulls) would silently
         // skip the duplicate component of the uniqueness dimension, breaking
         // cross-engine score parity with the incremental engine.
-        let mut row_tracker = BatchRowTracker::default();
-        let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
+        let mut row_tracker =
+            BatchRowTracker::with_exact_limit(self.options.duplicate_rows_exact_limit());
+        let mut hint_bindings = ValueHintBindingAccumulator::new(self.options.semantic_hints());
 
         let mut memory_sampler = PeakMemorySampler::new();
         // The share of the memory limit the exact distinct sets may hold, the
@@ -524,13 +532,7 @@ impl ArrowProfiler {
                 .collect()
         };
         let header_width = header_names.len();
-        let options = AnalysisOptions::default()
-            .with_columns(self.columns.clone())
-            .with_metric_packs(self.metric_packs.clone())
-            .with_quality_dimensions(self.quality_dimensions.clone())
-            .with_locale(self.locale)
-            .with_reference_date(self.reference_date)
-            .with_semantic_hints(self.semantic_hints.clone());
+        let options = &self.options;
         let projection = options
             .column_indices(&header_names)?
             .unwrap_or_else(|| (0..header_width).collect());
@@ -674,14 +676,14 @@ impl ArrowProfiler {
         .with_row_completeness(row_tracker.completeness_summary());
 
         if !MetricPack::include_quality(packs) {
-            assembler = assembler.record_analysis_settings(&options).skip_quality();
+            assembler = assembler.record_analysis_settings(options).skip_quality();
         } else {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_exact_value_hint_bindings(
                     hint_bindings.bindings(projected_header_names.iter().map(String::as_str)),
                 )
-                .with_analysis_options(&options);
+                .with_analysis_options(options);
         }
 
         Ok(assembler.build())
@@ -746,6 +748,9 @@ struct ColumnAnalyzer {
     // Reservoir sample for pattern detection and order statistics
     sample_values: StreamReservoirSampler,
     date_matched_values: usize,
+    /// Date statistics over every non-null value, independent of the
+    /// sample (#1297).
+    dates: DateTimeAccumulator,
 }
 
 impl ColumnAnalyzer {
@@ -760,6 +765,7 @@ impl ColumnAnalyzer {
             total_length: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
             date_matched_values: 0,
+            dates: DateTimeAccumulator::new(),
         }
     }
 
@@ -767,6 +773,7 @@ impl ColumnAnalyzer {
         if dataprof_metrics::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
+        self.dates.update(value);
         self.sample_values.offer(value);
     }
 
@@ -877,6 +884,7 @@ impl ColumnAnalyzer {
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
+            exact_dates: Some(&self.dates),
             decimal_values: false,
         })
     }

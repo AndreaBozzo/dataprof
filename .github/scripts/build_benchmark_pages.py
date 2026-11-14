@@ -75,7 +75,7 @@ PAGE_SHELL = """<!DOCTYPE html>
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="../">
-      <img src="../assets/logo-mark.png" alt="" width="32" height="32">
+      <img src="../assets/logo-mark-64.png" alt="" width="32" height="32">
       dataprof
     </a>
     <nav class="site-nav" aria-label="Main navigation">

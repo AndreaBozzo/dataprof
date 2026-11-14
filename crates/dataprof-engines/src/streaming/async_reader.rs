@@ -394,6 +394,13 @@ impl AsyncStreamingProfiler {
         self
     }
 
+    /// Count duplicate rows exactly up to `limit` distinct rows (#1292).
+    pub fn duplicate_rows_exact_limit(mut self, limit: usize) -> Self {
+        self.options =
+            std::mem::take(&mut self.options).with_duplicate_rows_exact_limit(Some(limit));
+        self
+    }
+
     pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
         self.options = std::mem::take(&mut self.options).with_semantic_hints(hints);
         self
@@ -1558,7 +1565,8 @@ impl AsyncStreamingProfiler {
         DataProfilerError,
     > {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb)
-            .with_semantic_hints(self.options.semantic_hints());
+            .with_semantic_hints(self.options.semantic_hints())
+            .with_duplicate_rows_exact_limit(self.options.duplicate_rows_exact_limit());
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
         let mut total_rows: usize = 0;

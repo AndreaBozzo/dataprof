@@ -17,7 +17,7 @@ from collections.abc import Iterator as _Iterator, Mapping as _Mapping, Sequence
 from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any
 
-from ._dataprof import finding_codes as _finding_codes
+from ._dataprof import __version__ as _version, finding_codes as _finding_codes
 from ._report_schema import _QUALITY_DIMENSIONS
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
@@ -79,7 +79,10 @@ class QualityCheck:
     bounds: dict[str, _Any] | None = None
     #: The baseline's side of a rule about change: its ``observed`` value,
     #: its ``evidence``, and ``change``, this check's ``observed`` minus the
-    #: baseline's in points. ``None`` on every other rule.
+    #: baseline's: in points, or for ``max_distinct_drop`` and the row count
+    #: rules in percent of the baseline's count. A ``full_source`` score drop
+    #: rule decided on a sampled baseline score adds ``bounds``, the
+    #: baseline's interval. ``None`` on every other rule.
     baseline: dict[str, _Any] | None = None
     #: The findings code a ``forbid_finding`` check concerns. ``None`` on
     #: every other rule.
@@ -153,6 +156,13 @@ class QualityGateResult:
     #: ``timeliness_clock``, the clock rule the score rules read. ``None``
     #: otherwise.
     baseline: dict[str, _Any] | None = None
+    #: The build that wrote the report evaluated (:attr:`ProfileReport.generator`),
+    #: which computed the metrics the verdict reads. ``None`` when the report
+    #: did not record one; the build evaluating the policy can be another.
+    generator: dict[str, _Any] | None = None
+    #: The caller's version of the source the report describes
+    #: (:attr:`ProfileReport.source_identity`), ``None`` when none was recorded.
+    source_identity: dict[str, _Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -190,11 +200,60 @@ class QualityGateResult:
         }
         if self.baseline is not None:
             document["baseline"] = dict(self.baseline)
+        document["generator"] = None if self.generator is None else dict(self.generator)
+        document["source_identity"] = (
+            None if self.source_identity is None else dict(self.source_identity)
+        )
         return document
 
     def to_json(self, indent: int = 2) -> str:
         """The result as a JSON string."""
         return _json.dumps(self.to_dict(), indent=indent)
+
+    def __str__(self) -> str:
+        """The short summary ``python -m dataprof.check`` prints."""
+        return "\n".join(_summary_lines(self, version=_version))
+
+
+def _summary_lines(
+    result: QualityGateResult, *, version: str, baseline_path: object = None
+) -> list[str]:
+    """The lines of the short summary: verdict, counts, then what did not pass.
+
+    The command line prints these to stderr and ``str(result)`` joins them.
+    ``baseline_path`` adds the line naming the baseline file, which only the
+    command line knows.
+    """
+    lines = [
+        f"dataprof {version}: "
+        f"{result.verdict}: {len(result.checks)} checks, "
+        f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
+        f"(scope: {result.scope})"
+    ]
+    if baseline_path is not None:
+        lines.append(f"  baseline: {baseline_path}")
+    for check in result.checks:
+        if check.status != "passed":
+            subject = next(
+                (s for s in (check.column, check.dimension, check.finding) if s is not None),
+                None,
+            )
+            label = f" [{subject}]" if subject is not None else ""
+            lines.append(f"  {check.status}: {check.code}{label}: {check.message}")
+    # Schema changes from the baseline never move the verdict, so a pass can
+    # carry them; without these lines only --json would show them.
+    for diagnostic in (result.baseline or {}).get("diagnostics", []):
+        detail = ""
+        if "data_type" in diagnostic:
+            types = diagnostic["data_type"]
+            detail += f" (baseline {types['a']}, report {types['b']})"
+        if "reason" in diagnostic:
+            detail += f" ({diagnostic['reason']}: {diagnostic['setting']})"
+        lines.append(
+            f"  diagnostic: {diagnostic['code']} [{diagnostic['column']}]: "
+            f"{diagnostic['message']}{detail}"
+        )
+    return lines
 
 
 def _real_number(value: _Any) -> float:
@@ -238,6 +297,46 @@ def _percentage(
     return number
 
 
+def _growth_percentage(code: str, value: _Any) -> float:
+    """Accept a growth threshold: a percentage of at least 0, with no upper
+    end, since a count can more than double."""
+    number = _real_number(value)
+    if number != number or number == float("inf") or number < 0.0:
+        raise _PolicyFieldError(
+            code, f"{code} threshold must be a percentage of at least 0, got {value!r}"
+        )
+    return number
+
+
+#: The largest age in days the Rust gate accepts (`u32`).
+_DAYS_MAX = (1 << 32) - 1
+
+
+def _days(code: str, value: _Any, subject: str) -> int:
+    """Accept an age in whole days the Rust gate can take."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _DAYS_MAX:
+        raise _PolicyFieldError(
+            code,
+            f"{code} for `{subject}` must be a whole number of days between 0 and "
+            f"{_DAYS_MAX}, got {value!r}",
+        )
+    return value
+
+
+def _date_columns(code: str, value: _Any) -> dict[str, int]:
+    """Accept a mapping of date column names to whole days.
+
+    The null rules read "*" as every column; the date rules name their date
+    columns, so "*" would only match a column of that name and leave the rule
+    unevaluated.
+    """
+    if value is not None and not isinstance(value, _Mapping):
+        raise _PolicyFieldError(code, f"{code} must map column names to days, got {value!r}")
+    if "*" in (value or {}):
+        raise _PolicyFieldError(code, f"{code} names date columns; it has no '*' form")
+    return {str(column): _days(code, days, str(column)) for column, days in (value or {}).items()}
+
+
 #: The largest count the Rust gate accepts (`usize` on the 64-bit wheels).
 _COUNT_MAX = (1 << 64) - 1
 
@@ -279,10 +378,15 @@ class _Policy:
         require_metrics: _Sequence[str] | None,
         scope: str,
         max_null_count: _Mapping[str, int] | int | None = None,
+        max_date_age: _Mapping[str, int] | None = None,
+        max_date_gap: _Mapping[str, int] | None = None,
         baseline: _RustProfileReport | str | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_distinct_drop: _Mapping[str, float] | float | None = None,
+        max_row_count_drop: float | None = None,
+        max_row_count_growth: float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -353,6 +457,9 @@ class _Policy:
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
 
+        self.max_date_age = _date_columns("max_date_age", max_date_age)
+        self.max_date_gap = _date_columns("max_date_gap", max_date_gap)
+
         self.max_quality_score_drop = (
             None
             if max_quality_score_drop is None
@@ -386,6 +493,33 @@ class _Policy:
             self.max_null_percentage_increase_any = _percentage(
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
+
+        self.max_distinct_drop: dict[str, float] = {}
+        self.max_distinct_drop_any: float | None = None
+        if isinstance(max_distinct_drop, _Mapping):
+            for column, value in max_distinct_drop.items():
+                limit = _percentage(
+                    "max_distinct_drop",
+                    None if column == "*" else str(column),
+                    value,
+                )
+                if column == "*":
+                    self.max_distinct_drop_any = limit
+                else:
+                    self.max_distinct_drop[str(column)] = limit
+        elif max_distinct_drop is not None:
+            self.max_distinct_drop_any = _percentage("max_distinct_drop", None, max_distinct_drop)
+
+        self.max_row_count_drop = (
+            None
+            if max_row_count_drop is None
+            else _percentage("max_row_count_drop", None, max_row_count_drop)
+        )
+        self.max_row_count_growth = (
+            None
+            if max_row_count_growth is None
+            else _growth_percentage("max_row_count_growth", max_row_count_growth)
+        )
 
         # A bare string is a sequence of characters, never a list of columns,
         # and a one-shot iterator would be consumed by the check below.
@@ -431,7 +565,8 @@ class _Policy:
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase, forbid_removed_columns, forbid_added_columns) "
+                "max_null_percentage_increase, max_distinct_drop, max_row_count_drop, "
+                "max_row_count_growth, forbid_removed_columns, forbid_added_columns) "
                 "needs a baseline report to compare against",
             )
 
@@ -452,6 +587,8 @@ class _Policy:
             or self.max_null_count
             or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
+            or self.max_date_age
+            or self.max_date_gap
             or self.require_quality
             or self.require_dimensions
             or self.require_columns
@@ -466,6 +603,10 @@ class _Policy:
             or bool(self.max_dimension_score_drops)
             or bool(self.max_null_percentage_increase)
             or self.max_null_percentage_increase_any is not None
+            or bool(self.max_distinct_drop)
+            or self.max_distinct_drop_any is not None
+            or self.max_row_count_drop is not None
+            or self.max_row_count_growth is not None
             or self.forbid_removed_columns
             or self.forbid_added_columns
         )
@@ -495,6 +636,8 @@ class _Policy:
                 max_null_count=list(self.max_null_count.items()),
                 max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
+                max_date_age=list(self.max_date_age.items()),
+                max_date_gap=list(self.max_date_gap.items()),
                 require_quality=self.require_quality,
                 require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,
@@ -503,6 +646,10 @@ class _Policy:
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
+                max_distinct_drop=list(self.max_distinct_drop.items()),
+                max_distinct_drop_any=self.max_distinct_drop_any,
+                max_row_count_drop=self.max_row_count_drop,
+                max_row_count_growth=self.max_row_count_growth,
                 require_columns=self.require_columns,
                 forbid_removed_columns=self.forbid_removed_columns,
                 forbid_added_columns=self.forbid_added_columns,
@@ -559,4 +706,6 @@ def _result_from_document(document: dict[str, _Any]) -> QualityGateResult:
         evidence=document["evidence"],
         checks=tuple(_check_from_document(check) for check in document["checks"]),
         baseline=document.get("baseline"),
+        generator=document["generator"],
+        source_identity=document["source_identity"],
     )

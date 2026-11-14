@@ -631,8 +631,8 @@ fn quality_gate_types_are_matched_with_a_wildcard() {
 #[test]
 fn report_delta_fields_are_reachable_through_the_facade() {
     use dataprof::{
-        ColumnChange, DimensionChange, ReportDelta, ReportReference, SchemaChange, ScoreChange,
-        SemanticsComparison, Sides,
+        ColumnChange, DimensionChange, ReportDelta, ReportPair, ReportReference, SchemaChange,
+        ScoreChange, SemanticsComparison, Sides,
     };
 
     fn score(change: &ScoreChange) -> usize {
@@ -682,7 +682,7 @@ fn report_delta_fields_are_reachable_through_the_facade() {
                     common,
                     ..
                 },
-            reports: Sides { a, b, .. },
+            reports: ReportPair { a, b, .. },
             ..
         } = delta;
         let _ = (semantics_a, semantics_b, comparable, added, removed, common);

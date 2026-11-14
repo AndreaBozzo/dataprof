@@ -8,18 +8,19 @@ pub mod types;
 
 pub use analysis::{
     MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast,
-    analyze_column_with_analysis_options, classify_lexical_forms, compute_value_hint_bindings,
-    detect_patterns, infer_type, is_null_like_token, lexical_class, list_patterns,
-    value_matches_hint,
+    analyze_column_with_analysis_options, analyze_declared_column, classify_lexical_forms,
+    compute_value_hint_bindings, detect_patterns, infer_type, is_null_like_token, lexical_class,
+    list_patterns, value_matches_hint,
 };
 pub use quality::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
-    QualityAssessment, QualityMetrics, QualityScores, RowCompletenessSummary, RowDuplicateSummary,
-    ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode, TimelinessClockTimezone,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,
+    MetricConfidence, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
+    RowCompletenessSummary, RowDuplicateSummary, ScoreBounds, ScoreInterval, TimelinessClock,
+    TimelinessClockMode, TimelinessClockTimezone, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics, ValueChecksSkipReason, columns_without_value_checks,
 };
 pub use stats::{
-    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal, HyperLogLog,
-    NumericAccumulator, ParsedNumber, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, spill_largest_exact_sets,
+    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, ExactDecimal,
+    HyperLogLog, NumericAccumulator, ParsedNumber, calculate_datetime_stats,
+    calculate_numeric_stats, calculate_text_stats, spill_largest_exact_sets,
 };

@@ -417,6 +417,35 @@ print(f"Before: {raw.quality_score:.2f}  After: {clean.quality_score:.2f}")
 print(f"Rows: {raw.rows} -> {clean.rows} ({raw.rows - clean.rows} dropped)")
 ```
 
+### Catch a key column that collapses to a few values
+
+```python
+import dataprof as dp
+
+baseline = dp.ProfileReport.load("quality/baseline.json")  # last accepted run
+today = dp.profile("landing/orders.csv", identifier_columns=["order_id"])
+
+result = today.check(
+    min_quality_score=85,
+    max_null_percentage={"customer_id": 5},
+    baseline=baseline,
+    # Fails when the distinct count fell by more than 10% of the baseline's
+    # and its share of the non-null values fell as far (0.14+).
+    max_distinct_drop={"customer_id": 10},
+)
+print(result.verdict)
+for check in result.violations:
+    if check.code == "max_distinct_drop":
+        print(check.column, check.baseline["observed"], "->", check.observed)
+    else:
+        print(check.code, check.column, check.observed)
+```
+
+A broken join that fills `customer_id` with one default value leaves the score
+and the null counts as they were. Only the distinct count moves, from 40 to 1
+in the runnable version, [`key_collapse_gate.py`](../../python/examples/key_collapse_gate.py).
+A smaller extract with the same share of distinct values passes.
+
 ### Monitor table quality across multiple CSVs
 
 ```python
@@ -538,6 +567,9 @@ asyncio.run(main())
 ---
 
 ## Rust Recipes
+
+The synchronous snippets go inside
+`fn main() -> Result<(), dataprof::DataProfilerError>`, before its final `Ok(())`.
 
 ### Basic file profiling
 
@@ -669,32 +701,66 @@ match quick_quality_check("data.csv")? {
 
 ### Async stream profiling
 
+Enable `async-streaming` for CSV and JSON byte streams, and add `bytes` directly:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["async-streaming"] }
+bytes = "1.10"
+```
+
 ```rust
 use dataprof::{Profiler, BytesSource, AsyncSourceInfo, FileFormat};
 
-let csv_bytes: bytes::Bytes = download_from_somewhere().await;
-let source = BytesSource::new(csv_bytes, AsyncSourceInfo::new("upload.csv", FileFormat::Csv));
+async fn profile_upload() -> Result<(), dataprof::DataProfilerError> {
+    let csv_bytes = bytes::Bytes::from_static(b"name,score\nada,100\n");
+    let source = BytesSource::new(csv_bytes, AsyncSourceInfo::new("upload.csv", FileFormat::Csv));
 
-let report = Profiler::new().profile_stream(source).await?;
+    let report = Profiler::new().profile_stream(source).await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ### Async URL profiling
 
+Remote Parquet needs `parquet-async`, which also enables `async-streaming`:
+
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["parquet-async"] }
+```
+
 ```rust
 use dataprof::Profiler;
 
-let report = Profiler::new()
-    .profile_url("https://example.com/data.parquet")
-    .await?;
+async fn profile_remote() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .profile_url("https://example.com/data.parquet")
+        .await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 ### Database query profiling
 
-```rust
-use dataprof::{Profiler, DatabaseConfig};
+Enable the PostgreSQL connector:
 
-let report = Profiler::new()
-    .connection_string("postgres://user:pass@localhost/mydb")
-    .analyze_query("SELECT * FROM users")
-    .await?;
+```toml
+[dependencies]
+dataprof = { version = "0.13", features = ["postgres"] }
+```
+
+```rust
+use dataprof::Profiler;
+
+async fn profile_users() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .connection_string("postgres://user:pass@localhost/mydb")
+        .analyze_query("SELECT * FROM users")
+        .await?;
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```

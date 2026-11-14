@@ -156,20 +156,22 @@ strings (no exponent, no trailing zeros in a fraction): `min`, `max`, `median`,
 `q1`, `q2`, `q3` and `mode`, each present when the `f64` field of the same name
 is, over the same values. It is present on every integer column and every
 decimal-typed column (an Arrow decimal read from Arrow, Parquet, pandas or
-polars), and absent on a float column, whose values are not held exactly. A
-CSV or JSON column of long decimal text is typed `float` and has no `exact`
-although its spread is exact, and so is a database `numeric` column, which
-arrives as text. A median or quartile between two integers is a decimal, such
-as `"9007199254740997.5"`. `exact` is absent on a report written before it
+polars, and a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column, whose declared
+type selects the decimal reading of its text, #1268), and absent on a float
+column, whose values are not held exactly. A CSV or JSON column of long decimal
+text is typed `float` and has no `exact` although its spread is exact. A median
+or quartile between two integers is a decimal, such as `"9007199254740997.5"`. `exact` is absent on a report written before it
 existed (#1038).
 
 Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
 deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
-`outlier_count` are exact as above, and the other statistics are taken in
-`f64`. A column typed as a decimal (an Arrow decimal of any
+`outlier_count` are exact as above, `mean` sums each value's remainder beyond
+its nearest `f64` in the compensated sum, as it does for integers (#1262), and
+the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
-polars) is held exactly from 11 significant digits. Text is held exactly
+polars, or a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column) is held exactly
+from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
 as the float it may be, as the same column typed `Float64` does. A CSV of a
 decimal column therefore serializes what the typed column does when its values
@@ -653,6 +655,12 @@ the end of its source (a row cap, a byte budget), or a report written before
 0.12. The quote that swallows the rest of the file is on the last record, so a
 scan that did not reach the end did not read it.
 
+`findings()` and `forbid_findings=["unterminated_quote"]` read that absence by
+the source format (#1306). On a CSV source, or a stream that records no
+format, the rule is not evaluated (`unrecorded`) and the check is
+inconclusive. On a source that is not CSV the rule does not apply and the
+check passes.
+
 Under `csv_flexible=False` such a source is refused instead, as a ragged row is.
 The field is additive and not `required`, so stored v1 reports remain valid.
 It is provenance about the source, not a metric, and every CSV engine and input
@@ -929,7 +937,10 @@ counted with the exact Tukey fences a column's `outlier_count` uses, and a
 value whose nearest `f64` equals a range or sign bound is compared with it by
 its digits. Through 0.13 both comparisons went through the value's nearest
 `f64`, so `100.000000000000000001` in a percentage column broke no rule, and a
-64-bit integer past 2^53 could land on the wrong side of a fence. The same
+64-bit integer past 2^53 could land on the wrong side of a fence. A column
+whose source declared a decimal (`native_type`) is read as a decimal with or
+without statistics (#1268); a pandas `object` column of `Decimal` values
+declares none and is read as text when statistics are not requested. The same
 bytes can therefore score lower on accuracy, and overall, than they did.
 
 A report that records no `accuracy_comparison` reads back with it unknown, and
@@ -969,6 +980,60 @@ the baseline with the current release to have those rules decided again. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `json_number_reading` is malformed, as for
 `text_length_unit`.
+
+## v1 additive change: `metric_semantics.sampled_score_estimator`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `sampled_score_estimator` | `"population_weighted"` | how a score computed over a retained sample estimates the score over every scanned value |
+
+A column keeps at most 10,000 of its non-null values for the sampled
+dimensions: consistency, accuracy, timeliness, validity and precision.
+Through 0.13 their scores pooled those samples, so a column counted as many
+values as its sample kept, and a sparse column read in full weighed as much
+as a dense one sampled from many more values. The score could then fall
+outside its own `score_bounds` (#1293). Each column's sampled counts are now
+scaled to its non-null values in the source, which is the score the bounds
+cover, so the score lies within its interval. A source whose samples hold
+every value scores as before. Only the scores change: the metric values
+beside them, such as `data_type_consistency` and `format_violations`, still
+describe the sample.
+
+A report that records no `sampled_score_estimator` reads back with it
+unknown, and a quality gate leaves the consistency, accuracy, timeliness,
+validity, precision and overall score rules over it
+`definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data. Regenerate the baseline with the current release to
+have those rules decided again. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for
+`sampled_score_estimator` is malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.date_statistics`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `date_statistics` | `"every_value"` | which values a date column's `min_datetime`, `max_datetime`, `duration_days`, year, month, weekday and hour distributions and `slash_date_order` are computed over |
+
+The file, Arrow and streaming engines keep at most 10,000 values of each
+column. Through 0.13 they computed a date column's statistics from those
+values, so on a larger source a date outside them was missing from
+`min_datetime` and `max_datetime`, the distributions counted the sample, and
+the slash order was decided from it, while the same data profiled in memory
+reported every value (#1297). The statistics are now computed over every
+non-null value read, on every engine. A source whose sample held every value
+reports as before.
+
+A `max_date_age` rule reads the record: with it, the newest date covers every
+value read, so a stale one fails on a complete scan. A report that records no
+`date_statistics` reads back with it unknown, and the rule keeps its earlier
+reading, `evidence_incomplete` (`quality_sampled`) for a stale date on a
+column larger than its sample. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for `date_statistics` is
+malformed, as for `text_length_unit`.
 
 ## v1 additive change: `generator`
 
@@ -1116,3 +1181,145 @@ follows: a component carrying signal that neither list names has
 `coverage_unrecorded` coverage, and so has any score that weighs it. A summary
 without `exact_dimensions` keeps reading a component that is not listed as
 sampled as exact. Stored v1 reports remain valid.
+
+## v1 additive change: column `native_type`
+
+Both dialects carry an optional `native_type` object on each column (#906):
+the type the source declared for the column, which `data_type` does not keep.
+Several declared types profile as one `data_type`, so an Arrow
+`decimal128(12, 2)` column is `Float` and a `timestamp[us, tz=UTC]` column is
+`Date`; `native_type` says which one the source declared.
+
+| field | meaning |
+| --- | --- |
+| `system` | the type system the declaration belongs to |
+| `name` | the type as that system spells it |
+
+| `system` | sources | `name` |
+| --- | --- | --- |
+| `arrow` | Arrow tables, record batches and streams, polars frames, ADBC results, Parquet files and buffers, local or remote | the name pyarrow prints for the type: `decimal128(12, 2)`, `timestamp[us, tz=UTC]`, `dictionary<values=string, indices=int32, ordered=0>` |
+| `pandas` | pandas DataFrames | the column's dtype as pandas prints it: `int64`, `object`, `datetime64[ns, UTC]`, `Int64`, `category` |
+| `postgresql`, `mysql` | the database connectors | the server's type name as the driver reports it: `NUMERIC`, `INT4`, `TIMESTAMPTZ`, `DECIMAL`, `BIGINT UNSIGNED` |
+
+A field that declares an Arrow extension type is named as the extension,
+`extension<arrow.uuid>` rather than the `fixed_size_binary[16]` that stores it,
+also as the child of a list, struct or map. pyarrow appends the parameters of a
+parameterized extension (`arrow.fixed_shape_tensor[value_type=int32, ...]`);
+the report keeps the name only. A Parquet column carries the Arrow type its reader produced from the file's
+schema, which keeps the Arrow schema the writer stored with the file. A pandas
+column records its dtype rather than the Arrow type the profiler read, because
+an `object` column declares no type for its values: pyarrow infers one from
+them. An index that pandas stores as columns takes the dtype of its level.
+
+The field is absent when the source declares no type: CSV, JSON and JSONL in
+every engine, Python dicts and lists of records, and SQLite, whose driver reads
+a declared type into a few classes and reports the first value's storage class
+for an expression or a declaration it does not know. It is also absent in every
+report written before 0.14. Both values are strings, so a report that names a
+system this build does not know still loads.
+
+The declaration is provenance, not a metric. Two input paths over the same
+logical data declare different types or none, so it stays outside the
+serialized-value parity comparison. Stored v1 reports remain valid.
+
+## v1 additive change: `analysis_settings.metric_packs`
+
+`analysis_settings` gains an optional `metric_packs` list (#1030): the metric
+packs the run computed, from `"schema"`, `"statistics"`, `"patterns"` and
+`"quality"`. `"schema"` is always listed, since every run computes it, and the
+packs follow that fixed order. An empty `quality_dimensions` selection drops
+`"quality"`, as the run then computes no quality.
+
+The packs move a score on unchanged data. Without `"patterns"` no column has
+detected patterns, so validity is not assessed and the overall score averages
+the other dimensions. `compare()` lists the packs under `configuration`. The
+baseline gate reads them for the validity score, and for the overall score
+when validity is assessed on one side only: when both sides record their
+packs and only one ran `"patterns"`, the rule is `setting_changed` on
+`metric_packs`.
+
+The field is absent from every report written before 0.14, whose packs are
+unknown rather than all four. An explicit `null` and an unknown pack name are
+malformed. Stored v1 reports remain valid.
+
+## v1 additive change: `analysis_settings.temporal_pairs`
+
+`analysis_settings` gains an optional `temporal_pairs` list (#1029): the
+start/end column pairs the run declared through `temporal_pairs`, each as
+`{"start": "...", "end": "..."}`. Timeliness counts a row whose start date
+falls after its end date, so pairing the same columns differently moves the
+score on unchanged data. The `temporal_pair` hint bindings already named the
+columns; this records which column pairs with which.
+
+The writer lists each pair once, sorted by start then end, since the
+calculator compares a repeated pair once and in any order. Direction is kept:
+a reversed pair counts the opposite rows. The list is empty when no pairs were
+declared.
+
+`compare()` lists the pairs under `configuration`, comparing them as a set of
+directed pairs. The baseline gate compares them for the timeliness and the
+overall score when both sides record them. Against a side that does not, it
+keeps the earlier rule: two empty pair-column lists agree, and anything else
+is `setting_unrecorded` on `temporal_pairs`.
+
+The field is absent from every report written before 0.14, whose pairs are
+unknown. An explicit `null` or a pair without a string `start` and `end` is
+malformed. Stored v1 reports remain valid.
+
+## v1 additive change: `quality.columns_without_value_checks`
+
+The quality block gains an optional `columns_without_value_checks` list in both
+dialects (#1134): the columns whose values no value-level check read, each as
+`{"column": "...", "reason": "..."}`, in column order. The one reason is
+`"nested"`: a struct, list or map column is counted and nothing more (#637).
+Its nulls count toward completeness and its values toward duplicate rows, but
+consistency, validity, accuracy, precision, timeliness and key uniqueness
+never read them, so those dimensions say nothing about their values. Before
+this, a source whose payload sat in such columns scored 100 with nothing in the
+report saying so.
+
+The list is empty when every column was checked. Every engine and input path
+records the same list for the same columns. The text and HTML renderings in
+Python (`repr()`, `to_markdown()`, `to_html()`, `to_llm_context()`) print a
+note next to the score when it is not empty.
+
+The field is absent from every report written before 0.14, which did not
+record it. An explicit `null` and an unknown reason are malformed. Stored v1
+reports remain valid.
+
+## v1 additive change: `largest_gap`
+
+The Rust dialect's `DateTime` statistics gain an optional `largest_gap`
+(#1300): the longest stretch between two consecutive distinct days of the
+column, as `{"days": 30, "from": "2024-01-31", "to": "2024-03-01"}`. `from` is
+the last day before the gap and `to` the first day after it. A contiguous daily
+column has a gap of `1`, and a column holding a single distinct day a gap of `0`
+from that day to itself. When several gaps are equally long, the earliest is
+reported. A datetime counts on its UTC day, as in the other date statistics,
+and ambiguous slash dates are read in the column's order.
+
+The gap is computed over every value read, as `metric_semantics.date_statistics`
+records for the other date statistics, so every engine and input path reports
+the same gap for the same values. A daily file that loses a period from the
+middle of its range keeps its newest date and most of its rows; this is where
+it shows, and the `max_date_gap` gate rule reads it.
+
+Absence means no value parsed as a date, the column's dates span more than
+10,000 distinct years (the profiler keeps one bitmap of days per year and stops
+past that), or the report predates 0.14. The flat summary carries no date
+statistics and so no gap. The field is additive and not `required`, so stored
+v1 reports remain valid.
+
+## v1 additive change: `duplicate_rows_exact_limit`
+
+`quality.metrics.uniqueness` gains an optional `duplicate_rows_exact_limit`
+(#1292): the distinct rows the full-stream row tracker counts exactly before
+`duplicate_rows` becomes an estimate. It is `1000000` unless the caller set
+`duplicate_rows_exact_limit` when profiling, and the flat summary carries it
+under the same name in `quality.uniqueness`. A limit the caller set is kept
+under memory pressure, so `duplicate_rows_approximate` is false whenever the
+source has no more distinct rows than the limit.
+
+Absence means no row tracker counted the rows (the duplicate count came from
+the retained sample), or the report predates 0.14. The field is additive and
+not `required`, so stored v1 reports remain valid.

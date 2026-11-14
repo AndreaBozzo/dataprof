@@ -22,7 +22,7 @@ from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _Rep
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ProfileReport as _RustProfileReport, report_delta_json as _report_delta_json
 from ._findings import FindingsResult as _FindingsResult, _evaluate as _evaluate_findings
-from ._gate import QualityGateResult as _QualityGateResult, _Policy
+from ._gate import QualityGateResult as _QualityGateResult, _Policy, _PolicyFieldError
 from ._paths import _normalize_pathlike
 from ._render import (
     _bounded,
@@ -138,6 +138,8 @@ class ProfileReport:
     """
 
     _MAX_REPR_COLUMNS = 15
+    #: Columns the value-checks note names before it counts the rest.
+    _MAX_NOTE_COLUMNS = 5
 
     def __init__(self, report: _RustProfileReport | _ReportView):
         self._native_report = None if isinstance(report, _ReportView) else report
@@ -329,6 +331,44 @@ class ProfileReport:
         return None if bounds is None else _copy.deepcopy(dict(bounds))
 
     @property
+    def quality_columns_without_value_checks(self) -> list[dict[str, str]] | None:
+        """Columns whose values no value-level quality check read.
+
+        Each entry is ``{"column": ..., "reason": ...}``, in column order. The
+        one reason today is ``"nested"``: a struct, list or map column, whose
+        values reach the checks only as a serialisation that differs by input
+        path. Its nulls still count toward completeness and its values toward
+        duplicate rows, but consistency, validity, accuracy, precision,
+        timeliness and key uniqueness never read them, so those dimensions
+        of :attr:`quality_score` say nothing about their values.
+
+        An empty list means every column was checked. ``None`` when there is
+        no quality assessment, or the report was loaded from a document
+        written before 0.14, which did not record this.
+        """
+        columns = self._report.quality_columns_without_value_checks
+        return None if columns is None else [dict(entry) for entry in columns]
+
+    def _value_checks_note(self) -> str | None:
+        """One line saying which columns the score's value checks skipped.
+
+        ``None`` when every column was checked or the report does not say.
+        """
+        skipped = self.quality_columns_without_value_checks
+        if not skipped:
+            return None
+        shown = [
+            f"{_bounded(_one_line(entry['column']))} ({entry['reason']})"
+            for entry in skipped[: self._MAX_NOTE_COLUMNS]
+        ]
+        if len(skipped) > len(shown):
+            shown.append(f"+{len(skipped) - len(shown)} more")
+        return (
+            f"the quality score's value checks skipped {len(skipped)} of "
+            f"{self.columns} columns: {', '.join(shown)}"
+        )
+
+    @property
     def metric_semantics(self) -> dict[str, str] | None:
         """How this report's measurements were defined.
 
@@ -365,6 +405,25 @@ class ProfileReport:
         ``{"selection": "listed", "names": [...]}`` for a ``columns=``
         projection, in the order given. A baseline ``check()`` reads it to
         tell a column the source lacks from one that was not selected.
+
+        ``metric_packs`` lists the packs the run computed, ``"schema"``
+        always among them, in the order ``schema``, ``statistics``,
+        ``patterns``, ``quality``. Without ``"patterns"`` validity is not
+        assessed and the overall score averages the other dimensions. A
+        baseline ``check()`` whose reports both record it and disagree on
+        ``"patterns"`` leaves the validity rule, and the overall rule when
+        validity is assessed on one side only, ``setting_changed`` on
+        ``metric_packs``. Absent from a report written before 0.14, which
+        did not record it.
+
+        ``temporal_pairs`` lists the start/end pairs ``temporal_pairs=``
+        declared, as ``{"start": ..., "end": ...}``, sorted, each once:
+        timeliness compares each pair once whatever order the list gives,
+        but a reversed pair counts the opposite rows. Empty when none were
+        declared. :meth:`compare` lists it under ``configuration``, and a
+        baseline ``check()`` decides a timeliness or overall drop only when
+        both reports declare the same pairs. Absent from a report written
+        before 0.14, which recorded only the columns the pairs named.
 
         ``None`` for a report loaded from a document written before dataprof
         recorded them: the settings are unknown, not the defaults.
@@ -523,6 +582,20 @@ class ProfileReport:
         return self._report.schema_version
 
     @property
+    def _ragged_row_count_recorded(self) -> bool:
+        """Whether ``ragged_row_count`` is a count the writer recorded.
+
+        Private, like ``_schema_version``: a document from before 0.10 did not
+        count ragged rows, and a summary that omits the field records none
+        either. Both read back as 0 through the public accessor.
+        """
+        if self._schema_version == 0:
+            return False
+        if self._native_report is not None:
+            return True
+        return bool(self._report._accessor.get("ragged_row_count_recorded"))
+
+    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 
@@ -609,6 +682,9 @@ class ProfileReport:
             bounds = self.quality_score_bounds
             if bounds is not None:
                 quality_dict["score_bounds"] = bounds
+            skipped = self.quality_columns_without_value_checks
+            if skipped is not None:
+                quality_dict["columns_without_value_checks"] = skipped
             # The Rust summary always names the weights behind its score
             # (#749). A summary that did not record them keeps them absent:
             # the defaults the loader filled in would be a guess.
@@ -639,7 +715,14 @@ class ProfileReport:
                 "throughput_rows_sec": _r4(self._report.throughput_rows_sec),
                 "memory_peak_mb": _r2(self._report.memory_peak_mb),
                 "error_count": self._report.error_count,
-                "ragged_row_count": self._report.ragged_row_count,
+                # Omitted when the loaded document did not record it, so a
+                # saved and reloaded summary still reads it as unrecorded,
+                # never as a measured zero (#1306 review).
+                **(
+                    {"ragged_row_count": self._report.ragged_row_count}
+                    if self._ragged_row_count_recorded
+                    else {}
+                ),
                 # Omitted when the loaded document did not record it, so the
                 # gate reads the coverage as unrecorded, never as unsampled
                 # (#1236).
@@ -792,12 +875,17 @@ class ProfileReport:
         max_null_percentage: _Mapping[str, float] | float | None = None,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
+        max_date_age: _Mapping[str, int] | None = None,
+        max_date_gap: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
         baseline: ProfileReport | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_distinct_drop: _Mapping[str, float] | float | None = None,
+        max_row_count_drop: float | None = None,
+        max_row_count_growth: float | None = None,
         require_columns: _Sequence[str] | None = None,
         forbid_removed_columns: bool = False,
         forbid_added_columns: bool = False,
@@ -845,6 +933,34 @@ class ProfileReport:
                 exact count. Same mapping shape as ``max_null_percentage``.
                 ``{"customer_id": 0}`` states "no nulls" at any row count.
             max_duplicate_rows: Ceiling for the duplicate-row count.
+            max_date_age: Days a column's newest date (its ``max_datetime``)
+                may lie before the timeliness reference date the report
+                recorded, so a feed that stopped moving fails:
+                ``{"published_at": 3}``. The reference date is the profiling
+                call's ``reference_date``, or the run's date when none was
+                given, and the age is counted in calendar days. A date after
+                the reference date is fresh. A newest date read on part of a
+                source can only be overtaken by a newer one, so under
+                ``"full_source"`` a fresh date passes on any scan, and a stale
+                one fails only when every row was read and the column's date
+                statistics saw every value; otherwise it is
+                ``evidence_incomplete``. Slash dates are the exception: their
+                day and month order is decided from the values read, so a
+                fresh one read on part of a column is ``evidence_incomplete``
+                while the unread values could still change that order. A
+                column with no newest date (not typed as a date, all null) is
+                ``not_assessed``.
+            max_date_gap: Days the largest gap between a column's
+                consecutive distinct dates may span, so a daily file that lost
+                a period from the middle of its range fails:
+                ``{"published_at": 1}`` allows no missing day. The gap is the
+                column's ``largest_gap``, read over every value profiled.
+                Unread rows can fill a gap or open a new one at either edge,
+                so under ``"full_source"`` the rule decides only when every
+                row was read and the column's date statistics saw every
+                value; otherwise it is ``evidence_incomplete`` either way. A
+                column with no gap recorded (not typed as a date, all null, a
+                report from before 0.14) is ``not_assessed``.
             require_metrics: Metrics that must have been analyzed at all:
                 ``"quality"`` for the assessment as a whole, or a dimension
                 name. Without this, a report with no assessment leaves the
@@ -861,7 +977,9 @@ class ProfileReport:
                 ``to_dict()`` summary, which leaves what it did not record
                 unrecorded.
             max_quality_score_drop: How many points the overall score may
-                fall below the baseline's, 0-100.
+                fall below the baseline's, 0-100. Under ``"full_source"``, a
+                score computed over a retained sample is read as its
+                ``quality_score_bounds`` interval on either side.
             max_dimension_score_drops: The same per ISO 25012 dimension.
             max_null_percentage_increase: How many points a column's null
                 percentage may rise above the baseline's, 0-100. A mapping
@@ -869,6 +987,29 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            max_distinct_drop: How far a column's distinct count may fall,
+                in percent (0-100) of the baseline's count, as a key that
+                suddenly repeats. Same mapping shape as
+                ``max_null_percentage_increase``. Fewer rows alone are not a
+                collapse: the check fails only when the column's distinct
+                share of non-null values also fell by more than that
+                percentage of the baseline's share. Decided on exact counts
+                only, so a count either side estimated, or did not record as
+                exact, leaves it ``approximate_count``.
+            max_row_count_drop: How far the row count may fall, in percent
+                (0-100) of the baseline's ``rows_processed``, as a truncated
+                extract. A scan that stopped early read a lower bound of its
+                source's rows, so under ``"full_source"`` an incomplete scan
+                of this report still decides a pass, an incomplete baseline
+                still decides a failure, and the other outcome is
+                ``evidence_incomplete``. An allowance of 100 passes whatever
+                the scans missed, since a count cannot fall by more. A
+                different column set leaves it ``schema_changed``.
+            max_row_count_growth: How far the row count may grow, in percent
+                of the baseline's, 0 or more, as a join that fans out or a
+                file published twice. The mirror of ``max_row_count_drop``:
+                an incomplete scan of this report still decides a failure,
+                and an incomplete baseline a pass.
             require_columns: Columns this report must have; needs no baseline.
                 One check per name, in name order.
             forbid_removed_columns: Require every column the baseline profiled
@@ -922,10 +1063,18 @@ class ProfileReport:
         depends on; ``setting_changed`` or ``setting_unrecorded`` for a
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
-        side does not cover its whole source. ``result.baseline`` names both
+        side does not cover its whole source. A score drop rule reads a
+        score computed over a retained sample of a fully read source as its
+        recorded interval, and is decided when every change the two sides'
+        intervals allow lies on one side of the allowance; the check records
+        them as ``bounds`` and ``baseline["bounds"]``. ``result.baseline`` names both
         reports and how their columns differ, and its ``diagnostics`` list
         each column added, removed, retyped or now all null, which never move
         the verdict.
+
+        ``result.generator`` and ``result.source_identity`` name the build
+        that wrote this report and the caller's version of its source, each
+        ``None`` when the report did not record it.
 
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
@@ -941,25 +1090,36 @@ class ProfileReport:
             raise TypeError(
                 f"baseline must be a dataprof ProfileReport, got {type(baseline).__name__}"
             )
-        return _Policy(
-            min_rows=min_rows,
-            min_quality_score=min_quality_score,
-            min_dimension_scores=min_dimension_scores,
-            max_null_percentage=max_null_percentage,
-            max_null_count=max_null_count,
-            max_duplicate_rows=max_duplicate_rows,
-            require_metrics=require_metrics,
-            scope=scope,
-            baseline=None if baseline is None else baseline._delta_input(),
-            max_quality_score_drop=max_quality_score_drop,
-            max_dimension_score_drops=max_dimension_score_drops,
-            max_null_percentage_increase=max_null_percentage_increase,
-            require_columns=require_columns,
-            forbid_removed_columns=forbid_removed_columns,
-            forbid_added_columns=forbid_added_columns,
-            forbid_findings=forbid_findings,
-            timeliness_clock=timeliness_clock,
-        ).evaluate(self._native_report)
+        try:
+            policy = _Policy(
+                min_rows=min_rows,
+                min_quality_score=min_quality_score,
+                min_dimension_scores=min_dimension_scores,
+                max_null_percentage=max_null_percentage,
+                max_null_count=max_null_count,
+                max_duplicate_rows=max_duplicate_rows,
+                max_date_age=max_date_age,
+                max_date_gap=max_date_gap,
+                require_metrics=require_metrics,
+                scope=scope,
+                baseline=None if baseline is None else baseline._delta_input(),
+                max_quality_score_drop=max_quality_score_drop,
+                max_dimension_score_drops=max_dimension_score_drops,
+                max_null_percentage_increase=max_null_percentage_increase,
+                max_distinct_drop=max_distinct_drop,
+                max_row_count_drop=max_row_count_drop,
+                max_row_count_growth=max_row_count_growth,
+                require_columns=require_columns,
+                forbid_removed_columns=forbid_removed_columns,
+                forbid_added_columns=forbid_added_columns,
+                forbid_findings=forbid_findings,
+                timeliness_clock=timeliness_clock,
+            )
+        except _PolicyFieldError as exc:
+            if exc.key != "baseline":
+                raise
+            raise ValueError(f"{exc}: pass baseline=ProfileReport.load('baseline.json')") from None
+        return policy.evaluate(self._native_report)
 
     def findings(
         self,
@@ -1122,6 +1282,7 @@ class ProfileReport:
             f"**Source:** {esc(self.source)} | **Rows:** {self.rows:,} | "
             f"**Columns:** {self.columns} | **Quality:** {qs_str} | "
             f"**Time:** {self.execution_time_ms}ms",
+            *([f"**Note:** {esc(note)}"] if (note := self._value_checks_note()) else []),
             "",
             "| Column | Type | Count | Null % | Unique | Stats | Pattern |",
             "|---|---|---|---|---|---|---|",
@@ -1201,6 +1362,9 @@ class ProfileReport:
             header.append(f"caveat: scan stopped early ({self.truncation_reason})")
         if self.low_sample_warning:
             header.append("caveat: low sample size, quality metrics are unreliable")
+        note = self._value_checks_note()
+        if note is not None:
+            header.append(f"caveat: {note}")
         # "quality: n/a" reads as a skipped run whatever the reason was. A
         # computation that was asked for and broke is a caveat about the whole
         # report, not a missing number.
@@ -1296,7 +1460,13 @@ class ProfileReport:
           validity, precision), as :meth:`quality_summary` reports them.
         - ``columns``: per-column ``null_pct_a``, ``null_pct_b`` and
           ``null_pct_delta`` over the union of column names, this report's
-          order first.
+          order first. Each entry also has ``data_type_a`` and
+          ``data_type_b``, the inferred type (``"integer"``), ``None`` on a
+          side that lacks the column or read no value for it that is not
+          null, so two different names are what :meth:`check` reports as
+          ``column_type_changed``; and ``native_type_a`` and
+          ``native_type_b``, the type the source declared (see
+          :attr:`ColumnProfile.native_type`), ``None`` where it declared none.
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
         - ``metric_semantics``: each side's :attr:`metric_semantics` and
           ``comparable``: ``True`` when both record every definition this
@@ -1308,18 +1478,37 @@ class ProfileReport:
           unchanged data, ``score_weights``, ``semantic_hints`` (the
           columns named by ``positive_columns``, ``identifier_columns``,
           ``temporal_columns`` and ``temporal_pairs``), ``pattern_locale``
-          (see :attr:`analysis_settings`) and ``timeliness_clock`` (the
-          ``clock`` in ``quality.timeliness``). Each has ``a``, ``b`` and
-          ``same``: ``True`` when both sides recorded it and agree, ``False``
-          when they differ, ``None`` when either did not record it (weights
-          on a summary saved before 0.12, hints before 0.10, the locale
-          before 0.13, the clock before 0.14 or with no timeliness
+          (see :attr:`analysis_settings`), ``timeliness_clock`` (the
+          ``clock`` in ``quality.timeliness``), ``columns`` (each side's
+          ``columns=`` selection, see :attr:`analysis_settings`; ``same``
+          ignores the order a list gives), ``metric_packs`` (the packs
+          each side computed, see :attr:`analysis_settings`) and
+          ``temporal_pairs`` (the pairs each side declared, see
+          :attr:`analysis_settings`; ``same`` compares the pairs, not the
+          order or repetition of a list). Each has
+          ``a``, ``b`` and ``same``: ``True`` when both sides recorded it
+          and agree, ``False`` when they differ, ``None`` when either did
+          not record it (weights on a summary saved before 0.12, hints
+          before 0.10, the locale and the selection before 0.13, the clock,
+          the packs and the pairs before 0.14, the clock also with no timeliness
           assessment). Two rolling clocks read on different days differ.
           A score that moved under a different setting may not reflect a change
           in the data.
-        - ``reports``: for each side, its ``id`` and ``timestamp`` (``None``
-          for a flat summary), ``source``, ``rows_processed`` and the scan's
-          ``evidence``.
+        - ``reports``: ``a`` and ``b``, each with its ``id`` and
+          ``timestamp`` (``None`` for a flat summary), ``source``,
+          ``rows_processed``, the scan's ``evidence``, ``generator`` (the
+          build that wrote it, see :attr:`generator`) and ``source_identity``
+          (see :attr:`source_identity`), each ``None`` where the side did not
+          record it; and ``same_build``, which reads the builds in order and
+          stops at the first answer: ``None`` when either side recorded no
+          build, ``False`` when the versions differ, ``None`` when either
+          side recorded no commit, ``False`` when the commits differ,
+          ``None`` when either side recorded no dirty flag, then ``True``
+          when both are clean, ``False`` when one is dirty, and ``None``
+          when both are dirty builds of one commit. A known difference gives
+          ``False`` even when a later field is missing. A change
+          between two builds can come from a definition that changed between
+          them.
 
         Every change is ``b - a``: a positive score change is an improvement,
         a positive ``null_pct_delta`` is more nulls. Numbers are compared at
@@ -1335,7 +1524,15 @@ class ProfileReport:
         The shape is stable: later releases may add keys, but do not remove
         or rename them. Either report may be loaded from a flat ``to_dict()``
         summary, including one saved before 0.12.
+
+        Raises:
+            TypeError: ``other`` is not a :class:`ProfileReport`.
         """
+        if not isinstance(other, ProfileReport):
+            raise TypeError(
+                f"other must be a dataprof ProfileReport, got {type(other).__name__}; "
+                "profile the data first, or load a saved report with ProfileReport.load(path)"
+            )
         return _json.loads(_report_delta_json(self._delta_input(), other._delta_input()))
 
     def _delta_input(self) -> _RustProfileReport | str:
@@ -1468,6 +1665,9 @@ class ProfileReport:
             f"rows={self.rows:,}, columns={self.columns}, "
             f"time={self.execution_time_ms}ms, quality={qs_str})"
         ]
+        note = self._value_checks_note()
+        if note is not None:
+            lines.append(f"Note: {note}")
 
         cols = list(self._report.column_profiles)
         show = cols[: self._MAX_REPR_COLUMNS]
@@ -1517,6 +1717,8 @@ class ProfileReport:
             )
         else:
             qs_html = "N/A"
+        note = self._value_checks_note()
+        note_html = f"<p><i>Note: {_html.escape(note)}</i></p>" if note is not None else ""
 
         col_rows = ""
         for i, col in enumerate(self._report.column_profiles):
@@ -1550,6 +1752,7 @@ class ProfileReport:
             f"<b>Columns:</b> {self.columns} | "
             f"<b>Quality:</b> {qs_html} | "
             f"<b>Time:</b> {self.execution_time_ms}ms</p>"
+            f"{note_html}"
             "<table style='border-collapse:collapse;width:100%'>"
             "<tr style='border-bottom:2px solid #e5e7eb'>"
             "<th style='text-align:left;padding:4px 8px'>Column</th>"

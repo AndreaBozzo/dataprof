@@ -104,6 +104,7 @@ fn whole_columns_with_nulls_in_place_are_still_compared() {
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,
+        native_type: None,
         stats: ColumnStats::Text(TextStats::from_lengths(10, 10, 10.0)),
         patterns: None,
     };

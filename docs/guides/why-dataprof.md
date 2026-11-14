@@ -129,10 +129,11 @@ when it already expresses the requirements you need to enforce.
 dataprof fits when the requirement is a threshold over the profile it already
 produces, and you want the decision tied to the available evidence. It does
 not replace arbitrary row-level expectations or business logic in these tools.
-In particular, `check()` has no rule for repeated key values, per-column value
-bounds, allowed-value sets or declared column types. Use a validation tool for
-those requirements. `max_duplicate_rows` checks repeated whole rows, which
-does not establish that a business key is unique.
+Declare the key with `identifier_columns`, then use
+`check(forbid_findings=["key_duplicates"])` to reject repeated non-null keys.
+`check()` has no rule for per-column value bounds, allowed-value sets or declared
+column types. Use a validation tool for those requirements. `max_duplicate_rows`
+checks repeated whole rows, which does not establish that a business key is unique.
 
 ## Rule of thumb
 

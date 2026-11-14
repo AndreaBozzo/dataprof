@@ -52,6 +52,8 @@ class QualityGateResult:
     evidence: dict[str, Any]
     checks: tuple[QualityCheck, ...]
     baseline: dict[str, Any] | None
+    generator: dict[str, Any] | None
+    source_identity: dict[str, Any] | None
 
     def __init__(
         self,
@@ -60,6 +62,8 @@ class QualityGateResult:
         evidence: dict[str, Any],
         checks: tuple[QualityCheck, ...] = ...,
         baseline: dict[str, Any] | None = ...,
+        generator: dict[str, Any] | None = ...,
+        source_identity: dict[str, Any] | None = ...,
     ) -> None: ...
     @property
     def passed(self) -> bool: ...
@@ -71,7 +75,11 @@ class QualityGateResult:
     def __iter__(self) -> Iterator[QualityCheck]: ...
     def to_dict(self) -> dict[str, Any]: ...
     def to_json(self, indent: int = ...) -> str: ...
+    def __str__(self) -> str: ...
 
+def _summary_lines(
+    result: QualityGateResult, *, version: str, baseline_path: object = ...
+) -> list[str]: ...
 def _real_number(value: Any) -> float: ...
 
 class _PolicyFieldError(ValueError):
@@ -91,10 +99,15 @@ class _Policy:
         require_metrics: Sequence[str] | None,
         scope: str,
         max_null_count: Mapping[str, int] | int | None = ...,
+        max_date_age: Mapping[str, int] | None = ...,
+        max_date_gap: Mapping[str, int] | None = ...,
         baseline: Any = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,
+        max_distinct_drop: Mapping[str, float] | float | None = ...,
+        max_row_count_drop: float | None = ...,
+        max_row_count_growth: float | None = ...,
         require_columns: Sequence[str] | None = ...,
         forbid_removed_columns: bool = ...,
         forbid_added_columns: bool = ...,

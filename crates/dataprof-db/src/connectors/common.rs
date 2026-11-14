@@ -114,8 +114,11 @@ macro_rules! db_column_to_string {
         }
         // Arms the shared chain cannot express because the type has no impl
         // for one of the backends. `to_string` is exact for both of today's
-        // callers: `u64` prints its digits, and `BigDecimal` keeps the scale
-        // the database stored rather than rounding through f64.
+        // callers: `u64` prints its digits, and `BigDecimal` keeps the
+        // database's value rather than rounding through f64. Its scale can
+        // differ: sqlx pads a PostgreSQL `NUMERIC` to whole groups of four
+        // decimals and drops the declared scale (`NUMERIC(10,2)` 1.50 reads
+        // `1.5000`, 4.00 reads `4`; transact-rs/sqlx#468).
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
             v.map(|x| x.to_string())
         })*
@@ -355,6 +358,13 @@ macro_rules! streaming_profile_loop {
         // Built from the driver's column list, so a zero-row query still returns
         // named empty columns, and values are filed by position in query order.
         let mut columns = $crate::QueryColumns::with_names(column_names.clone(), 0);
+        columns.set_type_names(
+            description
+                .columns()
+                .iter()
+                .map(|column| ::sqlx::TypeInfo::name(column.type_info()).to_string())
+                .collect(),
+        );
         let mut rows = sqlx::query(&select_query).fetch($pool);
         let mut rows_read = 0usize;
         let mut log_progress = |read: usize| {
@@ -419,6 +429,12 @@ macro_rules! process_rows_to_columns {
                     // Built from the driver's column list, so the result carries
                     // the query's column order and values are filed by position.
                     let mut result = $crate::QueryColumns::with_names(column_names, $rows.len());
+                    result.set_type_names(
+                        columns
+                            .iter()
+                            .map(|column| ::sqlx::TypeInfo::name(column.type_info()).to_string())
+                            .collect(),
+                    );
 
                     for row in &$rows {
                         for i in 0..columns.len() {

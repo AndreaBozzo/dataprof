@@ -31,12 +31,18 @@
 //!   releases is not a difference in the data.
 //! - **Configuration.** `configuration` lists each recorded setting that moves
 //!   a score on unchanged data (the score weights, the semantic hints, the
-//!   pattern locale) on both
+//!   pattern locale, the timeliness clock, the column selection, the metric
+//!   packs, the declared temporal pairs) on both
 //!   sides, with `same`: `Some(true)` when both recorded it and agree,
 //!   `Some(false)` when they differ, `None` when either did not record it.
 //!   Configuration is not comparability: a score that moved under a different
 //!   setting may not reflect a change in the data. Each policy reads only the
 //!   settings it depends on.
+//! - **Builds.** `reports` names each side's `generator`, the build that
+//!   wrote it, and its `source_identity`, the caller's version of the source,
+//!   `None` where the side did not record one. `same_build` says whether one
+//!   build wrote both: a difference between two builds can come from a
+//!   definition that changed between them, not from the data.
 //!
 //! Nothing here decides whether a change is acceptable; that is a policy's
 //! job. A window-over-window comparison reuses the same vocabulary: `a` and
@@ -62,17 +68,19 @@ use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataSource, DataType, FileFormat, QualityDimension, QualityScoreWeights, SemanticHintBinding,
-    SemanticHintKind,
+    DataSource, DataType, FileFormat, MetricPack, NativeType, QualityDimension,
+    QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
 };
 use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityMetrics,
-    TimelinessClock, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
+    QualityMetrics, ScoreBounds, TimelinessClock, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics,
 };
 use serde::ser::{SerializeMap, Serializer};
 
 use crate::profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
+    ReportGenerator, SourceIdentity, TemporalPair,
 };
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
@@ -103,6 +111,60 @@ pub struct ReportReference {
     pub rows_processed: Option<usize>,
     /// Whether the scan covered the whole source.
     pub evidence: Evidence,
+    /// The build that wrote the report, `None` when the report did not
+    /// record one (before 0.13). Provenance, not a measurement: it never
+    /// moves a number in the comparison.
+    pub generator: Option<ReportGenerator>,
+    /// The caller's version of the source the report describes, `None` when
+    /// none was recorded. Provenance, like `generator`.
+    pub source_identity: Option<SourceIdentity>,
+}
+
+/// The two reports a comparison read, and whether one build wrote both.
+///
+/// Serialized as `{"a": ..., "b": ..., "same_build": ...}`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct ReportPair {
+    /// The first report.
+    pub a: ReportReference,
+    /// The second report.
+    pub b: ReportReference,
+    /// Whether the same build wrote both reports, read in order and stopping
+    /// at the first answer: `None` when either side recorded no build;
+    /// `Some(false)` when the versions differ; `None` when either side
+    /// recorded no commit; `Some(false)` when the commits differ; `None` when
+    /// either side recorded no dirty flag; then `Some(true)` when both are
+    /// clean, `Some(false)` when one is dirty, and `None` when both are dirty
+    /// builds of one commit, whose uncommitted changes nothing records. A
+    /// known difference gives `Some(false)` even when a later field is
+    /// missing.
+    pub same_build: Option<bool>,
+}
+
+impl ReportPair {
+    fn new(a: ReportReference, b: ReportReference) -> Self {
+        let same_build = same_build(a.generator.as_ref(), b.generator.as_ref());
+        Self { a, b, same_build }
+    }
+}
+
+/// Whether two recorded builds are the same build; see
+/// [`ReportPair::same_build`] for the rule.
+fn same_build(a: Option<&ReportGenerator>, b: Option<&ReportGenerator>) -> Option<bool> {
+    let (a, b) = (a?, b?);
+    if a.version != b.version {
+        return Some(false);
+    }
+    let (commit_a, commit_b) = (a.commit.as_ref()?, b.commit.as_ref()?);
+    if commit_a != commit_b {
+        return Some(false);
+    }
+    match (a.dirty?, b.dirty?) {
+        (false, false) => Some(true),
+        (true, true) => None,
+        _ => Some(false),
+    }
 }
 
 /// One score on both sides and how it moved.
@@ -170,6 +232,30 @@ pub struct ColumnChange {
     /// `null_pct_b - null_pct_a`, when both are present. Positive means more
     /// nulls.
     pub null_pct_delta: Option<f64>,
+    /// The type `a` inferred, by its lowercase name (`"integer"`), or `None`
+    /// when `a` has no such column, read no value for it that is not null,
+    /// or did not record its counts or a type this build knows. A column
+    /// whose values are all null establishes no type, so two names that
+    /// differ here are the change the quality gate reports as
+    /// `column_type_changed`.
+    #[serde(serialize_with = "serialize_type_name")]
+    pub data_type_a: Option<DataType>,
+    /// The type `b` inferred, under the same rules.
+    #[serde(serialize_with = "serialize_type_name")]
+    pub data_type_b: Option<DataType>,
+    /// The type `a`'s source declared for the column (#906), or `None` when
+    /// `a` has no such column or recorded no declaration. A declaration does
+    /// not depend on the values, so it is kept for an all-null column too.
+    pub native_type_a: Option<NativeType>,
+    /// The type `b`'s source declared, under the same rules.
+    pub native_type_b: Option<NativeType>,
+}
+
+fn serialize_type_name<S: Serializer>(
+    data_type: &Option<DataType>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&data_type.as_ref().map(DataType::name), serializer)
 }
 
 /// Each side's recorded measurement definitions, and whether they agree.
@@ -203,12 +289,43 @@ pub struct SettingComparison<T> {
 
 impl<T: PartialEq> SettingComparison<T> {
     fn new(a: Option<T>, b: Option<T>) -> Self {
+        Self::new_by(a, b, |left, right| left == right)
+    }
+}
+
+impl<T> SettingComparison<T> {
+    fn new_by(a: Option<T>, b: Option<T>, same: impl Fn(&T, &T) -> bool) -> Self {
         let same = match (&a, &b) {
-            (Some(left), Some(right)) => Some(left == right),
+            (Some(left), Some(right)) => Some(same(left, right)),
             _ => None,
         };
         Self { a, b, same }
     }
+}
+
+/// Whether two selections profile the same columns. The order a `columns=`
+/// list gives orders the report's columns and moves no score, so it is not
+/// compared; `all` and a list are different settings even when the list
+/// names every column, since only `all` follows the source's columns.
+fn same_selection(a: &ColumnSelection, b: &ColumnSelection) -> bool {
+    match (a, b) {
+        (ColumnSelection::Listed { names: left }, ColumnSelection::Listed { names: right }) => {
+            let left: HashSet<&str> = left.iter().map(String::as_str).collect();
+            let right: HashSet<&str> = right.iter().map(String::as_str).collect();
+            left == right
+        }
+        _ => a == b,
+    }
+}
+
+/// Whether two records declare the same pairs. A writer records them sorted
+/// and once each; a document edited by hand may not, and the calculator
+/// compares each pair once in any order, so neither order nor repetition is
+/// compared. Direction is: a reversed pair counts the opposite rows.
+fn same_pairs(a: &[TemporalPair], b: &[TemporalPair]) -> bool {
+    let left: HashSet<&TemporalPair> = a.iter().collect();
+    let right: HashSet<&TemporalPair> = b.iter().collect();
+    left == right
 }
 
 /// The semantic hints a report recorded, by the configuration field that
@@ -228,8 +345,10 @@ pub struct RecordedHints {
     pub identifier_columns: Vec<String>,
     /// Columns named by `temporal_columns`, sorted.
     pub temporal_columns: Vec<String>,
-    /// Columns named by `temporal_pairs`, sorted. A report records which
-    /// columns the pairs named, not which column pairs with which.
+    /// Columns named by `temporal_pairs`, sorted. The bindings record which
+    /// columns the pairs named; which column pairs with which is recorded
+    /// from 0.14 in `analysis_settings` (see
+    /// [`ConfigurationComparison::temporal_pairs`]).
     pub temporal_pair_columns: Vec<String>,
 }
 
@@ -273,6 +392,22 @@ pub struct ConfigurationComparison {
     /// rolling clocks read on different days differ here, as their scores
     /// were measured against different dates.
     pub timeliness_clock: SettingComparison<TimelinessClock>,
+    /// Which columns each side profiled: `all`, or the `columns=` list as
+    /// given. A dataset score covers only the selected columns. `same`
+    /// compares the columns selected, not the order a list gives them in.
+    /// `None` on a side written before 0.13.
+    pub columns: SettingComparison<ColumnSelection>,
+    /// The metric packs each side computed, `schema` always among them, in
+    /// a fixed order. Without `patterns` validity is not assessed and the
+    /// overall score averages the other dimensions. `None` on a side written
+    /// before 0.14.
+    pub metric_packs: SettingComparison<Vec<MetricPack>>,
+    /// The start/end column pairs each side declared through
+    /// `temporal_pairs`, which timeliness compares. `same` compares the
+    /// pairs, direction included, not the order or repetition of a list.
+    /// `None` on a side written before 0.14, which recorded only the
+    /// columns the pairs named (see [`RecordedHints::temporal_pair_columns`]).
+    pub temporal_pairs: SettingComparison<Vec<TemporalPair>>,
 }
 
 /// Which columns each side has.
@@ -308,8 +443,8 @@ pub struct ReportDelta {
     pub configuration: ConfigurationComparison,
     /// Columns added, removed and shared.
     pub schema: SchemaChange,
-    /// Which two reports were compared.
-    pub reports: Sides<ReportReference>,
+    /// Which two reports were compared, and whether one build wrote both.
+    pub reports: ReportPair,
 }
 
 impl ReportDelta {
@@ -353,15 +488,15 @@ impl ReportDelta {
             .iter()
             .map(|column| column.name.as_str())
             .collect();
-        let a_nulls: BTreeMap<&str, Option<f64>> = a
+        let a_by_name: BTreeMap<&str, &ColumnSide> = a
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
-        let b_nulls: BTreeMap<&str, Option<f64>> = b
+        let b_by_name: BTreeMap<&str, &ColumnSide> = b
             .columns
             .iter()
-            .map(|column| (column.name.as_str(), column.null_pct))
+            .map(|column| (column.name.as_str(), column))
             .collect();
         let added: Vec<String> = b
             .columns
@@ -375,13 +510,19 @@ impl ReportDelta {
             .map(|column| &column.name)
             .chain(&added)
             .map(|name| {
-                let null_pct_a = a_nulls.get(name.as_str()).copied().flatten();
-                let null_pct_b = b_nulls.get(name.as_str()).copied().flatten();
+                let side_a = a_by_name.get(name.as_str()).copied();
+                let side_b = b_by_name.get(name.as_str()).copied();
+                let null_pct_a = side_a.and_then(|column| column.null_pct);
+                let null_pct_b = side_b.and_then(|column| column.null_pct);
                 ColumnChange {
                     name: name.clone(),
                     null_pct_a,
                     null_pct_b,
                     null_pct_delta: null_pct_a.zip(null_pct_b).map(|(a, b)| rounded_2(b - a)),
+                    data_type_a: side_a.and_then(ColumnSide::established_type),
+                    data_type_b: side_b.and_then(ColumnSide::established_type),
+                    native_type_a: side_a.and_then(|column| column.native_type.clone()),
+                    native_type_b: side_b.and_then(|column| column.native_type.clone()),
                 }
             })
             .collect();
@@ -415,16 +556,27 @@ impl ReportDelta {
                 ),
                 pattern_locale: SettingComparison::new(a.pattern_locale, b.pattern_locale),
                 timeliness_clock: SettingComparison::new(a.timeliness_clock, b.timeliness_clock),
+                columns: SettingComparison::new_by(
+                    a.column_selection.clone(),
+                    b.column_selection.clone(),
+                    same_selection,
+                ),
+                metric_packs: SettingComparison::new(
+                    a.metric_packs.clone(),
+                    b.metric_packs.clone(),
+                ),
+                temporal_pairs: SettingComparison::new_by(
+                    a.temporal_pairs.clone(),
+                    b.temporal_pairs.clone(),
+                    |left, right| same_pairs(left, right),
+                ),
             },
             schema: SchemaChange {
                 added,
                 removed,
                 common,
             },
-            reports: Sides {
-                a: a.reference.clone(),
-                b: b.reference.clone(),
-            },
+            reports: ReportPair::new(a.reference.clone(), b.reference.clone()),
         }
     }
 }
@@ -466,6 +618,9 @@ pub struct ReportSide {
     quality_score: Option<f64>,
     overall_evidence: Evidence,
     dimensions: Vec<DimensionSide>,
+    /// The recorded intervals for the scores over every scanned row, `None`
+    /// when the side recorded none: nothing was sampled, or it predates them.
+    score_bounds: Option<ScoreBounds>,
     columns: Vec<ColumnSide>,
     metric_semantics: Option<MetricSemantics>,
     score_weights: Option<QualityScoreWeights>,
@@ -478,6 +633,12 @@ pub struct ReportSide {
     timeliness_clock: Option<TimelinessClock>,
     /// Which columns the side profiled, `None` when it did not record it.
     column_selection: Option<ColumnSelection>,
+    /// The metric packs the side computed, `None` when it did not record
+    /// them.
+    metric_packs: Option<Vec<MetricPack>>,
+    /// The temporal pairs the side declared, `None` when it did not record
+    /// them.
+    temporal_pairs: Option<Vec<TemporalPair>>,
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
@@ -517,9 +678,26 @@ pub(crate) struct ColumnSide {
     /// record both. Exact where the rounded percentage is not: 99.999% null
     /// rounds to 100.00 and still holds a value.
     pub(crate) counts: Option<(usize, usize)>,
+    /// The type the source declared, `None` when it recorded none.
+    pub(crate) native_type: Option<NativeType>,
+    /// Distinct values among the non-null values read, `None` when the side
+    /// did not count them or did not record the count.
+    pub(crate) unique_count: Option<usize>,
+    /// Whether `unique_count` is an estimate, `None` when the side did not
+    /// record it. Only `Some(false)` makes the count exact.
+    pub(crate) unique_count_is_approximate: Option<bool>,
 }
 
 impl ColumnSide {
+    /// The inferred type, when the side read a value for the column that is
+    /// not null. The quality gate holds the same condition before it calls a
+    /// type a change.
+    fn established_type(&self) -> Option<DataType> {
+        self.populated()
+            .filter(|&populated| populated)
+            .and(self.data_type.clone())
+    }
+
     /// At least one value read for the column is not null. `None` when the
     /// counts were not recorded.
     pub(crate) fn populated(&self) -> Option<bool> {
@@ -596,10 +774,13 @@ impl ReportSide {
                 source: report.source_identifier(),
                 rows_processed: Some(report.execution.rows_processed),
                 evidence: scan,
+                generator: report.generator.clone(),
+                source_identity: report.source_identity.clone(),
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
+            score_bounds: quality.and_then(QualityAssessment::score_bounds).cloned(),
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
                 let pct = (column.total_count > 0)
                     .then(|| column.null_count as f64 / column.total_count as f64 * 100.0);
@@ -608,6 +789,9 @@ impl ReportSide {
                     null_pct: at_precision(pct),
                     data_type: Some(column.data_type.clone()),
                     counts: Some((column.total_count, column.null_count)),
+                    native_type: column.native_type.clone(),
+                    unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -636,6 +820,14 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.columns.clone()),
+            metric_packs: report
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.metric_packs.clone()),
+            temporal_pairs: report
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.temporal_pairs.clone()),
             schema_declared: declares_schema(&report.data_source),
             unlisted_components: unlisted,
         }
@@ -656,6 +848,12 @@ impl ReportSide {
     pub fn summary_quality_unlisted_components(quality: &str) -> serde_json::Result<Vec<String>> {
         let quality: SummaryQuality = serde_json::from_str(quality)?;
         Ok(quality.unlisted_components())
+    }
+
+    /// The recorded intervals for the side's scores over every scanned row,
+    /// or `None` when it recorded none.
+    pub(crate) fn score_bounds(&self) -> Option<&ScoreBounds> {
+        self.score_bounds.as_ref()
     }
 
     /// The identifier hint in the order it was given, or `None` when the side
@@ -777,10 +975,13 @@ impl ReportSide {
                 source: summary.source,
                 rows_processed: execution.rows_processed,
                 evidence: scan,
+                generator: summary.generator,
+                source_identity: summary.source_identity,
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
             dimensions,
+            score_bounds: quality.and_then(|quality| quality.score_bounds.clone()),
             columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
                 name: column.name,
                 null_pct: at_precision(column.null_percentage),
@@ -788,6 +989,9 @@ impl ReportSide {
                 // reads as unrecorded, since this build has no type to name it with.
                 data_type: column.data_type.as_deref().and_then(DataType::from_name),
                 counts: column.total_count.zip(column.null_count),
+                native_type: column.native_type,
+                unique_count: column.unique_count,
+                unique_count_is_approximate: column.unique_count_is_approximate,
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -815,6 +1019,14 @@ impl ReportSide {
             timeliness_clock: quality
                 .and_then(|quality| quality.timeliness.as_ref())
                 .and_then(|timeliness| timeliness.clock),
+            metric_packs: summary
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.metric_packs.clone()),
+            temporal_pairs: summary
+                .analysis_settings
+                .as_ref()
+                .and_then(|settings| settings.temporal_pairs.clone()),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has
@@ -902,6 +1114,31 @@ struct Summary {
     /// canonical reader and Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_analysis_settings")]
     analysis_settings: Option<AnalysisSettings>,
+    /// Absent before 0.14, or when the build recorded none. An explicit null
+    /// is malformed, as in the canonical reader.
+    #[serde(default, deserialize_with = "summary_generator")]
+    generator: Option<ReportGenerator>,
+    /// Absent when the caller supplied no version. An explicit null is
+    /// malformed, as in the canonical reader.
+    #[serde(default, deserialize_with = "summary_source_identity")]
+    source_identity: Option<SourceIdentity>,
+}
+
+fn summary_generator<'de, D>(deserializer: D) -> Result<Option<ReportGenerator>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer)
+        .map_err(|error| <D::Error as serde::de::Error>::custom(format!("generator: {error}")))
+}
+
+fn summary_source_identity<'de, D>(deserializer: D) -> Result<Option<SourceIdentity>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::profile_report::present_value(deserializer).map_err(|error| {
+        <D::Error as serde::de::Error>::custom(format!("source_identity: {error}"))
+    })
 }
 
 /// A flat summary's `source_type`. A kind a later release adds declares
@@ -971,6 +1208,15 @@ struct SummaryColumn {
     total_count: Option<usize>,
     #[serde(default)]
     null_count: Option<usize>,
+    /// Absent before 0.14, and for a column whose source declared no type.
+    #[serde(default)]
+    native_type: Option<NativeType>,
+    #[serde(default)]
+    unique_count: Option<usize>,
+    /// Absent, or null, where the writer did not record whether
+    /// `unique_count` is exact; that reads as unrecorded, never as exact.
+    #[serde(default)]
+    unique_count_is_approximate: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1009,6 +1255,26 @@ struct SummaryQuality {
     /// malformed, as in Python's `from_dict()`.
     #[serde(default, deserialize_with = "summary_score_weights")]
     score_weights: Option<QualityScoreWeights>,
+    /// Written when a score was computed over a retained sample (0.12+).
+    /// Bounds outside 0..=100, reversed, or at an impossible confidence
+    /// level are malformed, as in the full document's reader.
+    #[serde(default, deserialize_with = "summary_score_bounds")]
+    score_bounds: Option<ScoreBounds>,
+}
+
+/// Recorded score bounds, refused when they are not valid bounds.
+fn summary_score_bounds<'de, D>(deserializer: D) -> Result<Option<ScoreBounds>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bounds: Option<ScoreBounds> = serde::Deserialize::deserialize(deserializer)?;
+    if bounds.as_ref().is_some_and(|bounds| !bounds.is_valid()) {
+        return Err(<D::Error as serde::de::Error>::custom(
+            "quality.score_bounds: intervals must lie in 0..=100 with lower <= upper, at a \
+             confidence level between 0 and 1",
+        ));
+    }
+    Ok(bounds)
 }
 
 /// The timeliness facts a comparison reads: the clock its score used.

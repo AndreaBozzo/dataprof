@@ -18,8 +18,8 @@ Common entry points include `IsoQualityConfig`, `DataProfilerError`,
 
 - `arrow`: Arrow-backed core types.
 - `async-streaming`: async coordination primitives.
-- `database`: database-specific configuration.
-- `parquet`: Parquet-specific source metadata.
+- `database`: empty feature flag.
+- `parquet`: enables Parquet-aware error suggestions; metadata types are always available.
 
 The default feature set is empty.
 

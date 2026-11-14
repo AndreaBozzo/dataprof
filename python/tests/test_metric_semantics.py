@@ -20,6 +20,8 @@ CURRENT = {
     "key_column_source": "declared",
     "accuracy_comparison": "exact_values",
     "json_number_reading": "literal_digits",
+    "sampled_score_estimator": "population_weighted",
+    "date_statistics": "every_value",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -166,6 +168,10 @@ def _through_both_readers(value):
         {"accuracy_comparison": None},
         {"json_number_reading": "nearest_f64"},
         {"json_number_reading": None},
+        {"sampled_score_estimator": "pooled_sample"},
+        {"sampled_score_estimator": None},
+        {"date_statistics": "retained_sample"},
+        {"date_statistics": None},
     ],
     ids=[
         "null",
@@ -191,6 +197,10 @@ def _through_both_readers(value):
         "null-accuracy-comparison",
         "unknown-json-number-reading",
         "null-json-number-reading",
+        "unknown-sampled-score-estimator",
+        "null-sampled-score-estimator",
+        "unknown-date-statistics",
+        "null-date-statistics",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -229,6 +239,8 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"key_column_source": None},
         {"accuracy_comparison": None},
         {"json_number_reading": None},
+        {"sampled_score_estimator": None},
+        {"date_statistics": None},
     ],
     ids=[
         "null",
@@ -242,6 +254,8 @@ def test_both_readers_agree_on_accepted_semantics(value):
         "null-key-column-source",
         "null-accuracy-comparison",
         "null-json-number-reading",
+        "null-sampled-score-estimator",
+        "null-date-statistics",
     ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):

@@ -1,20 +1,22 @@
 //! Data Quality Metrics Calculation Module
 //!
-//! This module implements comprehensive data quality metric calculations following industry standards.
-//! It provides structured assessment across seven key dimensions: Completeness,
+//! This module scores a profile across seven dimensions: Completeness,
 //! Consistency, Uniqueness, Accuracy, Timeliness, Validity, and Precision.
 //!
-//! ## ISO Compliance
+//! ## Relation to ISO 8000 and ISO/IEC 25012
 //!
-//! This module follows:
-//! - **ISO 8000-8**: Data Quality (Completeness, Timeliness)
-//! - **ISO 8000-61**: Master Data Quality (Consistency)
-//! - **ISO 8000-110**: Duplicate Detection (Uniqueness)
-//! - **ISO 25012**: Data Quality Model (Accuracy)
+//! The dimensions are informed by these standards; the module does not claim
+//! conformance to them. Completeness, consistency, accuracy and precision are
+//! ISO/IEC 25012 characteristics, and timeliness stands close to its
+//! currentness; uniqueness and validity are common data-quality terms. The
+//! measures themselves are dataprof's own heuristics, such as Tukey fences for
+//! accuracy and the dominant decimal scale for precision; neither standard
+//! defines them.
 //!
 //! ## TODO: Future ISO 25012 Dimensions
 //!
-//! ISO/IEC 25012 defines 15 data quality characteristics. We currently implement 7.
+//! ISO/IEC 25012 defines 15 data quality characteristics, of which the
+//! dimensions above cover four, plus currentness through timeliness.
 //! Below are candidates for future implementation:
 //!
 //! ### Inherent Data Quality (content-focused)
@@ -290,6 +292,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             })
         } else {
             None
@@ -420,6 +423,7 @@ impl MetricsCalculator {
                     key_column: None,
                     key_values_checked: None,
                     duplicate_rows_approximate: false,
+                    duplicate_rows_exact_limit: None,
                 })
             } else {
                 None
@@ -522,6 +526,7 @@ impl MetricsCalculator {
                 sampled_dimensions: vec![],
                 sample_size: 0,
                 score_bounds: None,
+                estimated_scores: None,
             });
         }
 
@@ -603,6 +608,7 @@ impl MetricsCalculator {
                 key_column: u.key_column,
                 key_values_checked: u.key_values_checked,
                 duplicate_rows_approximate: u.duplicate_rows_approximate,
+                duplicate_rows_exact_limit: u.duplicate_rows_exact_limit,
             };
             if let Some(key) = metrics
                 .key_column
@@ -746,7 +752,7 @@ impl MetricsCalculator {
             low_sample_warning: !validation.sufficient_sample,
             score_weights: self.thresholds.score_weights,
         };
-        let score_bounds = bounds::score_bounds(
+        let sampled_scores = bounds::score_bounds(
             &self.thresholds,
             &timeliness_calculator,
             data,
@@ -757,6 +763,10 @@ impl MetricsCalculator {
             &sampled_dimensions,
             row_duplicates,
         )?;
+        let (score_bounds, estimated_scores) = match sampled_scores {
+            Some(scores) => (Some(scores.bounds), scores.estimates),
+            None => (None, None),
+        };
 
         Ok(BifurcatedResult {
             metrics,
@@ -764,7 +774,50 @@ impl MetricsCalculator {
             sampled_dimensions,
             sample_size: sample_rows,
             score_bounds,
+            estimated_scores,
         })
+    }
+
+    /// Score bounds, and the estimates that replace pooled scores, for an
+    /// assessment whose `sampled` components are estimates although `data`
+    /// holds every row: the uniform path's estimated duplicate-row or key
+    /// count (#1292). These are the bounds the bifurcated path attaches, so
+    /// retaining every row loses no decision the estimator bounds can make.
+    /// `(None, None)` when nothing is sampled.
+    #[allow(clippy::type_complexity)]
+    pub fn score_bounds_for(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        semantic_hints: &SemanticHints,
+        metrics: &QualityMetrics,
+        sampled: &[String],
+        row_duplicates: Option<RowDuplicateSummary>,
+    ) -> Result<
+        (
+            Option<crate::quality::ScoreBounds>,
+            Option<crate::quality::QualityScores>,
+        ),
+        DataProfilerError,
+    > {
+        let timeliness_calculator = self.timeliness_calculator();
+        let temporal_columns = Self::effective_temporal_columns(column_profiles, semantic_hints);
+        Ok(
+            match bounds::score_bounds(
+                &self.thresholds,
+                &timeliness_calculator,
+                data,
+                column_profiles,
+                semantic_hints,
+                &temporal_columns,
+                metrics,
+                sampled,
+                row_duplicates,
+            )? {
+                Some(scores) => (Some(scores.bounds), scores.estimates),
+                None => (None, None),
+            },
+        )
     }
 
     /// Calculate sample size across data column arrays (using max inner length heuristic)
@@ -784,6 +837,9 @@ impl MetricsCalculator {
 /// Contains the computed metrics plus provenance information about which
 /// dimensions were computed exactly (from global streaming counters) and
 /// which were computed from a bounded sample.
+///
+/// Only the calculator builds one, and later releases add fields.
+#[non_exhaustive]
 pub struct BifurcatedResult {
     /// The computed quality metrics
     pub metrics: QualityMetrics,
@@ -795,6 +851,12 @@ pub struct BifurcatedResult {
     pub sample_size: usize,
     /// Where the scores over every scanned row lie, when some dimension was sampled.
     pub score_bounds: Option<crate::quality::ScoreBounds>,
+    /// The scores to report in place of the ones `metrics` gives, when a
+    /// sampled dimension's score pooled over the sample differs from its
+    /// estimate over every scanned row: each column's sampled counts weigh
+    /// as many values as the column holds, not as many as its sample kept
+    /// (#1293). `None` when no sample left a column out.
+    pub estimated_scores: Option<crate::quality::QualityScores>,
 }
 
 #[cfg(test)]
@@ -821,6 +883,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -836,6 +899,7 @@ mod tests {
                     duplicate_rows: 0,
                     rows_checked: 1_000,
                     approximate: false,
+                    exact_limit: crate::EXACT_CARDINALITY_THRESHOLD,
                     max_duplicate_rows: 0,
                 }),
             )
@@ -863,6 +927,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         };
@@ -949,6 +1014,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -993,6 +1059,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];

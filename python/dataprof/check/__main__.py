@@ -14,7 +14,7 @@ from typing import Any, NoReturn
 
 import dataprof
 from dataprof import profile_file
-from dataprof._gate import _Policy, _PolicyFieldError
+from dataprof._gate import _Policy, _PolicyFieldError, _summary_lines
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
@@ -25,12 +25,17 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage": None,
     "max_null_count": None,
     "max_duplicate_rows": None,
+    "max_date_age": None,
+    "max_date_gap": None,
     "require_metrics": None,
     "require_columns": None,
     "scope": "full_source",
     "max_quality_score_drop": None,
     "max_dimension_score_drops": None,
     "max_null_percentage_increase": None,
+    "max_distinct_drop": None,
+    "max_row_count_drop": None,
+    "max_row_count_growth": None,
     "forbid_removed_columns": False,
     "forbid_added_columns": False,
     "forbid_findings": None,
@@ -46,6 +51,16 @@ def _named_percentage(text: str) -> tuple[str, float]:
         return name, float(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("expected NAME=PERCENT") from exc
+
+
+def _named_days(text: str) -> tuple[str, int]:
+    name, separator, value = text.rpartition("=")
+    if not separator or not name:
+        raise argparse.ArgumentTypeError("expected COLUMN=DAYS")
+    try:
+        return name, int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected COLUMN=DAYS") from exc
 
 
 def _named_count(text: str) -> tuple[str, int]:
@@ -99,6 +114,16 @@ def _non_negative_int(value: str) -> int:
         raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}") from None
     if result < 0:
         raise argparse.ArgumentTypeError(f"invalid non-negative integer: {value!r}")
+    return result
+
+
+def _positive_int(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value!r}") from None
+    if result < 1:
+        raise argparse.ArgumentTypeError(f"invalid positive integer: {value!r}")
     return result
 
 
@@ -267,6 +292,23 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     )
     parser.add_argument("--max-duplicate-rows", type=int, help="maximum duplicate-row count")
     parser.add_argument(
+        "--max-date-age",
+        dest="max_date_age",
+        type=_named_days,
+        action="append",
+        metavar="COLUMN=DAYS",
+        help="how many days the column's newest date may lie before today; repeatable",
+    )
+    parser.add_argument(
+        "--max-date-gap",
+        dest="max_date_gap",
+        type=_named_days,
+        action="append",
+        metavar="COLUMN=DAYS",
+        help="the longest gap allowed between the column's consecutive dates "
+        "(1 allows no missing day); repeatable",
+    )
+    parser.add_argument(
         "--require-metric",
         dest="require_metrics",
         action="append",
@@ -309,6 +351,15 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="cap the number of profiled rows",
     )
     parser.add_argument(
+        "--duplicate-rows-exact-limit",
+        type=_positive_int,
+        metavar="ROWS",
+        help=(
+            "count duplicate rows exactly up to ROWS distinct rows (default: 1000000), so "
+            "--max-duplicate-rows can decide on a larger source; costs 10-20 bytes per row"
+        ),
+    )
+    parser.add_argument(
         "--metric",
         dest="metrics",
         action="append",
@@ -338,6 +389,20 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="how far a dimension score may fall below the baseline's (0-100); repeatable",
     )
     parser.add_argument(
+        "--max-row-drop",
+        dest="max_row_count_drop",
+        type=float,
+        metavar="PERCENT",
+        help="how far the row count may fall, in percent of the baseline's (0-100)",
+    )
+    parser.add_argument(
+        "--max-row-growth",
+        dest="max_row_count_growth",
+        type=float,
+        metavar="PERCENT",
+        help="how far the row count may grow, in percent of the baseline's (0 or more)",
+    )
+    parser.add_argument(
         "--max-null-increase",
         dest="max_null_percentage_increase",
         type=_named_percentage,
@@ -346,6 +411,18 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help=(
             "how far a column's null percentage may rise above the baseline's (0-100); "
             "use *=POINTS for every column both reports profiled; repeatable"
+        ),
+    )
+    parser.add_argument(
+        "--max-distinct-drop",
+        dest="max_distinct_drop",
+        type=_named_percentage,
+        action="append",
+        metavar="COLUMN=PERCENT",
+        help=(
+            "how far a column's distinct count may fall, in percent of the baseline's (0-100), "
+            "failing only when its distinct share of non-null values fell as far; "
+            "use *=PERCENT for every column both reports profiled; repeatable"
         ),
     )
     parser.add_argument(
@@ -420,8 +497,11 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
                 "min_dimension_scores",
                 "max_null_percentage",
                 "max_null_count",
+                "max_date_age",
+                "max_date_gap",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
+                "max_distinct_drop",
             ):
                 value = dict(value)
             policy[key] = value
@@ -546,6 +626,7 @@ def main(argv: list[str] | None = None) -> int:
             format=args.format,
             max_rows=args.max_rows,
             metrics=args.metrics,
+            duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
             source_version=args.source_version,
         )
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
@@ -578,37 +659,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(result.to_json())
-    print(
-        f"dataprof {dataprof.__version__}: "
-        f"{result.verdict}: {len(result.checks)} checks, "
-        f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
-        f"(scope: {result.scope})",
-        file=sys.stderr,
-    )
-    if args.baseline is not None:
-        print(f"  baseline: {args.baseline}", file=sys.stderr)
-    for check in result.checks:
-        if check.status != "passed":
-            subject = next(
-                (s for s in (check.column, check.dimension, check.finding) if s is not None),
-                None,
-            )
-            label = f" [{subject}]" if subject is not None else ""
-            print(f"  {check.status}: {check.code}{label}: {check.message}", file=sys.stderr)
-    # Schema changes from the baseline never move the verdict, so a pass can
-    # carry them; without these lines only --json would show them.
-    for diagnostic in (result.baseline or {}).get("diagnostics", []):
-        detail = ""
-        if "data_type" in diagnostic:
-            types = diagnostic["data_type"]
-            detail += f" (baseline {types['a']}, report {types['b']})"
-        if "reason" in diagnostic:
-            detail += f" ({diagnostic['reason']}: {diagnostic['setting']})"
-        print(
-            f"  diagnostic: {diagnostic['code']} [{diagnostic['column']}]: "
-            f"{diagnostic['message']}{detail}",
-            file=sys.stderr,
-        )
+    for line in _summary_lines(result, version=dataprof.__version__, baseline_path=args.baseline):
+        print(line, file=sys.stderr)
     return _EXIT_CODES[result.verdict]
 
 

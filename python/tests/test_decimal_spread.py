@@ -7,7 +7,9 @@ a standard deviation off in its third digit. Such a literal is now held as a
 scaled integer, and its deviations taken exactly, so each statistic is the one
 of the exact values. Where a value is too wide to hold, as a ``decimal256`` of
 76 digits is, a spread too small to stand above its rounding is absent rather
-than 0.0.
+than 0.0. The mean sums every value's remainder beyond its nearest ``f64``,
+not the first value's alone, so a column of ``x`` and ``-x`` by turns has a
+mean of 0 (#1262).
 
 A column typed as a decimal (Arrow, Parquet, pandas and polars decimals) is
 held exactly from 11 significant digits. Text, ``Decimal`` objects in a dict or
@@ -57,6 +59,12 @@ COLUMNS: dict[str, tuple[list[Decimal], tuple[str, int, int]]] = {
     "unheld": (
         [Decimal(10**75 + c * 100) for c in CENTS],
         ("decimal256", 76, 0),
+    ),
+    # One value and its negation by turns: the mean is 0 (#1262). The nearest
+    # f64 of the value is 722.25 below it.
+    "balanced": (
+        [Decimal("12345678901234567890.25") * (-1 if i % 2 else 1) for i in range(len(CENTS))],
+        ("decimal128", 38, 2),
     ),
 }
 SPREAD = ("variance", "std_dev", "skewness", "kurtosis")
@@ -111,6 +119,12 @@ def _assert_exact(
             # Serialized at four decimals.
             if got is None or abs(got - expected) > 5e-5 + 1e-9 * abs(expected):
                 wrong[f"{name} {key}"] = (got, expected)
+        # The mean of the exact values, at four decimals and 12 significant digits.
+        values = COLUMNS[name][0]
+        mean = float(sum((Fraction(v) for v in values), Fraction(0)) / len(values))
+        got = column.get("mean")
+        if got is None or abs(got - mean) > 5e-5 + 5e-12 * abs(mean):
+            wrong[f"{name} mean"] = (got, mean)
     assert not wrong, (label, wrong)
 
 
@@ -194,7 +208,7 @@ def test_pandas_decimal_objects():
 def test_polars_decimal():
     pl = pytest.importorskip("polars")
     # Polars decimals hold at most 38 digits.
-    names = ["cents", "fifteen", "wide_cents"]
+    names = ["cents", "fifteen", "wide_cents", "balanced"]
     frame = pl.DataFrame(
         {
             name: pl.Series(COLUMNS[name][0], dtype=pl.Decimal(*COLUMNS[name][1][1:]))

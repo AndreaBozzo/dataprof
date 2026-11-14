@@ -98,6 +98,9 @@ change; run what matches the change and list the commands in the PR body.
 - Themes/initiatives live in **epic issues** (e.g. "Epic: Agent & LLM
   Integration"); link related issues from the epic body.
 - No version-specific labels; use `area: *` and `type: *` labels.
+- `origin: real incident` marks a gap shown by replaying a documented data
+  incident from a public pipeline. Apply it only when the replay was run;
+  never name the pipeline in the issue.
 
 ## Key docs
 
