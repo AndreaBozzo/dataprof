@@ -68,7 +68,10 @@ def test_legacy_summary_is_not_given_invented_provenance():
     summary["quality"].pop("sampled_dimensions", None)
     restored = dataprof.ProfileReport.from_dict(summary)
     # The resave is written by this build, so it states the version it wrote.
-    resaved = {**summary, "schema_version": dataprof.REPORT_SCHEMA_VERSION}
+    # Without the source's version, a count from before 0.10 would then read
+    # as measured, so the resave omits it (#1306 review).
+    execution = {k: v for k, v in summary["execution"].items() if k != "ragged_row_count"}
+    resaved = {**summary, "schema_version": dataprof.REPORT_SCHEMA_VERSION, "execution": execution}
     assert restored.to_dict() == resaved
     assert json.loads(restored.to_json()) == resaved
     assert restored.recovery_events is None

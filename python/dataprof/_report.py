@@ -715,7 +715,14 @@ class ProfileReport:
                 "throughput_rows_sec": _r4(self._report.throughput_rows_sec),
                 "memory_peak_mb": _r2(self._report.memory_peak_mb),
                 "error_count": self._report.error_count,
-                "ragged_row_count": self._report.ragged_row_count,
+                # Omitted when the loaded document did not record it, so a
+                # saved and reloaded summary still reads it as unrecorded,
+                # never as a measured zero (#1306 review).
+                **(
+                    {"ragged_row_count": self._report.ragged_row_count}
+                    if self._ragged_row_count_recorded
+                    else {}
+                ),
                 # Omitted when the loaded document did not record it, so the
                 # gate reads the coverage as unrecorded, never as unsampled
                 # (#1236).

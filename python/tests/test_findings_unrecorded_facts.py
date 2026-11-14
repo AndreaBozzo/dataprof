@@ -139,9 +139,19 @@ def test_a_versioned_summary_without_its_ragged_count_lists_ragged_rows(tmp_path
     assert summary["execution"]["ragged_row_count"] == 1
     recorded = dp.ProfileReport.from_dict(summary).findings()
     assert [f.code for f in recorded.findings if f.code == "ragged_rows"] == ["ragged_rows"]
-    result = _summary_without(summary, "ragged_row_count").findings()
-    assert [f.code for f in result.findings if f.code == "ragged_rows"] == []
-    assert _skipped(result, "ragged_rows") == ["unrecorded"]
+    loaded = _summary_without(summary, "ragged_row_count")
+    # Saving and reloading the summary must not turn the absence into a zero.
+    wrong = []
+    for label, report in (
+        ("loaded", loaded),
+        ("to_dict round trip", dp.ProfileReport.from_dict(loaded.to_dict())),
+        ("to_json round trip", dp.ProfileReport.from_json(loaded.to_json())),
+    ):
+        result = report.findings()
+        found = [f.code for f in result.findings if f.code == "ragged_rows"]
+        if found or _skipped(result, "ragged_rows") != ["unrecorded"]:
+            wrong.append((label, found, result.not_evaluated))
+    assert wrong == []
 
 
 def test_a_pre_versioning_summary_lists_ragged_rows(tmp_path):
