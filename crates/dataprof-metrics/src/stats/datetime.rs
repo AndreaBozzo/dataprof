@@ -415,11 +415,7 @@ impl DaySet {
             }
             previous = Some(day);
         }
-        largest.map(|(days, from, to)| DateGap {
-            days,
-            from: from.format("%Y-%m-%d").to_string(),
-            to: to.format("%Y-%m-%d").to_string(),
-        })
+        largest.map(|(_, from, to)| DateGap::new(from, to))
     }
 }
 

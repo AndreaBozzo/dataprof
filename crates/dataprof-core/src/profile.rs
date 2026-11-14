@@ -447,6 +447,7 @@ pub const DATE_GAP_YEAR_LIMIT: usize = 10_000;
 /// Two consecutive distinct days of a date column, and the days between
 /// them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
 pub struct DateGap {
     /// Days from `from` to `to`: `1` for consecutive days, `0` for a column
     /// holding a single distinct day.
@@ -455,6 +456,17 @@ pub struct DateGap {
     pub from: String,
     /// The first day after the gap, `YYYY-MM-DD`.
     pub to: String,
+}
+
+impl DateGap {
+    /// The gap from `from` to `to`, both written `YYYY-MM-DD`.
+    pub fn new(from: chrono::NaiveDate, to: chrono::NaiveDate) -> Self {
+        Self {
+            days: (to - from).num_days(),
+            from: from.format("%Y-%m-%d").to_string(),
+            to: to.format("%Y-%m-%d").to_string(),
+        }
+    }
 }
 
 /// The day/month order a column's slash dates were read in.
