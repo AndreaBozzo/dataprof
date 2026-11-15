@@ -1,0 +1,184 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 54.01,
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 7.0,
+          "mean": 4.0,
+          "median": 4.0,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 3.0,
+            "q1": 2.5,
+            "q2": 4.0,
+            "q3": 5.5
+          },
+          "skewness": 0.0,
+          "std_dev": 2.1602,
+          "variance": 4.6667
+        }
+      },
+      "total_count": 7,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 7,
+        "text": 0
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 1,
+      "locale_number_count": 0,
+      "name": "v",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 109.54,
+          "is_approximate": false,
+          "kurtosis": -3.3333,
+          "max": 1000000000000000.0,
+          "mean": 500000000000000.2,
+          "median": 500000000000000.7,
+          "min": 0.0,
+          "mode": 1000000000000000.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 999999999999999.6,
+            "q1": 0.38,
+            "q2": 500000000000000.75,
+            "q3": 1000000000000000.0
+          },
+          "skewness": -0.0,
+          "std_dev": 547722557505165.8,
+          "variance": 2.999999999999997e+29
+        }
+      },
+      "total_count": 7,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 6,
+        "text": 1
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "json",
+    "path": "long_floats.json",
+    "size_bytes": 194,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 2,
+    "engine": "json",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 7,
+    "sampling_applied": false,
+    "scan_time_ms": 0,
+    "source_exhausted": true
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "0474f1bc-baa8-483e-badc-7185e5f5f509",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 13,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 13,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 14
+      },
+      "consistency": {
+        "data_type_consistency": 92.86,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 14
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 83.33,
+        "inconsistent_precision_values": 1,
+        "numeric_values_checked": 6
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": false,
+        "key_uniqueness": 100.0,
+        "rows_checked": 7
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 92.86,
+        "precision": 83.33,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 97.17
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-15T13:36:44.705244900+00:00"
+}
