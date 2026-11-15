@@ -111,13 +111,18 @@ CASES: dict[str, tuple[Callable[[int], Columns], dict[str, Any]]] = {
     ),
 }
 
-# Cases that disagree today, by name, with the issue that owns the fix. A
-# sampled route types a column from its sample, so a share at a threshold or
-# one zero-padded value can type it differently from the dict.
-KNOWN: dict[str, str] = {
-    "zero padded": "#788",
-    "numeric share": "#788",
-    "date share": "#788",
+# Cases that disagree today, with the issue that owns the fix and each
+# disagreement as (check group, file verdict, dict verdict). A sampled route
+# types a column from its sample, so a share at a threshold or one zero-padded
+# value can type it differently from the dict. A case must show exactly these:
+# another disagreement fails, and so does one of these going away.
+KNOWN: dict[str, tuple[str, set[tuple[str, str, str]]]] = {
+    "zero padded": ("#788", {("overall", "pass", "fail"), ("accuracy", "pass", "inconclusive")}),
+    "numeric share": (
+        "#788",
+        {("overall", "pass", "fail"), ("precision", "pass", "inconclusive")},
+    ),
+    "date share": ("#788", {("timeliness", "pass", "inconclusive")}),
 }
 
 # What the dict must decide, so a case keeps meaning what its comment says.
@@ -161,7 +166,8 @@ def _checks(oracle: dp.ProfileReport) -> Iterator[tuple[str, str, dict[str, Any]
 
 
 def test_the_file_route_gives_the_verdict_of_the_dict_or_none(tmp_path: Path) -> None:
-    wrong: dict[str, list[str]] = {name: [] for name in CASES}
+    # Each disagreement as its (group, file verdict, dict verdict) and a line.
+    wrong: dict[str, list[tuple[tuple[str, str, str], str]]] = {name: [] for name in CASES}
     oracle_wrong = []
     dict_verdicts: set[str] = set()
     decided = 0
@@ -183,16 +189,17 @@ def test_the_file_route_gives_the_verdict_of_the_dict_or_none(tmp_path: Path) ->
                     verdict = got.check(**policy).verdict
                     decided += verdict != "inconclusive"
                     if verdict not in {expected, "inconclusive"}:
-                        wrong[name].append(f"order {order} [{form}] {label}: {verdict}")
+                        line = f"order {order} [{form}] {label}: {verdict}, dict {expected}"
+                        wrong[name].append(((group, verdict, expected), line))
 
-    unexpected = [
-        f"{name}: {line}, against the dict"
-        for name, lines in wrong.items()
-        if name not in KNOWN
-        for line in lines
-    ]
+    unexpected = []
+    settled = []
+    for name in CASES:
+        owner, known = KNOWN.get(name, ("", set()))
+        unexpected += [f"{name}: {line}" for entry, line in wrong[name] if entry not in known]
+        seen = {entry for entry, _ in wrong[name]}
+        settled += [f"{name} {entry} ({owner})" for entry in sorted(known - seen)]
     assert not unexpected, "\n".join(unexpected)
-    settled = [f"{name} ({owner})" for name, owner in KNOWN.items() if not wrong[name]]
     assert not settled, f"no longer disagree, remove from KNOWN: {', '.join(settled)}"
 
     assert not oracle_wrong, "\n".join(oracle_wrong)
