@@ -937,13 +937,13 @@ impl ScoreInterval {
 /// are rounded outward to two decimals, so a saved one still contains what
 /// the computed one did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[non_exhaustive]
 pub struct ScoreBounds {
     /// Probability that every interval here holds at once.
     pub confidence_level: f64,
     /// Interval for the overall score. `None` when there is no overall score,
-    /// when a sampled dimension behind it has no bound, or when a scan of
-    /// every value may assess a dimension the sample left unassessed, which
-    /// would weigh in the score (#1304).
+    /// when a sampled dimension behind it has no bound, or when one of
+    /// `open_dimensions` carries a positive weight.
     pub overall_score: Option<ScoreInterval>,
     /// Interval per dimension, keyed like `QualityScores::dimension_scores`.
     /// An exactly computed dimension's interval is its score. `None` for a
@@ -953,9 +953,31 @@ pub struct ScoreBounds {
     /// samples hold the same rows, so a pair where either column has nulls is
     /// not compared.
     pub dimension_scores: std::collections::BTreeMap<String, Option<ScoreInterval>>,
+    /// Dimensions the sample left unassessed that a scan of every value may
+    /// assess, keyed like `dimension_scores` (#1304). Such a dimension would
+    /// enter the overall score with its weight, so the overall score is open
+    /// while one of them stays unassessed and weighted, whatever weights are
+    /// set after profiling. Empty, and absent from the document, when the
+    /// sample settled every dimension.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_dimensions: Vec<String>,
 }
 
 impl ScoreBounds {
+    /// Bounds with no open dimension.
+    pub fn new(
+        confidence_level: f64,
+        overall_score: Option<ScoreInterval>,
+        dimension_scores: std::collections::BTreeMap<String, Option<ScoreInterval>>,
+    ) -> Self {
+        Self {
+            confidence_level,
+            overall_score,
+            dimension_scores,
+            open_dimensions: Vec::new(),
+        }
+    }
+
     /// Whether every interval lies in 0..=100 with `lower <= upper`, at a
     /// confidence level strictly between 0 and 1. A reader refuses bounds
     /// that are not.
@@ -1200,6 +1222,16 @@ impl QualityAssessment {
         self.columns_without_value_checks.as_deref()
     }
 
+    /// The bounds as recorded, whether or not `metrics` has changed since.
+    ///
+    /// Their intervals describe the recorded metrics only, which is why
+    /// [`score_bounds`](Self::score_bounds) withholds them after an edit.
+    /// `open_dimensions` is a fact about the sample, not about the numbers,
+    /// and still holds: a reweighting cannot settle what the sample left open.
+    pub fn recorded_score_bounds(&self) -> Option<&ScoreBounds> {
+        self.score_bounds.as_ref()
+    }
+
     /// Attach bounds on the scores over every scanned row, computed from the same
     /// sample as these metrics.
     pub fn with_score_bounds(mut self, bounds: Option<ScoreBounds>) -> Self {
@@ -1432,14 +1464,14 @@ mod tests {
 
     fn sample_bounds() -> ScoreBounds {
         let interval = |lower, upper| Some(ScoreInterval { lower, upper });
-        ScoreBounds {
-            confidence_level: 0.999,
-            overall_score: interval(97.25, 99.5),
-            dimension_scores: QualityDimension::all()
+        ScoreBounds::new(
+            0.999,
+            interval(97.25, 99.5),
+            QualityDimension::all()
                 .into_iter()
                 .map(|dimension| (dimension.to_string(), interval(96.0, 100.0)))
                 .collect(),
-        }
+        )
     }
 
     #[test]

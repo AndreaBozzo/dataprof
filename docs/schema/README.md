@@ -1070,6 +1070,17 @@ quartiles coincide, the accuracy interval is absent and a gate rule on it is
 inconclusive. An interval is as wide as before when no value lies between
 those fences, and wider on a column whose fences cut through dense values.
 
+`score_bounds` gains `open_dimensions`, the dimensions the sample left
+unassessed that a scan of every value may assess, such as accuracy on a
+sample whose quartiles coincide drawn from a source whose quartiles may not.
+Such a dimension would enter the overall score with its weight, so while one
+of them stays unassessed and carries a positive weight, the overall interval
+is absent and a gate leaves the overall score rules `evidence_incomplete`
+(`quality_sampled`). The rule reads the weights in force when the gate runs,
+so a weight set after profiling decides it too. The list is absent when the
+sample settled every dimension, and on documents written before it, which
+had no such case.
+
 A report that records no `outlier_spread` reads back with it unknown, and a
 quality gate leaves the accuracy and overall score rules over it
 `definition_not_comparable`, so a baseline saved by 0.13 does not fail the

@@ -14,7 +14,10 @@
 
 use std::io::Write;
 
-use dataprof::{EngineType, MetricPack, ProfileReport, Profiler, QualityDimension, QualityPolicy};
+use dataprof::{
+    EngineType, MetricPack, ProfileReport, Profiler, QualityDimension, QualityPolicy,
+    QualityScoreWeights,
+};
 use tempfile::NamedTempFile;
 
 const ROWS: usize = 40_000;
@@ -326,6 +329,72 @@ fn an_overall_score_the_full_scan_may_lift_is_never_failed_on_a_sample() {
         "failed on a sample:\n{}",
         wrong.join("\n")
     );
+}
+
+/// A sample that left accuracy open records it, and the overall score stays
+/// open under the weights set after profiling: settled when accuracy weighs
+/// nothing, open when it weighs anything (review of #1313).
+#[test]
+fn the_weights_set_after_profiling_decide_whether_an_open_accuracy_reaches_the_overall_score() {
+    let flat = MORE_ORDERS
+        .into_iter()
+        .find_map(|order| {
+            let case = Case {
+                zeros: 29_992,
+                hundreds: 0,
+                base: 0,
+                full_scan: "pass",
+            };
+            let mut csv_text = String::from("v\n");
+            for value in case.values(order) {
+                csv_text.push_str(&format!("{value}\n"));
+            }
+            csv_text.push_str(&"null\n".repeat(10_000));
+            let csv = file(".csv", &csv_text);
+            let report = Profiler::new()
+                .quality_dimensions(vec![
+                    QualityDimension::Completeness,
+                    QualityDimension::Accuracy,
+                ])
+                .analyze_file(csv.path())
+                .unwrap();
+            let quality = report.quality.as_ref()?;
+            quality
+                .metrics
+                .dimension_score(QualityDimension::Accuracy)
+                .is_none()
+                .then_some(report)
+        })
+        .expect("some sample leaves accuracy unassessed");
+    let open = &flat
+        .quality
+        .as_ref()
+        .unwrap()
+        .recorded_score_bounds()
+        .expect("sampled")
+        .open_dimensions;
+    assert_eq!(open, &["accuracy".to_string()]);
+
+    let verdict = |accuracy: f64, min: f64| {
+        let mut report = flat.clone();
+        let quality = report.quality.as_mut().unwrap();
+        quality.metrics.score_weights = QualityScoreWeights {
+            accuracy,
+            ..QualityScoreWeights::default()
+        };
+        let result = QualityPolicy::new()
+            .min_quality_score(min)
+            .evaluate(&report)
+            .unwrap();
+        serde_json::to_value(&result).unwrap()["verdict"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    // Weightless accuracy cannot move the score: 80 on both sides.
+    assert_eq!(verdict(0.0, 75.0), "pass");
+    // Weighted as completeness, a full scan may score 90: 85 is open.
+    assert_eq!(verdict(0.25, 85.0), "inconclusive");
 }
 
 /// The report records the definition the IQR rule is under.

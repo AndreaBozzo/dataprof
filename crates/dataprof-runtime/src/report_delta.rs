@@ -744,7 +744,11 @@ impl ReportSide {
             .map(|assessment| assessment.unlisted_components())
             .unwrap_or_default();
         let overall_open = quality.is_some_and(|assessment| {
-            overall_left_open(assessment.score(), assessment.score_bounds())
+            overall_left_open(
+                assessment.recorded_score_bounds(),
+                |dimension| assessment.metrics.dimension_score(dimension).is_none(),
+                Some(&assessment.metrics.score_weights),
+            )
         });
         // No assessment means no score for evidence to describe; the scan's
         // coverage is all there is to say.
@@ -955,7 +959,16 @@ impl ReportSide {
                     sampled,
                     &unlisted,
                     assessed.as_deref().unwrap_or_default(),
-                    overall_left_open(quality.overall_score, quality.score_bounds.as_ref()),
+                    overall_left_open(
+                        quality.score_bounds.as_ref(),
+                        |dimension| {
+                            quality
+                                .dimension_scores
+                                .get(&dimension.to_string())
+                                .is_none_or(Option::is_none)
+                        },
+                        quality.score_weights.as_ref(),
+                    ),
                     provenance,
                 ),
             };

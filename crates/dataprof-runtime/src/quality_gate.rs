@@ -4216,18 +4216,37 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         quality.sampled_dimensions().as_deref(),
         &quality.unlisted_components(),
         &quality.metrics.assessed_dimensions(),
-        overall_left_open(quality.score(), quality.score_bounds()),
+        overall_left_open(
+            quality.recorded_score_bounds(),
+            |dimension| quality.metrics.dimension_score(dimension).is_none(),
+            Some(&quality.metrics.score_weights),
+        ),
         provenance,
     )
 }
 
-/// Whether the recorded bounds leave an existing overall score without an
-/// interval. A sampled dimension behind the score with no bound does that,
-/// and so does a dimension the sample left unassessed that a scan of every
-/// value may assess (#1304): the second is the case the assessed dimensions
-/// alone cannot show.
-pub(crate) fn overall_left_open(overall: Option<f64>, bounds: Option<&ScoreBounds>) -> bool {
-    overall.is_some() && bounds.is_some_and(|bounds| bounds.overall_score.is_none())
+/// Whether a dimension the sample left open (`ScoreBounds::open_dimensions`)
+/// can still enter the overall score: it is unassessed and carries a
+/// positive weight under the current `weights` (#1304). A scan of every
+/// value may assess it, and its weight would move the score, so the overall
+/// score is not settled by the sample. Unknown weights count as positive.
+/// The assessed dimensions alone cannot show this, since the open one is not
+/// among them.
+pub(crate) fn overall_left_open(
+    bounds: Option<&ScoreBounds>,
+    unassessed: impl Fn(QualityDimension) -> bool,
+    weights: Option<&dataprof_core::QualityScoreWeights>,
+) -> bool {
+    bounds.is_some_and(|bounds| {
+        bounds
+            .open_dimensions
+            .iter()
+            .filter_map(|name| name.parse::<QualityDimension>().ok())
+            .any(|dimension| {
+                unassessed(dimension)
+                    && weights.is_none_or(|weights| weights.weight(dimension) > 0.0)
+            })
+    })
 }
 
 /// [`quality_evidence`] over the recorded facts it reads: the sampled

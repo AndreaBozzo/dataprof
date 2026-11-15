@@ -243,13 +243,16 @@ pub(crate) fn score_bounds(
     if let Some(Some(accuracy)) = shares.get_mut(&QualityDimension::Accuracy) {
         resolve_fences(accuracy, thresholds, data, column_profiles, log_term);
     }
-    // A scan of every value may assess accuracy where the sample did not,
-    // which would put it into the overall score: nothing bounds that score.
-    let accuracy_may_join = accuracy_unassessed
+    // A scan of every value may assess accuracy where the sample did not.
+    // That is recorded whatever its weight; with a positive one it would put
+    // accuracy into the overall score, and nothing bounds that score.
+    let accuracy_open = accuracy_unassessed
         && matches!(
             shares.get(&QualityDimension::Accuracy),
             Some(Some(accuracy)) if !accuracy.bounded
         );
+    let accuracy_may_join =
+        accuracy_open && dimension_weight(metrics, QualityDimension::Accuracy) > 0.0;
 
     let mut raw: HashMap<QualityDimension, Option<(f64, f64)>> = HashMap::new();
     for dimension in QualityDimension::all() {
@@ -302,10 +305,10 @@ pub(crate) fn score_bounds(
         .filter(|_| total_weight > 0.0 && !accuracy_may_join)
         .map(|(lower, upper)| outward(lower / total_weight, (upper / total_weight).min(100.0)));
 
-    let bounds = ScoreBounds {
-        confidence_level: SCORE_BOUNDS_CONFIDENCE,
+    let mut bounds = ScoreBounds::new(
+        SCORE_BOUNDS_CONFIDENCE,
         overall_score,
-        dimension_scores: QualityDimension::all()
+        QualityDimension::all()
             .into_iter()
             .map(|dimension| {
                 let interval = raw
@@ -316,7 +319,10 @@ pub(crate) fn score_bounds(
                 (dimension.to_string(), interval)
             })
             .collect(),
-    };
+    );
+    if accuracy_open {
+        bounds.open_dimensions = vec![QualityDimension::Accuracy.to_string()];
+    }
     Ok(Some(SampledScores { bounds, estimates }))
 }
 
@@ -1373,6 +1379,52 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn an_open_accuracy_leaves_the_overall_interval_out_only_when_it_weighs_something() {
+        // A sample of a 29,992-zero source whose quartiles coincide leaves
+        // accuracy unassessed, while a full scan tests the column. That is
+        // recorded either way; it removes the overall interval only when
+        // accuracy carries weight (review of #1313).
+        let source = zeros_and_fives(29_992, 0);
+        let profiles = vec![profile("v", DataType::Integer, 40_000, 0)];
+        let retained = (0..64)
+            .map(|seed| sample(&source, 10_000, seed))
+            .find(|retained| retained.iter().filter(|value| *value == "0").count() > 7_500)
+            .expect("some sample has its third quartile at 0");
+        let retained = HashMap::from([("v".to_string(), retained)]);
+        let bounds_with = |accuracy: f64| {
+            let thresholds = IsoQualityConfig {
+                score_weights: dataprof_core::QualityScoreWeights {
+                    accuracy,
+                    ..Default::default()
+                },
+                ..IsoQualityConfig::default()
+            };
+            let result = MetricsCalculator::with_thresholds(thresholds)
+                .calculate_bifurcated_metrics_with_hints(
+                    &retained,
+                    &profiles,
+                    None,
+                    &SemanticHints::default(),
+                    None,
+                )
+                .unwrap();
+            assert!(
+                result
+                    .metrics
+                    .dimension_score(QualityDimension::Accuracy)
+                    .is_none()
+            );
+            result.score_bounds.expect("sampled")
+        };
+        let weighted = bounds_with(0.15);
+        let weightless = bounds_with(0.0);
+        assert_eq!(weighted.open_dimensions, ["accuracy"]);
+        assert_eq!(weightless.open_dimensions, ["accuracy"]);
+        assert!(weighted.overall_score.is_none(), "{weighted:?}");
+        assert!(weightless.overall_score.is_some(), "{weightless:?}");
     }
 
     #[test]

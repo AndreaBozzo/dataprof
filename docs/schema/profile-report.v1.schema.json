@@ -3042,6 +3042,13 @@
           "description": "Interval per dimension, keyed like `QualityScores::dimension_scores`.\nAn exactly computed dimension's interval is its score. `None` for a\ndimension that was not assessed, or a sampled one with no bound: a\nduplicate scan over a sample, or an estimated count with no recorded\nfloor. Start/end ordering is compared only between date columns whose\nsamples hold the same rows, so a pair where either column has nulls is\nnot compared.",
           "type": "object"
         },
+        "open_dimensions": {
+          "description": "Dimensions the sample left unassessed that a scan of every value may\nassess, keyed like `dimension_scores` (#1304). Such a dimension would\nenter the overall score with its weight, so the overall score is open\nwhile one of them stays unassessed and weighted, whatever weights are\nset after profiling. Empty, and absent from the document, when the\nsample settled every dimension.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "overall_score": {
           "anyOf": [
             {
@@ -3051,7 +3058,7 @@
               "type": "null"
             }
           ],
-          "description": "Interval for the overall score. `None` when there is no overall score,\nwhen a sampled dimension behind it has no bound, or when a scan of\nevery value may assess a dimension the sample left unassessed, which\nwould weigh in the score (#1304)."
+          "description": "Interval for the overall score. `None` when there is no overall score,\nwhen a sampled dimension behind it has no bound, or when one of\n`open_dimensions` carries a positive weight."
         }
       },
       "required": [
