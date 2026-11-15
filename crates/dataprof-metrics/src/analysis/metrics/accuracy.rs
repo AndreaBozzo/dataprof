@@ -179,50 +179,95 @@ impl<'a> AccuracyCalculator<'a> {
         let mut total_outliers = 0;
 
         for profile in column_profiles {
-            if !matches!(profile.data_type, DataType::Integer | DataType::Float) {
+            let Some(column_data) = data.get(&profile.name) else {
+                continue;
+            };
+            let Some(values) = self.outlier_test_values(profile, column_data) else {
+                continue;
+            };
+            let sorted = sorted_numbers(&values);
+            // A column whose quartiles coincide has no spread to fence: every
+            // value off that one quartile would be an outlier, so a column of
+            // 75% zeros and 25% fives would fail a quarter of its values. It
+            // is not tested, as a column below `outlier_min_samples` is not
+            // (#1304).
+            if quartiles_coincide(&sorted) {
                 continue;
             }
 
-            if let Some(column_data) = data.get(&profile.name) {
-                // Read as the column's statistics read it, so a value held
-                // exactly there is held exactly here (#1181).
-                let parse = if read_as_decimal(profile) {
-                    ParsedNumber::parse_decimal
-                } else {
-                    ParsedNumber::parse
-                };
-                let values: Vec<ParsedNumber> = column_data
-                    .iter()
-                    .filter(|v| !is_null_like_token(v.trim()))
-                    .filter_map(|v| parse(v))
-                    .collect();
-
-                if values.len() < self.thresholds.outlier_min_samples {
-                    continue;
-                }
-
-                total_outliers += self.count_column_outliers(&values);
-                total_numeric_values += values.len();
-            }
+            total_outliers += self.count_column_outliers(&values, &sorted);
+            total_numeric_values += values.len();
         }
 
         Ok((total_outliers, total_numeric_values))
     }
 
+    /// The numbers of `column_data` the outlier test reads, or `None` when
+    /// the column is not numeric or holds fewer than `outlier_min_samples`
+    /// of them. Read as the column's statistics read them, so a value held
+    /// exactly there is held exactly here (#1181).
+    pub(crate) fn outlier_test_values(
+        &self,
+        profile: &ColumnProfile,
+        column_data: &[String],
+    ) -> Option<Vec<ParsedNumber>> {
+        if !matches!(profile.data_type, DataType::Integer | DataType::Float) {
+            return None;
+        }
+        let parse = if read_as_decimal(profile) {
+            ParsedNumber::parse_decimal
+        } else {
+            ParsedNumber::parse
+        };
+        let values: Vec<ParsedNumber> = column_data
+            .iter()
+            .filter(|v| !is_null_like_token(v.trim()))
+            .filter_map(|v| parse(v))
+            .collect();
+        (values.len() >= self.thresholds.outlier_min_samples).then_some(values)
+    }
+
+    /// Values outside the Tukey fences drawn from the quartiles `q1` and
+    /// `q3`, which need not be the quartiles of `values`: the score bounds
+    /// count a sample against the widest and the narrowest fences the
+    /// source's quartiles allow (#1304). Compared as
+    /// [`count_column_outliers`](Self::count_column_outliers) compares, by
+    /// exact differences when a value is held exactly.
+    pub(crate) fn count_outside_fences(
+        &self,
+        values: &[ParsedNumber],
+        q1: ParsedNumber,
+        q3: ParsedNumber,
+    ) -> usize {
+        let k = self.thresholds.outlier_iqr_multiplier;
+        if values
+            .iter()
+            .any(|number| !matches!(number, ParsedNumber::Float(_)))
+        {
+            return ExactTukey::from_quartiles(&q1, &q3, k).count_outliers(values);
+        }
+        let (q1, q3) = (q1.to_f64(), q3.to_f64());
+        let iqr = q3 - q1;
+        let (lower_bound, upper_bound) = (q1 - k * iqr, q3 + k * iqr);
+        values
+            .iter()
+            .map(|number| number.to_f64())
+            .filter(|&value| value < lower_bound || value > upper_bound)
+            .count()
+    }
+
     /// Count one column's outliers as its `outlier_count` does: a column
     /// holding a value exactly, an integer past 2^53 or a decimal past `f64`,
     /// takes its fences from exact differences between values, where the
-    /// `f64` fences snap to a grid coarser than its spread (#1181).
-    fn count_column_outliers(&self, values: &[ParsedNumber]) -> usize {
+    /// `f64` fences snap to a grid coarser than its spread (#1181). `sorted`
+    /// is `values` in ascending order.
+    fn count_column_outliers(&self, values: &[ParsedNumber], sorted: &[ParsedNumber]) -> usize {
         let wide = values
             .iter()
             .any(|number| !matches!(number, ParsedNumber::Float(_)));
-        if wide {
-            let mut sorted = values.to_vec();
-            sorted.sort_by(|a, b| a.value_cmp(*b));
-            if let Some(tukey) = ExactTukey::new(&sorted, self.thresholds.outlier_iqr_multiplier) {
-                return tukey.count_outliers(values);
-            }
+        if wide && let Some(tukey) = ExactTukey::new(sorted, self.thresholds.outlier_iqr_multiplier)
+        {
+            return tukey.count_outliers(values);
         }
         let numeric: Vec<f64> = values.iter().map(|number| number.to_f64()).collect();
         self.count_outliers_preparsed(&numeric)
@@ -310,6 +355,27 @@ impl<'a> AccuracyCalculator<'a> {
 
         counts
     }
+}
+
+/// `values` in ascending order, as the outlier test reads them.
+pub(crate) fn sorted_numbers(values: &[ParsedNumber]) -> Vec<ParsedNumber> {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.value_cmp(*b));
+    sorted
+}
+
+/// Whether the first and third quartiles of `sorted` are one value, so the
+/// IQR is 0. With Type 7 interpolation they are exactly when the value at or
+/// below the first quartile's position equals the one at or above the
+/// third's, so two values decide it and no interpolation is needed. Values
+/// are compared by their difference, so `-0` and `0` are one value.
+pub(crate) fn quartiles_coincide(sorted: &[ParsedNumber]) -> bool {
+    let Some(last) = sorted.len().checked_sub(1) else {
+        return false;
+    };
+    let below_q1 = last / 4;
+    let above_q3 = (3 * last).div_ceil(4);
+    sorted[above_q3].minus_value(sorted[below_q1]) == 0.0
 }
 
 /// Whether `profile`'s values are a decimal's renderings, read with
@@ -444,6 +510,38 @@ mod tests {
             metrics.outlier_ratio > 0.0,
             "small numeric samples above outlier_min_samples should still detect obvious outliers"
         );
+    }
+
+    #[test]
+    fn a_column_whose_quartiles_coincide_is_not_tested_for_outliers() {
+        // 75% zeros: Q1 and Q3 are both 0, so the fences sit on 0 and every
+        // five would be an outlier. One zero fewer moves Q3 to 5 and nothing
+        // is. The first column is left out of the test, the second tested
+        // (#1304). Wide integers past 2^53 take the exact path and agree.
+        let thresholds = IsoQualityConfig::default();
+        let calc = AccuracyCalculator::new(&thresholds);
+        let column = |zeros: usize, base: i128| -> Vec<String> {
+            (0..400)
+                .map(|index| (base + if index < zeros { 0 } else { 5 }).to_string())
+                .collect()
+        };
+        let mut wrong = Vec::new();
+        for base in [0, 1 << 60] {
+            for (zeros, tested) in [(301, false), (299, true)] {
+                let data = HashMap::from([("v".to_string(), column(zeros, base))]);
+                let metrics = calc
+                    .calculate(&data, &[numeric_profile("v")])
+                    .expect("accuracy metrics should be computed");
+                let expected = if tested { (0, 400) } else { (0, 0) };
+                if (metrics.outliers, metrics.outlier_values_checked) != expected {
+                    wrong.push(format!(
+                        "base {base}, {zeros} zeros: {} of {}",
+                        metrics.outliers, metrics.outlier_values_checked
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]

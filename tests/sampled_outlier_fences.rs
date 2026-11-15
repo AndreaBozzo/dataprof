@@ -1,0 +1,222 @@
+//! A sampled accuracy score's bounds cover the outlier fences of a scan of
+//! every value (#1304).
+//!
+//! A column of zeros and fives with a share of zeros near 75% has its third
+//! quartile at 0 or at 5 depending on a handful of values. A full scan draws
+//! its fences from the source's quartiles; a route that keeps a sample used
+//! to bound the score with the sample's own fences, so a complete scan could
+//! pass or fail on the wrong side. A column whose quartiles coincide is no
+//! longer tested, so with more than 75% zeros a full scan leaves accuracy
+//! unassessed, and with fewer it scores 100.
+//!
+//! `python/tests/test_sampled_outlier_fences.py` is the Python twin, which
+//! also holds each route to the same values profiled from a dict.
+
+use std::io::Write;
+
+use dataprof::{EngineType, MetricPack, ProfileReport, Profiler, QualityDimension, QualityPolicy};
+use tempfile::NamedTempFile;
+
+const ROWS: usize = 40_000;
+
+/// Multipliers that each lay the values out in another order: all prime,
+/// so coprime with `ROWS`, and each row maps to a distinct rank.
+const ORDERS: [usize; 3] = [7_919, 104_729, 1_299_709];
+
+/// One fixture: the number of zeros, the value added to each, and the
+/// verdict of `min_dimension_scores={"accuracy": 90}` on a full scan.
+struct Case {
+    zeros: usize,
+    base: i128,
+    full_scan: &'static str,
+}
+
+const CASES: [Case; 6] = [
+    // Q3 is 5: the column is tested, no value is an outlier, accuracy 100.
+    Case {
+        zeros: 29_992,
+        base: 0,
+        full_scan: "pass",
+    },
+    // Q3 is 0, so the IQR is 0: not tested, accuracy unassessed.
+    Case {
+        zeros: 30_008,
+        base: 0,
+        full_scan: "inconclusive",
+    },
+    // Half zeros, far from the boundary: every route decides.
+    Case {
+        zeros: 20_000,
+        base: 0,
+        full_scan: "pass",
+    },
+    // The same past 2^53, where the fences are compared exactly.
+    Case {
+        zeros: 29_992,
+        base: 1 << 60,
+        full_scan: "pass",
+    },
+    Case {
+        zeros: 30_008,
+        base: 1 << 60,
+        full_scan: "inconclusive",
+    },
+    Case {
+        zeros: 20_000,
+        base: 1 << 60,
+        full_scan: "pass",
+    },
+];
+
+impl Case {
+    fn label(&self, order: usize) -> String {
+        format!("{} zeros, base {}, order {order}", self.zeros, self.base)
+    }
+
+    fn values(&self, order: usize) -> Vec<i128> {
+        (0..ROWS)
+            .map(|row| {
+                let rank = (row * order) % ROWS;
+                self.base + if rank < self.zeros { 0 } else { 5 }
+            })
+            .collect()
+    }
+
+    /// Whether a sample of this case can tell the full scan's verdict: near
+    /// the boundary it may only report that it cannot.
+    fn may_be_inconclusive(&self) -> bool {
+        self.zeros != 20_000
+    }
+}
+
+fn file(suffix: &str, text: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::with_suffix(suffix).unwrap();
+    file.write_all(text.as_bytes()).unwrap();
+    file.flush().unwrap();
+    file
+}
+
+#[cfg(feature = "parquet")]
+fn parquet_file(values: &[i128]) -> Option<NamedTempFile> {
+    use std::sync::Arc;
+
+    use arrow::array::{ArrayRef, Int64Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+
+    let values: Vec<i64> = values
+        .iter()
+        .map(|&value| i64::try_from(value).ok())
+        .collect::<Option<_>>()?;
+    let schema = Arc::new(Schema::new(vec![Field::new("v", DataType::Int64, false)]));
+    let array = Arc::new(Int64Array::from(values)) as ArrayRef;
+    let batch = RecordBatch::try_new(schema.clone(), vec![array]).unwrap();
+    let file = NamedTempFile::with_suffix(".parquet").unwrap();
+    let mut writer = ArrowWriter::try_new(file.reopen().unwrap(), schema, None).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+    Some(file)
+}
+
+/// The values through every engine over a CSV, the other file formats, a
+/// quality-only run and the async route.
+fn routes(values: &[i128]) -> Vec<(String, ProfileReport)> {
+    let mut csv_text = String::from("v\n");
+    let mut jsonl = String::new();
+    for value in values {
+        csv_text.push_str(&format!("{value}\n"));
+        jsonl.push_str(&format!("{{\"v\":{value}}}\n"));
+    }
+    let csv = file(".csv", &csv_text);
+    let mut reports = Vec::new();
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(csv.path())
+            .unwrap_or_else(|e| panic!("[{engine:?}] {e}"));
+        reports.push((format!("csv {engine:?}"), report));
+    }
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .metric_packs(vec![MetricPack::Quality])
+        .analyze_file(csv.path())
+        .expect("quality only");
+    reports.push(("csv Incremental quality only".to_string(), report));
+    let mut files = vec![("jsonl", Some(file(".jsonl", &jsonl)))];
+    #[cfg(feature = "parquet")]
+    files.push(("parquet", parquet_file(values)));
+    for (label, source) in files {
+        let Some(source) = source else { continue };
+        let report = Profiler::new()
+            .analyze_file(source.path())
+            .unwrap_or_else(|e| panic!("[{label}] {e}"));
+        reports.push((label.to_string(), report));
+    }
+    #[cfg(feature = "async-streaming")]
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let report = runtime
+            .block_on(Profiler::new().profile_file(csv.path()))
+            .expect("async CSV");
+        reports.push(("async csv".to_string(), report));
+    }
+    reports
+}
+
+fn verdict(report: &ProfileReport) -> String {
+    let result = QualityPolicy::new()
+        .min_dimension_score(QualityDimension::Accuracy, 90.0)
+        .evaluate(report)
+        .unwrap();
+    serde_json::to_value(&result).unwrap()["verdict"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Every route, and the report it saves, gives the full scan's verdict, or
+/// says it cannot near the boundary. Never the opposite one.
+#[test]
+fn every_sampled_route_gives_the_full_scan_verdict_or_none() {
+    let mut wrong = Vec::new();
+    for case in &CASES {
+        for order in ORDERS {
+            for (route, report) in routes(&case.values(order)) {
+                let saved: ProfileReport =
+                    serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
+                for (form, report) in [("run", &report), ("saved", &saved)] {
+                    let got = verdict(report);
+                    let fine = got == case.full_scan
+                        || (case.may_be_inconclusive() && got == "inconclusive");
+                    if !fine {
+                        wrong.push(format!(
+                            "{} [{route}, {form}]: {got}, full scan {}",
+                            case.label(order),
+                            case.full_scan
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "wrong verdicts:\n{}", wrong.join("\n"));
+}
+
+/// The report records the definition the IQR rule is under.
+#[test]
+fn reports_record_which_columns_the_outlier_test_runs_on() {
+    let report = &routes(&CASES[0].values(ORDERS[0]))[0].1;
+    let document = serde_json::to_value(report).unwrap();
+    assert_eq!(
+        document["metric_semantics"]["outlier_spread"],
+        "nonzero_iqr"
+    );
+}

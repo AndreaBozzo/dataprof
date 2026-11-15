@@ -1043,6 +1043,41 @@ column larger than its sample. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for `date_statistics` is
 malformed, as for `text_length_unit`.
 
+## v1 additive change: `metric_semantics.outlier_spread`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `outlier_spread` | `"nonzero_iqr"` | which columns the outlier test behind `outlier_ratio` runs on |
+
+The outlier test now skips a column whose first and third quartiles are one
+value (#1304), as it skips one below `outlier_min_samples`: its values add
+nothing to `outlier_values_checked`. With an IQR of 0 the Tukey fences sit on
+that quartile, so a column of 75% zeros and 25% fives reported a quarter of
+its values as outliers, and one value more or less on either side of 75%
+moved the accuracy score between 75 and 100. Such a column now leaves the
+outlier component, and a source whose only tested columns were like it
+reports accuracy from its range and sign rules alone, or unassessed without
+them. A column's own `outlier_count` statistic is unchanged.
+
+On a sampled source the full scan's fences come from the source's quartiles,
+which the sample only estimates. The accuracy interval in `score_bounds` now
+covers them: each quartile is bounded by two sample values, and the interval
+runs from the share outside the widest fences those bounds allow to the share
+outside the narrowest. Where the bounds leave open whether the source's
+quartiles coincide, the accuracy interval is absent and a gate rule on it is
+inconclusive. An interval is as wide as before when no value lies between
+those fences, and wider on a column whose fences cut through dense values.
+
+A report that records no `outlier_spread` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data. Regenerate the baseline with the current release to
+have those rules decided again. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for `outlier_spread` is
+malformed, as for `text_length_unit`.
+
 ## v1 additive change: `generator`
 
 Both dialects gain a top-level `generator` object naming the dataprof build

@@ -925,10 +925,13 @@ impl ScoreInterval {
 /// Where the scores over every scanned row lie, for an assessment whose
 /// scores were partly computed over a retained sample of those rows.
 ///
-/// The sample fixes each check: a column's type, dominant form and decimal
-/// scale, detected pattern and outlier fences. The intervals cover the scores
-/// those same checks would give over every scanned value, and all of them
-/// hold at once with probability at least `confidence_level`. When the scan
+/// The intervals cover the scores a scan of every value gives, and all of
+/// them hold at once with probability at least `confidence_level`. The
+/// outlier fences such a scan draws from the source's quartiles are covered
+/// too (#1304): the accuracy interval spans every fence the source's
+/// quartiles may give, and is `None` when the sample cannot tell whether the
+/// scan tests a column at all. The sample still fixes the other checks: a
+/// column's type, dominant form and decimal scale, and detected pattern. When the scan
 /// read the whole source, that is the whole source's score, which is the
 /// only case a quality gate decides on them. Intervals
 /// are rounded outward to two decimals, so a saved one still contains what

@@ -3602,6 +3602,8 @@ enum Definition {
     KeyUniquenessUnits,
     /// What the outlier ratio is measured over, behind the accuracy score.
     OutlierUnits,
+    /// Which columns the outlier test runs on, behind the accuracy score.
+    OutlierSpread,
     /// Which column key uniqueness may measure, behind the uniqueness score.
     KeyColumnSource,
     /// How values meet outlier fences and rule bounds, behind the accuracy
@@ -3624,6 +3626,7 @@ impl Definition {
             Self::RangeRuleCount => "range_rule_count",
             Self::KeyUniquenessUnits => "key_uniqueness_units",
             Self::OutlierUnits => "outlier_units",
+            Self::OutlierSpread => "outlier_spread",
             Self::KeyColumnSource => "key_column_source",
             Self::AccuracyComparison => "accuracy_comparison",
             Self::JsonNumberReading => "json_number_reading",
@@ -3642,6 +3645,7 @@ impl Definition {
             Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
             Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
             Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
+            Self::OutlierSpread => agree(&a.outlier_spread, &b.outlier_spread),
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
             Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
             Self::JsonNumberReading => agree(&a.json_number_reading, &b.json_number_reading),
@@ -3666,6 +3670,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
+            Definition::OutlierSpread,
         ],
         Some(QualityDimension::Validity) => &[
             Definition::NullTokens,
@@ -3679,6 +3684,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
+            Definition::OutlierSpread,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,

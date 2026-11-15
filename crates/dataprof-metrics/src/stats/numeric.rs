@@ -507,6 +507,20 @@ impl<'a> ExactTukey<'a> {
         })
     }
 
+    /// Fences drawn from two given values as the quartiles, which need not be
+    /// the quartiles of the values counted (#1304).
+    pub(crate) fn from_quartiles(q1: &'a ParsedNumber, q3: &'a ParsedNumber, k: f64) -> Self {
+        let iqr = q3.minus_value(*q1);
+        Self {
+            q1_anchor: q1,
+            q1_offset: 0.0,
+            q3_anchor: q3,
+            q3_offset: 0.0,
+            iqr: iqr.is_finite().then_some(iqr),
+            k,
+        }
+    }
+
     /// Values below `q1 - k·IQR` or above `q3 + k·IQR`, each compared by its
     /// exact difference from the nearer quartile's anchor. An IQR beyond the
     /// `f64` range puts both fences beyond it, as in [`count_outliers_iqr`].
