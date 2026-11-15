@@ -1027,6 +1027,14 @@ reported every value (#1297). The statistics are now computed over every
 non-null value read, on every engine. A source whose sample held every value
 reports as before.
 
+The timeliness score, its `score_bounds` and the start/end comparison read a
+date column's slash dates in the `slash_date_order` these statistics record
+(#1305). They used to decide an order of their own from the retained sample,
+so on a larger source a value outside it that settled the order was missed,
+and the score read every ambiguous date the other way round from the report.
+A column named as temporal but typed other than date has no date statistics,
+and its order is still decided from the values held for it.
+
 A `max_date_age` rule reads the record: with it, the newest date covers every
 value read, so a stale one fails on a complete scan. A report that records no
 `date_statistics` reads back with it unknown, and the rule keeps its earlier

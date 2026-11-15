@@ -9,7 +9,7 @@ use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::quality::{TimelinessClock, TimelinessClockMode};
 use crate::stats::datetime::resolve_slash_order;
-use crate::types::ColumnProfile;
+use crate::types::{ColumnProfile, ColumnStats, SlashDateOrder};
 use chrono::{Days, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
 
@@ -133,6 +133,29 @@ pub(crate) fn rows_line_up(
     first_held == second_held && (every_row || null_free)
 }
 
+/// The order `name`'s slash dates are read in: the order its date statistics
+/// record, decided over every value the column streamed (#1297), so the score
+/// reads the dates the report describes (#1305). Resolving it from `values`
+/// instead read a retained sample, which on a large source can miss the one
+/// value that settles the order.
+///
+/// A column without date statistics (one typed other than date, named as
+/// temporal by a hint) has no recorded order, and falls back to `values`.
+fn slash_order(
+    name: &str,
+    values: &[String],
+    column_profiles: &[ColumnProfile],
+) -> Option<SlashDateOrder> {
+    match column_profiles
+        .iter()
+        .find(|profile| profile.name == name)
+        .map(|profile| &profile.stats)
+    {
+        Some(ColumnStats::DateTime(stats)) => stats.slash_date_order,
+        _ => resolve_slash_order(values),
+    }
+}
+
 /// Start/end ordering counts over the pairs that could be compared.
 struct TemporalOrdering {
     violations: usize,
@@ -205,7 +228,7 @@ impl<'a> TimelinessCalculator<'a> {
         declared_pairs: &[(String, String)],
         column_profiles: &[ColumnProfile],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
-        let summary = self.calculate_date_summary(data, temporal_columns);
+        let summary = self.calculate_date_summary(data, temporal_columns, column_profiles);
         let stale_data_ratio = if summary.valid_dates == 0 {
             0.0
         } else {
@@ -241,6 +264,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
+        column_profiles: &[ColumnProfile],
     ) -> DateSummary {
         let mut future_count = 0;
         let mut stale_dates = 0;
@@ -260,8 +284,8 @@ impl<'a> TimelinessCalculator<'a> {
             let Some(column_data) = data.get(column_name) else {
                 continue;
             };
-            // Read the column's slash dates in one order, as its statistics do.
-            let order = resolve_slash_order(column_data);
+            // Read the column's slash dates in the order its statistics record.
+            let order = slash_order(column_name, column_data, column_profiles);
             for value in column_data {
                 if is_null_like_token(value.trim()) {
                     continue;
@@ -456,8 +480,8 @@ impl<'a> TimelinessCalculator<'a> {
             compared.push((start_name.to_string(), end_name.to_string()));
             // Each column in its own order: a US start column paired with a
             // European end column is read correctly on both sides.
-            let start_order = resolve_slash_order(start_values);
-            let end_order = resolve_slash_order(end_values);
+            let start_order = slash_order(start_name, start_values, column_profiles);
+            let end_order = slash_order(end_name, end_values, column_profiles);
 
             for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
                 if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {

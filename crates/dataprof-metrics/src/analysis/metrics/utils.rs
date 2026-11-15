@@ -212,11 +212,12 @@ pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
 /// two of the supported formats put the day first, so neither the year alone
 /// nor the raw string orders them correctly.
 ///
-/// `order` is the value's column's [`resolve_slash_order`] result; read the
-/// column's values with it, or an ambiguous `01/02/2024` in a month-first
-/// column is dated a month off (#811).
+/// `order` is the slash order of the value's column, as its date statistics
+/// record it ([`DateTimeStats::slash_date_order`]); read the column's values
+/// with it, or an ambiguous `01/02/2024` in a month-first column is dated a
+/// month off (#811).
 ///
-/// [`resolve_slash_order`]: crate::stats::datetime::resolve_slash_order
+/// [`DateTimeStats::slash_date_order`]: crate::types::DateTimeStats::slash_date_order
 pub(crate) fn extract_date(date_str: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
     parse_raw_datetime_date(date_str, order)
 }
