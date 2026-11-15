@@ -120,7 +120,14 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
 
     let mut invalid_count = None;
     let stats = if input.skip_statistics {
-        ColumnStats::None
+        // Timeliness reads a date column's slash order from its date
+        // statistics (#1305), so a run without the statistics pack still
+        // carries them into the quality pass. `ReportAssembler::build` drops
+        // them from the report.
+        match (&input.data_type, input.exact_dates) {
+            (DataType::Date, Some(dates)) => ColumnStats::DateTime(dates.finish()),
+            _ => ColumnStats::None,
+        }
     } else {
         match input.data_type {
             DataType::Integer | DataType::Float => {
