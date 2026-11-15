@@ -393,6 +393,7 @@ _METRIC_SEMANTICS = {
     "json_number_reading": ("literal_digits",),
     "sampled_score_estimator": ("population_weighted",),
     "date_statistics": ("every_value",),
+    "outlier_spread": ("nonzero_iqr",),
 }
 
 

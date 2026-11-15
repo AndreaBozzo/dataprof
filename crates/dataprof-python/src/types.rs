@@ -4,11 +4,11 @@ use pyo3::types::PyDict;
 
 use dataprof::{
     AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateStatistics, JsonNumberReading,
-    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount,
-    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
-    QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval,
-    SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit,
-    TruncationReason,
+    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierSpread, OutlierUnits, Pattern,
+    PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension,
+    QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator,
+    ScoreInterval, SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1395,6 +1395,14 @@ impl PyProfileReport {
                 "date_statistics",
                 match statistics {
                     DateStatistics::EveryValue => "every_value",
+                },
+            )?;
+        }
+        if let Some(spread) = semantics.outlier_spread {
+            dict.set_item(
+                "outlier_spread",
+                match spread {
+                    OutlierSpread::NonzeroIqr => "nonzero_iqr",
                 },
             )?;
         }

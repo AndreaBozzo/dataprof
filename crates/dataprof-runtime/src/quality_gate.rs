@@ -3602,6 +3602,8 @@ enum Definition {
     KeyUniquenessUnits,
     /// What the outlier ratio is measured over, behind the accuracy score.
     OutlierUnits,
+    /// Which columns the outlier test runs on, behind the accuracy score.
+    OutlierSpread,
     /// Which column key uniqueness may measure, behind the uniqueness score.
     KeyColumnSource,
     /// How values meet outlier fences and rule bounds, behind the accuracy
@@ -3624,6 +3626,7 @@ impl Definition {
             Self::RangeRuleCount => "range_rule_count",
             Self::KeyUniquenessUnits => "key_uniqueness_units",
             Self::OutlierUnits => "outlier_units",
+            Self::OutlierSpread => "outlier_spread",
             Self::KeyColumnSource => "key_column_source",
             Self::AccuracyComparison => "accuracy_comparison",
             Self::JsonNumberReading => "json_number_reading",
@@ -3642,6 +3645,7 @@ impl Definition {
             Self::RangeRuleCount => agree(&a.range_rule_count, &b.range_rule_count),
             Self::KeyUniquenessUnits => agree(&a.key_uniqueness_units, &b.key_uniqueness_units),
             Self::OutlierUnits => agree(&a.outlier_units, &b.outlier_units),
+            Self::OutlierSpread => agree(&a.outlier_spread, &b.outlier_spread),
             Self::KeyColumnSource => agree(&a.key_column_source, &b.key_column_source),
             Self::AccuracyComparison => agree(&a.accuracy_comparison, &b.accuracy_comparison),
             Self::JsonNumberReading => agree(&a.json_number_reading, &b.json_number_reading),
@@ -3666,6 +3670,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
+            Definition::OutlierSpread,
         ],
         Some(QualityDimension::Validity) => &[
             Definition::NullTokens,
@@ -3679,6 +3684,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::AccuracyComparison,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
+            Definition::OutlierSpread,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,
@@ -4210,15 +4216,45 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         quality.sampled_dimensions().as_deref(),
         &quality.unlisted_components(),
         &quality.metrics.assessed_dimensions(),
+        overall_left_open(
+            quality.recorded_score_bounds(),
+            |dimension| quality.metrics.dimension_score(dimension).is_none(),
+            Some(&quality.metrics.score_weights),
+        ),
         provenance,
     )
+}
+
+/// Whether a dimension the sample left open (`ScoreBounds::open_dimensions`)
+/// can still enter the overall score: it is unassessed and carries a
+/// positive weight under the current `weights` (#1304). A scan of every
+/// value may assess it, and its weight would move the score, so the overall
+/// score is not settled by the sample. Unknown weights count as positive.
+/// The assessed dimensions alone cannot show this, since the open one is not
+/// among them.
+pub(crate) fn overall_left_open(
+    bounds: Option<&ScoreBounds>,
+    unassessed: impl Fn(QualityDimension) -> bool,
+    weights: Option<&dataprof_core::QualityScoreWeights>,
+) -> bool {
+    bounds.is_some_and(|bounds| {
+        bounds
+            .open_dimensions
+            .iter()
+            .filter_map(|name| name.parse::<QualityDimension>().ok())
+            .any(|dimension| {
+                unassessed(dimension)
+                    && weights.is_none_or(|weights| weights.weight(dimension) > 0.0)
+            })
+    })
 }
 
 /// [`quality_evidence`] over the recorded facts it reads: the sampled
 /// component labels (`None` when the report did not record them), the
 /// components computed with signal that neither list names
-/// ([`QualityAssessment::unlisted_components`]), and the dimensions the
-/// overall score weighs. A report delta reads the same facts
+/// ([`QualityAssessment::unlisted_components`]), the dimensions the
+/// overall score weighs, and whether the recorded bounds leave the overall
+/// score open ([`overall_left_open`]). A report delta reads the same facts
 /// from a flat summary, which has no [`QualityAssessment`] behind it, and
 /// findings read one component through it, so the gate, the delta and
 /// findings resolve coverage by one rule.
@@ -4226,6 +4262,7 @@ pub(crate) fn sampled_component_evidence(
     sampled: Option<&[String]>,
     unlisted: &[String],
     assessed: &[QualityDimension],
+    overall_open: bool,
     provenance: Provenance,
 ) -> Evidence {
     let Some(sampled) = sampled else {
@@ -4268,7 +4305,8 @@ pub(crate) fn sampled_component_evidence(
             reason: EvidenceGap::CoverageUnrecorded,
         };
     }
-    if any_in(sampled) {
+    // The overall score may weigh a dimension the sample left unassessed.
+    if any_in(sampled) || (matches!(provenance, Provenance::Overall) && overall_open) {
         Evidence::Incomplete {
             reason: EvidenceGap::QualitySampled,
         }

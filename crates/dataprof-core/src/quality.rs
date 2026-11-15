@@ -197,6 +197,25 @@ pub enum DateStatistics {
     EveryValue,
 }
 
+/// Which columns the outlier test behind `outlier_ratio` runs on, as
+/// recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 a column whose first
+/// and third quartiles were one value was tested too: its IQR was 0, so
+/// every value off that quartile was an outlier, and a column of 75% zeros
+/// and 25% fives reported a quarter of its values as outliers. Those releases
+/// recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlierSpread {
+    /// Columns whose first and third quartiles differ (#1304). A column whose
+    /// quartiles coincide is not tested, as one below `outlier_min_samples`
+    /// is not, and adds nothing to `outlier_values_checked`.
+    NonzeroIqr,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(
     Debug,

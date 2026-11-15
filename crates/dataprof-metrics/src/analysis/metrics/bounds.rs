@@ -7,11 +7,14 @@
 //!
 //! Every sampled dimension score is `100 - 100 * sum(share)` over one or more
 //! shares, each a count of failing values over a count of checked values,
-//! summed over columns. The checks themselves are fixed by the sample: a
-//! column's type, its dominant lexical form and decimal scale, its detected
-//! pattern and its outlier fences all come from the values retained. The
-//! bounds cover the share of *all* the source's values that fail those same
-//! checks.
+//! summed over columns. Most checks are fixed by the sample: a column's type,
+//! its dominant lexical form and decimal scale and its detected pattern come
+//! from the values retained, and the bounds cover the share of *all* the
+//! source's values that fail those same checks. Outlier fences are the
+//! exception (#1304): a scan of every value draws them from the source's
+//! quartiles, so the bounds first bound those quartiles by two values of the
+//! sample each, then the outlier share between the widest and the narrowest
+//! fences that allows (see [`fence_span`]).
 //!
 //! For each column, the failing and checked values per sampled value are
 //! means of bounded variables over a simple random sample drawn without
@@ -23,7 +26,7 @@
 //! [`SCORE_BOUNDS_CONFIDENCE`] (a union bound). A column whose sample holds
 //! every one of its values contributes its counts exactly.
 
-use super::accuracy::AccuracyCalculator;
+use super::accuracy::{AccuracyCalculator, quartiles_coincide, sorted_numbers};
 use super::consistency::ConsistencyCalculator;
 use super::precision::PrecisionCalculator;
 use super::timeliness::TimelinessCalculator;
@@ -31,6 +34,7 @@ use super::validity::ValidityCalculator;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::quality::{QualityScores, RowDuplicateSummary, ScoreBounds, ScoreInterval};
+use crate::stats::ParsedNumber;
 use crate::types::{ColumnProfile, QualityDimension, QualityMetrics};
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -55,6 +59,12 @@ struct ColumnCounts {
     /// Non-null values of the column in the whole source, which is what the
     /// sample was drawn from.
     population: usize,
+    /// The fewest and the most failures the sample can hold under the check
+    /// a scan of every value would make, when that check is not the one the
+    /// sample fixed: outlier fences drawn from the source's quartiles rather
+    /// than the sample's (#1304). `None` when the sample's check is the
+    /// source's, and `failures` is both.
+    failure_span: Option<(usize, usize)>,
 }
 
 impl ColumnCounts {
@@ -75,6 +85,12 @@ impl ColumnCounts {
         } else {
             Some(self.population as f64 / self.sampled as f64)
         }
+    }
+
+    /// The fewest and the most failures, as [`failure_span`](Self::failure_span)
+    /// gives them.
+    fn failure_range(&self) -> (usize, usize) {
+        self.failure_span.unwrap_or((self.failures, self.failures))
     }
 
     /// How many means this column adds to the union bound.
@@ -98,6 +114,44 @@ struct DimensionShares {
     /// reservoirs of different sizes. Such a share enters the point estimate
     /// with its sample counts as they are.
     bounded: bool,
+    /// Sampled columns whose outlier fences a scan of every value draws from
+    /// quartiles the sample only estimates (#1304). Each one's quartiles are
+    /// bounded before its outlier share is, which spends two means' worth of
+    /// the error budget.
+    fence_columns: Vec<FenceColumn>,
+}
+
+/// A sampled column the outlier test reads.
+#[derive(Debug, Clone, Copy)]
+struct FenceColumn {
+    /// Index of the column's profile.
+    profile: usize,
+    /// Index of the column's counts in the outlier share; `None` when the
+    /// sample's quartiles coincided, so the sample did not test it.
+    slot: Option<usize>,
+}
+
+impl DimensionShares {
+    /// Shares whose checks the sample fixes, with no fences to bound.
+    fn new(shares: Vec<Share>) -> Self {
+        Self {
+            shares,
+            bounded: true,
+            fence_columns: Vec::new(),
+        }
+    }
+
+    /// How many means this dimension adds to the union bound.
+    fn bounded_means(&self) -> usize {
+        let columns: usize = self
+            .shares
+            .iter()
+            .flatten()
+            .map(ColumnCounts::bounded_means)
+            .sum();
+        // Two one-sided events per quartile, two quartiles: two means.
+        columns + 2 * self.fence_columns.len()
+    }
 }
 
 /// What [`score_bounds`] returns: the intervals, and the point scores they
@@ -137,9 +191,21 @@ pub(crate) fn score_bounds(
     // over all of them, so no interval can be computed before the count of
     // bounded means is known. `None` in the map is a sampled dimension this
     // module has no bound for.
+    //
+    // Accuracy is wanted even when the sample left it unassessed: a column
+    // whose sample quartiles coincide is not tested, while a scan of every
+    // value may test it, and so assess accuracy and move the overall score
+    // (#1304). Only its fences are bounded then.
+    let accuracy_unassessed = metrics.accuracy.is_some()
+        && metrics
+            .dimension_score(QualityDimension::Accuracy)
+            .is_none();
     let wanted: Vec<QualityDimension> = QualityDimension::all()
         .into_iter()
-        .filter(|dimension| metrics.dimension_score(*dimension).is_some())
+        .filter(|dimension| {
+            metrics.dimension_score(*dimension).is_some()
+                || (*dimension == QualityDimension::Accuracy && accuracy_unassessed)
+        })
         .filter(|dimension| match dimension {
             QualityDimension::Uniqueness => {
                 is_sampled("key_uniqueness") || is_sampled("duplicate_rows")
@@ -147,7 +213,7 @@ pub(crate) fn score_bounds(
             other => is_sampled(&other.to_string()),
         })
         .collect();
-    let shares = collect_shares(
+    let mut shares = collect_shares(
         &wanted,
         thresholds,
         timeliness,
@@ -158,16 +224,35 @@ pub(crate) fn score_bounds(
     )?;
 
     let bounded_means: usize = shares
-        .values()
-        .flatten()
-        .filter(|dimension| dimension.bounded)
-        .flat_map(|dimension| dimension.shares.iter())
-        .flatten()
-        .map(ColumnCounts::bounded_means)
+        .iter()
+        .filter_map(|(dimension, shares)| Some((*dimension, shares.as_ref()?)))
+        .filter(|(_, shares)| shares.bounded)
+        .map(|(dimension, shares)| {
+            if dimension == QualityDimension::Accuracy && accuracy_unassessed {
+                // No share of an unassessed dimension is bounded; only its
+                // fences are.
+                2 * shares.fence_columns.len()
+            } else {
+                shares.bounded_means()
+            }
+        })
         .sum();
     let error_budget = 1.0 - SCORE_BOUNDS_CONFIDENCE;
     // Two tails per mean.
     let log_term = (2.0 * bounded_means.max(1) as f64 / error_budget).ln();
+    if let Some(Some(accuracy)) = shares.get_mut(&QualityDimension::Accuracy) {
+        resolve_fences(accuracy, thresholds, data, column_profiles, log_term);
+    }
+    // A scan of every value may assess accuracy where the sample did not.
+    // That is recorded whatever its weight; with a positive one it would put
+    // accuracy into the overall score, and nothing bounds that score.
+    let accuracy_open = accuracy_unassessed
+        && matches!(
+            shares.get(&QualityDimension::Accuracy),
+            Some(Some(accuracy)) if !accuracy.bounded
+        );
+    let accuracy_may_join =
+        accuracy_open && dimension_weight(metrics, QualityDimension::Accuracy) > 0.0;
 
     let mut raw: HashMap<QualityDimension, Option<(f64, f64)>> = HashMap::new();
     for dimension in QualityDimension::all() {
@@ -191,6 +276,7 @@ pub(crate) fn score_bounds(
 
     let estimates: HashMap<QualityDimension, f64> = shares
         .iter()
+        .filter(|(dimension, _)| metrics.dimension_score(**dimension).is_some())
         .filter_map(|(dimension, shares)| {
             let estimate = dimension_estimate(&shares.as_ref()?.shares)?;
             Some((*dimension, estimate))
@@ -216,13 +302,13 @@ pub(crate) fn score_bounds(
         }
     }
     let overall_score = overall
-        .filter(|_| total_weight > 0.0)
+        .filter(|_| total_weight > 0.0 && !accuracy_may_join)
         .map(|(lower, upper)| outward(lower / total_weight, (upper / total_weight).min(100.0)));
 
-    let bounds = ScoreBounds {
-        confidence_level: SCORE_BOUNDS_CONFIDENCE,
+    let mut bounds = ScoreBounds::new(
+        SCORE_BOUNDS_CONFIDENCE,
         overall_score,
-        dimension_scores: QualityDimension::all()
+        QualityDimension::all()
             .into_iter()
             .map(|dimension| {
                 let interval = raw
@@ -233,7 +319,10 @@ pub(crate) fn score_bounds(
                 (dimension.to_string(), interval)
             })
             .collect(),
-    };
+    );
+    if accuracy_open {
+        bounds.open_dimensions = vec![QualityDimension::Accuracy.to_string()];
+    }
     Ok(Some(SampledScores { bounds, estimates }))
 }
 
@@ -406,11 +495,14 @@ fn share_interval(share: &[ColumnCounts], log_term: f64) -> (f64, f64) {
     let mut most_per_value = 0usize;
     for column in share {
         most_per_value = most_per_value.max(column.max_failures_per_value);
-        let failures = column.failures as f64;
+        // Under the check a full scan makes, the sample holds between these
+        // many failures; each bound starts from its own end.
+        let (fewest, most) = column.failure_range();
+        let (fewest, most) = (fewest as f64, most as f64);
         let checked = column.checked as f64;
         if column.is_exact() {
-            failures_low += failures;
-            failures_high += failures;
+            failures_low += fewest;
+            failures_high += most;
             checked_low += checked;
             checked_high += checked;
             continue;
@@ -421,10 +513,17 @@ fn share_interval(share: &[ColumnCounts], log_term: f64) -> (f64, f64) {
         let checked_per_value = column.max_checked_per_value as f64;
         let unseen = population - sampled;
 
+        // The interval's ends move up with the sample mean, so the lowest end
+        // over every count in the range is the fewest's, the highest the
+        // most's.
         let (failure_mean_low, failure_mean_high) = if column.max_failures_per_value == 0 {
             (0.0, 0.0)
         } else {
-            mean_interval(failures / (sampled * per_value), column.sampled, log_term)
+            let mean = |count: f64| count / (sampled * per_value);
+            (
+                mean_interval(mean(fewest), column.sampled, log_term).0,
+                mean_interval(mean(most), column.sampled, log_term).1,
+            )
         };
         let (checked_mean_low, checked_mean_high) = mean_interval(
             checked / (sampled * checked_per_value),
@@ -432,9 +531,9 @@ fn share_interval(share: &[ColumnCounts], log_term: f64) -> (f64, f64) {
             log_term,
         );
 
-        failures_low += (population * per_value * failure_mean_low).max(failures);
+        failures_low += (population * per_value * failure_mean_low).max(fewest);
         failures_high +=
-            (population * per_value * failure_mean_high).min(failures + unseen * per_value);
+            (population * per_value * failure_mean_high).min(most + unseen * per_value);
         checked_low += (population * checked_per_value * checked_mean_low).max(checked);
         checked_high += (population * checked_per_value * checked_mean_high)
             .min(checked + unseen * checked_per_value);
@@ -529,8 +628,9 @@ fn collect_shares(
     let (mut outliers, mut violations) = (Vec::new(), Vec::new());
     let (mut stale, mut date_failures) = (Vec::new(), Vec::new());
     let (mut invalid, mut imprecise) = (Vec::new(), Vec::new());
+    let mut fence_columns = Vec::new();
 
-    for profile in column_profiles {
+    for (index, profile) in column_profiles.iter().enumerate() {
         let Some(values) = data.get(&profile.name) else {
             continue;
         };
@@ -550,6 +650,7 @@ fn collect_shares(
             max_checked_per_value: 1,
             sampled,
             population,
+            failure_span: None,
         };
         let single = HashMap::from([(profile.name.clone(), values.clone())]);
 
@@ -573,10 +674,23 @@ fn collect_shares(
                 column_profiles,
                 positive_columns,
             )?;
-            // A column with too few numbers for an outlier test in the sample
-            // was not tested, so it adds nothing to the outlier share.
-            if metrics.outlier_values_checked > 0 {
+            // A column with too few numbers for an outlier test in the sample,
+            // or whose sample quartiles coincide, was not tested, so it adds
+            // nothing to the outlier share.
+            let slot = (metrics.outlier_values_checked > 0).then(|| {
                 outliers.push(counts(metrics.outliers, metrics.outlier_values_checked, 1));
+                outliers.len() - 1
+            });
+            // A full scan draws the fences from the source's quartiles, which
+            // the sample only estimates; a sample holding every value draws
+            // the same ones. A column the source may test is tracked even
+            // when its sample holds too few numbers for the test: that one
+            // leaves accuracy unbounded.
+            if sampled < population && accuracy.may_test_source(profile, population) {
+                fence_columns.push(FenceColumn {
+                    profile: index,
+                    slot,
+                });
             }
             // A column under no range or sign rule has no units in the rule
             // share; one under a rule fails a value at most once (#1005). A
@@ -614,16 +728,8 @@ fn collect_shares(
         }
     }
 
-    let bounded = |shares| {
-        Some(DimensionShares {
-            shares,
-            bounded: true,
-        })
-    };
-    let mut timeliness_shares = DimensionShares {
-        shares: vec![stale, date_failures],
-        bounded: true,
-    };
+    let bounded = |shares| Some(DimensionShares::new(shares));
+    let mut timeliness_shares = DimensionShares::new(vec![stale, date_failures]);
     if wants(QualityDimension::Timeliness) {
         match temporal_pairs(
             timeliness,
@@ -647,7 +753,10 @@ fn collect_shares(
         ),
         (
             QualityDimension::Accuracy,
-            bounded(vec![outliers, violations]),
+            Some(DimensionShares {
+                fence_columns,
+                ..DimensionShares::new(vec![outliers, violations])
+            }),
         ),
         (QualityDimension::Timeliness, Some(timeliness_shares)),
         (QualityDimension::Validity, bounded(vec![invalid])),
@@ -666,6 +775,161 @@ fn collect_shares(
         .collect())
 }
 
+/// How a sampled column's outlier test fares under every pair of quartiles
+/// the source may have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FenceSpan {
+    /// Neither the sample nor the source has spread: not tested either way.
+    Untested,
+    /// The source is tested as the sample is, and the sample holds between
+    /// these many values outside the source's fences.
+    Counts(usize, usize),
+    /// The source's quartiles may coincide while the sample's do not, or the
+    /// other way round, so whether a full scan tests the column is open.
+    Undecided,
+}
+
+/// Bound each fence column's outlier failures by the widest and the
+/// narrowest fences the source's quartiles allow, or leave the dimension
+/// unbounded when a full scan may test a column the sample did not, or skip
+/// one the sample tested (#1304).
+fn resolve_fences(
+    dimension: &mut DimensionShares,
+    thresholds: &IsoQualityConfig,
+    data: &HashMap<String, Vec<String>>,
+    column_profiles: &[ColumnProfile],
+    log_term: f64,
+) {
+    let calculator = AccuracyCalculator::new(thresholds);
+    for fence in dimension.fence_columns.clone() {
+        let profile = &column_profiles[fence.profile];
+        let span = data
+            .get(&profile.name)
+            .and_then(|values| calculator.outlier_test_values(profile, values))
+            .map(|values| fence_span(&calculator, &values, log_term));
+        match (span, fence.slot) {
+            (Some(FenceSpan::Untested), None) => {}
+            (Some(FenceSpan::Counts(fewest, most)), Some(slot)) => {
+                dimension.shares[0][slot].failure_span = Some((fewest, most));
+            }
+            _ => dimension.bounded = false,
+        }
+    }
+}
+
+/// The outlier test of a scan of every value, judged from a sample of it.
+///
+/// The scan draws its fences, `q1 - k·IQR` and `q3 + k·IQR`, from the
+/// source's quartiles. Each lies between two values of the sample, with
+/// [`quantile_range`], so the lower fence is lowest and the upper highest at
+/// the lowest `q1` and the highest `q3`, and the fences are narrowest at the
+/// other two. The source's fences lie between those, so the sample holds no
+/// fewer values outside them than outside the widest, and no more than
+/// outside the narrowest.
+fn fence_span(
+    calculator: &AccuracyCalculator<'_>,
+    values: &[ParsedNumber],
+    log_term: f64,
+) -> FenceSpan {
+    let sorted = sorted_numbers(values);
+    let sample_untested = quartiles_coincide(&sorted);
+    let (q1_low, q1_high) = quantile_range(&sorted, 0.25, log_term);
+    let (q3_low, q3_high) = quantile_range(&sorted, 0.75, log_term);
+    let source_spread =
+        matches!((q1_high, q3_low), (Some(q1), Some(q3)) if q3.minus_value(q1) > 0.0);
+    let source_flat =
+        matches!((q1_low, q3_high), (Some(q1), Some(q3)) if q3.minus_value(q1) == 0.0);
+    match (sample_untested, source_spread, source_flat) {
+        (true, _, true) => FenceSpan::Untested,
+        (false, true, _) => {
+            let (Some(narrow_q1), Some(narrow_q3)) = (q1_high, q3_low) else {
+                return FenceSpan::Undecided;
+            };
+            // A quartile with no bound on one side puts the widest fence
+            // past every value.
+            let fewest = match (q1_low, q3_high) {
+                (Some(q1), Some(q3)) => calculator.count_outside_fences(values, q1, q3).0,
+                _ => 0,
+            };
+            let most = calculator
+                .count_outside_fences(values, narrow_q1, narrow_q3)
+                .1;
+            FenceSpan::Counts(fewest, most)
+        }
+        _ => FenceSpan::Undecided,
+    }
+}
+
+/// Two values of the ascending `sorted` sample between which the source's
+/// `p`-quantile lies, `None` for a side the sample cannot bound.
+///
+/// A Type 7 quantile `Q` of the source's `N` values has at least `p - 1/N`
+/// of them at or below it and at most `p + 1/N` below it. If the sample's
+/// `j`-th value (from 0) lay above `Q`, at most `j` sample values would lie
+/// at or below `Q`; if its `m`-th lay below `Q`, at least `m + 1` would lie
+/// below it. Each is a sample share of values on one side of a fixed point,
+/// the same mean of a bounded variable as the other shares here, so the
+/// Chernoff bound puts each beyond the chosen value with probability at most
+/// the error budget's share for one tail. `1/n` stands in for `1/N`, since
+/// the sample is part of the source.
+fn quantile_range(
+    sorted: &[ParsedNumber],
+    p: f64,
+    log_term: f64,
+) -> (Option<ParsedNumber>, Option<ParsedNumber>) {
+    let n = sorted.len();
+    if n == 0 {
+        return (None, None);
+    }
+    let slack = 1.0 / n as f64;
+    let low = sample_share_beyond(p - slack, n, log_term, Side::Below)
+        .map(|share| ((share * n as f64).floor() as usize).min(n - 1))
+        .map(|index| sorted[index]);
+    let high = sample_share_beyond(p + slack, n, log_term, Side::Above)
+        .map(|share| ((share * n as f64).ceil() as usize).saturating_sub(1))
+        .filter(|&index| index < n)
+        .map(|index| sorted[index]);
+    (low, high)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Side {
+    Below,
+    Above,
+}
+
+/// The sample share, below or above a source share `q`, that a sample of
+/// `n` reaches with probability at most `e^-log_term`: a point just beyond
+/// the set of shares `a` with `n * KL(a || q) <= log_term`. `None` when that
+/// set reaches 0 or 1, or `q` itself lies outside `(0, 1)`, so no share on
+/// that side is unlikely enough.
+fn sample_share_beyond(q: f64, n: usize, log_term: f64, side: Side) -> Option<f64> {
+    if !(q > 0.0 && q < 1.0) {
+        return None;
+    }
+    let n = n as f64;
+    let inside = |a: f64| n * bernoulli_kl(a, q) <= log_term;
+    let edge = match side {
+        Side::Below => 0.0,
+        Side::Above => 1.0,
+    };
+    if inside(edge) {
+        return None;
+    }
+    // KL(a || q) grows as `a` moves away from `q`, so the edge is outside
+    // and `q` inside; keep the outside end, which is never in the set.
+    let (mut outside, mut within) = (edge, q);
+    for _ in 0..64 {
+        let mid = (outside + within) / 2.0;
+        if inside(mid) {
+            within = mid;
+        } else {
+            outside = mid;
+        }
+    }
+    Some(outside)
+}
+
 /// The ordering counts of every compared pair as one exact column: the share
 /// as the calculator pooled it, with nothing to scale.
 fn pooled_pairs(metrics: &super::timeliness::TimelinessMetrics) -> ColumnCounts {
@@ -676,6 +940,7 @@ fn pooled_pairs(metrics: &super::timeliness::TimelinessMetrics) -> ColumnCounts 
         max_checked_per_value: metrics.temporal_column_pairs,
         sampled: 0,
         population: 0,
+        failure_span: None,
     }
 }
 
@@ -717,6 +982,7 @@ fn per_pair_counts(
             max_checked_per_value: 1,
             sampled,
             population: profile.total_count.max(sampled),
+            failure_span: None,
         });
     }
     let adds_up = pairs.iter().map(|pair| pair.failures).sum::<usize>()
@@ -785,6 +1051,7 @@ fn temporal_pairs(
         max_checked_per_value: metrics.temporal_column_pairs,
         sampled,
         population: population.max(sampled),
+        failure_span: None,
     }))
 }
 
@@ -992,6 +1259,227 @@ mod tests {
             );
             assert!(bound.upper - bound.lower < 5.0, "seed {seed}: {bound:?}");
         }
+    }
+
+    /// 40,000 values, `zeros` of them 0 and the rest 5, in a shuffled order,
+    /// `base` added to each, so a base past 2^53 takes the exact path.
+    fn zeros_and_fives(zeros: usize, base: i128) -> Vec<String> {
+        let mut values = strings((0..40_000).map(|index| base + if index < zeros { 0 } else { 5 }));
+        values.shuffle(&mut SmallRng::seed_from_u64(7));
+        values
+    }
+
+    fn accuracy_interval(bounds: &ScoreBounds) -> Option<ScoreInterval> {
+        bounds.dimension_scores.get("accuracy").copied().flatten()
+    }
+
+    #[test]
+    fn outlier_fences_near_a_quartile_boundary_bound_the_full_scan_or_stay_open() {
+        // With more than 75% zeros the third quartile is 0, the IQR is 0 and
+        // a full scan does not test the column; with fewer, it is 5 and no
+        // value is an outlier. A sample of a column near that boundary lands
+        // on either side, and its own fences used to bound the full scan's
+        // score at 100 when it was untested, or near 75 when it was 100
+        // (#1304). Half zeros is far from the boundary and stays bounded.
+        let profiles = vec![profile("v", DataType::Integer, 40_000, 0)];
+        let mut wrong = Vec::new();
+        let cases = [(29_992, false), (30_008, false), (20_000, true)];
+        for (base, (zeros, decided)) in [0, 1 << 60]
+            .into_iter()
+            .flat_map(|base| cases.map(|case| (base, case)))
+        {
+            let source = zeros_and_fives(zeros, base);
+            let full = bifurcated(
+                &HashMap::from([("v".to_string(), source.clone())]),
+                &profiles,
+            )
+            .metrics
+            .dimension_score(QualityDimension::Accuracy);
+            for seed in 0..16 {
+                let retained = HashMap::from([("v".to_string(), sample(&source, 10_000, seed))]);
+                let bound = accuracy_interval(&bounds_for(&retained, &profiles));
+                match (full, bound) {
+                    (_, None) if !decided => {}
+                    (Some(exact), Some(bound)) if contains(bound, exact) => {}
+                    _ => wrong.push(format!(
+                        "base {base}, {zeros} zeros, seed {seed}: {full:?} vs {bound:?}"
+                    )),
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Every sample's accuracy interval for `source`, a 40,000-value
+    /// integer column, that misses the full scan's score or is `max_width`
+    /// wide or wider.
+    fn outlier_intervals_off(source: &[String], max_width: f64) -> Vec<String> {
+        let profiles = vec![profile("v", DataType::Integer, 40_000, 0)];
+        let full = HashMap::from([("v".to_string(), source.to_vec())]);
+        let exact = score(&full, &profiles, QualityDimension::Accuracy);
+        (0..16)
+            .filter_map(|seed| {
+                let retained = HashMap::from([("v".to_string(), sample(source, 10_000, seed))]);
+                match accuracy_interval(&bounds_for(&retained, &profiles)) {
+                    Some(bound)
+                        if contains(bound, exact) && bound.upper - bound.lower < max_width =>
+                    {
+                        None
+                    }
+                    bound => Some(format!("seed {seed}: {exact} vs {bound:?}")),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn outliers_far_from_the_fences_keep_the_interval_as_narrow_as_before() {
+        // A spread of 1,000 values with one in 40 far above it: no value lies
+        // between the widest and the narrowest fences, so bounding the
+        // quartiles leaves the interval as it was, under 1.5 points wide.
+        let source = strings((0..40_000).map(|index| {
+            if index % 40 == 0 {
+                100_000 + index
+            } else {
+                (index * 7_919) % 1_000
+            }
+        }));
+        let wrong = outlier_intervals_off(&source, 1.5);
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn a_float_sample_bounds_the_exact_comparison_an_unseen_wide_value_brings() {
+        // The upper fence of 0.7 and 1.0 is 1.45 exactly; 1.4500000000000002
+        // reads past it exactly but on it through `f64`. One wide integer in
+        // the source makes a full scan compare exactly and fail 7,999 values;
+        // a sample without it compares through `f64` and fails none. The
+        // interval must cover both (review of #1313).
+        let mut source = strings(
+            std::iter::repeat_n("0.7", 16_000)
+                .chain(std::iter::repeat_n("1.0", 16_000))
+                .chain(std::iter::repeat_n("1.4500000000000002", 7_999))
+                .chain(["1152921504606846976"]),
+        );
+        source.shuffle(&mut SmallRng::seed_from_u64(3));
+        let profiles = vec![profile("v", DataType::Float, 40_000, 0)];
+        let full = HashMap::from([("v".to_string(), source.clone())]);
+        let exact = score(&full, &profiles, QualityDimension::Accuracy);
+        let mut wrong = Vec::new();
+        for seed in 0..8 {
+            let retained = sample(&source, 10_000, seed);
+            if retained.iter().any(|value| value.len() > 18) {
+                continue;
+            }
+            let retained = HashMap::from([("v".to_string(), retained)]);
+            if let Some(bound) = accuracy_interval(&bounds_for(&retained, &profiles))
+                && !contains(bound, exact)
+            {
+                wrong.push(format!("seed {seed}: {exact} outside {bound:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn an_open_accuracy_leaves_the_overall_interval_out_only_when_it_weighs_something() {
+        // A sample of a 29,992-zero source whose quartiles coincide leaves
+        // accuracy unassessed, while a full scan tests the column. That is
+        // recorded either way; it removes the overall interval only when
+        // accuracy carries weight (review of #1313).
+        let source = zeros_and_fives(29_992, 0);
+        let profiles = vec![profile("v", DataType::Integer, 40_000, 0)];
+        let retained = (0..64)
+            .map(|seed| sample(&source, 10_000, seed))
+            .find(|retained| retained.iter().filter(|value| *value == "0").count() > 7_500)
+            .expect("some sample has its third quartile at 0");
+        let retained = HashMap::from([("v".to_string(), retained)]);
+        let bounds_with = |accuracy: f64| {
+            let thresholds = IsoQualityConfig {
+                score_weights: dataprof_core::QualityScoreWeights {
+                    accuracy,
+                    ..Default::default()
+                },
+                ..IsoQualityConfig::default()
+            };
+            let result = MetricsCalculator::with_thresholds(thresholds)
+                .calculate_bifurcated_metrics_with_hints(
+                    &retained,
+                    &profiles,
+                    None,
+                    &SemanticHints::default(),
+                    None,
+                )
+                .unwrap();
+            assert!(
+                result
+                    .metrics
+                    .dimension_score(QualityDimension::Accuracy)
+                    .is_none()
+            );
+            result.score_bounds.expect("sampled")
+        };
+        let weighted = bounds_with(0.15);
+        let weightless = bounds_with(0.0);
+        assert_eq!(weighted.open_dimensions, ["accuracy"]);
+        assert_eq!(weightless.open_dimensions, ["accuracy"]);
+        assert!(weighted.overall_score.is_none(), "{weighted:?}");
+        assert!(weightless.overall_score.is_some(), "{weightless:?}");
+    }
+
+    #[test]
+    fn a_minimum_above_the_sample_leaves_accuracy_open_where_the_source_reaches_it() {
+        // With `outlier_min_samples` past the sample size the sample never
+        // tests a column that a full scan of 40,000 values does. A ruled
+        // `count` column keeps accuracy assessed through its sign rule, so
+        // its interval used to sit near 100 while the full scan fails the
+        // hundreds as outliers (review of #1313).
+        let thresholds = IsoQualityConfig {
+            outlier_min_samples: 10_001,
+            ..IsoQualityConfig::default()
+        };
+        let source = strings((0..40_000).map(|index| match (index * 7_919) % 40_000 {
+            rank if rank < 16_000 => 0,
+            rank if rank < 32_000 => 1,
+            _ => 100,
+        }));
+        let profiles = vec![profile("item_count", DataType::Integer, 40_000, 0)];
+        let calculator = MetricsCalculator::with_thresholds(thresholds);
+        let run = |data: &HashMap<String, Vec<String>>| {
+            calculator
+                .calculate_bifurcated_metrics_with_hints(
+                    data,
+                    &profiles,
+                    None,
+                    &SemanticHints::default(),
+                    None,
+                )
+                .unwrap()
+        };
+        let exact = run(&HashMap::from([("item_count".to_string(), source.clone())]))
+            .metrics
+            .dimension_score(QualityDimension::Accuracy)
+            .unwrap();
+        let retained = HashMap::from([("item_count".to_string(), sample(&source, 10_000, 0))]);
+        let bounds = run(&retained).score_bounds.expect("sampled");
+        match accuracy_interval(&bounds) {
+            None => {}
+            Some(bound) => assert!(contains(bound, exact), "{exact} outside {bound:?}"),
+        }
+    }
+
+    #[test]
+    fn a_long_tail_through_the_fences_widens_the_interval_and_keeps_the_full_scan_inside() {
+        // A smooth tail with 12.6% of values past the upper fence: the fence
+        // moves through dense values as the quartiles move within their
+        // bounds, so the interval widens, from about 3 points with the
+        // sample's fences to about 7.5, and still holds the full scan's score.
+        let source = strings((0..40_000u64).map(|index| {
+            let u = ((index * 7_919) % 40_009) as f64 / 40_009.0;
+            (u.powi(6) * 1e6).round() as u64
+        }));
+        let wrong = outlier_intervals_off(&source, 8.5);
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 
     #[test]
@@ -1528,7 +2016,8 @@ mod tests {
                 "discount_percent".to_string(),
                 strings((0..10_000).map(|index| format!("n/a-{index}"))),
             ),
-            ("reading".to_string(), strings(std::iter::repeat_n(1, 20))),
+            // Spread, so the outlier test runs on them (#1304).
+            ("reading".to_string(), strings(1..=20)),
         ]);
         let profiles = vec![
             profile("discount_percent", DataType::String, 20_000, 0),
