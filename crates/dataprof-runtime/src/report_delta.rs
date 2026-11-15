@@ -83,7 +83,8 @@ use crate::profile_report::{
     ReportGenerator, SourceIdentity, TemporalPair,
 };
 use crate::quality_gate::{
-    Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
+    Evidence, EvidenceGap, Provenance, overall_left_open, sampled_component_evidence,
+    scan_coverage, scan_evidence,
 };
 
 /// The same fact about each side of a comparison.
@@ -742,6 +743,9 @@ impl ReportSide {
         let unlisted = quality
             .map(|assessment| assessment.unlisted_components())
             .unwrap_or_default();
+        let overall_open = quality.is_some_and(|assessment| {
+            overall_left_open(assessment.score(), assessment.score_bounds())
+        });
         // No assessment means no score for evidence to describe; the scan's
         // coverage is all there is to say.
         let evidence = |provenance| match &sampled {
@@ -749,6 +753,7 @@ impl ReportSide {
                 sampled.as_deref(),
                 &unlisted,
                 &assessed,
+                overall_open,
                 provenance,
             )),
             None => scan,
@@ -950,6 +955,7 @@ impl ReportSide {
                     sampled,
                     &unlisted,
                     assessed.as_deref().unwrap_or_default(),
+                    overall_left_open(quality.overall_score, quality.score_bounds.as_ref()),
                     provenance,
                 ),
             };

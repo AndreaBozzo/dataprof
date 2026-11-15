@@ -23,6 +23,22 @@ const ROWS: usize = 40_000;
 /// so coprime with `ROWS`, and each row maps to a distinct rank.
 const ORDERS: [usize; 3] = [7_919, 104_729, 1_299_709];
 
+/// More orders, for a case that needs some sample to land on one side.
+const MORE_ORDERS: [usize; 12] = [
+    7_919,
+    104_729,
+    1_299_709,
+    15_485_863,
+    32_452_843,
+    49_979_687,
+    67_867_967,
+    86_028_121,
+    104_395_301,
+    122_949_829,
+    141_650_939,
+    160_481_183,
+];
+
 /// One fixture: the number of zeros, the value added to each, and the
 /// verdict of `min_dimension_scores={"accuracy": 90}` on a full scan.
 struct Case {
@@ -208,6 +224,74 @@ fn every_sampled_route_gives_the_full_scan_verdict_or_none() {
         }
     }
     assert!(wrong.is_empty(), "wrong verdicts:\n{}", wrong.join("\n"));
+}
+
+/// A sample whose quartiles coincide leaves accuracy unassessed, while a
+/// scan of every value may assess it and lift the overall score: 10,000
+/// nulls beside 29,992 zeros and 10,008 fives score 80 overall on
+/// completeness alone, and 87.5 once accuracy joins at 100. A minimum of 85
+/// must pass or be inconclusive, never fail (review of #1313).
+#[test]
+fn an_overall_score_the_full_scan_may_lift_is_never_failed_on_a_sample() {
+    let mut wrong = Vec::new();
+    let mut flat_samples = 0;
+    for order in MORE_ORDERS {
+        let case = Case {
+            zeros: 29_992,
+            base: 0,
+            full_scan: "pass",
+        };
+        let mut csv_text = String::from("v\n");
+        for value in case.values(order) {
+            csv_text.push_str(&format!("{value}\n"));
+        }
+        // Reservoirs hold non-null values, so where the nulls sit is moot.
+        csv_text.push_str(&"null\n".repeat(10_000));
+        let csv = file(".csv", &csv_text);
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .quality_dimensions(vec![
+                    QualityDimension::Completeness,
+                    QualityDimension::Accuracy,
+                ])
+                .analyze_file(csv.path())
+                .unwrap_or_else(|e| panic!("[{engine:?}] {e}"));
+            let quality = report.quality.as_ref().expect("quality");
+            if quality
+                .metrics
+                .dimension_score(QualityDimension::Accuracy)
+                .is_none()
+            {
+                flat_samples += 1;
+            }
+            let result = QualityPolicy::new()
+                .min_quality_score(85.0)
+                .evaluate(&report)
+                .unwrap();
+            let got = serde_json::to_value(&result).unwrap()["verdict"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            if got == "fail" {
+                wrong.push(format!(
+                    "{} [{engine:?}]: overall {:?}",
+                    case.label(order),
+                    quality.score()
+                ));
+            }
+        }
+    }
+    assert!(flat_samples > 0, "no sample left accuracy unassessed");
+    assert!(
+        wrong.is_empty(),
+        "failed on a sample:\n{}",
+        wrong.join("\n")
+    );
 }
 
 /// The report records the definition the IQR rule is under.

@@ -4216,15 +4216,26 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         quality.sampled_dimensions().as_deref(),
         &quality.unlisted_components(),
         &quality.metrics.assessed_dimensions(),
+        overall_left_open(quality.score(), quality.score_bounds()),
         provenance,
     )
+}
+
+/// Whether the recorded bounds leave an existing overall score without an
+/// interval. A sampled dimension behind the score with no bound does that,
+/// and so does a dimension the sample left unassessed that a scan of every
+/// value may assess (#1304): the second is the case the assessed dimensions
+/// alone cannot show.
+pub(crate) fn overall_left_open(overall: Option<f64>, bounds: Option<&ScoreBounds>) -> bool {
+    overall.is_some() && bounds.is_some_and(|bounds| bounds.overall_score.is_none())
 }
 
 /// [`quality_evidence`] over the recorded facts it reads: the sampled
 /// component labels (`None` when the report did not record them), the
 /// components computed with signal that neither list names
-/// ([`QualityAssessment::unlisted_components`]), and the dimensions the
-/// overall score weighs. A report delta reads the same facts
+/// ([`QualityAssessment::unlisted_components`]), the dimensions the
+/// overall score weighs, and whether the recorded bounds leave the overall
+/// score open ([`overall_left_open`]). A report delta reads the same facts
 /// from a flat summary, which has no [`QualityAssessment`] behind it, and
 /// findings read one component through it, so the gate, the delta and
 /// findings resolve coverage by one rule.
@@ -4232,6 +4243,7 @@ pub(crate) fn sampled_component_evidence(
     sampled: Option<&[String]>,
     unlisted: &[String],
     assessed: &[QualityDimension],
+    overall_open: bool,
     provenance: Provenance,
 ) -> Evidence {
     let Some(sampled) = sampled else {
@@ -4274,7 +4286,8 @@ pub(crate) fn sampled_component_evidence(
             reason: EvidenceGap::CoverageUnrecorded,
         };
     }
-    if any_in(sampled) {
+    // The overall score may weigh a dimension the sample left unassessed.
+    if any_in(sampled) || (matches!(provenance, Provenance::Overall) && overall_open) {
         Evidence::Incomplete {
             reason: EvidenceGap::QualitySampled,
         }

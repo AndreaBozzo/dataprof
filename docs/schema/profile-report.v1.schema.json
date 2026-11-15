@@ -3051,7 +3051,7 @@
               "type": "null"
             }
           ],
-          "description": "Interval for the overall score. `None` when there is no overall score,\nor when a sampled dimension behind it has no bound."
+          "description": "Interval for the overall score. `None` when there is no overall score,\nwhen a sampled dimension behind it has no bound, or when a scan of\nevery value may assess a dimension the sample left unassessed, which\nwould weigh in the score (#1304)."
         }
       },
       "required": [

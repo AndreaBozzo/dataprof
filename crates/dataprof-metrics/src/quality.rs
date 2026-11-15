@@ -941,7 +941,9 @@ pub struct ScoreBounds {
     /// Probability that every interval here holds at once.
     pub confidence_level: f64,
     /// Interval for the overall score. `None` when there is no overall score,
-    /// or when a sampled dimension behind it has no bound.
+    /// when a sampled dimension behind it has no bound, or when a scan of
+    /// every value may assess a dimension the sample left unassessed, which
+    /// would weigh in the score (#1304).
     pub overall_score: Option<ScoreInterval>,
     /// Interval per dimension, keyed like `QualityScores::dimension_scores`.
     /// An exactly computed dimension's interval is its score. `None` for a

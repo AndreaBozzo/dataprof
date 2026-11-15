@@ -191,9 +191,21 @@ pub(crate) fn score_bounds(
     // over all of them, so no interval can be computed before the count of
     // bounded means is known. `None` in the map is a sampled dimension this
     // module has no bound for.
+    //
+    // Accuracy is wanted even when the sample left it unassessed: a column
+    // whose sample quartiles coincide is not tested, while a scan of every
+    // value may test it, and so assess accuracy and move the overall score
+    // (#1304). Only its fences are bounded then.
+    let accuracy_unassessed = metrics.accuracy.is_some()
+        && metrics
+            .dimension_score(QualityDimension::Accuracy)
+            .is_none();
     let wanted: Vec<QualityDimension> = QualityDimension::all()
         .into_iter()
-        .filter(|dimension| metrics.dimension_score(*dimension).is_some())
+        .filter(|dimension| {
+            metrics.dimension_score(*dimension).is_some()
+                || (*dimension == QualityDimension::Accuracy && accuracy_unassessed)
+        })
         .filter(|dimension| match dimension {
             QualityDimension::Uniqueness => {
                 is_sampled("key_uniqueness") || is_sampled("duplicate_rows")
@@ -212,10 +224,18 @@ pub(crate) fn score_bounds(
     )?;
 
     let bounded_means: usize = shares
-        .values()
-        .flatten()
-        .filter(|dimension| dimension.bounded)
-        .map(DimensionShares::bounded_means)
+        .iter()
+        .filter_map(|(dimension, shares)| Some((*dimension, shares.as_ref()?)))
+        .filter(|(_, shares)| shares.bounded)
+        .map(|(dimension, shares)| {
+            if dimension == QualityDimension::Accuracy && accuracy_unassessed {
+                // No share of an unassessed dimension is bounded; only its
+                // fences are.
+                2 * shares.fence_columns.len()
+            } else {
+                shares.bounded_means()
+            }
+        })
         .sum();
     let error_budget = 1.0 - SCORE_BOUNDS_CONFIDENCE;
     // Two tails per mean.
@@ -223,6 +243,13 @@ pub(crate) fn score_bounds(
     if let Some(Some(accuracy)) = shares.get_mut(&QualityDimension::Accuracy) {
         resolve_fences(accuracy, thresholds, data, column_profiles, log_term);
     }
+    // A scan of every value may assess accuracy where the sample did not,
+    // which would put it into the overall score: nothing bounds that score.
+    let accuracy_may_join = accuracy_unassessed
+        && matches!(
+            shares.get(&QualityDimension::Accuracy),
+            Some(Some(accuracy)) if !accuracy.bounded
+        );
 
     let mut raw: HashMap<QualityDimension, Option<(f64, f64)>> = HashMap::new();
     for dimension in QualityDimension::all() {
@@ -246,6 +273,7 @@ pub(crate) fn score_bounds(
 
     let estimates: HashMap<QualityDimension, f64> = shares
         .iter()
+        .filter(|(dimension, _)| metrics.dimension_score(**dimension).is_some())
         .filter_map(|(dimension, shares)| {
             let estimate = dimension_estimate(&shares.as_ref()?.shares)?;
             Some((*dimension, estimate))
@@ -271,7 +299,7 @@ pub(crate) fn score_bounds(
         }
     }
     let overall_score = overall
-        .filter(|_| total_weight > 0.0)
+        .filter(|_| total_weight > 0.0 && !accuracy_may_join)
         .map(|(lower, upper)| outward(lower / total_weight, (upper / total_weight).min(100.0)));
 
     let bounds = ScoreBounds {

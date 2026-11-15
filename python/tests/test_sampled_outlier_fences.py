@@ -95,3 +95,34 @@ def test_a_column_whose_quartiles_coincide_is_not_tested_for_outliers() -> None:
     semantics = dp.profile({"v": [1, 2]}).metric_semantics
     assert semantics is not None
     assert semantics["outlier_spread"] == "nonzero_iqr"
+
+
+def test_an_overall_score_the_full_scan_may_lift_is_never_decided_against_it(
+    tmp_path: Path,
+) -> None:
+    # 10,000 nulls beside 29,992 zeros and 10,008 fives: a sample whose
+    # quartiles coincide leaves accuracy unassessed and scores 80 overall on
+    # completeness alone, while the dict assesses accuracy at 100 and scores
+    # 87.5 (review of #1313).
+    dims = ["completeness", "accuracy"]
+    wrong = []
+    flat = 0
+    for order in (7_919, 104_729, 1_299_709, 15_485_863, 32_452_843, 49_979_687):
+        values: list[int | None] = [*_values(29_992, 0, order), *([None] * 10_000)]
+        expected = dp.profile({"v": values}, quality_dimensions=dims).check(min_quality_score=85)
+        assert expected.verdict == "pass"
+        path = tmp_path / "v.csv"
+        path.write_text("v\n" + "\n".join("null" if v is None else str(v) for v in values) + "\n")
+        for engine in ("auto", "incremental", "columnar"):
+            report = dp.profile(str(path), engine=engine, quality_dimensions=dims)
+            scores = json.loads(report.to_json())["quality"]["scores"]["dimension_scores"]
+            flat += scores.get("accuracy") is None
+            for form, got in (
+                ("run", report),
+                ("saved", dp.ProfileReport.from_json(report.to_json())),
+            ):
+                verdict = got.check(min_quality_score=85).verdict
+                if verdict not in {"pass", "inconclusive"}:
+                    wrong.append(f"order {order} [{engine}, {form}]: {verdict}")
+    assert flat, "no sample left accuracy unassessed"
+    assert not wrong, "\n".join(wrong)
