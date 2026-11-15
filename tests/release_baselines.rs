@@ -22,14 +22,17 @@ fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/release_baselines")
 }
 
-/// The corpus inputs, each beside the report the release saved for it.
+/// The corpus inputs, each beside the report the release saved for it. A
+/// build without the `parquet` feature cannot read the Parquet input.
 fn inputs() -> Vec<PathBuf> {
     let mut inputs: Vec<PathBuf> = std::fs::read_dir(corpus())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
             let name = path.file_name().unwrap().to_string_lossy();
-            name != "RELEASE" && !name.ends_with(".report.json")
+            name != "RELEASE"
+                && !name.ends_with(".report.json")
+                && (cfg!(feature = "parquet") || !name.ends_with(".parquet"))
         })
         .collect();
     inputs.sort();
@@ -85,7 +88,12 @@ fn no_score_moves_against_the_last_release_without_a_definition() {
         |policy, dimension| policy.max_dimension_score_drop(dimension, 0.0),
     );
     let inputs = inputs();
-    assert!(inputs.len() >= 6, "corpus has {} inputs", inputs.len());
+    let expected = if cfg!(feature = "parquet") { 6 } else { 5 };
+    assert!(
+        inputs.len() >= expected,
+        "corpus has {} inputs",
+        inputs.len()
+    );
 
     let mut wrong = Vec::new();
     for input in &inputs {
