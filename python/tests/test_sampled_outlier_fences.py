@@ -26,13 +26,21 @@ pd = pytest.importorskip("pandas")
 ROWS = 40_000
 # Each lays the values out in another order: primes, coprime with ROWS.
 ORDERS = (7_919, 104_729, 1_299_709)
-# (zeros, value added to each): near the boundary on both sides, and half
-# zeros far from it; the same past 2**53, where fences compare exactly.
-CASES = [(zeros, base) for base in (0, 2**60) for zeros in (29_992, 30_008, 20_000)]
+# (zeros, hundreds, value added to each), the rest fives: near the boundary
+# on both sides, half zeros far from it, and 60/25/15 with every hundred an
+# outlier (accuracy 85); the same past 2**53, where fences compare exactly.
+CASES = [
+    (zeros, hundreds, base)
+    for base in (0, 2**60)
+    for zeros, hundreds in ((29_992, 0), (30_008, 0), (20_000, 0), (24_000, 6_000))
+]
 
 
-def _values(zeros: int, base: int, order: int) -> list[int]:
-    return [base + (0 if (row * order) % ROWS < zeros else 5) for row in range(ROWS)]
+def _values(zeros: int, base: int, order: int, hundreds: int = 0) -> list[int]:
+    def value(rank: int) -> int:
+        return 0 if rank < zeros else 5 if rank < ROWS - hundreds else 100
+
+    return [base + value((row * order) % ROWS) for row in range(ROWS)]
 
 
 def _csv(values: list[int]) -> str:
@@ -65,20 +73,23 @@ def _verdict(report: dp.ProfileReport) -> str:
 
 def test_every_sampled_route_gives_the_verdict_of_the_dict_or_none(tmp_path: Path) -> None:
     wrong = []
-    for zeros, base in CASES:
+    for zeros, hundreds, base in CASES:
         for order in ORDERS:
-            values = _values(zeros, base, order)
+            values = _values(zeros, base, order, hundreds)
             expected = _verdict(dp.profile({"v": values}))
             # More than 75% zeros: the quartiles coincide, the column is not
-            # tested and accuracy is unassessed; otherwise it scores 100.
-            assert expected == ("inconclusive" if zeros > 30_000 else "pass"), (zeros, base)
+            # tested and accuracy is unassessed; with hundreds it scores 85,
+            # otherwise 100.
+            assert expected == (
+                "inconclusive" if zeros > 30_000 else "fail" if hundreds else "pass"
+            ), (zeros, base)
             for route, run in _routes(tmp_path).items():
                 report = run(values)
                 saved = dp.ProfileReport.from_json(report.to_json())
                 for form, got in (("run", _verdict(report)), ("saved", _verdict(saved))):
-                    near_boundary = zeros != 20_000
+                    near_boundary = zeros != 20_000 and not hundreds
                     if got != expected and not (near_boundary and got == "inconclusive"):
-                        case = f"{zeros} zeros, base {base}, order {order}"
+                        case = f"{zeros} zeros, {hundreds} hundreds, base {base}, order {order}"
                         wrong.append(f"{case} [{route}, {form}]: {got}, dict {expected}")
     assert not wrong, "\n".join(wrong)
 

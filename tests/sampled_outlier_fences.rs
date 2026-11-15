@@ -39,61 +39,94 @@ const MORE_ORDERS: [usize; 12] = [
     160_481_183,
 ];
 
-/// One fixture: the number of zeros, the value added to each, and the
-/// verdict of `min_dimension_scores={"accuracy": 90}` on a full scan.
+/// One fixture: the number of zeros and of hundreds (the rest are fives),
+/// the value added to each, and the verdict of
+/// `min_dimension_scores={"accuracy": 90}` on a full scan.
 struct Case {
     zeros: usize,
+    hundreds: usize,
     base: i128,
     full_scan: &'static str,
 }
 
-const CASES: [Case; 6] = [
+const CASES: [Case; 8] = [
     // Q3 is 5: the column is tested, no value is an outlier, accuracy 100.
     Case {
         zeros: 29_992,
+        hundreds: 0,
         base: 0,
         full_scan: "pass",
     },
     // Q3 is 0, so the IQR is 0: not tested, accuracy unassessed.
     Case {
         zeros: 30_008,
+        hundreds: 0,
         base: 0,
         full_scan: "inconclusive",
     },
     // Half zeros, far from the boundary: every route decides.
     Case {
         zeros: 20_000,
+        hundreds: 0,
         base: 0,
         full_scan: "pass",
     },
     // The same past 2^53, where the fences are compared exactly.
     Case {
         zeros: 29_992,
+        hundreds: 0,
         base: 1 << 60,
         full_scan: "pass",
     },
     Case {
         zeros: 30_008,
+        hundreds: 0,
         base: 1 << 60,
         full_scan: "inconclusive",
     },
     Case {
         zeros: 20_000,
+        hundreds: 0,
         base: 1 << 60,
         full_scan: "pass",
+    },
+    // 60% zeros, 25% fives, 15% hundreds: quartiles 0 and 5, far from any
+    // boundary, and every hundred an outlier, so accuracy is 85 and the
+    // minimum of 90 fails. Every route must decide it (review of #1313).
+    Case {
+        zeros: 24_000,
+        hundreds: 6_000,
+        base: 0,
+        full_scan: "fail",
+    },
+    Case {
+        zeros: 24_000,
+        hundreds: 6_000,
+        base: 1 << 60,
+        full_scan: "fail",
     },
 ];
 
 impl Case {
     fn label(&self, order: usize) -> String {
-        format!("{} zeros, base {}, order {order}", self.zeros, self.base)
+        format!(
+            "{} zeros, {} hundreds, base {}, order {order}",
+            self.zeros, self.hundreds, self.base
+        )
     }
 
     fn values(&self, order: usize) -> Vec<i128> {
         (0..ROWS)
             .map(|row| {
                 let rank = (row * order) % ROWS;
-                self.base + if rank < self.zeros { 0 } else { 5 }
+                self.base
+                    + if rank < self.zeros {
+                        0
+                    } else if rank < ROWS - self.hundreds {
+                        5
+                    } else {
+                        100
+                    }
             })
             .collect()
     }
@@ -101,7 +134,7 @@ impl Case {
     /// Whether a sample of this case can tell the full scan's verdict: near
     /// the boundary it may only report that it cannot.
     fn may_be_inconclusive(&self) -> bool {
-        self.zeros != 20_000
+        self.zeros != 20_000 && self.hundreds == 0
     }
 }
 
@@ -238,6 +271,7 @@ fn an_overall_score_the_full_scan_may_lift_is_never_failed_on_a_sample() {
     for order in MORE_ORDERS {
         let case = Case {
             zeros: 29_992,
+            hundreds: 0,
             base: 0,
             full_scan: "pass",
         };

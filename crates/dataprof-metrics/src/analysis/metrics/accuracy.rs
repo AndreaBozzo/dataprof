@@ -227,25 +227,53 @@ impl<'a> AccuracyCalculator<'a> {
         (values.len() >= self.thresholds.outlier_min_samples).then_some(values)
     }
 
-    /// Values outside the Tukey fences drawn from the quartiles `q1` and
-    /// `q3`, which need not be the quartiles of `values`: the score bounds
-    /// count a sample against the widest and the narrowest fences the
-    /// source's quartiles allow (#1304). Compared as
-    /// [`count_column_outliers`](Self::count_column_outliers) compares, by
-    /// exact differences when a value is held exactly.
+    /// Whether a scan of `population` non-null values of `profile` may run
+    /// the outlier test: the column is numeric and the source holds enough
+    /// values to reach `outlier_min_samples`, whatever its sample holds. A
+    /// minimum above the sample size leaves the sample untested while the
+    /// source is tested.
+    pub(crate) fn may_test_source(&self, profile: &ColumnProfile, population: usize) -> bool {
+        matches!(profile.data_type, DataType::Integer | DataType::Float)
+            && population >= self.thresholds.outlier_min_samples
+    }
+
+    /// The fewest and the most of `values` outside the Tukey fences drawn
+    /// from the quartiles `q1` and `q3`, which need not be the quartiles of
+    /// `values`: the score bounds count a sample against the widest and the
+    /// narrowest fences the source's quartiles allow (#1304).
+    ///
+    /// A scan compares by exact differences when any value is held exactly,
+    /// as [`count_column_outliers`](Self::count_column_outliers) does. A
+    /// sample holding such a value settles that for the source. A sample of
+    /// floats alone does not: the source may hold an exact value the sample
+    /// missed. Both comparisons count then, and the range covers them.
     pub(crate) fn count_outside_fences(
+        &self,
+        values: &[ParsedNumber],
+        q1: ParsedNumber,
+        q3: ParsedNumber,
+    ) -> (usize, usize) {
+        let exact = ExactTukey::from_quartiles(&q1, &q3, self.thresholds.outlier_iqr_multiplier)
+            .count_outliers(values);
+        if values
+            .iter()
+            .any(|number| !matches!(number, ParsedNumber::Float(_)))
+        {
+            return (exact, exact);
+        }
+        let nearest = self.count_outside_nearest_fences(values, q1, q3);
+        (exact.min(nearest), exact.max(nearest))
+    }
+
+    /// Values outside the fences drawn from `q1` and `q3`, each compared
+    /// through its nearest `f64`.
+    fn count_outside_nearest_fences(
         &self,
         values: &[ParsedNumber],
         q1: ParsedNumber,
         q3: ParsedNumber,
     ) -> usize {
         let k = self.thresholds.outlier_iqr_multiplier;
-        if values
-            .iter()
-            .any(|number| !matches!(number, ParsedNumber::Float(_)))
-        {
-            return ExactTukey::from_quartiles(&q1, &q3, k).count_outliers(values);
-        }
         let (q1, q3) = (q1.to_f64(), q3.to_f64());
         let iqr = q3 - q1;
         let (lower_bound, upper_bound) = (q1 - k * iqr, q3 + k * iqr);

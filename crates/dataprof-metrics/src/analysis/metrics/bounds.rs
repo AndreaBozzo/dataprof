@@ -677,8 +677,10 @@ fn collect_shares(
             });
             // A full scan draws the fences from the source's quartiles, which
             // the sample only estimates; a sample holding every value draws
-            // the same ones.
-            if sampled < population && accuracy.outlier_test_values(profile, values).is_some() {
+            // the same ones. A column the source may test is tracked even
+            // when its sample holds too few numbers for the test: that one
+            // leaves accuracy unbounded.
+            if sampled < population && accuracy.may_test_source(profile, population) {
                 fence_columns.push(FenceColumn {
                     profile: index,
                     slot,
@@ -840,10 +842,12 @@ fn fence_span(
             // A quartile with no bound on one side puts the widest fence
             // past every value.
             let fewest = match (q1_low, q3_high) {
-                (Some(q1), Some(q3)) => calculator.count_outside_fences(values, q1, q3),
+                (Some(q1), Some(q3)) => calculator.count_outside_fences(values, q1, q3).0,
                 _ => 0,
             };
-            let most = calculator.count_outside_fences(values, narrow_q1, narrow_q3);
+            let most = calculator
+                .count_outside_fences(values, narrow_q1, narrow_q3)
+                .1;
             FenceSpan::Counts(fewest, most)
         }
         _ => FenceSpan::Undecided,
@@ -1336,6 +1340,80 @@ mod tests {
         }));
         let wrong = outlier_intervals_off(&source, 1.5);
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn a_float_sample_bounds_the_exact_comparison_an_unseen_wide_value_brings() {
+        // The upper fence of 0.7 and 1.0 is 1.45 exactly; 1.4500000000000002
+        // reads past it exactly but on it through `f64`. One wide integer in
+        // the source makes a full scan compare exactly and fail 7,999 values;
+        // a sample without it compares through `f64` and fails none. The
+        // interval must cover both (review of #1313).
+        let mut source = strings(
+            std::iter::repeat_n("0.7", 16_000)
+                .chain(std::iter::repeat_n("1.0", 16_000))
+                .chain(std::iter::repeat_n("1.4500000000000002", 7_999))
+                .chain(["1152921504606846976"]),
+        );
+        source.shuffle(&mut SmallRng::seed_from_u64(3));
+        let profiles = vec![profile("v", DataType::Float, 40_000, 0)];
+        let full = HashMap::from([("v".to_string(), source.clone())]);
+        let exact = score(&full, &profiles, QualityDimension::Accuracy);
+        let mut wrong = Vec::new();
+        for seed in 0..8 {
+            let retained = sample(&source, 10_000, seed);
+            if retained.iter().any(|value| value.len() > 18) {
+                continue;
+            }
+            let retained = HashMap::from([("v".to_string(), retained)]);
+            if let Some(bound) = accuracy_interval(&bounds_for(&retained, &profiles))
+                && !contains(bound, exact)
+            {
+                wrong.push(format!("seed {seed}: {exact} outside {bound:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn a_minimum_above_the_sample_leaves_accuracy_open_where_the_source_reaches_it() {
+        // With `outlier_min_samples` past the sample size the sample never
+        // tests a column that a full scan of 40,000 values does. A ruled
+        // `count` column keeps accuracy assessed through its sign rule, so
+        // its interval used to sit near 100 while the full scan fails the
+        // hundreds as outliers (review of #1313).
+        let thresholds = IsoQualityConfig {
+            outlier_min_samples: 10_001,
+            ..IsoQualityConfig::default()
+        };
+        let source = strings((0..40_000).map(|index| match (index * 7_919) % 40_000 {
+            rank if rank < 16_000 => 0,
+            rank if rank < 32_000 => 1,
+            _ => 100,
+        }));
+        let profiles = vec![profile("item_count", DataType::Integer, 40_000, 0)];
+        let calculator = MetricsCalculator::with_thresholds(thresholds);
+        let run = |data: &HashMap<String, Vec<String>>| {
+            calculator
+                .calculate_bifurcated_metrics_with_hints(
+                    data,
+                    &profiles,
+                    None,
+                    &SemanticHints::default(),
+                    None,
+                )
+                .unwrap()
+        };
+        let exact = run(&HashMap::from([("item_count".to_string(), source.clone())]))
+            .metrics
+            .dimension_score(QualityDimension::Accuracy)
+            .unwrap();
+        let retained = HashMap::from([("item_count".to_string(), sample(&source, 10_000, 0))]);
+        let bounds = run(&retained).score_bounds.expect("sampled");
+        match accuracy_interval(&bounds) {
+            None => {}
+            Some(bound) => assert!(contains(bound, exact), "{exact} outside {bound:?}"),
+        }
     }
 
     #[test]
