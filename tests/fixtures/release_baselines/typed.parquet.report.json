@@ -1,0 +1,314 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "event_ns",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 0.0,
+          "is_approximate": false,
+          "kurtosis": 0.8241,
+          "max": 1.7597000001234575e+18,
+          "mean": 1.759700000123457e+18,
+          "median": 1.759700000123457e+18,
+          "min": 1.7597000001234565e+18,
+          "mode": 1.759700000123457e+18,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 256.0,
+            "q1": 1.759700000123457e+18,
+            "q2": 1.759700000123457e+18,
+            "q3": 1.7597000001234573e+18
+          },
+          "skewness": -0.5916,
+          "std_dev": 279.3338,
+          "variance": 78027.3571
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 8,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "balance",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 0.0,
+          "is_approximate": false,
+          "kurtosis": 0.8587,
+          "max": 10000000000002.31,
+          "mean": 10000000000001.188,
+          "median": 10000000000001.156,
+          "min": 9999999999999.8,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 0.73,
+            "q1": 10000000000000.9,
+            "q2": 10000000000001.16,
+            "q3": 10000000000001.62
+          },
+          "skewness": -0.4531,
+          "std_dev": 0.7576,
+          "variance": 0.574
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 8,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "discount_percent",
+      "null_count": 1,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 80.94,
+          "is_approximate": false,
+          "kurtosis": -1.9501,
+          "max": 101.5,
+          "mean": 51.6429,
+          "median": 50.0,
+          "min": 0.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 70.0,
+            "q1": 17.5,
+            "q2": 50.0,
+            "q3": 87.5
+          },
+          "skewness": 0.0667,
+          "std_dev": 41.7998,
+          "variance": 1747.2262
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 7,
+        "text": 0
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "day",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.5,
+          "match_count": 8,
+          "match_percentage": 100.0,
+          "name": "Date (ISO)",
+          "regex": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      ],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Friday": 1,
+            "Monday": 2,
+            "Saturday": 1,
+            "Sunday": 1,
+            "Tuesday": 2,
+            "Wednesday": 1
+          },
+          "duration_days": 29.0,
+          "max_datetime": "2024-01-30",
+          "min_datetime": "2024-01-01",
+          "month_distribution": {
+            "1": 8
+          },
+          "year_distribution": {
+            "2024": 8
+          }
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 8,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "code",
+      "null_count": 1,
+      "patterns": [],
+      "stats": {
+        "Text": {
+          "avg_length": 2.0,
+          "max_length": 2,
+          "min_length": 2
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 7
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "parquet",
+    "parquet_metadata": {
+      "compressed_size_bytes": 640,
+      "compression": "UNCOMPRESSED",
+      "num_row_groups": 1,
+      "schema_summary": "Field { \"event_ns\": nullable Int64 }, Field { \"balance\": nullable Decimal128(16, 2) }, Field { \"discount_percent\": nullable Float64 }, Field { \"day\": nullable Date32 }, Field { \"code\": nullable Utf8 }",
+      "uncompressed_size_bytes": null,
+      "version": 2
+    },
+    "path": "typed.parquet",
+    "size_bytes": 1823,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 5,
+    "engine": "parquet",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 8,
+    "sampling_applied": false,
+    "scan_time_ms": 1,
+    "source_exhausted": true,
+    "throughput_rows_sec": 8000.0
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "afe1c302-6f89-4ddf-8fba-516b8a41f83d",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 23,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 23,
+        "range_violations": 1,
+        "rule_values_checked": 7,
+        "rule_violating_values": 1
+      },
+      "completeness": {
+        "complete_records_ratio": 75.0,
+        "missing_values_ratio": 5.0,
+        "null_columns": [],
+        "total_cells": 40
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 38
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 86.67,
+        "inconsistent_precision_values": 2,
+        "numeric_values_checked": 15
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "timeliness": {
+        "date_values_checked": 8,
+        "future_dates_count": 0,
+        "invalid_date_values": 0,
+        "stale_data_ratio": 0.0,
+        "temporal_pairs_checked": 0,
+        "temporal_violations": 0
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 8
+      },
+      "validity": {
+        "invalid_values": 0,
+        "valid_values_ratio": 100.0,
+        "values_checked": 8
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 85.71,
+        "completeness": 85.0,
+        "consistency": 100.0,
+        "precision": 86.67,
+        "timeliness": 100.0,
+        "uniqueness": 100.0,
+        "validity": 100.0
+      },
+      "overall_score": 93.44
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-15T13:36:44.756541100+00:00"
+}

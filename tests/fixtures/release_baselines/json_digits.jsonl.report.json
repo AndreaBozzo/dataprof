@@ -1,0 +1,217 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "amount",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 91.29,
+          "is_approximate": false,
+          "kurtosis": -3.3333,
+          "max": 1000000000000000.0,
+          "mean": 600000000000001.4,
+          "median": 1000000000000000.0,
+          "min": -0.0,
+          "mode": 1000000000000000.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 999999999999993.0,
+            "q1": 7.0,
+            "q2": 1000000000000000.0,
+            "q3": 1000000000000000.0
+          },
+          "skewness": -0.6086,
+          "std_dev": 547722557505164.2,
+          "variance": 2.999999999999979e+29
+        }
+      },
+      "total_count": 5,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 5,
+        "text": 0
+      },
+      "unique_count": 3,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "n",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 55.9,
+          "is_approximate": false,
+          "kurtosis": 0.3125,
+          "max": 3.0,
+          "mean": 1.6,
+          "median": 1.0,
+          "min": 1.0,
+          "mode": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 1.0,
+            "q1": 1.0,
+            "q2": 1.0,
+            "q3": 2.0
+          },
+          "skewness": 1.2578,
+          "std_dev": 0.8944,
+          "variance": 0.8
+        }
+      },
+      "total_count": 5,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 5,
+        "text": 0
+      },
+      "unique_count": 3,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 1,
+      "name": "w",
+      "null_count": 1,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.2,
+          "match_count": 3,
+          "match_percentage": 75.0,
+          "name": "Scientific Notation",
+          "regex": "^[-+]?\\d+(\\.\\d+)?[eE][-+]?\\d+$"
+        }
+      ],
+      "stats": {
+        "Text": {
+          "avg_length": 4.5,
+          "max_length": 5,
+          "min_length": 3
+        }
+      },
+      "total_count": 5,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 3,
+        "text": 1
+      },
+      "unique_count": 2,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "jsonl",
+    "path": "json_digits.jsonl",
+    "size_bytes": 284,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 3,
+    "engine": "json",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 5,
+    "sampling_applied": false,
+    "scan_time_ms": 0,
+    "source_exhausted": true
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "f8cb72cc-c331-441d-bdc7-ee43f26ce190",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 13,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 10,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 80.0,
+        "missing_values_ratio": 6.67,
+        "null_columns": [],
+        "total_cells": 15
+      },
+      "consistency": {
+        "data_type_consistency": 92.86,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 14
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 80.0,
+        "inconsistent_precision_values": 1,
+        "numeric_values_checked": 5
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 2,
+        "high_cardinality_warning": false,
+        "key_uniqueness": 100.0,
+        "rows_checked": 5
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 86.67,
+        "consistency": 92.86,
+        "precision": 80.0,
+        "timeliness": null,
+        "uniqueness": 60.0,
+        "validity": null
+      },
+      "overall_score": 85.3
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-15T13:36:44.698706700+00:00"
+}

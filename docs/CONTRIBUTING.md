@@ -206,6 +206,28 @@ Each install job's summary shows, per interpreter, whether the wheel was built,
 whether it installs and whether the smoke test passed; an interpreter maturin
 cannot resolve fails the build step before compilation.
 
+### Release baselines
+
+`tests/release_baselines.rs` and `python/tests/test_release_baselines.py`
+gate each file in `tests/fixtures/release_baselines/` against the report the
+last published release saved for it, with no score drop allowed. When a change
+moves a score on those unchanged bytes, the test fails unless the change also
+records a `metric_semantics` definition (`MetricSemantics::current()` and the
+lists in `score_definitions`), so that a gate against an older baseline reads
+`definition_not_comparable` instead of failing on identical data.
+
+After each release is on PyPI, rewrite the reports from the published wheel
+and commit them:
+
+```bash
+uv run --no-sync python .github/scripts/release_baselines.py <version>
+```
+
+The script runs the wheel in an isolated environment and refuses to use the
+local build. Until this runs, the tests compare against the release before it,
+and each definition that release did not record leaves the rules reading it
+undecided.
+
 ### Database regression tests
 
 CI runs both the facade integration target and every test target in the database
