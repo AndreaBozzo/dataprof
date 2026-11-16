@@ -98,6 +98,19 @@ def test_build_system_floor_is_the_pinned_maturin():
     assert int(pinned.split(".")[0]) < ceiling, f"maturin {pinned} is outside {requires[0]!r}"
 
 
+def test_benchmark_build_uses_the_pinned_maturin():
+    """The benchmark project builds dataprof from the checkout with its own exact
+    maturin constraint. A constraint below the build-system floor makes that build
+    unresolvable, which is how the first version of the pin broke the benchmarks."""
+    benches = tomllib.loads((REPO_ROOT / "benches/pyproject.toml").read_text(encoding="utf-8"))
+    constraints = benches["tool"]["uv"]["build-constraint-dependencies"]
+    maturin = [c.replace(" ", "") for c in constraints if c.startswith("maturin")]
+    assert maturin == [f"maturin=={_pinned_maturin()}"], (
+        f"benches/pyproject.toml constrains the build to {maturin}, the release build pins "
+        f"maturin {_pinned_maturin()}; bump both and run `uv lock` in benches/"
+    )
+
+
 def test_linux_build_images_are_pinned_by_digest():
     env = _workflow_env()
     for key in IMAGE_KEYS:

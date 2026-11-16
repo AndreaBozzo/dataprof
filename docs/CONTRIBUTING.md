@@ -207,8 +207,10 @@ the rehearsal. Dependabot tracks neither, so bump them by hand:
 
 - **maturin**: set `MATURIN_VERSION` to a release from
   [the maturin releases](https://github.com/PyO3/maturin/releases), and raise
-  the floor of `[build-system] requires` in `pyproject.toml` to the same
-  version. `python/tests/test_release_build_pins.py` fails if the two disagree.
+  the floor of `[build-system] requires` in `pyproject.toml` and the
+  `build-constraint-dependencies` pin in `benches/pyproject.toml` to the same
+  version, then run `uv lock` in `benches/`.
+  `python/tests/test_release_build_pins.py` fails if they disagree.
 - **x86_64 image** (`MANYLINUX_X86_64_IMAGE`): pick a dated tag of
   `quay.io/pypa/manylinux2014_x86_64` and keep the tag with its digest, which is
   the one Docker uses:
