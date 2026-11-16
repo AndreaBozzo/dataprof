@@ -22,6 +22,12 @@ fn profile(contents: &str) -> ProfileReport {
     Profiler::new().analyze_file(file.path()).unwrap()
 }
 
+fn profile_json(contents: &str) -> ProfileReport {
+    let mut file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+    file.write_all(contents.as_bytes()).unwrap();
+    Profiler::new().analyze_file(file.path()).unwrap()
+}
+
 fn against(policy: &QualityPolicy, report: &ProfileReport, baseline: &ProfileReport) -> GateResult {
     policy
         .evaluate_against(report, &ReportSide::from_report(baseline))
@@ -51,6 +57,20 @@ fn reason(check: &Check) -> Option<&NotEvaluated> {
 }
 
 const CLEAN: &str = "id,amount\n1,10\n2,20\n3,30\n4,40\n";
+/// `CLEAN` with an `amount` whose quartiles coincide, which the outlier test
+/// stopped testing in 0.14 (#1304).
+const FLAT_AMOUNT: &str = "id,amount\n1,10\n2,10\n3,10\n4,10\n";
+/// `CLEAN` as a JSON source, whose numbers 0.14 reads from their digits.
+const CLEAN_JSON: &str =
+    r#"[{"id":1,"amount":10},{"id":2,"amount":20},{"id":3,"amount":30},{"id":4,"amount":40}]"#;
+
+/// More rows than a column's 10,000-value quality sample, so the sampled
+/// dimensions are scored over part of the source.
+fn sampled_csv() -> String {
+    std::iter::once("id,amount\n".to_string())
+        .chain((0..12_000).map(|row| format!("{row},{}\n", row % 97)))
+        .collect()
+}
 const WITH_NULLS: &str = "id,amount\n1,10\n2,\n3,\n4,40\n";
 
 fn drift_policy() -> QualityPolicy {
@@ -422,20 +442,34 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
     // A baseline that records every other definition, as a 0.12 report does
     // not, so only the one removed separates it from the report (#1005). The
     // overall score and the dimension reading it go unevaluated; the other
-    // dimensions are still decided.
-    let report = profile(CLEAN);
-    for (definition, reads, other) in [
-        ("range_rule_count", "accuracy", "uniqueness"),
-        ("key_uniqueness_units", "uniqueness", "accuracy"),
-        ("outlier_units", "accuracy", "uniqueness"),
-        ("outlier_spread", "accuracy", "uniqueness"),
-        ("key_column_source", "uniqueness", "accuracy"),
-        ("accuracy_comparison", "accuracy", "uniqueness"),
-        ("json_number_reading", "uniqueness", "completeness"),
-        ("json_number_reading", "accuracy", "completeness"),
-        ("json_number_reading", "consistency", "completeness"),
-        ("sampled_score_estimator", "consistency", "completeness"),
-        ("sampled_score_estimator", "accuracy", "uniqueness"),
+    // dimensions are still decided. Each run is one the definition reaches
+    // (#1317): a JSON source, a column whose quartiles coincide, a sample.
+    let clean = profile(CLEAN);
+    let flat = profile(FLAT_AMOUNT);
+    let json = profile_json(CLEAN_JSON);
+    let sampled = profile(&sampled_csv());
+    for (definition, reads, other, report) in [
+        ("range_rule_count", "accuracy", "uniqueness", &clean),
+        ("key_uniqueness_units", "uniqueness", "accuracy", &clean),
+        ("outlier_units", "accuracy", "uniqueness", &clean),
+        ("outlier_spread", "accuracy", "uniqueness", &flat),
+        ("key_column_source", "uniqueness", "accuracy", &clean),
+        ("accuracy_comparison", "accuracy", "uniqueness", &clean),
+        ("json_number_reading", "uniqueness", "completeness", &json),
+        ("json_number_reading", "accuracy", "completeness", &json),
+        ("json_number_reading", "consistency", "completeness", &json),
+        (
+            "sampled_score_estimator",
+            "consistency",
+            "completeness",
+            &sampled,
+        ),
+        (
+            "sampled_score_estimator",
+            "accuracy",
+            "completeness",
+            &sampled,
+        ),
     ] {
         let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         summary["metric_semantics"]
@@ -456,7 +490,7 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
             .max_dimension_score_drop(dimension(reads), 0.0)
             .max_dimension_score_drop(dimension(other), 0.0)
             .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
-            .evaluate_against(&report, &baseline)
+            .evaluate_against(report, &baseline)
             .unwrap();
         for (code, subject) in [
             (CheckCode::MaxQualityScoreDrop, None),
@@ -477,6 +511,53 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
                 "{definition}: {decided}"
             );
         }
+    }
+}
+
+#[test]
+fn a_definition_no_run_can_reach_does_not_hold_a_score_open() {
+    // A CSV read in full, whose numeric columns all have spread: neither
+    // side holds a JSON number, scores a sample or tests a column whose
+    // quartiles coincide, so a baseline without these definitions decides
+    // every score that reads them (#1317).
+    let report = profile(CLEAN);
+    for definition in [
+        "json_number_reading",
+        "sampled_score_estimator",
+        "outlier_spread",
+    ] {
+        let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        summary["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove(definition)
+            .unwrap_or_else(|| panic!("reports record {definition}"));
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let result = QualityDimension::all()
+            .into_iter()
+            .fold(
+                QualityPolicy::new().max_quality_score_drop(0.0),
+                |policy, dimension| policy.max_dimension_score_drop(dimension, 0.0),
+            )
+            .evaluate_against(&report, &baseline)
+            .unwrap();
+        let held: Vec<_> = result
+            .checks
+            .iter()
+            .filter(|check| {
+                matches!(
+                    reason(check),
+                    Some(NotEvaluated::DefinitionNotComparable { .. })
+                )
+            })
+            .map(|check| format!("{:?} {:?}", check.dimension, reason(check)))
+            .collect();
+        assert!(held.is_empty(), "{definition}: {held:?}");
+        assert_eq!(
+            check(&result, CheckCode::MaxDimensionScoreDrop, Some("accuracy")).status,
+            CheckStatus::Passed,
+            "{definition}"
+        );
     }
 }
 

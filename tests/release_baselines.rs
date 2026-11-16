@@ -136,3 +136,66 @@ fn no_score_moves_against_the_last_release_without_a_definition() {
         wrong.join("\n")
     );
 }
+
+/// The definitions no CSV or Parquet input of the corpus can reach (#1317).
+const UNREACHED: [&str; 3] = [
+    "json_number_reading",
+    "sampled_score_estimator",
+    "outlier_spread",
+];
+
+/// A definition a run cannot reach does not hold the rule open (#1317). The
+/// CSV and Parquet inputs hold no JSON number, are read in full, and have no
+/// numeric column whose quartiles coincide. Against their release reports,
+/// given every other definition the report records, so that only those three
+/// can be missing, no accuracy or overall rule is held by a definition: each
+/// passes or fails (a definition such as `accuracy_comparison` does move them
+/// against 0.13), or waits on a setting the release did not record.
+#[test]
+fn csv_and_parquet_decide_accuracy_and_overall_without_unreached_definitions() {
+    let policy = QualityPolicy::new()
+        .max_quality_score_drop(0.0)
+        .max_dimension_score_drop(QualityDimension::Accuracy, 0.0);
+    let mut undecided = Vec::new();
+    let mut checked = 0;
+    for input in inputs() {
+        let name = input.file_name().unwrap().to_string_lossy().into_owned();
+        if !(name.ends_with(".csv") || name.ends_with(".parquet")) {
+            continue;
+        }
+        let mut stored = input.clone().into_os_string();
+        stored.push(".report.json");
+        let report = Profiler::new().analyze_file(&input).unwrap();
+        let current = serde_json::to_value(&report).unwrap()["metric_semantics"].clone();
+        let mut baseline: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&stored).unwrap()).unwrap();
+        let semantics = baseline["metric_semantics"].as_object_mut().unwrap();
+        for (key, value) in current.as_object().unwrap() {
+            if !UNREACHED.contains(&key.as_str()) {
+                semantics.insert(key.clone(), value.clone());
+            }
+        }
+        let baseline: ProfileReport = serde_json::from_value(baseline).unwrap();
+        let result = policy
+            .evaluate_against(&report, &ReportSide::from_report(&baseline))
+            .unwrap();
+        for check in &result.checks {
+            checked += 1;
+            // A setting 0.13 did not record, such as `timeliness_clock`, may
+            // still hold the overall score; that is not a definition.
+            if let Some(reason @ NotEvaluated::DefinitionNotComparable { .. }) =
+                check.not_evaluated()
+            {
+                undecided.push(format!(
+                    "{name}: {} {}: {reason:?}",
+                    check.code,
+                    check
+                        .dimension
+                        .map_or("overall".to_string(), |d| d.to_string()),
+                ));
+            }
+        }
+    }
+    assert!(checked >= 6, "{checked} checks");
+    assert!(undecided.is_empty(), "{}", undecided.join("\n"));
+}

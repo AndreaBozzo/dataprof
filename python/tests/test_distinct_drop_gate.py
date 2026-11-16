@@ -153,3 +153,31 @@ def test_a_column_without_a_distinct_count_is_not_assessed():
     result = report.check(baseline=baseline, max_distinct_drop={"n": 10})
     assert _status(result) == "not_assessed"
     assert result.checks[0].message == "the report counted no distinct values for this column"
+
+
+def test_json_number_reading_holds_the_rule_only_on_a_json_source():
+    # A distinct count reads json_number_reading only where the source may hold
+    # a JSON number (#1317): against a baseline that predates it, every other
+    # route decides and the JSONL route stays unevaluated, in both forms.
+    routes = {
+        **ROUTES,
+        "jsonl bytes": lambda values: dp.profile(
+            "".join(f"{json.dumps({'k': value})}\n" for value in values).encode(), format="jsonl"
+        ),
+    }
+    wrong = []
+    for route, build in routes.items():
+        report = build(_keys(100, 100))
+        expected = "definition_not_comparable" if route == "jsonl bytes" else "passed"
+        document = json.loads(report.to_json())
+        summary = report.to_dict()
+        for form in (document, summary):
+            del form["metric_semantics"]["json_number_reading"]
+        for form, baseline in (
+            ("to_json", dp.ProfileReport.from_json(json.dumps(document))),
+            ("to_dict", dp.ProfileReport.from_dict(summary)),
+        ):
+            got = _status(report.check(baseline=baseline, max_distinct_drop={"k": 0}))
+            if got != expected:
+                wrong.append(f"{route}/{form}: {got}, expected {expected}")
+    assert not wrong, "\n".join(wrong)

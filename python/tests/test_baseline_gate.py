@@ -218,28 +218,47 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
     assert result.verdict == "inconclusive"
 
 
+def _reached_by(run: str, tmp_path: Path) -> dp.ProfileReport:
+    """A run each definition reaches (#1317): the clean frame, a column whose
+    quartiles coincide, a JSON source, and more rows than a column's
+    10,000-value quality sample."""
+    if run == "clean":
+        return dp.profile(CLEAN)
+    if run == "flat":
+        return dp.profile({"id": [1, 2, 3, 4], "amount": [10, 10, 10, 10]})
+    if run == "json":
+        path = tmp_path / "clean.json"
+        path.write_text(
+            json.dumps([{"id": i, "amount": a} for i, a in zip(CLEAN["id"], CLEAN["amount"])])
+        )
+        return dp.profile(str(path))
+    path = tmp_path / "sampled.csv"
+    path.write_text("id,amount\n" + "".join(f"{row},{row % 97}\n" for row in range(12_000)))
+    return dp.profile(str(path))
+
+
 @pytest.mark.parametrize(
-    ("definition", "reads", "other"),
+    ("definition", "reads", "other", "run"),
     [
-        ("range_rule_count", "accuracy", "uniqueness"),
-        ("key_uniqueness_units", "uniqueness", "accuracy"),
-        ("outlier_units", "accuracy", "uniqueness"),
-        ("outlier_spread", "accuracy", "uniqueness"),
-        ("key_column_source", "uniqueness", "accuracy"),
-        ("accuracy_comparison", "accuracy", "uniqueness"),
-        ("json_number_reading", "uniqueness", "completeness"),
-        ("json_number_reading", "accuracy", "completeness"),
-        ("json_number_reading", "consistency", "completeness"),
-        ("sampled_score_estimator", "consistency", "completeness"),
-        ("sampled_score_estimator", "accuracy", "uniqueness"),
+        ("range_rule_count", "accuracy", "uniqueness", "clean"),
+        ("key_uniqueness_units", "uniqueness", "accuracy", "clean"),
+        ("outlier_units", "accuracy", "uniqueness", "clean"),
+        ("outlier_spread", "accuracy", "uniqueness", "flat"),
+        ("key_column_source", "uniqueness", "accuracy", "clean"),
+        ("accuracy_comparison", "accuracy", "uniqueness", "clean"),
+        ("json_number_reading", "uniqueness", "completeness", "json"),
+        ("json_number_reading", "accuracy", "completeness", "json"),
+        ("json_number_reading", "consistency", "completeness", "json"),
+        ("sampled_score_estimator", "consistency", "completeness", "sampled"),
+        ("sampled_score_estimator", "accuracy", "completeness", "sampled"),
     ],
 )
 def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(
-    definition: str, reads: str, other: str
+    definition: str, reads: str, other: str, run: str, tmp_path: Path
 ):
     # Every other definition recorded, so only the one removed separates the
     # baseline from the report (#1005). The other dimensions are still decided.
-    report = dp.profile(CLEAN)
+    report = _reached_by(run, tmp_path)
     summary = report.to_dict()
     del summary["metric_semantics"][definition]
     result = report.check(
@@ -252,6 +271,33 @@ def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unev
     assert _find(result, "max_dimension_score_drop", reads).reason == unevaluated
     assert _find(result, "max_dimension_score_drop", other).status == "passed"
     assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+
+
+@pytest.mark.parametrize(
+    "definition", ["json_number_reading", "sampled_score_estimator", "outlier_spread"]
+)
+def test_a_definition_no_run_can_reach_does_not_hold_a_score_open(definition: str):
+    # A frame read in full, whose numeric columns all have spread: neither side
+    # holds a JSON number, scores a sample or tests a column whose quartiles
+    # coincide, so a baseline without these definitions decides every score
+    # that reads them (#1317).
+    report = dp.profile(CLEAN)
+    summary = report.to_dict()
+    del summary["metric_semantics"][definition]
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        max_quality_score_drop=0,
+        max_dimension_score_drops=dict.fromkeys(
+            ("completeness", "consistency", "uniqueness", "accuracy", "precision"), 0
+        ),
+    )
+    held = [
+        check.to_dict()
+        for check in result.checks
+        if (check.reason or {}).get("reason") == "definition_not_comparable"
+    ]
+    assert not held, held
+    assert _find(result, "max_dimension_score_drop", "accuracy").status == "passed"
 
 
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):

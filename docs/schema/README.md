@@ -975,7 +975,10 @@ A report that records no `json_number_reading` reads back with it unknown, and
 a quality gate leaves the consistency, precision, uniqueness, accuracy and
 overall score rules over it `definition_not_comparable` (#1243), so a baseline saved by 0.13
 does not fail the gate on unchanged data. The definition is recorded for every
-source format, so this applies to a 0.13 baseline of any format. Regenerate
+source format, but the gate compares it only when either side's source may
+hold a JSON number: a JSON or JSONL source, a database query, or a source
+whose kind or format the side did not record (#1317). A CSV, Parquet, Arrow
+or DataFrame source on both sides decides those rules without it. Regenerate
 the baseline with the current release to have those rules decided again. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `json_number_reading` is malformed, as for
@@ -1005,8 +1008,11 @@ A report that records no `sampled_score_estimator` reads back with it
 unknown, and a quality gate leaves the consistency, accuracy, timeliness,
 validity, precision and overall score rules over it
 `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
-gate on unchanged data. Regenerate the baseline with the current release to
-have those rules decided again. The field is additive and not `required`, so
+gate on unchanged data. The gate compares it only when either side's score
+was computed over part of the source, or its coverage was not recorded
+(#1317): a score over every value is the same under either estimator.
+Regenerate the baseline with the current release to have those rules
+decided again. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for
 `sampled_score_estimator` is malformed, as for `text_length_unit`.
 
@@ -1084,8 +1090,14 @@ had no such case.
 A report that records no `outlier_spread` reads back with it unknown, and a
 quality gate leaves the accuracy and overall score rules over it
 `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
-gate on unchanged data. Regenerate the baseline with the current release to
-have those rules decided again. The field is additive and not `required`, so
+gate on unchanged data. The gate compares it only when either side's outlier
+test may have met a column whose quartiles coincide (#1317): a numeric
+column with values whose exact quartiles coincide, are estimates or were not
+recorded, or any column when the accuracy score was computed over part of
+the source. Where every numeric column records distinct exact quartiles, both
+definitions test the same columns, and the rules decide without it.
+Regenerate the baseline with the current release to have those rules decided
+again. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for `outlier_spread` is
 malformed, as for `text_length_unit`.
 

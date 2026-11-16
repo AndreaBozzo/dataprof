@@ -1060,7 +1060,7 @@ class ProfileReport:
         in the check: ``not_in_baseline``; ``schema_changed`` for a score
         when the column sets differ (a column's own rule still decides);
         ``definition_not_comparable`` for a ``metric_semantics`` key the rule
-        depends on; ``setting_changed`` or ``setting_unrecorded`` for a
+        depends on for these two runs; ``setting_changed`` or ``setting_unrecorded`` for a
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
         side does not cover its whole source. A score drop rule reads a

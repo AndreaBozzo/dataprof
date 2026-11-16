@@ -13,6 +13,7 @@ published wheel.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import dataprof as dp
@@ -78,3 +79,37 @@ def test_no_score_moves_against_the_last_release_without_a_definition():
         "recording why; add one to MetricSemantics::current() and score_definitions:\n"
         + "\n".join(wrong)
     )
+
+
+#: Definitions no CSV or Parquet input of the corpus can reach (#1317).
+UNREACHED = {"json_number_reading", "sampled_score_estimator", "outlier_spread"}
+
+
+def test_csv_and_parquet_decide_accuracy_and_overall_without_unreached_definitions():
+    # The CSV and Parquet inputs hold no JSON number, are read in full, and have
+    # no numeric column whose quartiles coincide (#1317). Given every other
+    # definition the report records, so that only those three can be missing,
+    # no accuracy or overall rule is held by a definition: each passes or fails
+    # (accuracy_comparison does move them against 0.13), or waits on a setting
+    # the release did not record, such as timeliness_clock.
+    inputs = sorted(p for p in CORPUS.iterdir() if p.suffix in {".csv", ".parquet"})
+    assert len(inputs) >= 4, inputs
+
+    held = []
+    for path in inputs:
+        report = dp.profile(str(path))
+        current = json.loads(report.to_json())["metric_semantics"]
+        document = json.loads((CORPUS / f"{path.name}.report.json").read_text(encoding="utf-8"))
+        document["metric_semantics"].update(
+            {key: value for key, value in current.items() if key not in UNREACHED}
+        )
+        result = report.check(
+            baseline=dp.ProfileReport.from_json(json.dumps(document)),
+            max_quality_score_drop=0,
+            max_dimension_score_drops={"accuracy": 0},
+        )
+        for check in result.checks:
+            reason = check.reason or {}
+            if reason.get("reason") == "definition_not_comparable":
+                held.append(f"{path.name}: {check.code} {check.dimension or 'overall'}: {reason}")
+    assert not held, "\n".join(held)
