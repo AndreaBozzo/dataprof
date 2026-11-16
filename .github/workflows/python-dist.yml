@@ -179,40 +179,6 @@ jobs:
       run: python .github/scripts/wheel_interpreters.py --wheels dist
       shell: bash
 
-    - name: Verify wheel compatibility (baseline only)
-      if: matrix.cpu_profile == 'baseline'
-      run: |
-        # Install objdump/readelf for analysis (Linux only for now)
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          echo "Verifying baseline wheel has no advanced CPU instructions..."
-          cd dist
-
-          for wheel in *.whl; do
-            if [ -f "$wheel" ]; then
-              echo "Analyzing wheel: $wheel"
-
-              # Extract wheel and find .so files
-              python -m zipfile -e "$wheel" wheel_extracted/
-
-              # Check for advanced CPU instructions in shared libraries
-              find wheel_extracted/ -name "*.so" -exec sh -c '
-                echo "Checking $1 for advanced CPU instructions..."
-                if objdump -d "$1" 2>/dev/null | grep -E "(vzeroupper|vmovdqu|vpor|vpaddd)" >/dev/null; then
-                  echo "WARNING: Found AVX instructions in $1"
-                  echo "This wheel may not be compatible with older CPUs"
-                else
-                  echo "OK: No advanced CPU instructions found in $1"
-                fi
-              ' _ {} \;
-
-              rm -rf wheel_extracted/
-            fi
-          done
-        else
-          echo "Skipping compatibility check on ${{ matrix.os }}"
-        fi
-      shell: bash
-
     - name: Rename wheels with CPU profile suffix
       run: |
         cd dist
@@ -231,8 +197,6 @@ jobs:
         done
       shell: bash
 
-        # The sdist is built on the host, never in a manylinux image.
-        maturin-version: ${{ env.MATURIN_VERSION }}
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
@@ -267,6 +231,8 @@ jobs:
       with:
         command: sdist
         args: --out dist
+        # The sdist is built on the host, never in a manylinux image.
+        maturin-version: ${{ env.MATURIN_VERSION }}
         manylinux: auto
         rust-toolchain: ${{ steps.toolchain.outputs.channel }}
 
@@ -283,6 +249,15 @@ jobs:
   # which also checks the wheel names the commit it was built from. Optimized
   # wheels target the build runner's CPU, which another runner need not share,
   # so they are not installed here.
+  #
+  # The x86_64 baseline wheels promise to run on a CPU without AVX, which is
+  # why they are the ones on PyPI. On Linux the smoke test runs a second time
+  # under qemu-user emulating a Westmere CPU (no AVX), where an AVX instruction
+  # raises SIGILL (#1077). Dependencies may still carry AVX code behind runtime
+  # CPU detection, which is safe and which this run does not flag. Not covered:
+  # the subprocess the smoke test starts (`python -m dataprof.check`) runs
+  # natively, since qemu-user does not follow exec; and the Windows and macOS
+  # x86_64 baseline wheels, which have no user-mode emulator on their runners.
   wheel-install:
     name: Install Wheels (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
@@ -293,6 +268,7 @@ jobs:
         include:
           - runner: ubuntu-latest
             artifact: wheels-ubuntu-latest-x86_64-baseline
+            emulated_cpu: Westmere
           - runner: ubuntu-24.04-arm
             artifact: wheels-ubuntu-latest-aarch64-baseline
           - runner: windows-latest
@@ -324,6 +300,13 @@ jobs:
         name: ${{ matrix.artifact }}
         path: dist
 
+    - name: Install qemu-user to emulate a CPU without AVX
+      if: matrix.emulated_cpu
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q qemu-user
+        qemu-x86_64 --version
+
     - name: Install and smoke-test each interpreter's wheel
       env:
         # Every job of a run checks out the same commit, so each wheel must
@@ -331,14 +314,20 @@ jobs:
         DATAPROF_EXPECTED_COMMIT: ${{ github.sha }}
         # One minor version per line.
         VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
+        EMULATED_CPU: ${{ matrix.emulated_cpu }}
       run: |
         cp .github/scripts/wheel_smoke.py "$RUNNER_TEMP/wheel_smoke.py"
         failed=0
         {
           echo "### ${{ matrix.artifact }}"
           echo ""
-          echo "| Interpreter | Wheel | Installs | Smoke test |"
-          echo "|---|---|---|---|"
+          if [ -n "$EMULATED_CPU" ]; then
+            echo "| Interpreter | Wheel | Installs | Smoke test | Smoke test on $EMULATED_CPU (no AVX) |"
+            echo "|---|---|---|---|---|"
+          else
+            echo "| Interpreter | Wheel | Installs | Smoke test |"
+            echo "|---|---|---|---|"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
         for version in $VERSIONS; do
           tag="cp${version/./}"
@@ -346,6 +335,7 @@ jobs:
           built="missing"
           installs="not run"
           smoke="not run"
+          emulated="not run"
           if [ -n "$wheel" ]; then
             built="$(basename "$wheel")"
             python=$(uv python find --system --no-python-downloads "$version")
@@ -363,12 +353,29 @@ jobs:
               else
                 smoke="failed"
               fi
+              if [ -n "$EMULATED_CPU" ]; then
+                echo "--- again on an emulated $EMULATED_CPU CPU (no AVX)"
+                if (cd "$RUNNER_TEMP" && qemu-x86_64 -cpu "$EMULATED_CPU" "$venv_python" wheel_smoke.py); then
+                  emulated="passed"
+                else
+                  # SIGILL (exit 132) means an instruction this CPU lacks.
+                  emulated="failed (exit $?)"
+                fi
+              fi
             else
               installs="failed"
             fi
             echo "::endgroup::"
           fi
-          echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$EMULATED_CPU" ]; then
+            echo "| $version | $built | $installs | $smoke | $emulated |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$emulated" != "passed" ]; then
+              echo "::error::CPython $version on ${{ matrix.runner }}: wheel $built, smoke test on an emulated $EMULATED_CPU CPU $emulated"
+              failed=1
+            fi
+          else
+            echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ "$smoke" != "passed" ]; then
             echo "::error::CPython $version on ${{ matrix.runner }}: wheel $built, installs $installs, smoke test $smoke"
             failed=1
