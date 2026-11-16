@@ -14,6 +14,10 @@ pub(crate) const DATE_YEAR_SLASH_PATTERN: &str = r"^\d{4}/\d{2}/\d{2}$";
 pub(crate) const DATE_DOT_PATTERN: &str = r"^\d{2}\.\d{2}\.\d{4}$";
 pub(crate) const ISO_DATETIME_PATTERN: &str =
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$";
+/// [`ISO_DATETIME_PATTERN`] with a space for the `T`. Type inference only:
+/// the `DateTime (ISO)` pattern has never matched the spaced form.
+const SPACED_ISO_DATETIME_PATTERN: &str =
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$";
 
 // Pre-compile regex patterns for better performance
 // These patterns are compiled once at startup instead of on every column analysis
@@ -45,7 +49,11 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         // form (`+0200`) is absent for the same reason.
         Regex::new(ISO_DATETIME_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
-        Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+        // The same form with a space for the `T`, which RFC 3339 permits and
+        // `parse_from_rfc3339` accepts: Python's `str()` of a datetime, pandas
+        // timestamps and SQL exports write it, with an offset when the value
+        // is timezone-aware (#1335). Without one the parser reads it naive.
+        Regex::new(SPACED_ISO_DATETIME_PATTERN)
             .expect("BUG: Invalid hardcoded regex pattern for spaced ISO datetime"),
         Regex::new(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$")
             .expect("BUG: Invalid hardcoded regex pattern for DD/MM/YYYY datetime"),
@@ -872,8 +880,8 @@ mod tests {
             "2024-01-15T10:30:00",
         ),
         (
-            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
-            "2024-01-15 10:30:00",
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$",
+            "2024-01-15 10:30:00.5+02:00",
         ),
         (
             r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$",

@@ -5,7 +5,8 @@
 //! ## Unambiguous Formats (Recommended)
 //! - ISO 8601: `2023-01-15` (YYYY-MM-DD)
 //! - ISO with slashes: `2023/01/15` (YYYY/MM/DD)
-//! - ISO datetime: `2023-01-15T10:30:00`
+//! - ISO datetime: `2023-01-15T10:30:00`, or with a space for the `T`
+//!   (`2023-01-15 10:30:00`), each with an optional fraction and offset
 //!
 //! ## Day/month order
 //! Dashed and dotted dates are read day-first (`15-01-2023`, `15.01.2023`).
@@ -23,7 +24,9 @@
 //! A value carrying an RFC 3339 offset (`Z`, `+HH:MM`, `-HH:MM`) designates an
 //! *instant*, and **dataprof normalizes it to UTC** before it reaches any
 //! statistic or quality predicate. `2024-01-15T23:00:00-05:00` therefore counts
-//! as 2024-01-16 at hour 04, not as 2024-01-15 at hour 23.
+//! as 2024-01-16 at hour 04, not as 2024-01-15 at hour 23, and so does
+//! `2024-01-15 23:00:00-05:00`, the form Python's `str()` gives an aware
+//! datetime (#1335). An hour-only offset (`+00`) is not RFC 3339 and stays text.
 //!
 //! The alternative — keeping each value's own wall clock — makes two values that
 //! name the same instant compare as different and two values that name different
@@ -558,6 +561,9 @@ fn parse_flexible_full(s: &str, month_first: bool) -> Option<ParsedDateTime> {
             slash_datetimes[0],
             slash_datetimes[1],
             "%Y-%m-%dT%H:%M:%S%.f",
+            // A naive spaced value with a fraction, as Python writes a
+            // datetime with microseconds; inference types it a date (#1335).
+            "%Y-%m-%d %H:%M:%S%.f",
         ];
         for format in datetime_formats {
             if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
@@ -754,6 +760,9 @@ mod tests {
             "2024-01-15 10:30:00",
             "2024-01-15T10:30:00.125",
             "2024-01-15T10:30:00+02:00",
+            "2024-01-15 10:30:00.125",
+            "2024-01-15 10:30:00+02:00",
+            "2024-01-15 10:30:00.125Z",
             "01/15/2024 10:30:00",
             "+2024-01-15",
         ] {
