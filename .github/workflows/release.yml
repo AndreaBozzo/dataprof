@@ -130,7 +130,7 @@ jobs:
           echo ""
           echo "### Python"
           echo "- **PyPI**: \`pip install dataprof==$VERSION\`"
-          echo "- **GitHub Releases**: Baseline and optimized wheels are attached as release assets"
+          echo "- **GitHub Releases**: Baseline and optimized wheels are attached as release assets. An x86_64 optimized wheel needs an x86-64-v3 CPU (AVX2, FMA and BMI2, which Intel Core CPUs have since Haswell and AMD CPUs since Excavator); pip installs it once \`-optimized\` is dropped from the filename"
           echo ""
           echo "### Source"
           echo "- GitHub automatically attaches source \`.tar.gz\` and \`.zip\` archives for this tag"

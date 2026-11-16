@@ -90,19 +90,22 @@ jobs:
             # bought no compatibility and cost performance.
             rustflags: "-C opt-level=2"
 
-          # Optimized builds (performance optimized)
+          # Optimized builds. x86_64 targets the named level x86-64-v3 (AVX2,
+          # FMA, BMI2), never `native`: a `native` build takes whatever CPU the
+          # runner happens to have, and one built on an AMD runner carried
+          # AMD-only SSE4a instructions that crash every Intel CPU (#1331).
           - os: ubuntu-latest
             target: x86_64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: windows-latest
             target: x64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: macos-15-intel
             target: x86_64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: macos-latest
             target: aarch64
             cpu_profile: optimized
@@ -246,9 +249,7 @@ jobs:
   # the aarch64 Linux leg is cross-compiled, so before this job nothing ran its
   # wheels before users did. Each baseline wheel goes into a bare venv on its
   # own platform, one interpreter at a time, and runs the wheel smoke test,
-  # which also checks the wheel names the commit it was built from. Optimized
-  # wheels target the build runner's CPU, which another runner need not share,
-  # so they are not installed here.
+  # which also checks the wheel names the commit it was built from.
   #
   # The x86_64 baseline wheels promise to run on a CPU without AVX, which is
   # why they are the ones on PyPI. On Linux the smoke test runs a second time
@@ -258,6 +259,13 @@ jobs:
   # the subprocess the smoke test starts (`python -m dataprof.check`) runs
   # natively, since qemu-user does not follow exec; and the Windows and macOS
   # x86_64 baseline wheels, which have no user-mode emulator on their runners.
+  #
+  # The optimized wheels are release assets too, so each runs the same smoke
+  # test (#1331). The x86_64 Linux ones run under an emulated Haswell CPU, an
+  # x86-64-v3 CPU with no vendor-only extensions, so an instruction outside
+  # what they promise raises SIGILL whichever CPU the runner has. The Windows
+  # and macOS ones run natively on their runner: that shows they install and
+  # run, not that they stay within x86-64-v3.
   wheel-install:
     name: Install Wheels (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
@@ -269,14 +277,19 @@ jobs:
           - runner: ubuntu-latest
             artifact: wheels-ubuntu-latest-x86_64-baseline
             emulated_cpu: Westmere
+            optimized_artifact: wheels-ubuntu-latest-x86_64-optimized
+            optimized_cpu: Haswell
           - runner: ubuntu-24.04-arm
             artifact: wheels-ubuntu-latest-aarch64-baseline
           - runner: windows-latest
             artifact: wheels-windows-latest-x64-baseline
+            optimized_artifact: wheels-windows-latest-x64-optimized
           - runner: macos-15-intel
             artifact: wheels-macos-15-intel-x86_64-baseline
+            optimized_artifact: wheels-macos-15-intel-x86_64-optimized
           - runner: macos-latest
             artifact: wheels-macos-latest-aarch64-baseline
+            optimized_artifact: wheels-macos-latest-aarch64-optimized
     defaults:
       run:
         shell: bash
@@ -300,8 +313,15 @@ jobs:
         name: ${{ matrix.artifact }}
         path: dist
 
-    - name: Install qemu-user to emulate a CPU without AVX
-      if: matrix.emulated_cpu
+    - name: Download this platform's optimized wheels
+      if: matrix.optimized_artifact
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ matrix.optimized_artifact }}
+        path: dist-optimized
+
+    - name: Install qemu-user to emulate older CPUs
+      if: matrix.emulated_cpu || matrix.optimized_cpu
       run: |
         sudo apt-get update -q
         sudo apt-get install -y -q qemu-user
@@ -378,6 +398,66 @@ jobs:
           fi
           if [ "$smoke" != "passed" ]; then
             echo "::error::CPython $version on ${{ matrix.runner }}: wheel $built, installs $installs, smoke test $smoke"
+            failed=1
+          fi
+        done
+        exit "$failed"
+
+    - name: Install and smoke-test each interpreter's optimized wheel
+      # Also after a baseline failure, so both results show in one run.
+      if: ${{ !cancelled() && matrix.optimized_artifact }}
+      env:
+        DATAPROF_EXPECTED_COMMIT: ${{ github.sha }}
+        VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
+        OPTIMIZED_CPU: ${{ matrix.optimized_cpu }}
+      run: |
+        cp .github/scripts/wheel_smoke.py "$RUNNER_TEMP/wheel_smoke.py"
+        if [ -n "$OPTIMIZED_CPU" ]; then where="on an emulated $OPTIMIZED_CPU CPU"; else where="on this runner"; fi
+        failed=0
+        {
+          echo "### ${{ matrix.optimized_artifact }}"
+          echo ""
+          echo "| Interpreter | Wheel | Installs | Smoke test $where |"
+          echo "|---|---|---|---|"
+        } >> "$GITHUB_STEP_SUMMARY"
+        for version in $VERSIONS; do
+          tag="cp${version/./}"
+          asset=$(find dist-optimized -maxdepth 1 -name "dataprof-*-${tag}-${tag}-*-optimized.whl" | head -n 1)
+          built="missing"
+          installs="not run"
+          smoke="not run"
+          if [ -n "$asset" ]; then
+            built="$(basename "$asset")"
+            # pip refuses the asset name; the wheel inside is a standard one.
+            wheel="$RUNNER_TEMP/${built%-optimized.whl}.whl"
+            cp "$asset" "$wheel"
+            python=$(uv python find --system --no-python-downloads "$version")
+            venv="$RUNNER_TEMP/venv-optimized-$tag"
+            "$python" -m venv "$venv"
+            venv_python="$venv/bin/python"
+            [ -x "$venv_python" ] || venv_python="$venv/Scripts/python.exe"
+            echo "::group::CPython $version: $built"
+            if "$venv_python" -m pip install --no-index "$wheel"; then
+              installs="yes"
+              if [ -n "$OPTIMIZED_CPU" ]; then
+                run=(qemu-x86_64 -cpu "$OPTIMIZED_CPU" "$venv_python" wheel_smoke.py)
+              else
+                run=("$venv_python" wheel_smoke.py)
+              fi
+              if (cd "$RUNNER_TEMP" && "${run[@]}"); then
+                smoke="passed"
+              else
+                # SIGILL (exit 132) means an instruction this CPU lacks.
+                smoke="failed (exit $?)"
+              fi
+            else
+              installs="failed"
+            fi
+            echo "::endgroup::"
+          fi
+          echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$smoke" != "passed" ]; then
+            echo "::error::CPython $version on ${{ matrix.runner }}: optimized wheel $built, installs $installs, smoke test $where $smoke"
             failed=1
           fi
         done
