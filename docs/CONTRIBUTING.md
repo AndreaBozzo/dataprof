@@ -196,11 +196,30 @@ gh run watch
 
 A pull request that changes `.github/python-interpreters.json`,
 `wheel_interpreters.py`, `rust-toolchain.toml`, `python-dist.yml` or
-`release-rehearsal.yml` runs it on its own. The release builds with the newest
-maturin that `[build-system] requires` in `pyproject.toml` allows, in manylinux
-images selected by floating tags, so an upstream release changes the build
-without any change here. The rehearsal therefore also runs weekly on `master`;
-run it there before tagging as well.
+`release-rehearsal.yml` runs it on its own. The runner images and the CPython
+patch releases installed on Windows and macOS still change without any change
+here, so the rehearsal also runs weekly on `master`; run it there before
+tagging as well.
+
+The maturin version and the two Linux build images are pinned in the `env:`
+block at the top of `python-dist.yml`, so each bump is a pull request that runs
+the rehearsal. Dependabot tracks neither, so bump them by hand:
+
+- **maturin**: set `MATURIN_VERSION` to a release from
+  [the maturin releases](https://github.com/PyO3/maturin/releases), and raise
+  the floor of `[build-system] requires` in `pyproject.toml` to the same
+  version. `python/tests/test_release_build_pins.py` fails if the two disagree.
+- **x86_64 image** (`MANYLINUX_X86_64_IMAGE`): pick a dated tag of
+  `quay.io/pypa/manylinux2014_x86_64` and keep the tag with its digest, which is
+  the one Docker uses:
+
+  ```bash
+  docker buildx imagetools inspect quay.io/pypa/manylinux2014_x86_64:<tag> --format '{{json .Manifest.Digest}}'
+  ```
+
+- **aarch64 image** (`MANYLINUX_AARCH64_IMAGE`): the cross image publishes no
+  dated tags, so take the current digest of
+  `ghcr.io/rust-cross/manylinux_2_28-cross:aarch64` the same way.
 
 Each install job's summary shows, per interpreter, whether the wheel was built,
 whether it installs and whether the smoke test passed; an interpreter maturin
