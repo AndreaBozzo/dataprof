@@ -15,6 +15,13 @@ updates:
   # Python dependencies (uv.lock). Without this nothing watched the Python
   # environment, so an advisory against a transitive dev dependency stayed open
   # with no update path — the gap that left Pygments unpatched (#464).
+  #
+  # The floors in pyproject.toml are the supported range, which the `jupyter`
+  # and `all` extras publish to users, so a bump must not raise them. Raising
+  # them also left benches/uv.lock stale, since it records the root's
+  # metadata (#1321-#1323). This strategy updates only the lock when the new
+  # version fits and widens a bound when it does not (maturin <2, jsonschema
+  # <5). The benches entry keeps the default: its exact pins must move.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
@@ -22,6 +29,7 @@ updates:
       day: "monday"
       time: "06:00"
     open-pull-requests-limit: 3
+    versioning-strategy: "increase-if-necessary"
     commit-message:
       prefix: "deps"
       include: "scope"
