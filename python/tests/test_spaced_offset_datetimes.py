@@ -66,9 +66,11 @@ ROUTES: dict[str, Callable[[list[Any]], dp.ProfileReport]] = {
     "list of records": lambda cells: dp.profile(
         [{"published_at": cell} for cell in cells], reference_date=REF
     ),
-    # Mixed cells push pandas off its Arrow fast path onto `str()` per cell.
+    # A text cell beside the datetimes makes pyarrow refuse the column, so
+    # each cell is rendered with `str()`; "NA" is then read as a null. With
+    # `None` instead, pyarrow would convert the column to a timestamp itself.
     "pandas mixed object": lambda cells: dp.profile(
-        pd.DataFrame({"published_at": pd.Series([*cells, None], dtype=object)}),
+        pd.DataFrame({"published_at": pd.Series([*cells, "NA"], dtype=object)}),
         reference_date=REF,
     ),
 }
