@@ -91,7 +91,7 @@ dev = [
     { name = "pyarrow", specifier = ">=14.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.9" },
-    { name = "ty", specifier = ">=0.0.102" },
+    { name = "ty", specifier = ">=0.0.56" },
 ]
 
 [[package]]
