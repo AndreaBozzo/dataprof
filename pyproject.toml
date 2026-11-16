@@ -41,8 +41,8 @@ Issues = "https://github.com/AndreaBozzo/dataprof/issues"
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.0.0"]
-jupyter = ["pandas>=2.0.0", "ipython>=9.18.1"]
-all = ["pandas>=2.0.0", "ipython>=9.18.1", "numpy>=1.23.0"]
+jupyter = ["pandas>=2.0.0", "ipython>=8.0.0"]
+all = ["pandas>=2.0.0", "ipython>=8.0.0", "numpy>=1.23.0"]
 # There is deliberately no `database` extra: database support is a compile-time
 # feature of the extension, not a Python dependency, and the published wheels do
 # not carry it (#588). An extra cannot install it, so offering one only promises
