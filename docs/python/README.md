@@ -1013,6 +1013,7 @@ if not result.passed:
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
 | `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
+| `unique_columns` | `list[str]` | Columns whose non-null values must not repeat, such as a business key; whole-row duplicates miss a reused key whenever another column differs (0.14+) |
 | `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
 | `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
@@ -1040,6 +1041,22 @@ no-null rule on a key or required column, use `max_null_count={"column": 0}`,
 which compares the exact count and needs no rounding. Like `max_duplicate_rows`,
 it fails a truncated or sampled scan that already counted more nulls than
 allowed, and otherwise leaves a full-source rule unevaluated on such a scan.
+
+`unique_columns=["order_id"]` (0.14+) checks a business key directly.
+`max_duplicate_rows=0` counts whole rows, so it passes a reused key whenever
+another column differs, and always when a loader adds a row id. Each named
+column gets a `unique_column` check that observes its non-null values minus
+its distinct values against an allowance of zero, read from the exact
+distinct count. Nulls never repeat; pair it with
+`max_null_count={"order_id": 0}` for a key that must also be present. A repeat the scan witnessed fails
+whatever the scan missed, and none passes under `"full_source"` only when
+every row was read. A distinct count that is an estimate, past one million
+distinct values or sooner under memory pressure, settles neither direction
+(`approximate_count`).
+`unique_columns` is a gate requirement, while `identifier_columns=` is a
+profiling option that picks the key the uniqueness score and the
+`key_duplicates` finding read. Neither implies the other: a pipeline that
+wants both scores and gates its key names it in both.
 
 `max_date_age` reads the column's `max_datetime` against the reference date
 the report's timeliness clock recorded: the `reference_date=` of the profiling
@@ -1577,7 +1594,7 @@ Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
-`--require-metric NAME`, `--require-column NAME`,
+`--require-metric NAME`, `--require-column NAME`, `--unique-column NAME` (0.14+),
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
 today's date, since the command line takes no reference date.

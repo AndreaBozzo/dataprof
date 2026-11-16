@@ -97,6 +97,16 @@
 //! the setting `columns`, [`NotEvaluated::ColumnNotProfiled`] for a required
 //! column the run did not select, or [`NotEvaluated::EvidenceIncomplete`].
 //!
+//! # Unique columns
+//!
+//! [`QualityPolicy::unique_columns`] fails a column whose non-null values
+//! repeat, such as a reused business key (#904). It reads the column's exact
+//! distinct count against its non-null values, so a repeat the scan witnessed
+//! fails whatever the scan missed, and none passes under
+//! [`PolicyScope::FullSource`] only on a scan that covered the source. An
+//! estimated distinct count settles neither direction
+//! ([`NotEvaluated::ApproximateCount`]).
+//!
 //! # Freshness
 //!
 //! [`QualityPolicy::max_date_age`] fails a column whose newest date lies too
@@ -446,6 +456,8 @@ pub enum CheckCode {
     MaxNullCount,
     /// The duplicate-row count must be at most the threshold.
     MaxDuplicateRows,
+    /// No non-null value of a column may occur more than once.
+    UniqueColumn,
     /// A column's newest date may lie at most the threshold's number of days
     /// before the timeliness reference date.
     MaxDateAge,
@@ -491,6 +503,7 @@ impl fmt::Display for CheckCode {
             Self::MaxNullPercentage => write!(f, "max_null_percentage"),
             Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
+            Self::UniqueColumn => write!(f, "unique_column"),
             Self::MaxDateAge => write!(f, "max_date_age"),
             Self::MaxDateGap => write!(f, "max_date_gap"),
             Self::RequireMetric => write!(f, "require_metric"),
@@ -650,7 +663,8 @@ pub enum NotEvaluated {
     /// A distinct count the requirement reads is an estimate on at least one
     /// side, because the exact set of values spilled into its sketch, or the
     /// side does not record whether it is exact. An estimate falling is not a
-    /// column collapsing, so the requirement decides on exact counts only.
+    /// column collapsing, and an estimate below the value count witnesses no
+    /// repeated value, so the requirement decides on exact counts only.
     ApproximateCount,
     /// The two reports profiled different column sets, and the requirement
     /// is about a dataset-level score, whose subject is the column set. The
@@ -1030,6 +1044,7 @@ pub struct QualityPolicy {
     max_null_count: BTreeMap<String, usize>,
     max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
+    unique_columns: BTreeSet<String>,
     max_date_age: BTreeMap<String, u32>,
     max_date_gap: BTreeMap<String, u32>,
     require_metrics: Vec<RequiredMetric>,
@@ -1111,6 +1126,38 @@ impl QualityPolicy {
     /// Require the report to count at most `max` duplicate rows.
     pub fn max_duplicate_rows(mut self, max: usize) -> Self {
         self.max_duplicate_rows = Some(max);
+        self
+    }
+
+    /// Require no non-null value of each named column to occur more than
+    /// once, as a business key must not repeat (#904). Whole-row duplicates
+    /// miss a reused key whenever another column differs, and always when a
+    /// loader adds a row id.
+    ///
+    /// The rule reads the column's distinct count: its non-null values minus
+    /// its distinct values are the values that repeat, and the check observes
+    /// that number against an allowance of zero. Nulls are not values, so they
+    /// never repeat; [`max_null_count`](Self::max_null_count) rules them out.
+    /// A repeat the scan witnessed stays one however much was not read, so it
+    /// fails under any scope, and none passes under
+    /// [`PolicyScope::FullSource`] only when the scan covered the source, as
+    /// with [`max_duplicate_rows`](Self::max_duplicate_rows). A distinct count
+    /// that is an estimate (past one million distinct values, or sooner under
+    /// memory pressure) or not recorded as exact witnesses nothing, so the
+    /// check is [`NotEvaluated::ApproximateCount`] either way. A column with
+    /// no distinct count (a nested column) is [`NotEvaluated::NotAssessed`].
+    ///
+    /// This is a requirement on the columns named, independent of the
+    /// `identifier_columns` profiling option, which picks the key the
+    /// uniqueness score and the `key_duplicates` finding read. Declaring one
+    /// does not imply the other.
+    pub fn unique_columns<I, S>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.unique_columns
+            .extend(columns.into_iter().map(Into::into));
         self
     }
 
@@ -1415,6 +1462,7 @@ impl QualityPolicy {
             && self.max_null_count.is_empty()
             && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
+            && self.unique_columns.is_empty()
             && self.max_date_age.is_empty()
             && self.max_date_gap.is_empty()
             && self.require_metrics.is_empty()
@@ -1592,6 +1640,13 @@ impl QualityPolicy {
         checks.extend(self.null_count_checks(report, scan));
         if let Some(max) = self.max_duplicate_rows {
             checks.push(self.duplicate_rows_check(report, scan, max));
+        }
+        for column in &self.unique_columns {
+            let profile = report
+                .column_profiles
+                .iter()
+                .find(|candidate| &candidate.name == column);
+            checks.push(self.unique_column_check(column, profile, scan));
         }
         for (column, days) in &self.max_date_age {
             let profile = report
@@ -2201,6 +2256,70 @@ impl QualityPolicy {
         };
         let undecided_estimate = estimated && matches!(check.status, CheckStatus::NotEvaluated(_));
         check.message = with_exact_count_hint(message, report, undecided_estimate);
+        check
+    }
+
+    /// Whether a column's non-null values repeat. See
+    /// [`unique_columns`](Self::unique_columns).
+    fn unique_column_check(
+        &self,
+        column: &str,
+        profile: Option<&ColumnProfile>,
+        scan: Evidence,
+    ) -> Check {
+        let mut check = Check {
+            code: CheckCode::UniqueColumn,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::AtMost {
+                value: MetricValue::Count(0),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(profile) = profile else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled);
+            check.message = "this column has no profile in the report".to_string();
+            return check;
+        };
+        let Some(distinct) = profile.unique_count else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+            check.message = "the report counted no distinct values for this column".to_string();
+            return check;
+        };
+        if profile.unique_count_is_approximate != Some(false) {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ApproximateCount);
+            check.message = "this column's distinct count is an estimate, or not recorded as \
+                             exact, which can neither witness a repeated value nor rule one out"
+                .to_string();
+            return check;
+        }
+        let values = profile.total_count.saturating_sub(profile.null_count);
+        let repeated = values.saturating_sub(distinct);
+        check.observed = Some(MetricValue::Count(repeated));
+        check.status = match (self.scope, scan.gap()) {
+            _ if repeated > 0 => CheckStatus::Failed,
+            (PolicyScope::FullSource, Some(gap)) => {
+                CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
+            }
+            _ => CheckStatus::Passed,
+        };
+        check.message = match check.status {
+            CheckStatus::Passed => "no non-null value of this column occurs more than once",
+            CheckStatus::Failed => "some non-null values of this column occur more than once",
+            CheckStatus::NotEvaluated(_) => {
+                "no value of this column was observed more than once, and the rows that were \
+                 not read may repeat one"
+            }
+        }
+        .to_string();
         check
     }
 

@@ -875,6 +875,7 @@ class ProfileReport:
         max_null_percentage: _Mapping[str, float] | float | None = None,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
+        unique_columns: _Sequence[str] | None = None,
         max_date_age: _Mapping[str, int] | None = None,
         max_date_gap: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
@@ -933,6 +934,22 @@ class ProfileReport:
                 exact count. Same mapping shape as ``max_null_percentage``.
                 ``{"customer_id": 0}`` states "no nulls" at any row count.
             max_duplicate_rows: Ceiling for the duplicate-row count.
+            unique_columns: Columns whose non-null values must not repeat,
+                such as a business key: ``["order_id"]``. One
+                ``unique_column`` check per name, in name order, observing
+                the column's non-null values minus its distinct values
+                against an allowance of zero. Whole-row duplicates miss a
+                reused key whenever another column differs. Nulls never
+                repeat; use ``max_null_count`` to rule them out. A repeat the
+                scan witnessed fails under any scope, and none passes under
+                ``"full_source"`` only when every row was read. A distinct
+                count that is an estimate (past one million distinct values,
+                or sooner under memory pressure) or not recorded as exact
+                is ``approximate_count``, and a column with no distinct
+                count (a nested column) is ``not_assessed``. Independent of
+                the ``identifier_columns`` profiling option, which picks the
+                key the uniqueness score and the ``key_duplicates`` finding
+                read; declaring one does not imply the other.
             max_date_age: Days a column's newest date (its ``max_datetime``)
                 may lie before the timeliness reference date the report
                 recorded, so a feed that stopped moving fails:
@@ -1098,6 +1115,7 @@ class ProfileReport:
                 max_null_percentage=max_null_percentage,
                 max_null_count=max_null_count,
                 max_duplicate_rows=max_duplicate_rows,
+                unique_columns=unique_columns,
                 max_date_age=max_date_age,
                 max_date_gap=max_date_gap,
                 require_metrics=require_metrics,
