@@ -8,6 +8,7 @@ dataprof.check`` flag and policy-file key.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from typing import Any
 
 import dataprof as dp
 import pytest
+from dataprof.asyncio import profile_bytes
 from dataprof.check import __main__ as entrypoint
 
 pa = pytest.importorskip("pyarrow")
@@ -186,6 +188,133 @@ def test_a_column_without_a_newest_date_is_never_a_pass():
         dp.ProfileReport.from_json(json.dumps(document)).check(max_date_age={"published_at": 3})
     )
     assert no_clock.reason == {"reason": "setting_unrecorded", "setting": "timeliness_clock"}
+
+
+#: The issue's case (#1333): a fresh date, then a value that is not one.
+CORRUPT = ["2026-06-01", "corrupt"]
+
+
+def _corrupt_csv() -> bytes:
+    return _csv(CORRUPT)
+
+
+def test_a_partial_read_passes_a_fresh_date_only_when_the_source_declared_its_type(
+    tmp_path: Path,
+):
+    # Read whole, the column is text and has no newest date; read in part,
+    # the rows left out are the ones that type it so. A declared date type
+    # keeps every value a date, so a partial read still passes a fresh one.
+    path = tmp_path / "corrupt.csv"
+    path.write_bytes(_corrupt_csv())
+    ref = "2026-06-01"
+    fresh = [dt.date(2026, 6, 1)] * 2
+
+    def stream(cap: int | None) -> dp.ProfileReport:
+        return asyncio.run(
+            profile_bytes(_corrupt_csv(), format="csv", max_rows=cap, reference_date=ref)
+        )
+
+    # route -> (profile with a cap of one row or a sample, or whole; expected partial, whole)
+    routes: dict[str, tuple[Callable[[bool], dp.ProfileReport], str, str]] = {
+        "csv path": (
+            lambda part: dp.profile(str(path), max_rows=1 if part else None, reference_date=ref),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "csv path sampled": (
+            lambda part: dp.profile(
+                str(path),
+                sampling=dp.SamplingStrategy.systematic(2) if part else None,
+                reference_date=ref,
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "csv bytes": (
+            lambda part: dp.profile(
+                _corrupt_csv(), format="csv", max_rows=1 if part else None, reference_date=ref
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "async csv bytes": (
+            lambda part: stream(1 if part else None),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "dict of strings": (
+            lambda part: dp.profile(
+                {"published_at": CORRUPT}, max_rows=1 if part else None, reference_date=ref
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "list of records": (
+            lambda part: dp.profile(
+                [{"published_at": value} for value in CORRUPT],
+                max_rows=1 if part else None,
+                reference_date=ref,
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "pandas strings": (
+            lambda part: dp.profile(
+                pd.DataFrame({"published_at": CORRUPT}),
+                max_rows=1 if part else None,
+                reference_date=ref,
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "arrow strings": (
+            lambda part: dp.profile(
+                pa.table({"published_at": CORRUPT}),
+                max_rows=1 if part else None,
+                reference_date=ref,
+            ),
+            "evidence_incomplete",
+            "not_assessed",
+        ),
+        "pandas datetime64": (
+            lambda part: dp.profile(
+                pd.DataFrame({"published_at": pd.to_datetime(fresh)}),
+                max_rows=1 if part else None,
+                reference_date=ref,
+            ),
+            "passed",
+            "passed",
+        ),
+        "arrow date32": (
+            lambda part: dp.profile(
+                pa.table({"published_at": pa.array(fresh)}),
+                max_rows=1 if part else None,
+                reference_date=ref,
+            ),
+            "passed",
+            "passed",
+        ),
+    }
+    policy: dict[str, Any] = {"max_date_age": {"published_at": 0}}
+    wrong = []
+    for route, (profile, partial, whole) in routes.items():
+        got = tuple(_status(_check(profile(part).check(**policy))) for part in (True, False))
+        if got != (partial, whole):
+            wrong.append(f"{route}: {got}")
+        # The observed scope decides on the rows read, as it always has.
+        observed = _check(profile(True).check(**policy, scope="observed"))
+        if observed.status != "passed":
+            wrong.append(f"{route} observed: {_status(observed)}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_the_check_entrypoint_leaves_a_capped_inferred_date_open(tmp_path: Path):
+    # The command line reads today's date, so the date sits far after it.
+    source = tmp_path / "corrupt.csv"
+    source.write_bytes(_csv(["2999-01-01", "corrupt"]))
+    flag = ["--max-date-age", "published_at=0"]
+    assert entrypoint.main([str(source), *flag, "--max-rows", "1"]) == 2
+    assert entrypoint.main([str(source), *flag]) == 2
 
 
 def test_a_partial_read_leaves_a_fresh_slash_date_open_while_its_order_can_change(

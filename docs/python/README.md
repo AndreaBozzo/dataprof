@@ -1063,13 +1063,17 @@ the report's timeliness clock recorded: the `reference_date=` of the profiling
 call, or the run's date when none was given. The age is counted in calendar
 days, a date after the reference date is fresh, and a saved report decides as
 the run did. A newest date read on part of a source can only be overtaken by
-a newer one, so under `"full_source"` a fresh date passes on any scan, and a
-stale one fails only when every row was read and the column's date statistics
-saw every value. Slash dates (`01/10/2026`) are the exception: their day and
-month order is decided from the column's values, so a fresh one read on part
-of a column is `evidence_incomplete` while the unread values could still
-change that order. The date statistics cover every value read
-(`metric_semantics["date_statistics"]`), so a stale date on a complete scan
+a newer one, so under `"full_source"` a fresh date passes on any scan of a
+column whose source declared a date type (an Arrow date or timestamp, a pandas
+`datetime64`, a database date or timestamp). A date column typed from text
+(CSV, JSON, strings in memory) passes only on a scan of every row: on a capped
+or sampled read it is `evidence_incomplete`, since the rows not read may hold
+values that type the column as text. A stale date fails only when every row
+was read and the column's date statistics saw every value. Slash dates
+(`01/10/2026`) are read in a day and month order decided from the column's
+values, so a fresh one is also `evidence_incomplete` while values the
+statistics left out could still change that order. The date statistics cover
+every value read (`metric_semantics["date_statistics"]`), so a stale date on a complete scan
 fails at any size. A report saved before that record computed them from the
 retained sample, and on a file larger than the sample a stale date there is
 `evidence_incomplete` (`quality_sampled`). A column not typed as a date, or with no dates, is

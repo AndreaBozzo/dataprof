@@ -958,15 +958,18 @@ class ProfileReport:
                 given, and the age is counted in calendar days. A date after
                 the reference date is fresh. A newest date read on part of a
                 source can only be overtaken by a newer one, so under
-                ``"full_source"`` a fresh date passes on any scan, and a stale
-                one fails only when every row was read and the column's date
-                statistics saw every value; otherwise it is
-                ``evidence_incomplete``. Slash dates are the exception: their
-                day and month order is decided from the values read, so a
-                fresh one read on part of a column is ``evidence_incomplete``
-                while the unread values could still change that order. A
-                column with no newest date (not typed as a date, all null) is
-                ``not_assessed``.
+                ``"full_source"`` a fresh date passes on a capped or sampled
+                read when the source declared a date type (an Arrow date or
+                timestamp, a pandas ``datetime64``); a date column typed from
+                text is ``evidence_incomplete`` there, since the rows not read
+                may type it as text. A stale date fails only when every row
+                was read and the column's date statistics saw every value;
+                otherwise it is ``evidence_incomplete``. Slash dates are read
+                in a day and month order decided from the values read, so a
+                fresh one whose statistics left values out is
+                ``evidence_incomplete`` while those values could still change
+                that order. A column with no newest date (not typed as a date,
+                all null) is ``not_assessed``.
             max_date_gap: Days the largest gap between a column's
                 consecutive distinct dates may span, so a daily file that lost
                 a period from the middle of its range fails:

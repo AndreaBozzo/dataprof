@@ -114,9 +114,12 @@
 //! (#1290): a feed that stopped moving keeps passing every rule above, since
 //! the same rows keep their counts, nulls and scores. A newest date read on
 //! part of a source can only be overtaken by a newer one, so a fresh date
-//! passes on any scan and a stale one fails only when the values behind it
-//! cover the column, which a report computing its date statistics over every
-//! value read does on a complete scan (#1297). Slash dates are the exception:
+//! passes on any scan of a column whose source declared a date type. A
+//! column typed from text passes only on a scan that read every row, since
+//! rows left unread could type it as text (#1333). A stale one fails only
+//! when the values behind it cover the column, which a report computing its
+//! date statistics over every value read does on a complete scan (#1297).
+//! Slash dates are the exception:
 //! their day and month order is decided from the values read, so a fresh one
 //! read on part of a column passes only once that order cannot change.
 //!
@@ -180,7 +183,7 @@ use std::fmt;
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
     ColumnProfile, ColumnStats, DataType, DateStatistics, ExecutionMetadata, MetricPack,
-    QualityDimension, SlashDateOrder,
+    NativeType, QualityDimension, SlashDateOrder,
 };
 use dataprof_metrics::{
     QualityAssessment, ScoreBounds, ScoreInterval, TimelinessClock, TimelinessClockMode,
@@ -1171,8 +1174,12 @@ impl QualityPolicy {
     /// counted in calendar days and a saved report evaluated later decides
     /// the same. A date after the reference date is fresh. A newest date only
     /// gets newer as more values are read, so under [`PolicyScope::FullSource`]
-    /// a fresh date passes whatever the scan missed, and a stale one fails
-    /// only when the values behind it cover the column: every row read, and
+    /// a fresh date passes whatever the scan missed, provided the column
+    /// stays a date: on a truncated or sampled scan that holds only for a
+    /// date type the source declared ([`NativeType::declares_date`]), since
+    /// the rows not read may hold text that types an inferred column as text
+    /// (#1333). A stale one fails only when the values behind it cover the
+    /// column: every row read, and
     /// the date statistics computed over every value read. A report that
     /// records `metric_semantics.date_statistics` computed them so (#1297);
     /// for an older one the retained sample they came from must hold every
@@ -2394,12 +2401,20 @@ impl QualityPolicy {
         let fresh = age <= i64::from(max_days);
         // The newest date only moves forward as more values are read, so a
         // fresh one is a decision whatever the evidence missed, as long as
-        // the values read keep the reading they were given. Slash dates are
-        // read in an order the column's values decide (#811), and an order
-        // the unread values can still change may move the dates already read.
-        let settled = slash_order_settled(slash_order);
+        // the values read keep the reading they were given. A date type
+        // inferred from the rows read is one such reading: rows the scan did
+        // not reach may hold text that types the column as text, and the
+        // whole column then has no newest date (#1333). Slash dates are read
+        // in an order the column's values decide (#811), and an order the
+        // unread values can still change may move the dates already read.
+        let type_settled = !scan_left_rows_out(scan)
+            || profile
+                .native_type
+                .as_ref()
+                .is_some_and(NativeType::declares_date);
+        let order_settled = slash_order_settled(slash_order);
         check.status = match (self.scope, check.evidence.gap()) {
-            (PolicyScope::FullSource, Some(gap)) if !(fresh && settled) => {
+            (PolicyScope::FullSource, Some(gap)) if !(fresh && type_settled && order_settled) => {
                 CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
             }
             _ if fresh => CheckStatus::Passed,
@@ -2408,10 +2423,15 @@ impl QualityPolicy {
         check.message = match check.status {
             CheckStatus::Passed => "this column's newest date is within the allowed age",
             CheckStatus::Failed => "this column's newest date is older than the allowed age",
-            CheckStatus::NotEvaluated(_) if fresh => {
+            CheckStatus::NotEvaluated(_) if fresh && !order_settled => {
                 "the newest date read in this column is within the allowed age, and the values \
                  that were not read may change the day and month order its slash dates are \
                  read in"
+            }
+            CheckStatus::NotEvaluated(_) if fresh => {
+                "the newest date read in this column is within the allowed age, and the rows \
+                 that were not read may hold values that are not dates, which would type the \
+                 column as text"
             }
             CheckStatus::NotEvaluated(_) => {
                 "the newest date read in this column is older than the allowed age, and the \
@@ -4283,6 +4303,18 @@ fn slash_order_settled(order: Option<SlashDateOrder>) -> bool {
     !matches!(
         order,
         Some(SlashDateOrder::AssumedDayFirst | SlashDateOrder::MonthFirst)
+    )
+}
+
+/// Whether the scan left rows of the source unread, so a type inferred from
+/// the rows read may not be the whole source's (#1333). Records skipped
+/// because they could not be turned into rows are skipped on every scan of
+/// that source, so they leave no row of it unread, and a coverage the
+/// report does not record is not taken for a complete one.
+fn scan_left_rows_out(scan: Evidence) -> bool {
+    matches!(
+        scan.gap(),
+        Some(EvidenceGap::Truncated | EvidenceGap::Sampled | EvidenceGap::CoverageUnrecorded)
     )
 }
 
