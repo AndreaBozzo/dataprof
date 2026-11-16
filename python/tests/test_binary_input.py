@@ -43,7 +43,7 @@ CSV_TEXT = b"id,city\n1,Rome\n2,\n3,Milan\n"
 def _zstd(payload: bytes) -> bytes:
     """Real zstd where the standard library has it (3.14+), else its signature."""
     try:
-        from compression import zstd  # ty: ignore[unresolved-import]
+        from compression import zstd  # ty: ignore[import-not-found]
     except ImportError:
         return b"\x28\xb5\x2f\xfd" + b"\x00\xff\x8b\x02"
     return zstd.compress(payload)

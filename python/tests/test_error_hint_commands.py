@@ -41,7 +41,7 @@ WINDOWS = sys.platform == "win32"
 
 def _zstd(payload: bytes) -> bytes | None:
     try:
-        from compression import zstd  # ty: ignore[unresolved-import]
+        from compression import zstd  # ty: ignore[import-not-found]
     except ImportError:
         return None
     return zstd.compress(payload)
