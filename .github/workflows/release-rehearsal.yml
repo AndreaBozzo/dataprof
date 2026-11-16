@@ -9,8 +9,10 @@ name: Release Rehearsal
 
 on:
   workflow_dispatch:
-  # maturin and the build images float upstream (#1076), so a weekly run
-  # catches a release that breaks the build between two tags.
+  # maturin and the Linux build images are pinned in python-dist.yml (#1076),
+  # but the runner images and the CPython patch releases setup-python installs
+  # on Windows and macOS still float, so a weekly run catches an upstream
+  # change that breaks the build between two tags.
   schedule:
     - cron: '17 5 * * 1'
   pull_request:

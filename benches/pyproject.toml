@@ -20,4 +20,4 @@ dataprof = { path = ".." }
 
 [tool.uv]
 package = false
-build-constraint-dependencies = ["maturin==1.15.0"]
+build-constraint-dependencies = ["maturin==1.16.0"]

@@ -1,5 +1,8 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+# The floor is the maturin the release build pins (MATURIN_VERSION in
+# .github/workflows/python-dist.yml), so a source install never builds with an
+# older one; python/tests/test_release_build_pins.py keeps the two together.
+requires = ["maturin>=1.16.0,<2.0"]
 build-backend = "maturin"
 
 [project]
