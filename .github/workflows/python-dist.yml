@@ -251,14 +251,18 @@ jobs:
   # own platform, one interpreter at a time, and runs the wheel smoke test,
   # which also checks the wheel names the commit it was built from.
   #
-  # The x86_64 baseline wheels promise to run on a CPU without AVX, which is
-  # why they are the ones on PyPI. On Linux the smoke test runs a second time
-  # under qemu-user emulating a Westmere CPU (no AVX), where an AVX instruction
-  # raises SIGILL (#1077). Dependencies may still carry AVX code behind runtime
-  # CPU detection, which is safe and which this run does not flag. Not covered:
-  # the subprocess the smoke test starts (`python -m dataprof.check`) runs
-  # natively, since qemu-user does not follow exec; and the Windows and macOS
-  # x86_64 baseline wheels, which have no user-mode emulator on their runners.
+  # The x86_64 baseline wheels promise to run on a CPU without AVX, which is why
+  # they are the ones on PyPI. On Linux the smoke test runs a second time under
+  # qemu-user emulating a Westmere CPU (no AVX), where an AVX instruction raises
+  # SIGILL (#1077). That run happens inside the manylinux image the wheels were
+  # built in, with its own interpreters, because setup-python's ubuntu-26.04
+  # interpreters require x86-64-v3 and cannot start on a CPU without AVX2
+  # (.github/scripts/wheel_smoke_emulated.sh). Dependencies may still carry AVX
+  # code behind runtime CPU detection, which is safe and which this run does not
+  # flag. Not covered: the subprocess the smoke test starts (`python -m
+  # dataprof.check`) runs natively, since qemu-user does not follow exec; and
+  # the Windows and macOS x86_64 baseline wheels, which have no user-mode
+  # emulator on their runners.
   #
   # The optimized wheels are release assets too, so each runs the same smoke
   # test (#1331). The x86_64 Linux ones run under an emulated Haswell CPU, an
@@ -334,20 +338,14 @@ jobs:
         DATAPROF_EXPECTED_COMMIT: ${{ github.sha }}
         # One minor version per line.
         VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
-        EMULATED_CPU: ${{ matrix.emulated_cpu }}
       run: |
         cp .github/scripts/wheel_smoke.py "$RUNNER_TEMP/wheel_smoke.py"
         failed=0
         {
           echo "### ${{ matrix.artifact }}"
           echo ""
-          if [ -n "$EMULATED_CPU" ]; then
-            echo "| Interpreter | Wheel | Installs | Smoke test | Smoke test on $EMULATED_CPU (no AVX) |"
-            echo "|---|---|---|---|---|"
-          else
-            echo "| Interpreter | Wheel | Installs | Smoke test |"
-            echo "|---|---|---|---|"
-          fi
+          echo "| Interpreter | Wheel | Installs | Smoke test |"
+          echo "|---|---|---|---|"
         } >> "$GITHUB_STEP_SUMMARY"
         for version in $VERSIONS; do
           tag="cp${version/./}"
@@ -355,7 +353,6 @@ jobs:
           built="missing"
           installs="not run"
           smoke="not run"
-          emulated="not run"
           if [ -n "$wheel" ]; then
             built="$(basename "$wheel")"
             python=$(uv python find --system --no-python-downloads "$version")
@@ -373,35 +370,46 @@ jobs:
               else
                 smoke="failed"
               fi
-              if [ -n "$EMULATED_CPU" ]; then
-                echo "--- again on an emulated $EMULATED_CPU CPU (no AVX)"
-                if (cd "$RUNNER_TEMP" && qemu-x86_64 -cpu "$EMULATED_CPU" "$venv_python" wheel_smoke.py); then
-                  emulated="passed"
-                else
-                  # SIGILL (exit 132) means an instruction this CPU lacks.
-                  emulated="failed (exit $?)"
-                fi
-              fi
             else
               installs="failed"
             fi
             echo "::endgroup::"
           fi
-          if [ -n "$EMULATED_CPU" ]; then
-            echo "| $version | $built | $installs | $smoke | $emulated |" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$emulated" != "passed" ]; then
-              echo "::error::CPython $version on ${{ matrix.runner }}: wheel $built, smoke test on an emulated $EMULATED_CPU CPU $emulated"
-              failed=1
-            fi
-          else
-            echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
           if [ "$smoke" != "passed" ]; then
             echo "::error::CPython $version on ${{ matrix.runner }}: wheel $built, installs $installs, smoke test $smoke"
             failed=1
           fi
         done
         exit "$failed"
+
+    - name: Smoke-test each baseline wheel on an emulated CPU without AVX
+      # Also after a native failure, so both results show in one run.
+      if: ${{ !cancelled() && matrix.emulated_cpu }}
+      env:
+        VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
+        EMULATED_CPU: ${{ matrix.emulated_cpu }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/emulated"
+        status=0
+        # The runner's qemu-user is statically linked, so it runs inside the image.
+        qemu=$(readlink -f "$(command -v qemu-x86_64)")
+        if ! ldd "$qemu" 2>&1 | grep -q -e "statically linked" -e "not a dynamic executable"; then
+          echo "::error::$qemu is dynamically linked and cannot run inside the manylinux image"
+          exit 1
+        fi
+        docker run --rm -e VERSIONS -e EMULATED_CPU \
+          -v "$PWD/dist:/dist:ro" \
+          -v "$PWD/.github/scripts:/scripts:ro" \
+          -v "$qemu:/usr/local/bin/qemu-x86_64:ro" \
+          -v "$RUNNER_TEMP/emulated:/out" \
+          "$MANYLINUX_X86_64_IMAGE" bash /scripts/wheel_smoke_emulated.sh || status=$?
+        {
+          echo "### ${{ matrix.artifact }} on an emulated $EMULATED_CPU CPU (no AVX)"
+          echo ""
+          cat "$RUNNER_TEMP/emulated/summary.md"
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit "$status"
 
     - name: Install and smoke-test each interpreter's optimized wheel
       # Also after a baseline failure, so both results show in one run.
