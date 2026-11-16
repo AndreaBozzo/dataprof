@@ -482,6 +482,14 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Install the pinned Rust toolchain
+      # The sdist carries rust-toolchain.toml, so pip's build asks rustup for
+      # that toolchain. Installed on first use in the middle of the build, it
+      # once came up without cargo and the build failed; install it here.
+      run: |
+        rustup toolchain install
+        cargo --version
+
     - name: Download sdist
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
