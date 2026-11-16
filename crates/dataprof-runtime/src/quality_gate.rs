@@ -2458,10 +2458,13 @@ impl QualityPolicy {
         } else if dimensions_changed {
             Some(NotEvaluated::DimensionsChanged)
         } else {
+            let facts = RunFacts::of(sides, dimension);
             definition_gap(
                 delta.metric_semantics.a.as_ref(),
                 delta.metric_semantics.b.as_ref(),
-                score_definitions(dimension),
+                score_definitions(dimension)
+                    .iter()
+                    .filter(|definition| definition.reaches(&facts)),
             )
             .or_else(|| {
                 setting_gap(
@@ -2681,7 +2684,7 @@ impl QualityPolicy {
             definition_gap(
                 delta.metric_semantics.a.as_ref(),
                 delta.metric_semantics.b.as_ref(),
-                &[Definition::NullTokens],
+                [Definition::NullTokens].iter(),
             )
         };
         let subject = "this column's null percentage";
@@ -2859,14 +2862,23 @@ impl QualityPolicy {
             a: by_name(baseline),
             b: by_name(current),
         };
+        // A distinct count reads no sampled score, so the overall score's
+        // sample stands in for `part_of_source`, which its rule never reads.
+        let facts = RunFacts::of(
+            &Sides {
+                a: baseline,
+                b: current,
+            },
+            None,
+        );
         let mut checks = Vec::new();
         for (column, percent) in &self.max_distinct_drop {
-            checks.push(self.distinct_drop_check(delta, &sides, column, *percent));
+            checks.push(self.distinct_drop_check(delta, &sides, &facts, column, *percent));
         }
         if let Some(percent) = self.max_distinct_drop_any {
             for column in &delta.schema.common {
                 if !self.max_distinct_drop.contains_key(column) {
-                    checks.push(self.distinct_drop_check(delta, &sides, column, percent));
+                    checks.push(self.distinct_drop_check(delta, &sides, &facts, column, percent));
                 }
             }
         }
@@ -2883,6 +2895,7 @@ impl QualityPolicy {
         &self,
         delta: &ReportDelta,
         sides: &Sides<HashMap<&str, &ColumnSide>>,
+        facts: &RunFacts,
         column: &str,
         percent: f64,
     ) -> Check {
@@ -2942,7 +2955,9 @@ impl QualityPolicy {
             definition_gap(
                 delta.metric_semantics.a.as_ref(),
                 delta.metric_semantics.b.as_ref(),
-                &[Definition::NullTokens, Definition::JsonNumberReading],
+                [Definition::NullTokens, Definition::JsonNumberReading]
+                    .iter()
+                    .filter(|definition| definition.reaches(facts)),
             )
         };
         let subject = "this column's distinct count";
@@ -3634,6 +3649,25 @@ impl Definition {
         }
     }
 
+    /// Whether a change of this definition can move the number a rule reads
+    /// on either of two runs (#1317). One that cannot leaves both numbers as
+    /// the other definition computes them, so the rule needs no record of
+    /// it.
+    fn reaches(self, facts: &RunFacts) -> bool {
+        match self {
+            Self::SampledScoreEstimator => facts.part_of_source,
+            Self::JsonNumberReading => facts.json_numbers,
+            Self::OutlierSpread => facts.coinciding_quartiles,
+            Self::NullTokens
+            | Self::PatternMatchCount
+            | Self::RangeRuleCount
+            | Self::KeyUniquenessUnits
+            | Self::OutlierUnits
+            | Self::KeyColumnSource
+            | Self::AccuracyComparison => true,
+        }
+    }
+
     /// Whether both sides recorded the definition, with the same value.
     fn same(self, a: &MetricSemantics, b: &MetricSemantics) -> bool {
         fn agree<T: PartialEq>(a: &Option<T>, b: &Option<T>) -> bool {
@@ -3652,6 +3686,35 @@ impl Definition {
             Self::SampledScoreEstimator => {
                 agree(&a.sampled_score_estimator, &b.sampled_score_estimator)
             }
+        }
+    }
+}
+
+/// What two runs recorded about the facts some definitions move a number
+/// through (#1317). Each is true when either side may meet it, and when a
+/// side did not record it.
+struct RunFacts {
+    /// The score was computed over a sample of the values the scan read: a
+    /// score over every value read is the same under either
+    /// `sampled_score_estimator`, however much of the source the scan read.
+    part_of_source: bool,
+    /// The source may hold a JSON number, which `json_number_reading` reads.
+    json_numbers: bool,
+    /// The outlier test may have run on a column whose quartiles coincide,
+    /// which `outlier_spread` stops testing.
+    coinciding_quartiles: bool,
+}
+
+impl RunFacts {
+    /// The facts of two sides, for the score of `dimension`, the overall one
+    /// for `None`.
+    fn of(sides: &Sides<&ReportSide>, dimension: Option<QualityDimension>) -> Self {
+        Self {
+            part_of_source: !(sides.a.sample_evidence(dimension).is_complete()
+                && sides.b.sample_evidence(dimension).is_complete()),
+            json_numbers: sides.a.may_read_json_numbers() || sides.b.may_read_json_numbers(),
+            coinciding_quartiles: sides.a.may_test_coinciding_quartiles()
+                || sides.b.may_test_coinciding_quartiles(),
         }
     }
 }
@@ -3705,13 +3768,12 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
 }
 
 /// The first definition the two sides do not both record identically.
-fn definition_gap(
+fn definition_gap<'d>(
     a: Option<&MetricSemantics>,
     b: Option<&MetricSemantics>,
-    definitions: &[Definition],
+    mut definitions: impl Iterator<Item = &'d Definition>,
 ) -> Option<NotEvaluated> {
     definitions
-        .iter()
         .find(|definition| !a.zip(b).is_some_and(|(a, b)| definition.same(a, b)))
         .map(|definition| NotEvaluated::DefinitionNotComparable {
             definition: definition.key().to_string(),
