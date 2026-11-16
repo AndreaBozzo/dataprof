@@ -1270,10 +1270,11 @@ unevaluated, with one of these reasons:
   baseline saved before 0.13 records neither. The last three are compared
   only on runs they can move: `json_number_reading` when either source may
   hold a JSON number (JSON, JSONL, a database, or a format not recorded),
-  `sampled_score_estimator` when either score was computed over part of the
-  source, and `outlier_spread` when either side has a numeric column whose
-  exact quartiles coincide or were not recorded, or an accuracy score over
-  part of the source;
+  `sampled_score_estimator` when either score was computed over a sample of
+  the values the scan read, and `outlier_spread` when either side has a
+  numeric column whose exact quartiles coincide or were not recorded, or an
+  accuracy score over such a sample. A scan that stopped early reaches
+  neither by itself;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
   the score weights for the overall score, `identifier_columns` (in the order

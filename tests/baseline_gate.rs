@@ -600,6 +600,44 @@ fn partial_evidence_on_either_side_is_unevaluated_under_full_source_only() {
 }
 
 #[test]
+fn a_truncated_scan_scored_in_full_does_not_reach_the_sample_definitions() {
+    // A scan that stopped after 50 rows, each score over every value it read:
+    // under the observed scope, a baseline without `sampled_score_estimator`
+    // or `outlier_spread` decides the scores that read them. How much of the
+    // source the scan read does not decide whether those definitions move
+    // them (#1317).
+    let rows: String = (0..200).map(|i| format!("{i},{}\n", i * 2)).collect();
+    let file = csv(&format!("id,amount\n{rows}"));
+    let truncated = Profiler::new()
+        .stop_when(StopCondition::MaxRows(50))
+        .analyze_file(file.path())
+        .unwrap();
+    for definition in ["sampled_score_estimator", "outlier_spread"] {
+        let mut summary: Value = serde_json::from_str(&truncated.summary_json().unwrap()).unwrap();
+        summary["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove(definition)
+            .unwrap_or_else(|| panic!("reports record {definition}"));
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let result = QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Accuracy, 0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .scope(PolicyScope::Observed)
+            .evaluate_against(&truncated, &baseline)
+            .unwrap();
+        for check in &result.checks {
+            assert_eq!(
+                check.status,
+                CheckStatus::Passed,
+                "{definition}: {check:#?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_saved_baseline_gives_the_verdict_the_live_one_does() {
     let baseline = profile(WITH_NULLS);
     let report = profile(CLEAN);

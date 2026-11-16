@@ -2458,7 +2458,7 @@ impl QualityPolicy {
         } else if dimensions_changed {
             Some(NotEvaluated::DimensionsChanged)
         } else {
-            let facts = RunFacts::of(sides, &change.evidence);
+            let facts = RunFacts::of(sides, dimension);
             definition_gap(
                 delta.metric_semantics.a.as_ref(),
                 delta.metric_semantics.b.as_ref(),
@@ -2862,17 +2862,14 @@ impl QualityPolicy {
             a: by_name(baseline),
             b: by_name(current),
         };
-        // A distinct count is over every scanned row, so the scan's coverage
-        // is the evidence behind it.
+        // A distinct count reads no sampled score, so the overall score's
+        // sample stands in for `part_of_source`, which its rule never reads.
         let facts = RunFacts::of(
             &Sides {
                 a: baseline,
                 b: current,
             },
-            &Sides {
-                a: delta.reports.a.evidence,
-                b: delta.reports.b.evidence,
-            },
+            None,
         );
         let mut checks = Vec::new();
         for (column, percent) in &self.max_distinct_drop {
@@ -3697,8 +3694,9 @@ impl Definition {
 /// through (#1317). Each is true when either side may meet it, and when a
 /// side did not record it.
 struct RunFacts {
-    /// The number was computed over part of the source: a score over every
-    /// value is the same under either `sampled_score_estimator`.
+    /// The score was computed over a sample of the values the scan read: a
+    /// score over every value read is the same under either
+    /// `sampled_score_estimator`, however much of the source the scan read.
     part_of_source: bool,
     /// The source may hold a JSON number, which `json_number_reading` reads.
     json_numbers: bool,
@@ -3708,11 +3706,12 @@ struct RunFacts {
 }
 
 impl RunFacts {
-    /// The facts of two sides, with the `evidence` behind the number a rule
-    /// reads on each.
-    fn of(sides: &Sides<&ReportSide>, evidence: &Sides<Evidence>) -> Self {
+    /// The facts of two sides, for the score of `dimension`, the overall one
+    /// for `None`.
+    fn of(sides: &Sides<&ReportSide>, dimension: Option<QualityDimension>) -> Self {
         Self {
-            part_of_source: !(evidence.a.is_complete() && evidence.b.is_complete()),
+            part_of_source: !(sides.a.sample_evidence(dimension).is_complete()
+                && sides.b.sample_evidence(dimension).is_complete()),
             json_numbers: sides.a.may_read_json_numbers() || sides.b.may_read_json_numbers(),
             coinciding_quartiles: sides.a.may_test_coinciding_quartiles()
                 || sides.b.may_test_coinciding_quartiles(),

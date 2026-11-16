@@ -1009,8 +1009,9 @@ unknown, and a quality gate leaves the consistency, accuracy, timeliness,
 validity, precision and overall score rules over it
 `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
 gate on unchanged data. The gate compares it only when either side's score
-was computed over part of the source, or its coverage was not recorded
-(#1317): a score over every value is the same under either estimator.
+was computed over a sample of the values the scan read, or its coverage was
+not recorded (#1317): a score over every value read is the same under either
+estimator, however much of the source the scan read.
 Regenerate the baseline with the current release to have those rules
 decided again. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for
@@ -1093,8 +1094,8 @@ quality gate leaves the accuracy and overall score rules over it
 gate on unchanged data. The gate compares it only when either side's outlier
 test may have met a column whose quartiles coincide (#1317): a numeric
 column with values whose exact quartiles coincide, are estimates or were not
-recorded, or any column when the accuracy score was computed over part of
-the source. Where every numeric column records distinct exact quartiles, both
+recorded, or any column when the accuracy score was computed over a sample
+of the values the scan read. Where every numeric column records distinct exact quartiles, both
 definitions test the same columns, and the rules decide without it.
 Regenerate the baseline with the current release to have those rules decided
 again. The field is additive and not `required`, so

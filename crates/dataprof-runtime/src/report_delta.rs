@@ -618,6 +618,8 @@ pub struct ReportSide {
     reference: ReportReference,
     quality_score: Option<f64>,
     overall_evidence: Evidence,
+    /// [`DimensionSide::sample_evidence`] for the overall score.
+    overall_sample_evidence: Evidence,
     dimensions: Vec<DimensionSide>,
     /// The recorded intervals for the scores over every scanned row, `None`
     /// when the side recorded none: nothing was sampled, or it predates them.
@@ -666,6 +668,9 @@ struct DimensionSide {
     dimension: QualityDimension,
     score: Option<f64>,
     evidence: Evidence,
+    /// Whether the score covers every value the scan read, apart from how
+    /// much of the source the scan read (#1317).
+    sample_evidence: Evidence,
 }
 
 /// What a comparison reads about one column.
@@ -804,16 +809,17 @@ impl ReportSide {
         });
         // No assessment means no score for evidence to describe; the scan's
         // coverage is all there is to say.
-        let evidence = |provenance| match &sampled {
-            Some(sampled) => scan.and(sampled_component_evidence(
+        let sample_evidence = |provenance| match &sampled {
+            Some(sampled) => sampled_component_evidence(
                 sampled.as_deref(),
                 &unlisted,
                 &assessed,
                 overall_open,
                 provenance,
-            )),
-            None => scan,
+            ),
+            None => Evidence::Complete,
         };
+        let evidence = |provenance| scan.and(sample_evidence(provenance));
         let dimensions = QualityDimension::all()
             .into_iter()
             .map(|dimension| DimensionSide {
@@ -826,6 +832,7 @@ impl ReportSide {
                         .flatten(),
                 ),
                 evidence: evidence(Provenance::Dimension(dimension)),
+                sample_evidence: sample_evidence(Provenance::Dimension(dimension)),
             })
             .collect();
         Self {
@@ -840,6 +847,7 @@ impl ReportSide {
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
+            overall_sample_evidence: sample_evidence(Provenance::Overall),
             dimensions,
             score_bounds: quality.and_then(QualityAssessment::score_bounds).cloned(),
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
@@ -930,6 +938,25 @@ impl ReportSide {
         self.identifier_order.as_deref()
     }
 
+    /// Whether a score, the overall one for `None`, covers every value the
+    /// scan read. Unlike the score's evidence, a scan that stopped early
+    /// leaves it complete.
+    pub(crate) fn sample_evidence(&self, dimension: Option<QualityDimension>) -> Evidence {
+        match dimension {
+            None => self.overall_sample_evidence,
+            Some(dimension) => self
+                .dimensions
+                .iter()
+                .find(|side| side.dimension == dimension)
+                .map_or(
+                    Evidence::Incomplete {
+                        reason: EvidenceGap::CoverageUnrecorded,
+                    },
+                    |side| side.sample_evidence,
+                ),
+        }
+    }
+
     /// Whether the side's source may hold a JSON number, so that
     /// `json_number_reading` may move its scores.
     pub(crate) fn may_read_json_numbers(&self) -> bool {
@@ -938,15 +965,14 @@ impl ReportSide {
 
     /// Whether the side's outlier test may have run on a column whose
     /// quartiles coincide, so that `outlier_spread` may move its accuracy
-    /// score. The recorded quartiles describe every value and the test reads
-    /// the quality sample, so they speak for the test only where the
-    /// accuracy score covers every value.
+    /// score. The recorded quartiles describe every value the scan read and
+    /// the test reads the quality sample, so they speak for the test only
+    /// where that sample held every value read. How much of the source the
+    /// scan read does not matter: both describe the same values.
     pub(crate) fn may_test_coinciding_quartiles(&self) -> bool {
         let every_value = self
-            .dimensions
-            .iter()
-            .find(|side| side.dimension == QualityDimension::Accuracy)
-            .is_some_and(|side| side.evidence.is_complete());
+            .sample_evidence(Some(QualityDimension::Accuracy))
+            .is_complete();
         !every_value
             || self
                 .columns
@@ -1022,12 +1048,12 @@ impl ReportSide {
         let unlisted = quality
             .map(SummaryQuality::unlisted_components)
             .unwrap_or_default();
-        let evidence = |provenance| {
+        let sample_evidence = |provenance| {
             let Some(quality) = quality else {
-                return scan;
+                return Evidence::Complete;
             };
             let sampled = quality.sampled_dimensions.as_deref();
-            let coverage = match (provenance, &assessed) {
+            match (provenance, &assessed) {
                 // Without the weights, a sampled component may or may not
                 // reach the overall score; only "nothing was sampled" settles it.
                 (Provenance::Overall, None)
@@ -1054,9 +1080,9 @@ impl ReportSide {
                     ),
                     provenance,
                 ),
-            };
-            scan.and(coverage)
+            }
         };
+        let evidence = |provenance| scan.and(sample_evidence(provenance));
         let dimensions = QualityDimension::all()
             .into_iter()
             .map(|dimension| DimensionSide {
@@ -1068,6 +1094,7 @@ impl ReportSide {
                         .flatten(),
                 ),
                 evidence: evidence(Provenance::Dimension(dimension)),
+                sample_evidence: sample_evidence(Provenance::Dimension(dimension)),
             })
             .collect();
         Ok(Self {
@@ -1082,6 +1109,7 @@ impl ReportSide {
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
+            overall_sample_evidence: sample_evidence(Provenance::Overall),
             dimensions,
             score_bounds: quality.and_then(|quality| quality.score_bounds.clone()),
             columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {

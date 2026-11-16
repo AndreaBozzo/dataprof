@@ -318,6 +318,30 @@ def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(t
         assert report.check(baseline=baseline, scope="observed", **policy).verdict == "pass"
 
 
+@pytest.mark.parametrize("definition", ["sampled_score_estimator", "outlier_spread"])
+def test_a_truncated_scan_scored_in_full_does_not_reach_the_sample_definitions(
+    definition: str, tmp_path: Path
+):
+    # A scan that stopped after 50 rows, each score over every value it read:
+    # under the observed scope, a baseline without the definition decides the
+    # scores that read it. How much of the source the scan read does not
+    # decide whether those definitions move them (#1317).
+    path = tmp_path / "rows.csv"
+    path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))
+    truncated = dp.profile(str(path), max_rows=50)
+    summary = truncated.to_dict()
+    del summary["metric_semantics"][definition]
+    result = truncated.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        scope="observed",
+        max_quality_score_drop=0,
+        max_dimension_score_drops={"accuracy": 0, "consistency": 0},
+    )
+    assert [check.status for check in result.checks] == ["passed"] * 3, [
+        check.to_dict() for check in result.checks
+    ]
+
+
 def test_a_saved_baseline_gives_the_verdict_the_live_one_does(tmp_path: Path):
     baseline = dp.profile(WITH_NULLS)
     report = dp.profile(CLEAN)
