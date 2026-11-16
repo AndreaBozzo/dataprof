@@ -235,7 +235,7 @@ def test_future_annotations_stay_enabled_under_the_private_alias(name):
     module = _module(name)
     # The loader is typed as an optional protocol without get_code; every loader
     # that imported these modules from source has it.
-    code = module.__loader__.get_code(module.__name__)  # ty: ignore[unresolved-attribute]
+    code = module.__loader__.get_code(module.__name__)  # ty: ignore[missing-attribute]
     assert code is not None, f"{name}: cannot recover compiled code to check flags"
     assert code.co_flags & __future__.annotations.compiler_flag, (
         f"{name}: PEP 563 is not active -- annotations will be evaluated at runtime"
