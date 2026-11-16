@@ -120,6 +120,8 @@ jobs:
     - name: Install uv for host interpreter discovery
       if: runner.os != 'Linux'
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        prune-cache: true
 
     - name: Select build interpreters
       id: build-interpreters
@@ -300,6 +302,8 @@ jobs:
 
     - name: Install uv for interpreter discovery
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        prune-cache: true
 
     - name: Download this platform's baseline wheels
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
