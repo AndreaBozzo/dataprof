@@ -25,6 +25,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_null_percentage": None,
     "max_null_count": None,
     "max_duplicate_rows": None,
+    "unique_columns": None,
     "max_date_age": None,
     "max_date_gap": None,
     "require_metrics": None,
@@ -321,6 +322,13 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         action="append",
         metavar="NAME",
         help="require a column to be profiled; fails when the source lacks it; repeatable",
+    )
+    parser.add_argument(
+        "--unique-column",
+        dest="unique_columns",
+        action="append",
+        metavar="NAME",
+        help="fail when a non-null value of the column occurs more than once; repeatable",
     )
     parser.add_argument(
         "--forbid-finding",

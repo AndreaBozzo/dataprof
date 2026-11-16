@@ -1601,6 +1601,7 @@ impl PyProfileReport {
         max_null_count = Vec::new(),
         max_null_count_any = None,
         max_duplicate_rows = None,
+        unique_columns = Vec::new(),
         max_date_age = Vec::new(),
         max_date_gap = Vec::new(),
         require_quality = false,
@@ -1632,6 +1633,7 @@ impl PyProfileReport {
         max_null_count: Vec<(String, usize)>,
         max_null_count_any: Option<usize>,
         max_duplicate_rows: Option<usize>,
+        unique_columns: Vec<String>,
         max_date_age: Vec<(String, u32)>,
         max_date_gap: Vec<(String, u32)>,
         require_quality: bool,
@@ -1680,6 +1682,9 @@ impl PyProfileReport {
         }
         if let Some(max) = max_duplicate_rows {
             policy = policy.max_duplicate_rows(max);
+        }
+        if !unique_columns.is_empty() {
+            policy = policy.unique_columns(unique_columns);
         }
         for (column, days) in max_date_age {
             policy = policy.max_date_age(column, days);

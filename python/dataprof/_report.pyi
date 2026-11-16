@@ -163,6 +163,7 @@ class ProfileReport:
         max_null_percentage: Mapping[str, float] | float | None = ...,
         max_null_count: Mapping[str, int] | int | None = ...,
         max_duplicate_rows: int | None = ...,
+        unique_columns: Sequence[str] | None = ...,
         max_date_age: Mapping[str, int] | None = ...,
         max_date_gap: Mapping[str, int] | None = ...,
         require_metrics: Sequence[str] | None = ...,
