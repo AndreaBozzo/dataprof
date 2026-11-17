@@ -1296,8 +1296,9 @@ unevaluated, with one of these reasons:
   the values the scan read, `outlier_spread` when either side has a
   numeric column whose exact quartiles coincide or were not recorded, or an
   accuracy score over such a sample, and `date_forms` when either side has a
-  date column, a text column with a value of 20 characters or more, or a
-  column whose type or lengths were not recorded. A scan that stopped early
+  date column, a text column with a value of 20 characters or more, a column
+  named by `temporal_columns` or `temporal_pairs`, or a column whose type or
+  lengths were not recorded. A scan that stopped early
   reaches none of them by itself;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:

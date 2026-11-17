@@ -1420,9 +1420,12 @@ it `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
 gate on unchanged data (#1340). The gate compares it only when either side may
 hold such a value (#1317): a column typed as a date, a text column whose
 longest value has 20 characters or more (the shortest such datetime,
-`2026-06-01 12:00:00Z`, has 20), or a column whose type or text lengths were
-not recorded. Where every column is numeric, boolean, nested or short text,
-both definitions read the same dates, and the rules decide without it.
+`2026-06-01 12:00:00Z`, has 20), a column named by `temporal_columns` or
+`temporal_pairs` of any type, since timeliness parses it, or a column whose
+type or text lengths were not recorded, or any column on a report that
+recorded no hints. Where every column is numeric, boolean, nested or short
+text and none is named as temporal, both definitions read the same dates, and
+the rules decide without it.
 Regenerate the baseline with the current release to have those rules decided
 again. The field is additive and not `required`, so stored v1 reports remain
 valid; an explicit `null` for `date_forms` is malformed, as for
