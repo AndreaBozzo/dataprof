@@ -29,6 +29,26 @@ fn only(name: &str, value: &str) {
     }
 }
 
+#[allow(unsafe_code)]
+fn set_all(variables: &[(&str, &str)]) {
+    // SAFETY: as in `only`.
+    unsafe {
+        for (name, value) in variables {
+            std::env::set_var(name, value);
+        }
+    }
+}
+
+#[allow(unsafe_code)]
+fn remove_all(variables: &[(&str, &str)]) {
+    // SAFETY: as in `only`.
+    unsafe {
+        for (name, _) in variables {
+            std::env::remove_var(name);
+        }
+    }
+}
+
 fn empty_config(ssl_config: SslConfig) -> DatabaseConfig {
     DatabaseConfig {
         connection_string: String::new(),
@@ -78,6 +98,35 @@ async fn an_empty_connection_string_keeps_its_tls_settings() {
             .or(info.query_param("ssl-ca"));
         assert_eq!(ca, Some("/ca&x.crt"), "{name}: {built}");
     }
+
+    // A variable that does not decode is an error, not an absent URL whose
+    // `verify-full` is dropped. The credentials come from their own
+    // variables, so only the URL can fail the load.
+    only(
+        "POSTGRES_URL",
+        "postgresql://u:%FF@h:5432/db?sslmode=verify-full",
+    );
+    let credentials = [
+        ("POSTGRES_HOST", "h"),
+        ("POSTGRES_USER", "u"),
+        ("POSTGRES_PASSWORD", "p"),
+    ];
+    set_all(&credentials);
+    let result = load_secure_database_config("postgresql");
+    remove_all(&credentials);
+    assert!(result.is_err(), "{result:?}");
+
+    // A MySQL URL in `DATABASE_URL` alone selects the MySQL connector; it
+    // selected PostgreSQL. Nothing listens on port 1, so the connector names
+    // its engine in the error, without a test server.
+    only("DATABASE_URL", "mysql://u:p@127.0.0.1:1/db");
+    let mut connector = create_connector(DatabaseConfig {
+        connection_timeout: Some(std::time::Duration::from_secs(2)),
+        ..empty_config(SslConfig::default())
+    })
+    .unwrap();
+    let error = connector.connect().await.unwrap_err().to_string();
+    assert!(error.contains("MySQL"), "{error}");
 
     // Against the dev servers: a verifying mode in the variable, or the
     // production preset, refuses a server it cannot verify (PostgreSQL has no
