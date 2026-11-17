@@ -261,7 +261,7 @@ fn exact_order_stats(
     // quarters so that it stays an integer.
     let quartile = |quarter: usize| -> Option<String> {
         let position = (values.len() - 1) * quarter;
-        let (lower, weight) = (position / 4, (position % 4) as i128);
+        let (lower, weight) = (position / 4, (position % 4) as u128);
         let base = values[lower];
         if weight == 0 {
             return Some(base.canonical());

@@ -48,6 +48,21 @@ CASES: list[tuple[str, Any, float, list[float] | None]] = [
         None,
     ),
     ("small integers: unchanged", pa.array([1, 2, 3, 4], pa.int64()), 2.5, [1.75, 2.5, 3.25]),
+    (
+        "decimal128(38, 0): a gap past i128 (#1341)",
+        pa.array([Decimal(-(9 * 10**37)), Decimal(9 * 10**37 + 10**20)], pa.decimal128(38, 0)),
+        5e19,
+        None,
+    ),
+    (
+        "decimal128(38, 0): q2 across a gap past i128 (#1341)",
+        pa.array(
+            [Decimal(-(9 * 10**37))] * 2 + [Decimal(9 * 10**37 + 10**20)] * 2,
+            pa.decimal128(38, 0),
+        ),
+        5e19,
+        [-9e37, 5e19, float(9 * 10**37 + 10**20)],
+    ),
 ]
 
 
