@@ -122,7 +122,7 @@ impl DatabaseConnector for PostgresConnector {
             // NUMERIC has no `Type<Sqlite>` impl, so it cannot sit in the
             // shared chain. Without this arm it falls past every arm and
             // records as null (#365).
-            process_rows_to_columns!(rows, [::sqlx::types::BigDecimal])
+            process_rows_to_columns!(rows, [super::common::PgNumericText])
         }
 
         #[cfg(not(feature = "postgres"))]
@@ -145,7 +145,7 @@ impl DatabaseConnector for PostgresConnector {
                 query,
                 batch_size,
                 "PostgreSQL",
-                [::sqlx::types::BigDecimal]
+                [super::common::PgNumericText]
             );
             let columns = columns?;
             end_read_only_transaction(transaction).await?;

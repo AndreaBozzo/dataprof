@@ -116,10 +116,9 @@ macro_rules! db_column_to_string {
         // for one of the backends, each rendered by its `BackendText`. The text
         // is exact: `u64` prints its digits, and `BigDecimal` keeps the
         // database's value in plain digits rather than rounding through f64.
-        // Its scale can differ: sqlx pads a PostgreSQL `NUMERIC` to whole
-        // groups of four decimals and drops the declared scale
-        // (`NUMERIC(10,2)` 1.50 reads `1.5000`, 4.00 reads `4`;
-        // transact-rs/sqlx#468).
+        // A PostgreSQL `NUMERIC` reads through `PgNumericText`, at its display
+        // scale: sqlx's `BigDecimal` pads it to whole groups of four decimals
+        // and drops that scale (transact-rs/sqlx#468).
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
             v.map(|x| $crate::BackendText::backend_text(&x))
         })*
@@ -347,6 +346,61 @@ impl BackendText for ::sqlx::types::BigDecimal {
     }
 }
 
+/// A PostgreSQL `NUMERIC` in plain digits at its own display scale, as
+/// PostgreSQL prints it and as an Arrow or Parquet decimal is rendered.
+///
+/// sqlx's `BigDecimal` takes its scale from whole groups of four decimals and
+/// ignores the display scale the value carries (transact-rs/sqlx#468):
+/// `NUMERIC(9,2)` 0.01 reads `0.0100`, 4.00 reads `4`. The profiler keeps a
+/// declared decimal exact from 11 written digits, so the padding turned
+/// `1000000.01` exact beside its neighbours read as floats, and moved the
+/// quartiles off the other routes (#1342). The digits past the display scale
+/// are zero, so setting it drops only padding.
+#[cfg(feature = "postgres")]
+pub struct PgNumericText(String);
+
+#[cfg(feature = "postgres")]
+impl ::sqlx::Type<::sqlx::Postgres> for PgNumericText {
+    fn type_info() -> ::sqlx::postgres::PgTypeInfo {
+        <::sqlx::types::BigDecimal as ::sqlx::Type<::sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &::sqlx::postgres::PgTypeInfo) -> bool {
+        <::sqlx::types::BigDecimal as ::sqlx::Type<::sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'r> ::sqlx::Decode<'r, ::sqlx::Postgres> for PgNumericText {
+    fn decode(value: ::sqlx::postgres::PgValueRef<'r>) -> Result<Self, ::sqlx::error::BoxDynError> {
+        use std::str::FromStr;
+        match value.format() {
+            ::sqlx::postgres::PgValueFormat::Binary => {
+                // The header is four 16-bit fields: digit count, weight, sign
+                // and display scale.
+                let bytes = value.as_bytes()?;
+                let scale = bytes
+                    .get(6..8)
+                    .map(|field| i16::from_be_bytes([field[0], field[1]]))
+                    .ok_or("NUMERIC value shorter than its header")?;
+                let decimal =
+                    <::sqlx::types::BigDecimal as ::sqlx::Decode<::sqlx::Postgres>>::decode(value)?;
+                Ok(Self(decimal.with_scale(i64::from(scale)).to_plain_string()))
+            }
+            ::sqlx::postgres::PgValueFormat::Text => Ok(Self(
+                ::sqlx::types::BigDecimal::from_str(value.as_str()?)?.to_plain_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl BackendText for PgNumericText {
+    fn backend_text(&self) -> String {
+        self.0.clone()
+    }
+}
+
 #[cfg(feature = "mysql")]
 impl BackendText for ::sqlx::mysql::types::MySqlTime {
     fn backend_text(&self) -> String {
@@ -518,6 +572,56 @@ mod tests {
             let decimal = ::sqlx::types::BigDecimal::from_str(value).unwrap();
             assert_eq!(BackendText::backend_text(&decimal), plain, "{value}");
         }
+    }
+
+    /// A PostgreSQL `NUMERIC` reads at its display scale, as `psql` prints
+    /// it: sqlx alone pads to groups of four decimals or drops trailing
+    /// zeros. `NaN` stays a decode error. Needs `POSTGRES_TEST_URL`.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_postgresql_numeric_reads_at_its_display_scale() {
+        use sqlx::Row;
+
+        let Ok(url) = std::env::var("POSTGRES_TEST_URL") else {
+            eprintln!("POSTGRES_TEST_URL not set; skipping");
+            return;
+        };
+        let mut connection = <::sqlx::PgConnection as ::sqlx::Connection>::connect(&url)
+            .await
+            .expect("postgres connection");
+        for (literal, text) in [
+            ("0.01::numeric(9,2)", "0.01"),
+            ("4.00::numeric(9,2)", "4.00"),
+            ("1000000.01::numeric(9,2)", "1000000.01"),
+            ("0.00000001::numeric", "0.00000001"),
+            ("'-0.0'::numeric(3,1)", "0.0"),
+            (
+                "'-90000000000000000000000'::numeric",
+                "-90000000000000000000000",
+            ),
+            (
+                "'1e40'::numeric",
+                "10000000000000000000000000000000000000000",
+            ),
+            (
+                "'-9000000000000000000000000000000000000.0'::numeric(38,1)",
+                "-9000000000000000000000000000000000000.0",
+            ),
+            ("0::numeric", "0"),
+            ("12.3400::numeric", "12.3400"),
+        ] {
+            let row = sqlx::query(&format!("SELECT {literal}"))
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            let got: PgNumericText = row.try_get(0).unwrap();
+            assert_eq!(got.backend_text(), text, "{literal}");
+        }
+        let row = sqlx::query("SELECT 'NaN'::numeric")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert!(row.try_get::<PgNumericText, _>(0).is_err());
     }
 
     #[test]
