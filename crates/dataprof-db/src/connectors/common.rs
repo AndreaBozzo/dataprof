@@ -113,14 +113,15 @@ macro_rules! db_column_to_string {
             v.map(|x| x.to_string())
         }
         // Arms the shared chain cannot express because the type has no impl
-        // for one of the backends. `to_string` is exact for both of today's
-        // callers: `u64` prints its digits, and `BigDecimal` keeps the
-        // database's value rather than rounding through f64. Its scale can
-        // differ: sqlx pads a PostgreSQL `NUMERIC` to whole groups of four
-        // decimals and drops the declared scale (`NUMERIC(10,2)` 1.50 reads
-        // `1.5000`, 4.00 reads `4`; transact-rs/sqlx#468).
+        // for one of the backends, each rendered by its `BackendText`. The text
+        // is exact: `u64` prints its digits, and `BigDecimal` keeps the
+        // database's value in plain digits rather than rounding through f64.
+        // Its scale can differ: sqlx pads a PostgreSQL `NUMERIC` to whole
+        // groups of four decimals and drops the declared scale
+        // (`NUMERIC(10,2)` 1.50 reads `1.5000`, 4.00 reads `4`;
+        // transact-rs/sqlx#468).
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
-            v.map(|x| x.to_string())
+            v.map(|x| $crate::BackendText::backend_text(&x))
         })*
         else if let Ok(v) = row.try_get::<Option<f64>, _>(index) {
             // `{:?}` keeps the decimal point on integral floats ("100.0", not
@@ -319,6 +320,40 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
+/// The text of a value decoded through one of a connector's own arms of
+/// [`db_column_to_string!`](crate::db_column_to_string), for the types the
+/// shared chain cannot hold.
+pub trait BackendText {
+    /// The value as the profiler reads it.
+    fn backend_text(&self) -> String;
+}
+
+impl BackendText for u64 {
+    fn backend_text(&self) -> String {
+        self.to_string()
+    }
+}
+
+/// A `NUMERIC` or `DECIMAL` in plain digits. `Display` writes an exponent past
+/// 15 trailing zeros or 5 leading ones (`-900e+20`, `1E-7`), and how many is
+/// set when `bigdecimal` is built. The profiler holds a declared decimal
+/// exactly from its digits as written, so a value written short read as a
+/// float beside its exactly held neighbours, and their mean kept its rounding
+/// (#1342).
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+impl BackendText for ::sqlx::types::BigDecimal {
+    fn backend_text(&self) -> String {
+        self.to_plain_string()
+    }
+}
+
+#[cfg(feature = "mysql")]
+impl BackendText for ::sqlx::mysql::types::MySqlTime {
+    fn backend_text(&self) -> String {
+        self.to_string()
+    }
+}
+
 /// Macro to fetch a profiled query's result in one execution, read as a stream.
 ///
 /// The result comes from a single execution. Paging it as `LIMIT n OFFSET k`
@@ -468,6 +503,22 @@ pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A decimal in plain digits, where `Display` writes an exponent (#1342).
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn a_big_decimal_is_written_in_plain_digits() {
+        use std::str::FromStr;
+        for (value, plain) in [
+            ("-9E+22", "-90000000000000000000000"),
+            ("1E-7", "0.0000001"),
+            ("90000000000000000000001", "90000000000000000000001"),
+            ("1.5000", "1.5000"),
+        ] {
+            let decimal = ::sqlx::types::BigDecimal::from_str(value).unwrap();
+            assert_eq!(BackendText::backend_text(&decimal), plain, "{value}");
+        }
+    }
 
     #[test]
     fn test_build_select_query() {
