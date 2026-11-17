@@ -55,7 +55,10 @@ impl DatabaseConnector for PostgresConnector {
     async fn connect(&mut self) -> Result<(), DataProfilerError> {
         #[cfg(feature = "postgres")]
         {
-            let connection_string = self.connection_info.to_connection_string("sqlx");
+            // The URL as configured, query included: its TLS settings
+            // (`sslmode`, `ssl-mode`, the certificate paths) are read by
+            // sqlx, and a rebuilt URL without them connects unverified.
+            let connection_string = &self.config.connection_string;
 
             let pool = PgPoolOptions::new()
                 .max_connections(self.config.max_connections.unwrap_or(10))
@@ -64,7 +67,7 @@ impl DatabaseConnector for PostgresConnector {
                         .connection_timeout
                         .unwrap_or(std::time::Duration::from_secs(30)),
                 )
-                .connect(&connection_string)
+                .connect(connection_string)
                 .await
                 .map_err(|e| {
                     DataProfilerError::database_connection(&format!(

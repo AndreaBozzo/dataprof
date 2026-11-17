@@ -87,6 +87,14 @@ pub fn create_connector(
 ) -> Result<Box<dyn DatabaseConnector>, DataProfilerError> {
     if config.load_credentials_from_env || config.connection_string.is_empty() {
         config = apply_environment_configuration(config)?;
+    } else if let Some(ssl_config) = &config.ssl_config {
+        // Without the environment, the TLS settings still apply: skipping
+        // them left `SslConfig::production()` unenforced.
+        let database_type = ConnectionInfo::parse(&config.connection_string)?
+            .database_type()
+            .to_string();
+        config.connection_string =
+            ssl_config.apply_to_connection_string(config.connection_string.clone(), &database_type);
     }
 
     let connection_str = config.connection_string.as_str();

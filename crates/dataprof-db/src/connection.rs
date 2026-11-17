@@ -119,7 +119,7 @@ impl ConnectionInfo {
                         parts.push(format!("/{}", db));
                     }
 
-                    parts.join("")
+                    self.with_query(parts.join(""))
                 }
                 "mysql" => {
                     let mut parts = vec!["mysql://".to_string()];
@@ -141,7 +141,7 @@ impl ConnectionInfo {
                         parts.push(format!("/{}", db));
                     }
 
-                    parts.join("")
+                    self.with_query(parts.join(""))
                 }
                 "sqlite" | "file" => {
                     if let Some(path) = &self.path {
@@ -154,6 +154,22 @@ impl ConnectionInfo {
             },
             _ => self.to_original_string(),
         }
+    }
+
+    /// `base` with the query parameters appended, percent-encoded and in key
+    /// order. The query carries the TLS settings (`sslmode`, `ssl-mode`,
+    /// certificate paths), so a URL handed to a driver without it connects
+    /// unverified.
+    fn with_query(&self, base: String) -> String {
+        if self.query_params.is_empty() {
+            return base;
+        }
+        let mut pairs: Vec<(&String, &String)> = self.query_params.iter().collect();
+        pairs.sort();
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(pairs)
+            .finish();
+        format!("{base}?{query}")
     }
 
     /// Reconstruct the original connection string
@@ -224,6 +240,32 @@ mod tests {
         assert_eq!(info.password, Some("password".to_string()));
         assert_eq!(info.database, Some("testdb".to_string()));
         assert_eq!(info.database_type(), "mysql");
+    }
+
+    /// The query carries the TLS settings, so the URL built for sqlx keeps
+    /// it: dropping it connected without verifying the server.
+    #[test]
+    fn the_sqlx_url_keeps_the_tls_settings() {
+        let postgres = ConnectionInfo::parse(
+            "postgresql://u:p@db.example:5432/app?sslmode=verify-full&sslrootcert=/certs/my%20ca.crt",
+        )
+        .unwrap()
+        .to_connection_string("sqlx");
+        assert_eq!(
+            postgres,
+            "postgresql://u:p@db.example:5432/app?sslmode=verify-full&sslrootcert=%2Fcerts%2Fmy+ca.crt"
+        );
+        let reparsed = ConnectionInfo::parse(&postgres).unwrap();
+        assert_eq!(reparsed.query_params["sslrootcert"], "/certs/my ca.crt");
+
+        let mysql =
+            ConnectionInfo::parse("mysql://u:p@db.example:3306/app?ssl-mode=VERIFY_IDENTITY")
+                .unwrap()
+                .to_connection_string("sqlx");
+        assert_eq!(
+            mysql,
+            "mysql://u:p@db.example:3306/app?ssl-mode=VERIFY_IDENTITY"
+        );
     }
 
     #[test]

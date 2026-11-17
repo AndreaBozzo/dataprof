@@ -437,6 +437,38 @@ mod postgres_tests {
         connector.disconnect().await.unwrap();
     }
 
+    /// A verifying TLS mode in the URL reaches the driver. The test server
+    /// cannot satisfy it (no TLS, or a certificate no CA here signed), so
+    /// connecting fails; the settings were dropped and it connected.
+    #[tokio::test]
+    async fn test_postgres_url_tls_verification_is_enforced() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        let config = postgres_config(&format!(
+            "{url}{separator}sslmode=verify-full&sslrootcert=no-such-dir/ca.crt"
+        ));
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// `SslConfig::production()` (verify-full) applies without the
+    /// environment too: it was only applied when credentials were loaded
+    /// from it.
+    #[tokio::test]
+    async fn test_postgres_production_ssl_config_is_enforced() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let config = DatabaseConfig {
+            ssl_config: Some(dataprof::SslConfig::production()),
+            ..postgres_config(&url)
+        };
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
     #[tokio::test]
     async fn test_postgres_profile_query() {
         let Some(url) = postgres_url() else {
@@ -602,6 +634,38 @@ mod mysql_tests {
         assert!(result);
 
         connector.disconnect().await.unwrap();
+    }
+
+    /// A verifying TLS mode in the URL reaches the driver. The test server
+    /// cannot satisfy it (no TLS, or a certificate no CA here signed), so
+    /// connecting fails; the settings were dropped and it connected.
+    #[tokio::test]
+    async fn test_mysql_url_tls_verification_is_enforced() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        let config = mysql_config(&format!(
+            "{url}{separator}ssl-mode=VERIFY_CA&ssl-ca=no-such-dir/ca.crt"
+        ));
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// `SslConfig::production()` (verify-full) applies without the
+    /// environment too: it was only applied when credentials were loaded
+    /// from it.
+    #[tokio::test]
+    async fn test_mysql_production_ssl_config_is_enforced() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let config = DatabaseConfig {
+            ssl_config: Some(dataprof::SslConfig::production()),
+            ..mysql_config(&url)
+        };
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
     }
 
     #[tokio::test]
