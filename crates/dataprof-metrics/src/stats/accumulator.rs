@@ -1047,7 +1047,7 @@ impl ExactDecimal {
     /// `i128`, as they do near its top (#1186 review). Their gap is taken in
     /// `u128`, which holds it even when the two have opposite signs near the
     /// top of `i128`'s range (#1341).
-    pub(crate) fn interpolated(self, next: Self, quarters: i128) -> Option<String> {
+    pub(crate) fn interpolated(self, next: Self, quarters: u128) -> Option<String> {
         let scale = self.scale.max(next.scale);
         let base = scale_up(self.unscaled, scale - self.scale)?;
         let next = scale_up(next.unscaled, scale - next.scale)?;
@@ -1056,7 +1056,6 @@ impl ExactDecimal {
         // difference read as unsigned is the gap exactly.
         debug_assert!(next >= base, "interpolated between unsorted values");
         let gap = next.wrapping_sub(base) as u128;
-        let quarters = u128::try_from(quarters).ok()?;
         // At most `gap`: `gap / 4 × 3` and `gap % 4 × 3 / 4` stay below it.
         let steps = gap / 4 * quarters + gap % 4 * quarters / 4;
         // Between `base` and `next`, so inside `i128`: the wrapping sum is
