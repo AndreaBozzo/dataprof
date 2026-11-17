@@ -5,7 +5,7 @@ marked 0.14 need that release or later.
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
-[release notes](../release-notes.md): 0.13.1, then the 0.13.0 migration guide.
+[release notes](../release-notes.md) for 0.14.0 and their upgrade notes.
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -1700,7 +1700,7 @@ runs this cycle over seven drops, including the ones that must not become the
 baseline, and shows it as a CI job that keeps the baseline in the repository.
 
 The [file publication CI recipe](../../examples/README.md#check-a-file-before-publishing-it-in-ci)
-uses a pinned 0.13.1 wheel, required columns and a per-column null limit, and
+uses a pinned 0.14.0 wheel, required columns and a per-column null limit, and
 retains both the profile and verdict on a rejected run. To run the current
 checkout instead, build the extension with `uv sync --no-install-project` and
 `uv run --no-sync maturin develop`, then invoke the module with

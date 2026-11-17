@@ -52,7 +52,7 @@ uv run --no-sync python python/examples/etl_quality_gate.py
 #### Check a file before publishing it in CI
 
 Add these steps after your extract creates `orders.csv` and before the step
-that publishes it. This recipe uses the published 0.13.1 wheel and absolute
+that publishes it. This recipe uses the published 0.14.0 wheel and absolute
 checks: the file must have at least one row, both named columns must exist,
 and `customer_id` must have no nulls. Choose columns and limits with the feed's
 owner. For Parquet, replace `orders.csv` with `orders.parquet`.
@@ -62,7 +62,7 @@ owner. For Parquet, replace `orders.csv` with `orders.parquet`.
         with:
           python-version: '3.12'
       - run: |
-          python -m pip install --only-binary=:all: dataprof==0.13.1
+          python -m pip install --only-binary=:all: dataprof==0.14.0
       - name: Check the extracted file
         shell: bash
         run: |
@@ -96,7 +96,7 @@ dataprof development checkout:
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --only-binary=:all: dataprof==0.13.1
+python -m pip install --only-binary=:all: dataprof==0.14.0
 printf 'order_id,customer_id\n1,C001\n2,C002\n' > orders.csv
 mkdir -p quality-evidence
 python -m dataprof.check orders.csv \
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: python -m pip install dataprof==0.13.1
+      - run: python -m pip install dataprof==0.14.0
       - run: ./fetch_drop.sh orders.csv  # your extract step
       - name: Check against the accepted baseline
         run: |

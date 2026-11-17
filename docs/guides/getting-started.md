@@ -24,7 +24,7 @@ uv pip install dataprof
 # or: pip install dataprof
 
 # Rust library -- add to Cargo.toml
-# dataprof = "0.13"
+# dataprof = "0.14"
 ```
 
 The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. Database helpers are not in the wheels: build the extension from source with the corresponding Rust features.
@@ -524,7 +524,7 @@ Enable `async-streaming` and add `bytes` as a direct dependency:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["async-streaming"] }
+dataprof = { version = "0.14", features = ["async-streaming"] }
 bytes = "1.10"
 ```
 
@@ -567,7 +567,7 @@ Enable the PostgreSQL connector:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["postgres"] }
+dataprof = { version = "0.14", features = ["postgres"] }
 ```
 
 ```rust

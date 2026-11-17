@@ -870,7 +870,7 @@ Enable `async-streaming` for CSV and JSON byte streams, and add `bytes` directly
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["async-streaming"] }
+dataprof = { version = "0.14", features = ["async-streaming"] }
 bytes = "1.10"
 ```
 
@@ -893,7 +893,7 @@ Remote Parquet needs `parquet-async`, which also enables `async-streaming`:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["parquet-async"] }
+dataprof = { version = "0.14", features = ["parquet-async"] }
 ```
 
 ```rust
@@ -914,7 +914,7 @@ Enable the PostgreSQL connector:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["postgres"] }
+dataprof = { version = "0.14", features = ["postgres"] }
 ```
 
 ```rust
