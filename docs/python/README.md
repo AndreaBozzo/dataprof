@@ -1,6 +1,7 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.13.1).
+Complete reference for the `dataprof` Python package (v0.14.0). Options
+marked 0.14 need that release or later.
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
@@ -23,6 +24,12 @@ The package ships pre-built wheels for Linux, macOS, and Windows, and declares *
 
 The wheel also carries the async API: `dataprof.asyncio`, HTTP URL profiling,
 and remote Parquet all work on a bare `pip install dataprof`.
+
+Install the producer library for DataFrame and Arrow inputs. The pandas
+adapter uses pyarrow, and the polars adapter calls `to_arrow()`, which also
+needs pyarrow. The `pandas` extra installs pandas; install pyarrow too for input
+conversion.
+Parquet file and bytes profiling uses the compiled reader and needs neither.
 
 Database profiling is the one documented feature the wheel does not contain.
 Connectors are a compile-time feature rather than a Python dependency, so no
@@ -551,6 +558,12 @@ Segmenting grapheme clusters instead would need a Unicode segmentation table and
 a policy for which version of it; encoded size is a property of the encoding
 rather than of the value, and is reported at the source level instead.
 
+Declared decimals in Arrow, Parquet, PostgreSQL `NUMERIC` and MySQL `DECIMAL`
+are read from their decimal digits (0.14), including quality-only runs that
+omit the statistics pack. A pandas `object` column does not declare its
+values as decimals; use an Arrow decimal dtype to retain that declaration.
+See the [declared decimal example](../guides/examples.md#inspect-schema-drift-and-declared-decimals).
+
 ## `Pattern`
 
 Represents a pattern found in a column. Matches pass both the regular expression
@@ -596,10 +609,11 @@ SamplingStrategy.reservoir(size=10000)               # same guarantee, Algorithm
 SamplingStrategy.systematic(interval=10)             # every Nth row
 ```
 
-Sampling applies to CSV sources on the `auto` and `incremental` engines and to
-every `dataprof.asyncio` entry point. The columnar engine and the JSON/Parquet
-readers cannot sample row by row and raise `ValueError` rather than silently
-returning a full profile.
+Row sampling works for CSV files on the `auto` and `incremental` engines and
+for CSV, JSON and JSONL inputs in `dataprof.asyncio`. Columnar CSV, synchronous
+JSON/JSONL, every Parquet reader and synchronous in-memory routes reject
+nontrivial sampling requests with `ValueError`. `SamplingStrategy.none()` is
+accepted.
 
 `random` and `reservoir` give the same guarantee — a uniform sample of exactly
 `size` rows — and both hold `size` rows in memory, because which rows belong in
@@ -988,7 +1002,8 @@ the Rust `FindingPolicy` writes for the same report and thresholds.
 
 State a policy as data and get a structured verdict back. Nothing is printed,
 the process is not exited, and the report is not modified, so this composes
-into Airflow, Dagster, a GitHub Action, or a shell script -- no CLI involved.
+into a pipeline or application. The same policy is available through
+`python -m dataprof.check`.
 
 ```python
 report = dp.profile("daily_drop.csv")

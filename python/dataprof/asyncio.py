@@ -76,7 +76,7 @@ async def profile_bytes(
 
     Args:
         data: Raw bytes to profile.
-        format: Data format ("csv", "json", "jsonl").
+        format: Data format ("csv", "json", "jsonl", "parquet").
         **kwargs: Additional config options (passed to ProfilerConfig).
             The async stream always uses the incremental engine, so
             ``engine="columnar"`` is rejected.
