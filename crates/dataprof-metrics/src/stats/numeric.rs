@@ -176,6 +176,11 @@ fn compute_parsed_stats(
     // Arrow double written out in digits (`44918740094933100000` for
     // 4.49187400949331e19), which reads as an exact integer that is not the
     // double, so interpolating on it would move a correct median.
+    //
+    // A column whose values all fit `f64` also stays on it: there the two
+    // agree up to the last bit, which can still decide a serialized digit
+    // (0.145 against 0.14500000000000002), and its CSV and `Float64` twins
+    // are interpolated in `f64`.
     let order = if exact {
         exact_order_stats(
             &sorted_sample,
@@ -186,7 +191,7 @@ fn compute_parsed_stats(
         None
     };
     let mut median = median;
-    if let Some(order) = &order {
+    if let Some(order) = order.as_ref().filter(|_| wide) {
         if let Some(exact_median) = order.median.as_deref() {
             median = Some(rounded(exact_median));
         }

@@ -104,6 +104,29 @@ def test_the_plain_median_and_quartiles_round_the_exact_ones():
     assert not wrong, "\n".join(wrong)
 
 
+def test_a_short_decimal_column_serializes_what_its_float_twin_does():
+    # The exact q1 is 0.145, whose nearest `f64` rounds to 0.14, and q3 0.325
+    # rounds to 0.33; `f64` interpolation gives 0.14500000000000002 and
+    # 0.32499999999999996, which round to 0.15 and 0.32. Values that fit `f64`
+    # stay on it, so the declared decimal serializes what the same values
+    # typed `float64` or written as text do.
+    values = ["0.01", "0.19", "0.30", "0.40"]
+    twins = {
+        "decimal128(4, 2)": pa.array([Decimal(v) for v in values], pa.decimal128(4, 2)),
+        "float64": pa.array([float(v) for v in values], pa.float64()),
+        "text": pa.array(values, pa.string()),
+    }
+    wrong = []
+    for route, profile in ROUTES.items():
+        seen = {}
+        for kind, array in twins.items():
+            stats = profile(pa.table({"amount": array})).to_dict()["columns"][0]["stats"]
+            seen[kind] = (stats["median"], stats["quartiles"])
+        if len({repr(got) for got in seen.values()}) != 1:
+            wrong.append(f"[{route}]: {seen}")
+    assert not wrong, "\n".join(wrong)
+
+
 def test_a_float_column_keeps_the_true_midpoint_of_its_doubles():
     # Rust writes these doubles out in digits (`44918740094933100000`). The
     # outer two have 18 or more of them, so they read as exact integers and the
