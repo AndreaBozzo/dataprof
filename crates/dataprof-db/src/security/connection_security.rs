@@ -67,7 +67,49 @@ pub fn validate_connection_security(
 pub fn load_secure_database_config(
     database_type: &str,
 ) -> Result<(String, SslConfig), DataProfilerError> {
+    load_secure_database_config_with_ssl(database_type, None)
+}
+
+/// The query pairs of the URL-valued variables, `{PREFIX}_URL` then
+/// `DATABASE_URL`. The driver applies the last of two settings, and the
+/// credentials take `DATABASE_URL` first, so it comes last here too.
+///
+/// A variable that does not parse is an error: read as absent, its TLS
+/// settings were dropped and the connection went ahead with `prefer`.
+fn environment_url_query(database_type: &str) -> Result<Vec<(String, String)>, DataProfilerError> {
+    let prefix = match database_type {
+        "postgresql" => "POSTGRES",
+        "mysql" => "MYSQL",
+        _ => return Ok(Vec::new()),
+    };
+    let mut query = Vec::new();
+    for name in [format!("{prefix}_URL"), "DATABASE_URL".to_string()] {
+        let Ok(url) = std::env::var(&name) else {
+            continue;
+        };
+        let info = crate::connection::ConnectionInfo::parse(&url).map_err(|_| {
+            DataProfilerError::database_config(&format!("{name} is not a valid connection URL"))
+        })?;
+        if info.database_type() == database_type {
+            query.extend(info.query_params);
+        }
+    }
+    Ok(query)
+}
+
+/// [`load_secure_database_config`], with the caller's TLS configuration in
+/// place of the SSL environment variables when `ssl_config` is given.
+///
+/// The TLS settings written in `{PREFIX}_URL` or `DATABASE_URL` are kept, and
+/// as in an explicit URL they win over either configuration. Building the URL
+/// from the credentials alone dropped them, and a verifying `sslmode` there
+/// connected with `prefer`.
+pub fn load_secure_database_config_with_ssl(
+    database_type: &str,
+    ssl_config: Option<SslConfig>,
+) -> Result<(String, SslConfig), DataProfilerError> {
     let credentials = DatabaseCredentials::from_environment(database_type);
+    let query = environment_url_query(database_type)?;
 
     // The credentials hold literal values, so the base URL is serialized with
     // each part encoded: a database name `app?sslmode=disable` interpolated
@@ -91,7 +133,7 @@ pub fn load_secure_database_config(
                     .unwrap_or_else(|| database.to_string()),
             ),
             path: None,
-            query_params: Vec::new(),
+            query_params: query.clone(),
         }
         .to_original_string()
     };
@@ -111,7 +153,7 @@ pub fn load_secure_database_config(
     };
 
     let connection_string = credentials.apply_to_connection_string(&base_connection_string);
-    let ssl_config = load_ssl_config_from_environment(database_type);
+    let ssl_config = ssl_config.unwrap_or_else(|| load_ssl_config_from_environment(database_type));
     let secure_connection_string =
         ssl_config.apply_to_connection_string(connection_string, database_type);
 

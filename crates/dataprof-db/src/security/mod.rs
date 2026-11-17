@@ -7,7 +7,9 @@ pub mod sql_validation;
 pub mod ssl_config;
 pub mod utils;
 
-pub use connection_security::{load_secure_database_config, validate_connection_security};
+pub use connection_security::{
+    load_secure_database_config, load_secure_database_config_with_ssl, validate_connection_security,
+};
 pub use credentials::DatabaseCredentials;
 pub use environment::load_ssl_config_from_environment;
 pub use sql_validation::{is_query, validate_base_query, validate_sql_identifier};

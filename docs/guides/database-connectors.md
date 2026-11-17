@@ -279,9 +279,17 @@ Avoid embedding credentials in connection strings. Set environment variables ins
 With `load_credentials_from_env: true` (the default), credential environment
 variables can override an explicit URL. Their values are literal: a password
 with `@`, `:` or `%` in it is encoded for the URL, while one written in the URL
-itself must be percent-encoded as usual. SSL environment variables are loaded
-when the connection string is empty; otherwise configure `ssl_config` or URL
-parameters.
+itself must be percent-encoded as usual.
+
+With an empty connection string, the URL comes from the environment
+(`POSTGRES_URL`, `MYSQL_URL` or `DATABASE_URL`) and keeps its TLS settings, which
+win as in an explicit URL. When `DATABASE_URL` and `POSTGRES_URL` or
+`MYSQL_URL` both set one, `DATABASE_URL` wins, as it does for the credentials;
+a `DATABASE_URL` for the other engine is ignored for these settings, and one
+that is not a valid URL is an error. The settings left unset come from an
+`ssl_config` other than the default, or else from the SSL environment
+variables. With a connection string, the SSL environment variables are not
+read; configure `ssl_config` or URL parameters.
 
 ## Troubleshooting
 

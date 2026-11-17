@@ -9,7 +9,7 @@ use std::path::Path;
 const PG_TLS_OPTIONAL: [&str; 3] = ["disable", "allow", "prefer"];
 
 /// SSL/TLS configuration for database connections
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SslConfig {
     /// Whether to require SSL/TLS
     pub require_ssl: bool,
