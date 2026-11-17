@@ -1396,3 +1396,34 @@ source has no more distinct rows than the limit.
 Absence means no row tracker counted the rows (the duplicate count came from
 the retained sample), or the report predates 0.14. The field is additive and
 not `required`, so stored v1 reports remain valid.
+
+## v1 additive change: `metric_semantics.date_forms`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `date_forms` | `"spaced_iso_datetimes"` | which text forms read as dates |
+
+The ISO datetime with a space for the `T` now reads as a date with a fraction
+and a UTC offset, as the `T` form does: `2026-06-01 12:00:00+00:00`, the form
+Python's `str()` writes for a timezone-aware datetime, and
+`2026-06-01 12:00:00.250` (#1335). Through 0.13 only the plain
+`2026-06-01 12:00:00` was a date, and these were text. Type inference, the
+consistency check and the timeliness counts read them, so the same bytes can
+type a column as a date that was text, and score differently on consistency,
+timeliness and overall.
+
+A report that records no `date_forms` reads back with it unknown, and a
+quality gate leaves the consistency, timeliness and overall score rules over
+it `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data (#1340). The gate compares it only when either side may
+hold such a value (#1317): a column typed as a date, a text column whose
+longest value has 20 characters or more (the shortest such datetime,
+`2026-06-01 12:00:00Z`, has 20), or a column whose type or text lengths were
+not recorded. Where every column is numeric, boolean, nested or short text,
+both definitions read the same dates, and the rules decide without it.
+Regenerate the baseline with the current release to have those rules decided
+again. The field is additive and not `required`, so stored v1 reports remain
+valid; an explicit `null` for `date_forms` is malformed, as for
+`text_length_unit`.

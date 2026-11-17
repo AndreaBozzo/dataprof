@@ -1,0 +1,248 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "pattern_locale": "none"
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 51.64,
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 4.0,
+          "mean": 2.5,
+          "median": 2.5,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 1.5,
+            "q1": 1.75,
+            "q2": 2.5,
+            "q3": 3.25
+          },
+          "skewness": 0.0,
+          "std_dev": 1.291,
+          "variance": 1.6667
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 4,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "event",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Text": {
+          "avg_length": 15.5,
+          "max_length": 25,
+          "min_length": 7
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 4
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "logged_at",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Text": {
+          "avg_length": 24.75,
+          "max_length": 25,
+          "min_length": 24
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 4
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "day",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.5,
+          "match_count": 4,
+          "match_percentage": 100.0,
+          "name": "Date (ISO)",
+          "regex": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      ],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Monday": 1,
+            "Thursday": 1,
+            "Tuesday": 1,
+            "Wednesday": 1
+          },
+          "duration_days": 3.0,
+          "max_datetime": "2026-06-04",
+          "min_datetime": "2026-06-01",
+          "month_distribution": {
+            "6": 4
+          },
+          "year_distribution": {
+            "2026": 4
+          }
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 4,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "csv",
+    "path": "spaced_datetimes.csv",
+    "size_bytes": 244,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 244,
+    "columns_detected": 4,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 20.93359375,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 4,
+    "sampling_applied": false,
+    "scan_time_ms": 48,
+    "source_exhausted": true,
+    "throughput_rows_sec": 83.33333333333333,
+    "unterminated_quote": false
+  },
+  "generator": {
+    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "dirty": false,
+    "version": "0.13.1"
+  },
+  "id": "a4f893a1-cb8b-4c56-b068-90e684ee8d0c",
+  "metric_semantics": {
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "shape_moments": "adjusted_sample",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 4,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 4,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 16
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 16
+      },
+      "low_sample_warning": true,
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "timeliness": {
+        "date_values_checked": 4,
+        "future_dates_count": 0,
+        "invalid_date_values": 0,
+        "stale_data_ratio": 0.0,
+        "temporal_pairs_checked": 0,
+        "temporal_violations": 0
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 4
+      },
+      "validity": {
+        "invalid_values": 0,
+        "valid_values_ratio": 100.0,
+        "values_checked": 4
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 100.0,
+        "precision": null,
+        "timeliness": 100.0,
+        "uniqueness": 100.0,
+        "validity": 100.0
+      },
+      "overall_score": 100.0
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-17T10:40:44.906693500+00:00"
+}

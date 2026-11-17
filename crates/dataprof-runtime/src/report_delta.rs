@@ -698,7 +698,16 @@ pub(crate) struct ColumnSide {
     /// The column's exact recorded quartiles differ. False when they
     /// coincide, are estimates, or were not recorded.
     pub(crate) quartiles_differ: bool,
+    /// The longest value of a text column, `None` when the side recorded no
+    /// text lengths for it.
+    pub(crate) max_text_length: Option<usize>,
 }
+
+/// The fewest characters a spaced ISO datetime has when `date_forms` reads it
+/// as a date and earlier releases did not: the plain `2026-06-01 12:00:00`
+/// (19) was a date in both, and the new forms add a fraction (`.5`) or an
+/// offset (`Z`, `+00:00`).
+const SPACED_DATETIME_MIN_LENGTH: usize = 20;
 
 impl ColumnSide {
     /// The inferred type, when the side read a value for the column that is
@@ -728,6 +737,28 @@ impl ColumnSide {
             .as_ref()
             .is_none_or(|data_type| matches!(data_type, DataType::Integer | DataType::Float));
         numeric && self.populated() != Some(false) && !self.quartiles_differ
+    }
+
+    /// Whether the column may hold a spaced ISO datetime with a fraction or
+    /// an offset, which `date_forms` reads as a date and earlier releases as
+    /// text (#1340). Such a value moves a score only in a column the checks
+    /// read as text or as dates. A text column whose longest value is
+    /// shorter than any such datetime holds none; its lengths cover every
+    /// value read, and so every value a score reads. A date column records
+    /// no lengths. An unrecorded type or length may.
+    fn may_hold_spaced_datetime(&self) -> bool {
+        if self.populated() == Some(false) {
+            return false;
+        }
+        match self.data_type {
+            None | Some(DataType::Date) => true,
+            Some(DataType::String | DataType::Identifier) => self
+                .max_text_length
+                .is_none_or(|length| length >= SPACED_DATETIME_MIN_LENGTH),
+            Some(DataType::Integer | DataType::Float | DataType::Boolean | DataType::Nested) => {
+                false
+            }
+        }
     }
 
     /// Values were read for the column and every one is null. `None` when
@@ -867,6 +898,10 @@ impl ReportSide {
                         }
                         _ => false,
                     },
+                    max_text_length: match &column.stats {
+                        ColumnStats::Text(stats) => Some(stats.max_length),
+                        _ => None,
+                    },
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -978,6 +1013,15 @@ impl ReportSide {
                 .columns
                 .iter()
                 .any(ColumnSide::may_have_coinciding_quartiles)
+    }
+
+    /// Whether a column the side scored may hold a spaced ISO datetime with
+    /// a fraction or an offset, so that `date_forms` may move its consistency
+    /// and timeliness scores (#1340).
+    pub(crate) fn may_hold_spaced_datetimes(&self) -> bool {
+        self.columns
+            .iter()
+            .any(ColumnSide::may_hold_spaced_datetime)
     }
 
     /// Which columns the side profiled, or `None` when it did not record it.
@@ -1123,6 +1167,7 @@ impl ReportSide {
                 unique_count: column.unique_count,
                 unique_count_is_approximate: column.unique_count_is_approximate,
                 quartiles_differ: column.stats.as_ref().is_some_and(summary_quartiles_differ),
+                max_text_length: column.stats.as_ref().and_then(summary_max_text_length),
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -1377,6 +1422,15 @@ fn summary_quartiles_differ(stats: &serde_json::Value) -> bool {
         && quartile("q1")
             .zip(quartile("q3"))
             .is_some_and(|(q1, q3)| q1 != q3)
+}
+
+/// A summary column's recorded `max_length`, `None` when its `stats` hold no
+/// text lengths this build can read.
+fn summary_max_text_length(stats: &serde_json::Value) -> Option<usize> {
+    stats
+        .get("max_length")?
+        .as_u64()
+        .and_then(|length| usize::try_from(length).ok())
 }
 
 #[derive(serde::Deserialize)]

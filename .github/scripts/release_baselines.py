@@ -108,6 +108,18 @@ TEXT = {
         '{"id":3,"v":1000000000000000.02},{"id":4,"v":1e-400},{"id":5,"v":2e-400},'
         '{"id":6,"v":1.50},{"id":7,"v":[1000000000000000.01]}]\n'
     ),
+    # Spaced ISO datetimes with a fraction or an offset, which 0.14 reads as
+    # dates (#1335): beside words in a text column, and alone in a column the
+    # release typed as text (#1340).
+    "spaced_datetimes.csv": _lines(
+        "id,event,logged_at,day",
+        [
+            "1,heartbeat,2026-06-01 12:00:00+00:00,2026-06-01",
+            "2,2026-06-01 12:05:00+00:00,2026-06-01 12:05:00.250Z,2026-06-02",
+            "3,restart,2026-06-02 08:30:00+02:00,2026-06-03",
+            "4,2026-06-02 09:00:00.5,2026-06-02 23:59:59-05:00,2026-06-04",
+        ],
+    ),
     "json_digits.jsonl": (
         '{"amount":1000000000000000.01,"n":1,"w":100000000000000000000.0001}\n'
         '{"amount":1000000000000000.02,"n":1,"w":100000000000000000000.0001}\n'

@@ -88,7 +88,7 @@ fn no_score_moves_against_the_last_release_without_a_definition() {
         |policy, dimension| policy.max_dimension_score_drop(dimension, 0.0),
     );
     let inputs = inputs();
-    let expected = if cfg!(feature = "parquet") { 6 } else { 5 };
+    let expected = if cfg!(feature = "parquet") { 7 } else { 6 };
     assert!(
         inputs.len() >= expected,
         "corpus has {} inputs",

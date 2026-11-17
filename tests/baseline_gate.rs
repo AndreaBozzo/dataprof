@@ -66,6 +66,14 @@ const CLEAN_JSON: &str =
 
 /// More rows than a column's 10,000-value quality sample, so the sampled
 /// dimensions are scored over part of the source.
+/// A text column beside spaced ISO datetimes with an offset, and a column of
+/// them alone, which 0.14 reads as dates and 0.13 as text (#1340).
+const SPACED_DATETIMES: &str = "id,event,logged_at
+    1,heartbeat,2026-06-01 12:00:00+00:00
+    2,2026-06-01 12:05:00+00:00,2026-06-01 12:05:00.250Z
+    3,restart,2026-06-02 08:30:00+02:00
+";
+
 fn sampled_csv() -> String {
     std::iter::once("id,amount\n".to_string())
         .chain((0..12_000).map(|row| format!("{row},{}\n", row % 97)))
@@ -448,7 +456,10 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
     let flat = profile(FLAT_AMOUNT);
     let json = profile_json(CLEAN_JSON);
     let sampled = profile(&sampled_csv());
+    let spaced = profile(SPACED_DATETIMES);
     for (definition, reads, other, report) in [
+        ("date_forms", "consistency", "uniqueness", &spaced),
+        ("date_forms", "timeliness", "uniqueness", &spaced),
         ("range_rule_count", "accuracy", "uniqueness", &clean),
         ("key_uniqueness_units", "uniqueness", "accuracy", &clean),
         ("outlier_units", "accuracy", "uniqueness", &clean),
@@ -483,6 +494,7 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
             "consistency" => QualityDimension::Consistency,
             "completeness" => QualityDimension::Completeness,
             "uniqueness" => QualityDimension::Uniqueness,
+            "timeliness" => QualityDimension::Timeliness,
             other => panic!("no dimension {other}"),
         };
         let result = QualityPolicy::new()
@@ -525,6 +537,7 @@ fn a_definition_no_run_can_reach_does_not_hold_a_score_open() {
         "json_number_reading",
         "sampled_score_estimator",
         "outlier_spread",
+        "date_forms",
     ] {
         let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         summary["metric_semantics"]
@@ -596,6 +609,51 @@ fn partial_evidence_on_either_side_is_unevaluated_under_full_source_only() {
             baseline,
         );
         assert_eq!(observed.verdict, Verdict::Pass, "{:#?}", observed.checks);
+    }
+}
+
+#[test]
+fn short_text_does_not_reach_date_forms() {
+    // A text column whose longest value is shorter than any spaced datetime
+    // `date_forms` reads differently holds none, so a baseline without the
+    // definition decides consistency. One long value holds it open (#1340).
+    let long = format!(
+        "id,status
+1,ok
+2,fail
+3,{}
+",
+        "x".repeat(20)
+    );
+    for (contents, held) in [
+        (
+            "id,status
+1,ok
+2,fail
+3,ok
+",
+            false,
+        ),
+        (long.as_str(), true),
+    ] {
+        let report = profile(contents);
+        let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        summary["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove("date_forms")
+            .expect("reports record date_forms");
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let result = QualityPolicy::new()
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .evaluate_against(&report, &baseline)
+            .unwrap();
+        let reason = reason(check(
+            &result,
+            CheckCode::MaxDimensionScoreDrop,
+            Some("consistency"),
+        ));
+        assert_eq!(reason.is_some(), held, "{contents}: {reason:?}");
     }
 }
 

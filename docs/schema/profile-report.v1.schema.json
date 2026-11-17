@@ -763,6 +763,16 @@
         }
       ]
     },
+    "DateForms": {
+      "description": "Which text forms read as dates, as recorded in a report's metric\nsemantics. Type inference, the consistency check and the timeliness\ncounts read them.\n\nOnly the current definition has a value. Through 0.13, and on 0.14\nrelease candidates before #1340, the ISO datetime with a space for the `T`\nwas a date only in its plain whole-second form: with a fraction or an\noffset (`2026-06-01 12:00:00+00:00`, what Python's `str()` writes for an\naware datetime) it was text. Those reports recorded no definition.",
+      "oneOf": [
+        {
+          "const": "spaced_iso_datetimes",
+          "description": "The spaced ISO datetime reads as a date with a fraction and an offset,\nas the `T` form does (#1335).",
+          "type": "string"
+        }
+      ]
+    },
     "DateGap": {
       "description": "Two consecutive distinct days of a date column, and the days between\nthem.",
       "properties": {
@@ -1294,6 +1304,10 @@
         "accuracy_comparison": {
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
+        },
+        "date_forms": {
+          "$ref": "#/$defs/DateForms",
+          "description": "Which text forms read as dates.\n\nAbsent means not recorded: through 0.13 the spaced ISO datetime with a\nfraction or an offset (`2026-06-01 12:00:00+00:00`) was text."
         },
         "date_statistics": {
           "$ref": "#/$defs/DateStatistics",

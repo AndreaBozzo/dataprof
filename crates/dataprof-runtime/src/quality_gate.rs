@@ -3770,6 +3770,9 @@ enum Definition {
     /// behind the consistency, accuracy, timeliness, validity and precision
     /// scores.
     SampledScoreEstimator,
+    /// Which text forms read as dates, behind the consistency and timeliness
+    /// scores.
+    DateForms,
 }
 
 impl Definition {
@@ -3785,6 +3788,7 @@ impl Definition {
             Self::AccuracyComparison => "accuracy_comparison",
             Self::JsonNumberReading => "json_number_reading",
             Self::SampledScoreEstimator => "sampled_score_estimator",
+            Self::DateForms => "date_forms",
         }
     }
 
@@ -3797,6 +3801,7 @@ impl Definition {
             Self::SampledScoreEstimator => facts.part_of_source,
             Self::JsonNumberReading => facts.json_numbers,
             Self::OutlierSpread => facts.coinciding_quartiles,
+            Self::DateForms => facts.spaced_datetimes,
             Self::NullTokens
             | Self::PatternMatchCount
             | Self::RangeRuleCount
@@ -3825,6 +3830,7 @@ impl Definition {
             Self::SampledScoreEstimator => {
                 agree(&a.sampled_score_estimator, &b.sampled_score_estimator)
             }
+            Self::DateForms => agree(&a.date_forms, &b.date_forms),
         }
     }
 }
@@ -3842,6 +3848,10 @@ struct RunFacts {
     /// The outlier test may have run on a column whose quartiles coincide,
     /// which `outlier_spread` stops testing.
     coinciding_quartiles: bool,
+    /// A scored column may hold a spaced ISO datetime with a fraction or an
+    /// offset, which `date_forms` reads as a date and earlier releases as
+    /// text.
+    spaced_datetimes: bool,
 }
 
 impl RunFacts {
@@ -3854,6 +3864,8 @@ impl RunFacts {
             json_numbers: sides.a.may_read_json_numbers() || sides.b.may_read_json_numbers(),
             coinciding_quartiles: sides.a.may_test_coinciding_quartiles()
                 || sides.b.may_test_coinciding_quartiles(),
+            spaced_datetimes: sides.a.may_hold_spaced_datetimes()
+                || sides.b.may_hold_spaced_datetimes(),
         }
     }
 }
@@ -3873,6 +3885,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
             Definition::OutlierSpread,
+            Definition::DateForms,
         ],
         Some(QualityDimension::Validity) => &[
             Definition::NullTokens,
@@ -3894,14 +3907,22 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::KeyColumnSource,
             Definition::JsonNumberReading,
         ],
-        Some(QualityDimension::Consistency | QualityDimension::Precision) => &[
+        Some(QualityDimension::Consistency) => &[
+            Definition::NullTokens,
+            Definition::JsonNumberReading,
+            Definition::SampledScoreEstimator,
+            Definition::DateForms,
+        ],
+        Some(QualityDimension::Precision) => &[
             Definition::NullTokens,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
         ],
-        Some(QualityDimension::Timeliness) => {
-            &[Definition::NullTokens, Definition::SampledScoreEstimator]
-        }
+        Some(QualityDimension::Timeliness) => &[
+            Definition::NullTokens,
+            Definition::SampledScoreEstimator,
+            Definition::DateForms,
+        ],
         Some(_) => &[Definition::NullTokens],
     }
 }

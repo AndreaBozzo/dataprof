@@ -3,12 +3,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateStatistics, JsonNumberReading,
-    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierSpread, OutlierUnits, Pattern,
-    PatternMatchCount, ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension,
-    QualityMetrics, QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator,
-    ScoreInterval, SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding,
-    TextLengthUnit, TruncationReason,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateForms, DateStatistics,
+    JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierSpread,
+    OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
+    QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
+    RangeRuleCount, SampledScoreEstimator, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
+    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1403,6 +1403,14 @@ impl PyProfileReport {
                 "outlier_spread",
                 match spread {
                     OutlierSpread::NonzeroIqr => "nonzero_iqr",
+                },
+            )?;
+        }
+        if let Some(forms) = semantics.date_forms {
+            dict.set_item(
+                "date_forms",
+                match forms {
+                    DateForms::SpacedIsoDatetimes => "spaced_iso_datetimes",
                 },
             )?;
         }
