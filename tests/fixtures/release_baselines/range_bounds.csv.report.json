@@ -3,7 +3,14 @@
     "columns": {
       "selection": "all"
     },
-    "pattern_locale": "none"
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
   },
   "column_profiles": [
     {
@@ -22,7 +29,6 @@
           "mean": 55.1,
           "median": 50.0,
           "min": 0.0,
-          "mode": 100.0,
           "outlier_count": 0,
           "quartiles": {
             "iqr": 74.5,
@@ -55,6 +61,14 @@
       "stats": {
         "Numeric": {
           "coefficient_of_variation": 115.92,
+          "exact": {
+            "max": "120",
+            "median": "35",
+            "min": "-1",
+            "q1": "0",
+            "q2": "35",
+            "q3": "64"
+          },
           "is_approximate": false,
           "kurtosis": 0.012,
           "max": 120.0,
@@ -133,6 +147,13 @@
     }
   ],
   "data_source": {
+    "csv_metadata": {
+      "delimiter": ",",
+      "delimiter_detection": {
+        "delimiter": ",",
+        "header_fields": 3
+      }
+    },
     "format": "csv",
     "path": "range_bounds.csv",
     "size_bytes": 105,
@@ -143,43 +164,51 @@
     "columns_detected": 3,
     "engine": "incremental",
     "error_count": 0,
-    "memory_peak_mb": 26.875,
+    "memory_peak_mb": 28.28515625,
     "ragged_row_count": 0,
     "recovery_events": [],
     "rows_processed": 5,
     "sampling_applied": false,
-    "scan_time_ms": 35,
+    "scan_time_ms": 19,
     "source_exhausted": true,
-    "throughput_rows_sec": 142.85714285714283,
+    "throughput_rows_sec": 263.15789473684214,
     "unterminated_quote": false
   },
   "generator": {
-    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
     "dirty": false,
-    "version": "0.13.1"
+    "version": "0.14.0"
   },
-  "id": "bacdd889-1a01-4952-b105-1a8f9e5cb496",
+  "id": "bb8df5e6-3427-4889-b4bd-2287160caeb9",
   "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
     "key_column_source": "declared",
     "key_uniqueness_units": "non_null_values",
     "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
     "outlier_units": "tested_values",
     "pattern_match_count": "validated",
     "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
     "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
     "text_length_unit": "unicode_scalar"
   },
   "quality": {
+    "columns_without_value_checks": [],
     "confidence": "Exact",
     "metrics": {
       "accuracy": {
         "negative_values_in_positive": 0,
-        "numeric_values_checked": 14,
+        "numeric_values_checked": 15,
         "outlier_ratio": 0.0,
         "outlier_values_checked": 14,
-        "range_violations": 1,
+        "range_violations": 2,
         "rule_values_checked": 10,
-        "rule_violating_values": 1
+        "rule_violating_values": 2
       },
       "completeness": {
         "complete_records_ratio": 100.0,
@@ -210,6 +239,7 @@
       },
       "uniqueness": {
         "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
         "high_cardinality_warning": true,
         "key_uniqueness": 100.0,
         "rows_checked": 5
@@ -217,7 +247,7 @@
     },
     "scores": {
       "dimension_scores": {
-        "accuracy": 90.0,
+        "accuracy": 80.0,
         "completeness": 100.0,
         "consistency": 100.0,
         "precision": 44.44,
@@ -225,12 +255,12 @@
         "uniqueness": 100.0,
         "validity": null
       },
-      "overall_score": 94.65
+      "overall_score": 92.78
     }
   },
   "quality_status": {
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-15T13:36:44.746838300+00:00"
+  "timestamp": "2026-11-17T18:32:07.376158100+00:00"
 }

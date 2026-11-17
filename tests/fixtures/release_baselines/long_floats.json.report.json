@@ -3,7 +3,14 @@
     "columns": {
       "selection": "all"
     },
-    "pattern_locale": "none"
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
   },
   "column_profiles": [
     {
@@ -16,6 +23,14 @@
       "stats": {
         "Numeric": {
           "coefficient_of_variation": 54.01,
+          "exact": {
+            "max": "7",
+            "median": "4",
+            "min": "1",
+            "q1": "2.5",
+            "q2": "4",
+            "q3": "5.5"
+          },
           "is_approximate": false,
           "kurtosis": -1.2,
           "max": 7.0,
@@ -50,17 +65,26 @@
       "locale_number_count": 0,
       "name": "v",
       "null_count": 0,
-      "patterns": [],
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.11428571428571428,
+          "match_count": 2,
+          "match_percentage": 28.57142857142857,
+          "name": "Scientific Notation",
+          "regex": "^[-+]?\\d+(\\.\\d+)?[eE][-+]?\\d+$"
+        }
+      ],
       "stats": {
         "Numeric": {
           "coefficient_of_variation": 109.54,
           "is_approximate": false,
           "kurtosis": -3.3333,
           "max": 1000000000000000.0,
-          "mean": 500000000000000.2,
+          "mean": 500000000000000.0,
           "median": 500000000000000.7,
           "min": 0.0,
-          "mode": 1000000000000000.0,
+          "mode": 0.0,
           "outlier_count": 0,
           "quartiles": {
             "iqr": 999999999999999.6,
@@ -68,9 +92,9 @@
             "q2": 500000000000000.75,
             "q3": 1000000000000000.0
           },
-          "skewness": -0.0,
-          "std_dev": 547722557505165.8,
-          "variance": 2.999999999999997e+29
+          "skewness": 0.0,
+          "std_dev": 547722557505000.0,
+          "variance": 3e+29
         }
       },
       "total_count": 7,
@@ -80,7 +104,7 @@
         "numeric": 6,
         "text": 1
       },
-      "unique_count": 4,
+      "unique_count": 7,
       "unique_count_is_approximate": false
     }
   ],
@@ -102,22 +126,30 @@
     "source_exhausted": true
   },
   "generator": {
-    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
     "dirty": false,
-    "version": "0.13.1"
+    "version": "0.14.0"
   },
-  "id": "0474f1bc-baa8-483e-badc-7185e5f5f509",
+  "id": "59d4dd2c-cc9a-43f2-9e8d-e80b0e0fee32",
   "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
     "key_column_source": "declared",
     "key_uniqueness_units": "non_null_values",
     "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
     "outlier_units": "tested_values",
     "pattern_match_count": "validated",
     "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
     "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
     "text_length_unit": "unicode_scalar"
   },
   "quality": {
+    "columns_without_value_checks": [],
     "confidence": "Exact",
     "metrics": {
       "accuracy": {
@@ -143,8 +175,8 @@
       },
       "low_sample_warning": true,
       "precision": {
-        "decimal_places_consistency": 83.33,
-        "inconsistent_precision_values": 1,
+        "decimal_places_consistency": 50.0,
+        "inconsistent_precision_values": 3,
         "numeric_values_checked": 6
       },
       "score_weights": {
@@ -158,7 +190,8 @@
       },
       "uniqueness": {
         "duplicate_rows": 0,
-        "high_cardinality_warning": false,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
         "key_uniqueness": 100.0,
         "rows_checked": 7
       }
@@ -168,17 +201,17 @@
         "accuracy": 100.0,
         "completeness": 100.0,
         "consistency": 92.86,
-        "precision": 83.33,
+        "precision": 50.0,
         "timeliness": null,
         "uniqueness": 100.0,
         "validity": null
       },
-      "overall_score": 97.17
+      "overall_score": 95.09
     }
   },
   "quality_status": {
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-15T13:36:44.705244900+00:00"
+  "timestamp": "2026-11-17T18:32:07.340123700+00:00"
 }

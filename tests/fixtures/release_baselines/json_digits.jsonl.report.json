@@ -3,7 +3,14 @@
     "columns": {
       "selection": "all"
     },
-    "pattern_locale": "none"
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
   },
   "column_profiles": [
     {
@@ -19,10 +26,9 @@
           "is_approximate": false,
           "kurtosis": -3.3333,
           "max": 1000000000000000.0,
-          "mean": 600000000000001.4,
+          "mean": 600000000000000.0,
           "median": 1000000000000000.0,
           "min": -0.0,
-          "mode": 1000000000000000.0,
           "outlier_count": 0,
           "quartiles": {
             "iqr": 999999999999993.0,
@@ -31,8 +37,8 @@
             "q3": 1000000000000000.0
           },
           "skewness": -0.6086,
-          "std_dev": 547722557505164.2,
-          "variance": 2.999999999999979e+29
+          "std_dev": 547722557505000.0,
+          "variance": 3e+29
         }
       },
       "total_count": 5,
@@ -42,7 +48,7 @@
         "numeric": 5,
         "text": 0
       },
-      "unique_count": 3,
+      "unique_count": 5,
       "unique_count_is_approximate": false
     },
     {
@@ -55,6 +61,15 @@
       "stats": {
         "Numeric": {
           "coefficient_of_variation": 55.9,
+          "exact": {
+            "max": "3",
+            "median": "1",
+            "min": "1",
+            "mode": "1",
+            "q1": "1",
+            "q2": "1",
+            "q3": "2"
+          },
           "is_approximate": false,
           "kurtosis": 0.3125,
           "max": 3.0,
@@ -89,20 +104,11 @@
       "locale_number_count": 1,
       "name": "w",
       "null_count": 1,
-      "patterns": [
-        {
-          "category": "other",
-          "confidence": 0.2,
-          "match_count": 3,
-          "match_percentage": 75.0,
-          "name": "Scientific Notation",
-          "regex": "^[-+]?\\d+(\\.\\d+)?[eE][-+]?\\d+$"
-        }
-      ],
+      "patterns": [],
       "stats": {
         "Text": {
-          "avg_length": 4.5,
-          "max_length": 5,
+          "avg_length": 20.25,
+          "max_length": 26,
           "min_length": 3
         }
       },
@@ -135,22 +141,30 @@
     "source_exhausted": true
   },
   "generator": {
-    "commit": "93e4aeb478bdd0889efef642fca3224fe35f3cfc",
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
     "dirty": false,
-    "version": "0.13.1"
+    "version": "0.14.0"
   },
-  "id": "f8cb72cc-c331-441d-bdc7-ee43f26ce190",
+  "id": "f5746f8d-1ae0-4ef6-9be4-56ebacf26fd4",
   "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
     "key_column_source": "declared",
     "key_uniqueness_units": "non_null_values",
     "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
     "outlier_units": "tested_values",
     "pattern_match_count": "validated",
     "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
     "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
     "text_length_unit": "unicode_scalar"
   },
   "quality": {
+    "columns_without_value_checks": [],
     "confidence": "Exact",
     "metrics": {
       "accuracy": {
@@ -171,13 +185,13 @@
       "consistency": {
         "data_type_consistency": 92.86,
         "encoding_issues": 0,
-        "format_violations": 0,
+        "format_violations": 1,
         "values_checked": 14
       },
       "low_sample_warning": true,
       "precision": {
-        "decimal_places_consistency": 80.0,
-        "inconsistent_precision_values": 1,
+        "decimal_places_consistency": 60.0,
+        "inconsistent_precision_values": 2,
         "numeric_values_checked": 5
       },
       "score_weights": {
@@ -190,8 +204,9 @@
         "validity": 0.1
       },
       "uniqueness": {
-        "duplicate_rows": 2,
-        "high_cardinality_warning": false,
+        "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
         "key_uniqueness": 100.0,
         "rows_checked": 5
       }
@@ -200,18 +215,18 @@
       "dimension_scores": {
         "accuracy": 100.0,
         "completeness": 86.67,
-        "consistency": 92.86,
-        "precision": 80.0,
+        "consistency": 85.71,
+        "precision": 60.0,
         "timeliness": null,
-        "uniqueness": 60.0,
+        "uniqueness": 100.0,
         "validity": null
       },
-      "overall_score": 85.3
+      "overall_score": 89.76
     }
   },
   "quality_status": {
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-15T13:36:44.698706700+00:00"
+  "timestamp": "2026-11-17T18:32:07.321029800+00:00"
 }
