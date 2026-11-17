@@ -147,9 +147,10 @@ sum. `mode` is counted over the exact values, so distinct values that round
 alike do not tie for it, and is reported as the nearest `f64` of the exact
 mode. `quartiles.iqr` and the fences `outlier_count` uses come from exact
 differences between neighbouring values, so a spread of a few units has an IQR
-of a few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken from
-the nearest `f64` of each value, so `iqr` can differ from `q3 - q1` as
-reported.
+of a few units (#1038). `min` and `max` are the nearest `f64` of each value.
+`median`, `q1`, `q2` and `q3` are interpolated on the exact values and reported
+as the nearest `f64` of the result, so the median of -2^53 and 2^53 + 1 is 0.5
+(#1334). `iqr` can still differ from `q3 - q1` as reported.
 
 `stats.exact` carries the order statistics themselves, as canonical decimal
 strings (no exponent, no trailing zeros in a fraction): `min`, `max`, `median`,
@@ -167,15 +168,20 @@ Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
 deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
 `outlier_count` are exact as above, `mean` sums each value's remainder beyond
-its nearest `f64` in the compensated sum, as it does for integers (#1262), and
-the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
+its nearest `f64` in the compensated sum, as it does for integers (#1262),
+`median` and the quartiles of a typed decimal are interpolated on the exact
+values as for integers (#1334), and the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
 polars, or a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column) is held exactly
 from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
 as the float it may be, as the same column typed `Float64` does. A CSV of a
 decimal column therefore serializes what the typed column does when its values
-have at most 10 significant digits or at least 18, and may differ in between. A
+have at most 10 significant digits or at least 18, and may differ in between.
+One exception from 18 digits: text interpolates `median` and the quartiles in
+`f64`, so where the typed column reports 0.01 as the median of
+-1000000000000000000.00 and 1000000000000000000.02, the CSV reports 0.0
+(#1311). A
 decimal too wide to hold exactly, past 38 digits, keeps a spread only where it
 stands well above the rounding of its nearest `f64` (2^-32 of the magnitude);
 below that, a constant column of such values included, the spread statistics
