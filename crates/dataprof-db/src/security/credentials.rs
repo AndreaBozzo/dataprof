@@ -127,8 +127,10 @@ impl DatabaseCredentials {
                 conn_info.database = Some(database.clone());
             }
 
-            for (key, value) in &self.extra_params {
-                conn_info.query_params.insert(key.clone(), value.clone());
+            let mut extra_params: Vec<_> = self.extra_params.iter().collect();
+            extra_params.sort();
+            for (key, value) in extra_params {
+                conn_info.set_query_param(key, value);
             }
 
             conn_info.to_original_string()
@@ -190,6 +192,31 @@ impl DatabaseCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A password from the environment is literal: it reaches the URL
+    /// encoded, and the URL's own encoded query values and their order
+    /// survive the override pass.
+    #[test]
+    fn an_override_keeps_the_url_encoded_and_in_order() {
+        let creds = DatabaseCredentials {
+            username: Some("envprobe".to_string()),
+            password: Some("p@:/ %".to_string()),
+            ..Default::default()
+        };
+        let url = creds.apply_to_connection_string(
+            "postgresql://u@h:5432/db?sslmode=disable&ssl-mode=verify-full&sslrootcert=%2Fcerts%2FCA%26good.crt",
+        );
+        assert_eq!(
+            url,
+            "postgresql://envprobe:p%40%3A%2F%20%25@h:5432/db?sslmode=disable&ssl-mode=verify-full&sslrootcert=%2Fcerts%2FCA%26good.crt"
+        );
+        let parsed = crate::connection::ConnectionInfo::parse(&url).unwrap();
+        assert_eq!(parsed.password.as_deref(), Some("p@:/ %"));
+        assert_eq!(
+            parsed.query_param("sslrootcert"),
+            Some("/certs/CA&good.crt")
+        );
+    }
 
     #[test]
     fn test_credentials_masking() {

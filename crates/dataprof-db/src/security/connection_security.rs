@@ -24,9 +24,9 @@ pub fn validate_connection_security(
         }
 
         if database_type != "sqlite" {
-            let has_ssl_params = conn_info.query_params.contains_key("sslmode")
-                || conn_info.query_params.contains_key("tls")
-                || conn_info.query_params.contains_key("ssl");
+            let has_ssl_params = ["sslmode", "tls", "ssl"]
+                .iter()
+                .any(|key| conn_info.query_param(key).is_some());
 
             if !has_ssl_params && !ssl_config.require_ssl {
                 warnings.push(
@@ -69,19 +69,35 @@ pub fn load_secure_database_config(
 ) -> Result<(String, SslConfig), DataProfilerError> {
     let credentials = DatabaseCredentials::from_environment(database_type);
 
+    // The credentials hold literal values, so the base URL is serialized with
+    // each part encoded: a database name `app?sslmode=disable` interpolated
+    // as text became a query pair that overrode the TLS configuration.
+    let base_url = |scheme: &str, port: u16, database: &str| {
+        crate::connection::ConnectionInfo {
+            scheme: scheme.to_string(),
+            host: Some(
+                credentials
+                    .host
+                    .clone()
+                    .unwrap_or_else(|| "localhost".to_string()),
+            ),
+            port: Some(credentials.port.unwrap_or(port)),
+            username: None,
+            password: None,
+            database: Some(
+                credentials
+                    .database
+                    .clone()
+                    .unwrap_or_else(|| database.to_string()),
+            ),
+            path: None,
+            query_params: Vec::new(),
+        }
+        .to_original_string()
+    };
     let base_connection_string = match database_type {
-        "postgresql" => {
-            let host = credentials.host.as_deref().unwrap_or("localhost");
-            let port = credentials.port.unwrap_or(5432);
-            let database = credentials.database.as_deref().unwrap_or("postgres");
-            format!("postgresql://{}:{}/{}", host, port, database)
-        }
-        "mysql" => {
-            let host = credentials.host.as_deref().unwrap_or("localhost");
-            let port = credentials.port.unwrap_or(3306);
-            let database = credentials.database.as_deref().unwrap_or("mysql");
-            format!("mysql://{}:{}/{}", host, port, database)
-        }
+        "postgresql" => base_url("postgresql", 5432, "postgres"),
+        "mysql" => base_url("mysql", 3306, "mysql"),
         "sqlite" => credentials
             .database
             .clone()

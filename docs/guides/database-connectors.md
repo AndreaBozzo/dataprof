@@ -234,7 +234,10 @@ The synchronous Rust snippets below go inside `fn main()`.
 
 `SslConfig::production()` requires TLS with certificate and hostname verification
 (PostgreSQL `verify-full`, MySQL `VERIFY_IDENTITY`). A TLS mode written in the
-URL wins over `ssl_config`.
+URL wins over `ssl_config`, under either spelling (`sslmode`, `ssl-mode`) and
+percent-encoded or not. When the URL sets the mode twice, the last one applies,
+as the driver reads it. Certificate paths in `ssl_config` are literal file
+names and are encoded for the URL.
 
 ```rust
 use dataprof::SslConfig;
@@ -274,7 +277,9 @@ Avoid embedding credentials in connection strings. Set environment variables ins
 | `DATABASE_URL` | Generic connection URL |
 
 With `load_credentials_from_env: true` (the default), credential environment
-variables can override an explicit URL. SSL environment variables are loaded
+variables can override an explicit URL. Their values are literal: a password
+with `@`, `:` or `%` in it is encoded for the URL, while one written in the URL
+itself must be percent-encoded as usual. SSL environment variables are loaded
 when the connection string is empty; otherwise configure `ssl_config` or URL
 parameters.
 

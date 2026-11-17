@@ -62,12 +62,13 @@ serde = { version = "1.0", features = ["derive"] }
 # float_roundtrip preserves the exact serialized f64 on load, including raw
 # execution metadata, so resaving a canonical report cannot change its last bit.
 serde_json = { version = "1.0.149", features = ["preserve_order", "float_roundtrip"] }
-sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio-rustls", "chrono", "uuid"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "chrono", "uuid"] }
 sysinfo = "0.40"
 thiserror = "2.0"
 tokio = "1.49"
 tokio-util = { version = "0.7", features = ["io-util"] }
 url = "2.5.8"
+percent-encoding = "2.3.2"
 uuid = { version = "1.0", features = ["v4"] }
 wide = "1.2.0"
 # Dev dependencies

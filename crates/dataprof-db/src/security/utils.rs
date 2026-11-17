@@ -43,30 +43,44 @@ pub fn sanitize_error_message(error_message: &str) -> String {
     sanitized
 }
 
-/// Add query parameter to connection string
+/// Add query parameter to connection string.
+///
+/// `key` and `value` are literal and are percent-encoded here: a certificate
+/// path containing `&` or `=` stays one value instead of starting another
+/// pair the driver would apply.
 pub fn add_query_param(connection_string: String, key: &str, value: &str) -> String {
-    if connection_string.contains('?') {
-        format!("{}&{}={}", connection_string, key, value)
-    } else {
-        format!("{}?{}={}", connection_string, key, value)
-    }
+    let pair = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair(key, value)
+        .finish();
+    // The pair goes before any `#fragment`: after it, the driver never reads
+    // the setting.
+    let (base, fragment) = split_fragment(&connection_string);
+    let separator = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{separator}{pair}{fragment}")
+}
+
+/// The URL before its `#fragment`, and the fragment with its `#`.
+fn split_fragment(connection_string: &str) -> (&str, &str) {
+    connection_string
+        .find('#')
+        .map_or((connection_string, ""), |at| connection_string.split_at(at))
 }
 
 /// Add a query parameter unless the connection string already sets one of
 /// `aliases` (the names the driver accepts for the same setting).
 ///
 /// sqlx applies query pairs in order, so a value appended after the caller's
-/// own would override it. A setting the caller wrote in the URL wins.
+/// own would override it. A setting the caller wrote in the URL wins. Names
+/// are compared decoded, as sqlx reads them: `ssl%6dode` is `sslmode`.
 pub fn add_query_param_if_absent(
     connection_string: String,
     aliases: &[&str],
     value: &str,
 ) -> String {
-    let already_set = connection_string.split_once('?').is_some_and(|(_, query)| {
-        query.split('&').any(|pair| {
-            let key = pair.split_once('=').map_or(pair, |(key, _)| key);
-            aliases.contains(&key)
-        })
+    // Only the query counts: text after `#` is a fragment the driver ignores.
+    let (base, _) = split_fragment(&connection_string);
+    let already_set = base.split_once('?').is_some_and(|(_, query)| {
+        url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| aliases.contains(&&*key))
     });
     if already_set {
         connection_string

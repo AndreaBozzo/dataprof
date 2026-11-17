@@ -29,6 +29,7 @@ dataprof-metrics = { workspace = true }
 dataprof-runtime = { workspace = true }
 futures = { workspace = true, optional = true }
 log = { workspace = true }
+percent-encoding = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true, features = ["raw_value"] }

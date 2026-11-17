@@ -469,6 +469,39 @@ mod postgres_tests {
         assert!(connector.connect().await.is_err());
     }
 
+    /// sqlx reads query names decoded: an encoded `sslmode` is still the
+    /// caller's mode, and the default `prefer` appended after it connected.
+    /// A CA filename with `&` in it started a pair that disabled TLS.
+    #[tokio::test]
+    async fn test_postgres_tls_settings_survive_url_encoding() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        for load_credentials_from_env in [false, true] {
+            let config = DatabaseConfig {
+                load_credentials_from_env,
+                ..postgres_config(&format!(
+                    "{url}{separator}ssl%6dode=verify-full&sslrootcert=no-such-dir/ca.crt"
+                ))
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+
+            let ssl_config = dataprof::SslConfig {
+                ca_cert_path: Some("no-such-dir/CA&sslmode=disable".to_string()),
+                ..dataprof::SslConfig::production()
+            };
+            let config = DatabaseConfig {
+                ssl_config: Some(ssl_config),
+                load_credentials_from_env,
+                ..postgres_config(&url)
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+        }
+    }
+
     #[tokio::test]
     async fn test_postgres_profile_query() {
         let Some(url) = postgres_url() else {
@@ -666,6 +699,40 @@ mod mysql_tests {
         };
         let mut connector = create_connector(config).unwrap();
         assert!(connector.connect().await.is_err());
+    }
+
+    /// sqlx reads query names decoded: an encoded `ssl-mode` is still the
+    /// caller's mode, and the default `PREFERRED` appended after it
+    /// connected. A CA filename with `&` in it started a pair that disabled
+    /// TLS.
+    #[tokio::test]
+    async fn test_mysql_tls_settings_survive_url_encoding() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        for load_credentials_from_env in [false, true] {
+            let config = DatabaseConfig {
+                load_credentials_from_env,
+                ..mysql_config(&format!(
+                    "{url}{separator}ssl%2Dmode=VERIFY_CA&ssl-ca=no-such-dir/ca.crt"
+                ))
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+
+            let ssl_config = dataprof::SslConfig {
+                ca_cert_path: Some("no-such-dir/CA&ssl-mode=DISABLED".to_string()),
+                ..dataprof::SslConfig::production()
+            };
+            let config = DatabaseConfig {
+                ssl_config: Some(ssl_config),
+                load_credentials_from_env,
+                ..mysql_config(&url)
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+        }
     }
 
     #[tokio::test]
