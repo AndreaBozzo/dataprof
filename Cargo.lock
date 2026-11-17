@@ -970,6 +970,7 @@ dependencies = [
  "dataprof-runtime",
  "futures",
  "log",
+ "percent-encoding",
  "regex",
  "serde",
  "serde_json",

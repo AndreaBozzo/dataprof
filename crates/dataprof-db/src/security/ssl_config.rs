@@ -302,6 +302,29 @@ mod tests {
             assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
         }
 
+        /// sqlx decodes query names, so an encoded `sslmode` is the caller's
+        /// mode too; appending the default after it weakened it to `prefer`.
+        #[test]
+        fn an_encoded_mode_name_in_the_url_is_not_overridden() {
+            let got = mode(
+                &SslConfig::default(),
+                "postgresql://u@h/db?ssl%6dode=verify-full",
+            );
+            assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
+        }
+
+        /// A CA path is one query value: an `&` in the filename started a
+        /// second pair that disabled TLS.
+        #[test]
+        fn a_ca_path_cannot_add_a_query_pair() {
+            let config = SslConfig {
+                ca_cert_path: Some("/certs/CA&sslmode=disable".to_string()),
+                ..SslConfig::production()
+            };
+            let got = mode(&config, "postgresql://u@h/db");
+            assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
+        }
+
         #[test]
         fn require_ssl_raises_an_optional_mode() {
             // ENVIRONMENT=production sets these two flags over the default
@@ -362,6 +385,25 @@ mod tests {
             };
             let got = mode(&config, "mysql://u@h/db");
             assert!(matches!(got, MySqlSslMode::Required), "{got:?}");
+        }
+
+        #[test]
+        fn an_encoded_mode_name_in_the_url_is_not_overridden() {
+            let got = mode(
+                &SslConfig::default(),
+                "mysql://u@h/db?ssl%2Dmode=VERIFY_IDENTITY",
+            );
+            assert!(matches!(got, MySqlSslMode::VerifyIdentity), "{got:?}");
+        }
+
+        #[test]
+        fn a_ca_path_cannot_add_a_query_pair() {
+            let config = SslConfig {
+                ca_cert_path: Some("/certs/CA&ssl-mode=DISABLED".to_string()),
+                ..SslConfig::production()
+            };
+            let got = mode(&config, "mysql://u@h/db");
+            assert!(matches!(got, MySqlSslMode::VerifyIdentity), "{got:?}");
         }
 
         #[test]

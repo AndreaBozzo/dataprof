@@ -68,6 +68,7 @@ thiserror = "2.0"
 tokio = "1.49"
 tokio-util = { version = "0.7", features = ["io-util"] }
 url = "2.5.8"
+percent-encoding = "2.3.2"
 uuid = { version = "1.0", features = ["v4"] }
 wide = "1.2.0"
 # Dev dependencies

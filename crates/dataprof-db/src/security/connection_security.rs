@@ -24,9 +24,9 @@ pub fn validate_connection_security(
         }
 
         if database_type != "sqlite" {
-            let has_ssl_params = conn_info.query_params.contains_key("sslmode")
-                || conn_info.query_params.contains_key("tls")
-                || conn_info.query_params.contains_key("ssl");
+            let has_ssl_params = ["sslmode", "tls", "ssl"]
+                .iter()
+                .any(|key| conn_info.query_param(key).is_some());
 
             if !has_ssl_params && !ssl_config.require_ssl {
                 warnings.push(

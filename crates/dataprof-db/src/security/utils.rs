@@ -43,12 +43,19 @@ pub fn sanitize_error_message(error_message: &str) -> String {
     sanitized
 }
 
-/// Add query parameter to connection string
+/// Add query parameter to connection string.
+///
+/// `key` and `value` are literal and are percent-encoded here: a certificate
+/// path containing `&` or `=` stays one value instead of starting another
+/// pair the driver would apply.
 pub fn add_query_param(connection_string: String, key: &str, value: &str) -> String {
+    let pair = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair(key, value)
+        .finish();
     if connection_string.contains('?') {
-        format!("{}&{}={}", connection_string, key, value)
+        format!("{}&{}", connection_string, pair)
     } else {
-        format!("{}?{}={}", connection_string, key, value)
+        format!("{}?{}", connection_string, pair)
     }
 }
 
@@ -56,17 +63,15 @@ pub fn add_query_param(connection_string: String, key: &str, value: &str) -> Str
 /// `aliases` (the names the driver accepts for the same setting).
 ///
 /// sqlx applies query pairs in order, so a value appended after the caller's
-/// own would override it. A setting the caller wrote in the URL wins.
+/// own would override it. A setting the caller wrote in the URL wins. Names
+/// are compared decoded, as sqlx reads them: `ssl%6dode` is `sslmode`.
 pub fn add_query_param_if_absent(
     connection_string: String,
     aliases: &[&str],
     value: &str,
 ) -> String {
     let already_set = connection_string.split_once('?').is_some_and(|(_, query)| {
-        query.split('&').any(|pair| {
-            let key = pair.split_once('=').map_or(pair, |(key, _)| key);
-            aliases.contains(&key)
-        })
+        url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| aliases.contains(&&*key))
     });
     if already_set {
         connection_string
