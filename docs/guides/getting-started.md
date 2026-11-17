@@ -29,6 +29,8 @@ uv pip install dataprof
 
 The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. Database helpers are not in the wheels: build the extension from source with the corresponding Rust features.
 
+Options marked 0.14 below need dataprof 0.14 or later.
+
 ## Your First Profile
 
 ### With Python
@@ -119,6 +121,59 @@ A rule whose input the report does not carry, such as patterns when the
 than reading as clean. The codes, severities and thresholds are listed in the
 [Python API Guide](../python/README.md#findings----what-deserves-attention).
 
+## Gate a Batch and Keep a Baseline
+
+`check()` returns `pass` when every requirement is met, `fail` when at least
+one is violated, and `inconclusive` when no violation is proven but a check
+cannot be evaluated. `result.passed` is true only for a pass.
+
+```python
+result = report.check(
+    min_rows=1,
+    require_columns=["order_id", "customer_id"],
+    max_null_count={"order_id": 0},
+    unique_columns=["order_id"],  # 0.14: repeated non-null keys
+)
+print(result.verdict)
+for check in [*result.violations, *result.unevaluated]:
+    print(check.code, check.column, check.reason)
+```
+
+For a checkpoint, compare each batch with the last accepted report. Save the
+candidate separately and promote it only on a pass. These shell commands use
+0.13 rules; the rolling clock option needs 0.14:
+
+```bash
+# First run: absolute rules only.
+python -m dataprof.check orders.csv --min-rows 1 --min-quality 90 --report candidate.json \
+  && mv candidate.json baseline.json
+
+# Later runs: absolute rules plus changes from the accepted baseline.
+python -m dataprof.check orders.csv --min-rows 1 --min-quality 90 \
+  --baseline baseline.json --max-quality-drop 5 --forbid-removed-columns \
+  --timeliness-clock rolling --report candidate.json --json > verdict.json \
+  && mv candidate.json baseline.json
+```
+
+Exit codes are `0` pass, `1` fail, `2` inconclusive, and `3` for an argument,
+policy, input, baseline or output error. `--report` writes the full report for
+all three verdicts. A metric definition that changed or was not recorded can
+leave an affected change rule `definition_not_comparable`. Inspect it before
+regenerating the baseline with the current build. Retyping a column appears in
+baseline diagnostics; it does not itself fail the gate.
+
+For daily runs, `timeliness_clock="rolling"` allows two clocks that each used
+their own run's UTC day. For a reproducible comparison, profile both runs with
+the same `reference_date` and keep the default `timeliness_clock="fixed"`.
+The [checkpoint example](../../examples/README.md#4-baseline-checkpoint) covers
+first runs, promotion, schema changes and older baselines.
+
+In 0.14, add `max_row_count_drop=10` and `max_row_count_growth=20` to a
+baseline check for volume changes, and `max_date_age={"published_at": 3}` for
+freshness. `max_date_gap={"published_at": 1}` checks the largest internal gap
+between consecutive distinct days; it catches a missing period even when the
+newest date is fresh. See the [cookbook](examples.md#freshness-and-missing-days).
+
 ## Understanding Quality Metrics
 
 dataprof evaluates seven quality dimensions informed by ISO 8000 and ISO/IEC
@@ -205,6 +260,20 @@ Measures duplication in the data.
   key from a foreign key
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
+Whole-row duplicates and key duplicates answer separate questions. The
+`key_duplicates` finding reads the first declared `identifier_columns` entry
+present in the report. `check(unique_columns=["order_id"])` checks that
+column directly without requiring a hint; nulls need their own count rule.
+
+The row tracker counts duplicates exactly up to 1,000,000 distinct rows by
+default, or fewer under memory pressure. In 0.14, raise that limit with
+`dp.profile("orders.csv", duplicate_rows_exact_limit=2_000_000)` or
+`--duplicate-rows-exact-limit 2000000` in CI. An explicit limit keeps the exact
+set even past the memory budget, costing about 10 to 20 bytes per distinct
+row. Read `quality.uniqueness["duplicate_rows_approximate"]`; an estimate
+cannot settle `max_duplicate_rows`. This option does not raise the per-column
+distinct-count limit used by `unique_columns`.
+
 ### Accuracy
 
 Measures whether values fall within expected ranges.
@@ -277,6 +346,20 @@ places a business domain requires.
 
 ## Working with Different Formats
 
+| Input | Python entry point | Dependency or Rust feature |
+|---|---|---|
+| CSV, JSON, JSONL files | `dp.profile(path)` | Base wheel; no optional Rust feature |
+| Parquet file or bytes | `dp.profile(path)` or `dp.profile(data, format="parquet")` | Base wheel; Rust `parquet` is enabled by default |
+| pandas DataFrame | `dp.profile(frame)` | Install `dataprof[pandas]` or pandas; the conversion also needs pyarrow |
+| polars DataFrame | `dp.profile(frame)` | Install polars and pyarrow for its `to_arrow()` conversion; no pandas required |
+| Arrow table, batch, C array or C stream producer | `dp.profile(source)` | Install the producer, such as pyarrow; Rust `arrow` is enabled by default through `parquet` |
+| Dicts, lists of records, bytes, BytesIO | `dp.profile(source)` | Base wheel; bytes and BytesIO require `format=` |
+| Async files, bytes and HTTP URLs | `dataprof.asyncio.profile_file`, `profile_bytes`, `profile_url` | Base wheel; Rust `async-streaming`, plus `parquet-async` for remote Parquet |
+| PostgreSQL, MySQL, SQLite query | `dp.analyze_database_async(url, query)` | Source build with `python-async,database` and `postgres`, `mysql` or `sqlite`; no Python database extra |
+
+For a database source build, preserve the full wheel feature list as described
+in the [Python API guide](../python/README.md#database-profiling-source-build-only).
+
 ### CSV
 
 dataprof auto-detects the delimiter (`,`, `;`, `|`, `\t`) by analyzing the first few lines:
@@ -299,6 +382,10 @@ detection still applies:
 ```python
 report = dp.profile("messy.csv", csv_flexible=True)
 ```
+
+In 0.14, `report.csv_metadata` records the delimiter and how detection chose it.
+The findings `delimiter_ambiguous` and `header_not_split` identify detection
+that needs inspection.
 
 ### JSON and JSONL
 
@@ -344,6 +431,22 @@ report = dp.profile("data.parquet")           # full profiling reads row groups
 
 ## Scaling Up: Sampling and Stop Conditions
 
+Check `sampling_applied`, `source_exhausted` and `truncation_reason` before
+interpreting a report. A complete read may still use retained samples for
+statistics or quality. `report[name].is_approximate` flags sampled numeric
+statistics, `unique_count_is_approximate` flags an estimated distinct count,
+and `quality_sampled_dimensions` names sampled quality components.
+`quality_score_bounds` carries intervals where the scores can be bounded.
+A full-source score check on a complete read can decide from those intervals;
+an interval crossing the threshold leaves the check inconclusive.
+
+The [numeric contract](../schema/README.md#numeric-equality-contract) requires
+identical serialized metrics across routes for the same logical data, schema
+semantics, options and analyzed population. It compares Rust Serde output and
+Python `to_dict()` / `to_json()`, with provenance compared separately. Raw
+floats may differ in their final digits; values near `f64`'s limits belong to
+an approximate domain. A sample and a full scan need not have identical metrics.
+
 For very large files, you don't always need to read every row. dataprof provides two mechanisms to limit work.
 
 ### Sampling
@@ -373,10 +476,10 @@ only be drawn once the source has been seen to the end, so the file is still
 read in full and `reservoir(n)` holds `n` rows in memory. To read less, use a
 [stop condition](#stop-conditions) — the two compose.
 
-Sampling applies to CSV sources on the `auto` and `incremental` engines and to
-every `dataprof.asyncio` entry point. The columnar engine and the JSON and
-Parquet readers cannot sample row by row, so they raise rather than quietly
-returning a full profile.
+Row sampling works for CSV files on the `auto` and `incremental` engines and
+for CSV, JSON and JSONL inputs in `dataprof.asyncio`. Columnar CSV, synchronous
+JSON/JSONL, every Parquet reader and synchronous in-memory routes reject
+nontrivial sampling requests. `SamplingStrategy.none()` is accepted.
 
 ### Stop Conditions
 

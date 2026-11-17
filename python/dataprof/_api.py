@@ -150,8 +150,7 @@ def profile_file(
             first such row the profile reads: a row past ``max_rows`` is not
             judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
-            False. CSV bytes are always parsed strictly, and
-            ``engine="columnar"`` does not report the count.
+            False. CSV bytes are always parsed strictly.
         jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
             row — malformed JSON, or valid JSON that is not an object and so
             has no fields to profile: "skip" (default) skips it, counts it in
@@ -336,8 +335,7 @@ def profile(
             first such row the profile reads: a row past ``max_rows`` is not
             judged. A source ending inside a quoted field is likewise
             profiled with ``report.unterminated_quote`` set, or refused under
-            False. CSV bytes are always parsed strictly, and
-            ``engine="columnar"`` does not report the count.
+            False. CSV bytes are always parsed strictly.
         jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
             row — malformed JSON, or valid JSON that is not an object and so has
             no fields to profile — applied identically to file, bytes, and async
