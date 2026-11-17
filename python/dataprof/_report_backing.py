@@ -394,6 +394,7 @@ _METRIC_SEMANTICS = {
     "sampled_score_estimator": ("population_weighted",),
     "date_statistics": ("every_value",),
     "outlier_spread": ("nonzero_iqr",),
+    "date_forms": ("spaced_iso_datetimes",),
 }
 
 

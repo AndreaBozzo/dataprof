@@ -338,7 +338,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
 | `quality_columns_without_value_checks` | `list[dict] \| None` | Columns whose values no value-level check read, each `{"column": ..., "reason": "nested"}`: a struct, list or map column counts toward completeness and duplicate rows only. `[]` when every column was checked; `None` when there is no assessment or the report was written before 0.14. `repr()`, `to_markdown()`, `to_html()` and `to_llm_context()` print a note next to the score when it is not empty |
 | `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}, "metric_packs": ["schema", "statistics", "patterns", "quality"], "temporal_pairs": []}`, where `"none"` means no locale, a `columns=` projection reads `{"selection": "listed", "names": [...]}`, `metric_packs` lists the packs the run computed (`"schema"` always), and `temporal_pairs` the declared start/end pairs as `[{"start": ..., "end": ...}]`, sorted, each once, both absent before 0.14; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits", "sampled_score_estimator": "population_weighted", "date_statistics": "every_value", "outlier_spread": "nonzero_iqr"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits", "sampled_score_estimator": "population_weighted", "date_statistics": "every_value", "outlier_spread": "nonzero_iqr", "date_forms": "spaced_iso_datetimes"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
 | `execution_time_ms` | `int` | Total processing time |
@@ -1286,16 +1286,20 @@ unevaluated, with one of these reasons:
   `json_number_reading` also for consistency, precision, uniqueness, accuracy,
   the overall score and the distinct count, `sampled_score_estimator` also for
   consistency, accuracy, timeliness, validity, precision and the overall
-  score, `outlier_spread` also for accuracy and the overall score), when the
-  two reports do not both record it identically. A
-  baseline saved before 0.13 records neither. The last three are compared
+  score, `outlier_spread` also for accuracy and the overall score,
+  `date_forms` also for consistency, timeliness and the overall score), when
+  the two reports do not both record it identically. A
+  baseline saved before 0.13 records neither. The last four are compared
   only on runs they can move: `json_number_reading` when either source may
   hold a JSON number (JSON, JSONL, a database, or a format not recorded),
   `sampled_score_estimator` when either score was computed over a sample of
-  the values the scan read, and `outlier_spread` when either side has a
+  the values the scan read, `outlier_spread` when either side has a
   numeric column whose exact quartiles coincide or were not recorded, or an
-  accuracy score over such a sample. A scan that stopped early reaches
-  neither by itself;
+  accuracy score over such a sample, and `date_forms` when either side has a
+  date column, a text column with a value of 20 characters or more, a column
+  named by `temporal_columns` or `temporal_pairs`, or a column whose type or
+  lengths were not recorded. A scan that stopped early
+  reaches none of them by itself;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
   the score weights for the overall score, `identifier_columns` (in the order

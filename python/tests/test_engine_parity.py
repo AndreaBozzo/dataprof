@@ -306,6 +306,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "sampled_score_estimator": "population_weighted",
         "date_statistics": "every_value",
         "outlier_spread": "nonzero_iqr",
+        "date_forms": "spaced_iso_datetimes",
     }
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected

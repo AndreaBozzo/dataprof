@@ -46,7 +46,7 @@ def test_no_score_moves_against_the_last_release_without_a_definition():
     inputs = sorted(
         p for p in CORPUS.iterdir() if p.name != "RELEASE" and not p.name.endswith(".report.json")
     )
-    assert len(inputs) >= 6, inputs
+    assert len(inputs) >= 7, inputs
 
     wrong = []
     for path in inputs:
@@ -93,7 +93,7 @@ def test_csv_and_parquet_decide_accuracy_and_overall_without_unreached_definitio
     # (accuracy_comparison does move them against 0.13), or waits on a setting
     # the release did not record, such as timeliness_clock.
     inputs = sorted(p for p in CORPUS.iterdir() if p.suffix in {".csv", ".parquet"})
-    assert len(inputs) >= 4, inputs
+    assert len(inputs) >= 5, inputs
 
     held = []
     for path in inputs:

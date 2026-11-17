@@ -15,6 +15,17 @@ import pytest
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
 CLEAN = {"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]}
 WITH_NULLS = {"id": [1, 2, 3, 4], "amount": [10, None, None, 40]}
+#: A text column beside spaced ISO datetimes with an offset, and a column of
+#: them alone, which 0.14 reads as dates and 0.13 as text (#1340).
+SPACED_DATETIMES = {
+    "id": [1, 2, 3],
+    "event": ["heartbeat", "2026-06-01 12:05:00+00:00", "restart"],
+    "logged_at": [
+        "2026-06-01 12:00:00+00:00",
+        "2026-06-01 12:05:00.250Z",
+        "2026-06-02 08:30:00+02:00",
+    ],
+}
 DRIFT: dict[str, Any] = {
     "max_quality_score_drop": 0,
     "max_dimension_score_drops": {"completeness": 0},
@@ -226,6 +237,8 @@ def _reached_by(run: str, tmp_path: Path) -> dp.ProfileReport:
         return dp.profile(CLEAN)
     if run == "flat":
         return dp.profile({"id": [1, 2, 3, 4], "amount": [10, 10, 10, 10]})
+    if run == "spaced":
+        return dp.profile(SPACED_DATETIMES)
     if run == "json":
         path = tmp_path / "clean.json"
         path.write_text(
@@ -240,6 +253,8 @@ def _reached_by(run: str, tmp_path: Path) -> dp.ProfileReport:
 @pytest.mark.parametrize(
     ("definition", "reads", "other", "run"),
     [
+        ("date_forms", "consistency", "uniqueness", "spaced"),
+        ("date_forms", "timeliness", "uniqueness", "spaced"),
         ("range_rule_count", "accuracy", "uniqueness", "clean"),
         ("key_uniqueness_units", "uniqueness", "accuracy", "clean"),
         ("outlier_units", "accuracy", "uniqueness", "clean"),
@@ -274,7 +289,8 @@ def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unev
 
 
 @pytest.mark.parametrize(
-    "definition", ["json_number_reading", "sampled_score_estimator", "outlier_spread"]
+    "definition",
+    ["json_number_reading", "sampled_score_estimator", "outlier_spread", "date_forms"],
 )
 def test_a_definition_no_run_can_reach_does_not_hold_a_score_open(definition: str):
     # A frame read in full, whose numeric columns all have spread: neither side
@@ -298,6 +314,41 @@ def test_a_definition_no_run_can_reach_does_not_hold_a_score_open(definition: st
     ]
     assert not held, held
     assert _find(result, "max_dimension_score_drop", "accuracy").status == "passed"
+
+
+def test_short_text_does_not_reach_date_forms():
+    # A text column whose longest value is shorter than any spaced datetime
+    # `date_forms` reads differently holds none, so a baseline without the
+    # definition decides consistency. One long value holds it open (#1340).
+    for codes, held in ((["ok", "fail", "ok"], False), (["ok", "fail", "x" * 20], True)):
+        report = dp.profile({"id": [1, 2, 3], "status": codes})
+        summary = report.to_dict()
+        del summary["metric_semantics"]["date_forms"]
+        result = report.check(
+            baseline=dp.ProfileReport.from_dict(summary),
+            max_dimension_score_drops={"consistency": 0},
+        )
+        reason = _find(result, "max_dimension_score_drop", "consistency").reason
+        assert (reason is not None) == held, (codes, reason)
+
+
+def test_a_temporal_hint_on_a_numeric_column_reaches_date_forms(tmp_path: Path):
+    # Timeliness parses a column named by `temporal_columns` whatever its type:
+    # a float column holding one spaced datetime with a fraction moves it
+    # (#1340 review). Without the hint the same numeric run is not reached.
+    path = tmp_path / "readings.csv"
+    readings = "".join(f"{i}.5\n" for i in range(1, 10))
+    path.write_text(f"reading\n{readings}2026-06-01 12:00:00.5\n")
+    for temporal, held in ((None, False), (["reading"], True)):
+        report = dp.profile(str(path), temporal_columns=temporal)
+        summary = report.to_dict()
+        del summary["metric_semantics"]["date_forms"]
+        result = report.check(
+            baseline=dp.ProfileReport.from_dict(summary),
+            max_dimension_score_drops={"consistency": 0},
+        )
+        reason = _find(result, "max_dimension_score_drop", "consistency").reason
+        assert (reason is not None) == held, (temporal, reason)
 
 
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):

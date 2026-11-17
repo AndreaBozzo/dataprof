@@ -23,6 +23,7 @@ CURRENT = {
     "sampled_score_estimator": "population_weighted",
     "date_statistics": "every_value",
     "outlier_spread": "nonzero_iqr",
+    "date_forms": "spaced_iso_datetimes",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -175,6 +176,8 @@ def _through_both_readers(value):
         {"date_statistics": None},
         {"outlier_spread": "every_column"},
         {"outlier_spread": None},
+        {"date_forms": "plain_spaced_datetimes"},
+        {"date_forms": None},
     ],
     ids=[
         "null",
@@ -206,6 +209,8 @@ def _through_both_readers(value):
         "null-date-statistics",
         "unknown-outlier-spread",
         "null-outlier-spread",
+        "unknown-date-forms",
+        "null-date-forms",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -247,6 +252,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"sampled_score_estimator": None},
         {"date_statistics": None},
         {"outlier_spread": None},
+        {"date_forms": None},
     ],
     ids=[
         "null",
@@ -263,6 +269,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         "null-sampled-score-estimator",
         "null-date-statistics",
         "null-outlier-spread",
+        "null-date-forms",
     ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):

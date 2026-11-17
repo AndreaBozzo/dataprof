@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use dataprof_core::{
-    AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource,
+    AccuracyComparison, AnalysisOptions, ColumnProfile, CsvSourceMetadata, DataSource, DateForms,
     DateStatistics, ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource,
     KeyUniquenessUnits, Locale, MetricPack, NullTokenSet, OutlierSpread, OutlierUnits,
     PatternMatchCount, QualityScoreWeights, RangeRuleCount, SampledScoreEstimator,
@@ -244,6 +244,17 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "OutlierSpread")]
     pub outlier_spread: Option<OutlierSpread>,
+    /// Which text forms read as dates.
+    ///
+    /// Absent means not recorded: through 0.13 the spaced ISO datetime with a
+    /// fraction or an offset (`2026-06-01 12:00:00+00:00`) was text.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "DateForms")]
+    pub date_forms: Option<DateForms>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -274,6 +285,7 @@ impl MetricSemantics {
             sampled_score_estimator: Some(SampledScoreEstimator::PopulationWeighted),
             date_statistics: Some(DateStatistics::EveryValue),
             outlier_spread: Some(OutlierSpread::NonzeroIqr),
+            date_forms: Some(DateForms::SpacedIsoDatetimes),
         }
     }
 
@@ -297,6 +309,7 @@ impl MetricSemantics {
             sampled_score_estimator,
             date_statistics,
             outlier_spread,
+            date_forms,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -312,6 +325,7 @@ impl MetricSemantics {
             && sampled_score_estimator.is_some()
             && date_statistics.is_some()
             && outlier_spread.is_some()
+            && date_forms.is_some()
     }
 }
 
@@ -1786,6 +1800,7 @@ mod tests {
             "sampled_score_estimator": "population_weighted",
             "date_statistics": "every_value",
             "outlier_spread": "nonzero_iqr",
+            "date_forms": "spaced_iso_datetimes",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);
@@ -1829,6 +1844,8 @@ mod tests {
             json!({"json_number_reading": null}),
             json!({"outlier_spread": "every_column"}),
             json!({"outlier_spread": null}),
+            json!({"date_forms": "plain_spaced_datetimes"}),
+            json!({"date_forms": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();
