@@ -339,8 +339,8 @@ def test_a_temporal_hint_on_a_numeric_column_reaches_date_forms(tmp_path: Path):
     path = tmp_path / "readings.csv"
     readings = "".join(f"{i}.5\n" for i in range(1, 10))
     path.write_text(f"reading\n{readings}2026-06-01 12:00:00.5\n")
-    for hints, held in (({}, False), ({"temporal_columns": ["reading"]}, True)):
-        report = dp.profile(str(path), **hints)
+    for temporal, held in ((None, False), (["reading"], True)):
+        report = dp.profile(str(path), temporal_columns=temporal)
         summary = report.to_dict()
         del summary["metric_semantics"]["date_forms"]
         result = report.check(
@@ -348,7 +348,7 @@ def test_a_temporal_hint_on_a_numeric_column_reaches_date_forms(tmp_path: Path):
             max_dimension_score_drops={"consistency": 0},
         )
         reason = _find(result, "max_dimension_score_drop", "consistency").reason
-        assert (reason is not None) == held, (hints, reason)
+        assert (reason is not None) == held, (temporal, reason)
 
 
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):
