@@ -77,6 +77,8 @@ inconvenient" is not a reason.
 | [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) | `rsa` 0.9.x | Not applicable — see below | 2026-10-01 |
 | [RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436) | `paste` 1.0.15 | Unmaintained, not a vulnerability; transitive via arrow-rs, no replacement available | 2026-10-01 |
 | [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) | `libsqlite3-sys` 0.30.1 | Applies only to the `sqlite` feature with an untrusted database file and its `-wal`; no fixed version reachable through SQLx. See below | 2027-01-09 |
+| [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) | `chrono` 0.4.45 | Unmaintained, not a vulnerability; used directly and by arrow-rs and SQLx. See below | 2027-02-01 |
+| [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555) | `chrono-tz` 0.10.4 | Unmaintained, not a vulnerability; transitive via arrow-array only. See below | 2027-02-01 |
 
 #### RUSTSEC-2023-0071 (Marvin attack in `rsa`)
 
@@ -127,6 +129,24 @@ with the `sqlite` feature need SQLite development files.
 
 This will be revisited when a SQLx release allows `libsqlite3-sys` 0.39, or by
 2027-01-09, whichever comes first.
+
+#### RUSTSEC-2026-0543 and RUSTSEC-2026-0555 (`chrono`, `chrono-tz` unmaintained)
+
+Both advisories mark the crates unmaintained
+([chronotope/chrono#1768](https://github.com/chronotope/chrono/issues/1768)).
+Neither reports a vulnerability, and no fixed version exists. They first failed
+the audit on 2026-11-17.
+
+dataprof parses, normalizes and formats dates with `chrono` in most of its
+crates. Its dependencies use it too: arrow-rs (`arrow-arith`, `arrow-array`,
+`arrow-cast`, `arrow-csv`, `arrow-json`, `parquet`) and SQLx. `chrono-tz`
+reaches the graph only through `arrow-array`; dataprof does not depend on it.
+Moving dataprof's own date code to `jiff` or `time` would therefore leave both
+crates in the graph.
+
+This will be revisited if a vulnerability is reported against either crate,
+if `chrono` gains a maintainer, if arrow-rs moves off it, or by 2027-02-01,
+whichever comes first.
 
 ## Security Best Practices
 
