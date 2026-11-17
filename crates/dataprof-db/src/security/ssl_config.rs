@@ -325,6 +325,19 @@ mod tests {
             assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
         }
 
+        /// The driver ignores a `#fragment`: a mode appended after it, or a
+        /// mode written inside it, never applied.
+        #[test]
+        fn a_fragment_neither_hides_nor_fakes_the_mode() {
+            for url in [
+                "postgresql://u@h/db#x",
+                "postgresql://u@h/db#?sslmode=disable",
+            ] {
+                let got = mode(&SslConfig::production(), url);
+                assert!(matches!(got, PgSslMode::VerifyFull), "{url}: {got:?}");
+            }
+        }
+
         #[test]
         fn require_ssl_raises_an_optional_mode() {
             // ENVIRONMENT=production sets these two flags over the default

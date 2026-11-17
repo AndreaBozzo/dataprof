@@ -13,6 +13,11 @@ const URL_COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+/// The host keeps the brackets and colons of an IPv6 literal. Any other
+/// delimiter is encoded, so a host from the environment such as
+/// `h/db?sslmode=disable` cannot add a path or query; it fails to resolve.
+const URL_HOST: &AsciiSet = &URL_COMPONENT.remove(b'[').remove(b']').remove(b':');
+
 /// Parse database connection string and extract components.
 ///
 /// `username`, `password`, `database` and `query_params` hold decoded, literal
@@ -166,7 +171,7 @@ impl ConnectionInfo {
         }
 
         if let Some(host) = &self.host {
-            url.push_str(host);
+            url.push_str(&utf8_percent_encode(host, URL_HOST).to_string());
             if let Some(port) = self.port {
                 url.push_str(&format!(":{}", port));
             }
@@ -283,6 +288,28 @@ mod tests {
         assert_eq!(info.password.as_deref(), Some("p@:/ %"));
         assert_eq!(info.database.as_deref(), Some("my db"));
         assert_eq!(info.to_original_string(), url);
+    }
+
+    /// A database name or host holding URL delimiters stays one component:
+    /// written as text, `?sslmode=disable` in it became a TLS setting.
+    #[test]
+    fn delimiters_in_a_database_or_host_add_no_query() {
+        let info = ConnectionInfo {
+            scheme: "postgresql".to_string(),
+            host: Some("h/db?sslmode=disable".to_string()),
+            port: Some(5432),
+            username: None,
+            password: None,
+            database: Some("app?sslmode=disable".to_string()),
+            path: None,
+            query_params: Vec::new(),
+        };
+        let reparsed = ConnectionInfo::parse(&info.to_original_string()).unwrap();
+        assert!(reparsed.query_params.is_empty(), "{reparsed:?}");
+        assert_eq!(reparsed.database.as_deref(), Some("app?sslmode=disable"));
+
+        let ipv6 = ConnectionInfo::parse("postgresql://u@[::1]:5432/db").unwrap();
+        assert_eq!(ipv6.to_original_string(), "postgresql://u@[::1]:5432/db");
     }
 
     #[test]
