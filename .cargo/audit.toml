@@ -29,4 +29,14 @@ ignore = [
     # allows the fixed libsqlite3-sys 0.39.
     # Reviewed 2026-11-09, next review 2027-01-09. See docs/SECURITY.md.
     "RUSTSEC-2026-0459",
+
+    # `chrono` is unmaintained (not a vulnerability). dataprof uses it directly
+    # and arrow-rs and SQLx depend on it, so no change in dataprof removes it.
+    # Reviewed 2026-11-17, next review 2027-02-01. See docs/SECURITY.md.
+    "RUSTSEC-2026-0543",
+
+    # `chrono-tz` is unmaintained (not a vulnerability). Reached only through
+    # arrow-array.
+    # Reviewed 2026-11-17, next review 2027-02-01. See docs/SECURITY.md.
+    "RUSTSEC-2026-0555",
 ]
