@@ -1017,11 +1017,25 @@ impl ReportSide {
 
     /// Whether a column the side scored may hold a spaced ISO datetime with
     /// a fraction or an offset, so that `date_forms` may move its consistency
-    /// and timeliness scores (#1340).
+    /// and timeliness scores (#1340). Timeliness parses a column named by
+    /// `temporal_columns` or `temporal_pairs` whatever its type, so a
+    /// populated one may, a numeric one included; a side that recorded no
+    /// hints may have named any column.
     pub(crate) fn may_hold_spaced_datetimes(&self) -> bool {
-        self.columns
-            .iter()
-            .any(ColumnSide::may_hold_spaced_datetime)
+        let temporal = self.semantic_hints.as_ref().map(|hints| {
+            hints
+                .temporal_columns
+                .iter()
+                .chain(&hints.temporal_pair_columns)
+                .collect::<HashSet<_>>()
+        });
+        self.columns.iter().any(|column| {
+            column.may_hold_spaced_datetime()
+                || (column.populated() != Some(false)
+                    && temporal
+                        .as_ref()
+                        .is_none_or(|names| names.contains(&column.name)))
+        })
     }
 
     /// Which columns the side profiled, or `None` when it did not record it.

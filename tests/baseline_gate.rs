@@ -68,11 +68,10 @@ const CLEAN_JSON: &str =
 /// dimensions are scored over part of the source.
 /// A text column beside spaced ISO datetimes with an offset, and a column of
 /// them alone, which 0.14 reads as dates and 0.13 as text (#1340).
-const SPACED_DATETIMES: &str = "id,event,logged_at
-    1,heartbeat,2026-06-01 12:00:00+00:00
-    2,2026-06-01 12:05:00+00:00,2026-06-01 12:05:00.250Z
-    3,restart,2026-06-02 08:30:00+02:00
-";
+const SPACED_DATETIMES: &str = "id,event,logged_at\n\
+    1,heartbeat,2026-06-01 12:00:00+00:00\n\
+    2,2026-06-01 12:05:00+00:00,2026-06-01 12:05:00.250Z\n\
+    3,restart,2026-06-02 08:30:00+02:00\n";
 
 fn sampled_csv() -> String {
     std::iter::once("id,amount\n".to_string())
@@ -617,23 +616,9 @@ fn short_text_does_not_reach_date_forms() {
     // A text column whose longest value is shorter than any spaced datetime
     // `date_forms` reads differently holds none, so a baseline without the
     // definition decides consistency. One long value holds it open (#1340).
-    let long = format!(
-        "id,status
-1,ok
-2,fail
-3,{}
-",
-        "x".repeat(20)
-    );
+    let long = format!("id,status\n1,ok\n2,fail\n3,{}\n", "x".repeat(20));
     for (contents, held) in [
-        (
-            "id,status
-1,ok
-2,fail
-3,ok
-",
-            false,
-        ),
+        ("id,status\n1,ok\n2,fail\n3,ok\n", false),
         (long.as_str(), true),
     ] {
         let report = profile(contents);
@@ -654,6 +639,39 @@ fn short_text_does_not_reach_date_forms() {
             Some("consistency"),
         ));
         assert_eq!(reason.is_some(), held, "{contents}: {reason:?}");
+    }
+}
+
+#[test]
+fn a_temporal_hint_on_a_numeric_column_reaches_date_forms() {
+    // Timeliness parses a column named by `temporal_columns` whatever its
+    // type: a float column holding one spaced datetime with a fraction moves
+    // it (#1340 review). Without the hint the same numeric run is not reached.
+    let rows: String = (1..=9).map(|i| format!("{i}.5\n")).collect();
+    let file = csv(&format!("reading\n{rows}2026-06-01 12:00:00.5\n"));
+    for (hinted, held) in [(false, false), (true, true)] {
+        let mut profiler = Profiler::new();
+        if hinted {
+            profiler = profiler.temporal_columns(vec!["reading".to_string()]);
+        }
+        let report = profiler.analyze_file(file.path()).unwrap();
+        let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        summary["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove("date_forms")
+            .expect("reports record date_forms");
+        let baseline = ReportSide::from_summary_json(&summary.to_string()).unwrap();
+        let result = QualityPolicy::new()
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .evaluate_against(&report, &baseline)
+            .unwrap();
+        let reason = reason(check(
+            &result,
+            CheckCode::MaxDimensionScoreDrop,
+            Some("consistency"),
+        ));
+        assert_eq!(reason.is_some(), held, "hinted {hinted}: {reason:?}");
     }
 }
 

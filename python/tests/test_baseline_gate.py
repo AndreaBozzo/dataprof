@@ -332,6 +332,25 @@ def test_short_text_does_not_reach_date_forms():
         assert (reason is not None) == held, (codes, reason)
 
 
+def test_a_temporal_hint_on_a_numeric_column_reaches_date_forms(tmp_path: Path):
+    # Timeliness parses a column named by `temporal_columns` whatever its type:
+    # a float column holding one spaced datetime with a fraction moves it
+    # (#1340 review). Without the hint the same numeric run is not reached.
+    path = tmp_path / "readings.csv"
+    readings = "".join(f"{i}.5\n" for i in range(1, 10))
+    path.write_text(f"reading\n{readings}2026-06-01 12:00:00.5\n")
+    for hints, held in (({}, False), ({"temporal_columns": ["reading"]}, True)):
+        report = dp.profile(str(path), **hints)
+        summary = report.to_dict()
+        del summary["metric_semantics"]["date_forms"]
+        result = report.check(
+            baseline=dp.ProfileReport.from_dict(summary),
+            max_dimension_score_drops={"consistency": 0},
+        )
+        reason = _find(result, "max_dimension_score_drop", "consistency").reason
+        assert (reason is not None) == held, (hints, reason)
+
+
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):
     path = tmp_path / "rows.csv"
     path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))
