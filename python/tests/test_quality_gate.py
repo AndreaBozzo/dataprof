@@ -309,6 +309,8 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "max_dimension_score_drops": [],
             "max_null_percentage_increase": [],
             "max_null_percentage_increase_any": None,
+            "max_null_count_increase": [],
+            "max_null_count_increase_any": None,
             "max_distinct_drop": [],
             "max_distinct_drop_any": None,
             "max_row_count_drop": None,

@@ -31,8 +31,9 @@
 //! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
 //! [`ReportDelta`] between it and the report, and evaluates rules about change:
 //! how far the overall score or a dimension score may drop, and how far a
-//! column's null percentage may rise, in points, how far a column's
-//! distinct count may fall, in percent of the baseline's (#1026), and how far
+//! column's null percentage may rise, in points, how far a column's null
+//! count may rise, in nulls (#1346), how far a column's distinct count may
+//! fall, in percent of the baseline's (#1026), and how far
 //! the row count may fall or grow, in percent of the baseline's (#1291). A
 //! change is decided only when both sides measured the same thing the same
 //! way. Otherwise the rule is left unevaluated, naming what differs:
@@ -484,6 +485,9 @@ pub enum CheckCode {
     /// A column's null percentage may rise at most the threshold's number of
     /// points above the baseline's.
     MaxNullPercentageIncrease,
+    /// A column's null count may rise at most the threshold's number of nulls
+    /// above the baseline's.
+    MaxNullCountIncrease,
     /// A column's distinct count may fall at most the threshold's percentage
     /// of the baseline's, unless its distinct share of non-null values held.
     MaxDistinctDrop,
@@ -515,6 +519,7 @@ impl fmt::Display for CheckCode {
             Self::MaxRowCountDrop => write!(f, "max_row_count_drop"),
             Self::MaxRowCountGrowth => write!(f, "max_row_count_growth"),
             Self::MaxNullPercentageIncrease => write!(f, "max_null_percentage_increase"),
+            Self::MaxNullCountIncrease => write!(f, "max_null_count_increase"),
             Self::MaxDistinctDrop => write!(f, "max_distinct_drop"),
             Self::RequireColumn => write!(f, "require_column"),
             Self::ForbidRemovedColumn => write!(f, "forbid_removed_column"),
@@ -539,6 +544,9 @@ pub enum MetricValue {
     /// A number of whole days. An age is negative when the date lies after
     /// the reference date.
     Days(i64),
+    /// A change in a count of rows or values, this report's minus the
+    /// baseline's: negative when the count fell.
+    CountChange(i64),
 }
 
 impl fmt::Display for MetricValue {
@@ -549,6 +557,7 @@ impl fmt::Display for MetricValue {
             Self::Count(count) => write!(f, "{count}"),
             Self::Percentage(value) => write!(f, "{value:.2}"),
             Self::Days(days) => write!(f, "{days}"),
+            Self::CountChange(change) => write!(f, "{change}"),
         }
     }
 }
@@ -802,7 +811,7 @@ pub struct BaselineReading {
     /// The check's `observed` minus the baseline's, at the report's
     /// serialized precision: in points, or, for a rule on a relative change
     /// such as `max_distinct_drop` and the row count rules, in percent of the
-    /// baseline's value.
+    /// baseline's value, or, for `max_null_count_increase`, in nulls.
     /// `None` when either side has no value.
     pub change: Option<MetricValue>,
     /// Where the baseline's whole-source score lies, when its score came
@@ -1055,6 +1064,8 @@ pub struct QualityPolicy {
     max_dimension_score_drops: BTreeMap<String, (QualityDimension, f64)>,
     max_null_percentage_increase: BTreeMap<String, f64>,
     max_null_percentage_increase_any: Option<f64>,
+    max_null_count_increase: BTreeMap<String, usize>,
+    max_null_count_increase_any: Option<usize>,
     max_distinct_drop: BTreeMap<String, f64>,
     max_distinct_drop_any: Option<f64>,
     max_row_count_drop: Option<f64>,
@@ -1278,6 +1289,26 @@ impl QualityPolicy {
         self
     }
 
+    /// Allow the named column's null count to rise at most `nulls` above the
+    /// baseline's (#1346). Decided on the exact `null_count` of both sides,
+    /// so one new null fails an allowance of 0 at any row count, where the
+    /// percentage rule rounds it away from about 30,000 rows. Takes
+    /// precedence over
+    /// [`max_null_count_increase_any`](Self::max_null_count_increase_any)
+    /// for that column. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_null_count_increase(mut self, column: impl Into<String>, nulls: usize) -> Self {
+        self.max_null_count_increase.insert(column.into(), nulls);
+        self
+    }
+
+    /// [`max_null_count_increase`](Self::max_null_count_increase) for every
+    /// other column both reports profiled. A column only the evaluated report
+    /// has is not covered. Needs [`evaluate_against`](Self::evaluate_against).
+    pub fn max_null_count_increase_any(mut self, nulls: usize) -> Self {
+        self.max_null_count_increase_any = Some(nulls);
+        self
+    }
+
     /// Allow the named column's distinct count to fall at most `percent`
     /// (0..=100) of the baseline's (#1026). Fewer rows alone do not make a
     /// collapse, so the check fails only when the column's distinct share of
@@ -1484,6 +1515,8 @@ impl QualityPolicy {
             || !self.max_dimension_score_drops.is_empty()
             || !self.max_null_percentage_increase.is_empty()
             || self.max_null_percentage_increase_any.is_some()
+            || !self.max_null_count_increase.is_empty()
+            || self.max_null_count_increase_any.is_some()
             || !self.max_distinct_drop.is_empty()
             || self.max_distinct_drop_any.is_some()
             || self.max_row_count_drop.is_some()
@@ -1522,9 +1555,9 @@ impl QualityPolicy {
     /// Every requirement is evaluated as [`evaluate`](Self::evaluate) does,
     /// then each rule about change, in a fixed order: the overall score, the
     /// dimensions in [`QualityDimension::all`] order, the row count drop and
-    /// then growth, then for the null increase and then the distinct drop
-    /// rules the named columns in name order and every other shared column in
-    /// the baseline's order.
+    /// then growth, then for the null percentage increase, the null count
+    /// increase and then the distinct drop rules the named columns in name
+    /// order and every other shared column in the baseline's order.
     /// The baseline may come from a flat summary, which leaves what it did
     /// not record unrecorded. See the [module docs](self) for when a change
     /// is decided.
@@ -1567,6 +1600,7 @@ impl QualityPolicy {
             checks.push(self.row_count_change_check(&delta, RowCountRule::Growth, percent));
         }
         checks.extend(self.null_increase_checks(&delta));
+        checks.extend(self.null_count_increase_checks(&delta, baseline, &current));
         checks.extend(self.distinct_drop_checks(&delta, baseline, &current));
         // Collected once, so a rule over every column does not rescan the
         // other side's columns for each one.
@@ -2843,6 +2877,117 @@ impl QualityPolicy {
         check
     }
 
+    /// One check per named column, in name order, then one per other column
+    /// both reports profiled, in the baseline's order, as for
+    /// [`null_increase_checks`](Self::null_increase_checks).
+    fn null_count_increase_checks(
+        &self,
+        delta: &ReportDelta,
+        baseline: &ReportSide,
+        current: &ReportSide,
+    ) -> Vec<Check> {
+        if self.max_null_count_increase.is_empty() && self.max_null_count_increase_any.is_none() {
+            return Vec::new();
+        }
+        let sides = Sides {
+            a: columns_by_name(baseline),
+            b: columns_by_name(current),
+        };
+        let mut checks = Vec::new();
+        for (column, nulls) in &self.max_null_count_increase {
+            checks.push(self.null_count_increase_check(delta, &sides, column, *nulls));
+        }
+        if let Some(nulls) = self.max_null_count_increase_any {
+            for column in &delta.schema.common {
+                if !self.max_null_count_increase.contains_key(column) {
+                    checks.push(self.null_count_increase_check(delta, &sides, column, nulls));
+                }
+            }
+        }
+        checks
+    }
+
+    /// How many nulls a column may gain over the baseline's (#1346). The
+    /// change is `null_count - baseline null_count`, a whole number, so it
+    /// is decided exactly at any row count, where the percentage rule
+    /// compares changes rounded to two decimals. Evidence and definitions are
+    /// read as for [`null_increase_check`](Self::null_increase_check). A
+    /// column with no values read has a null count of zero, as for
+    /// [`max_null_count`](Self::max_null_count).
+    fn null_count_increase_check(
+        &self,
+        delta: &ReportDelta,
+        sides: &Sides<HashMap<&str, &ColumnSide>>,
+        column: &str,
+        nulls: usize,
+    ) -> Check {
+        let (a, b) = (sides.a.get(column), sides.b.get(column));
+        let null_count =
+            |side: Option<&&ColumnSide>| side.and_then(|side| side.counts).map(|(_, nulls)| nulls);
+        let (count_a, count_b) = (null_count(a), null_count(b));
+        let change = count_a.zip(count_b).map(|(a, b)| count_change(a, b));
+        let evidence = Sides {
+            a: delta.reports.a.evidence,
+            b: delta.reports.b.evidence,
+        };
+        let mut check = Check {
+            code: CheckCode::MaxNullCountIncrease,
+            column: Some(column.to_string()),
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            expected: Expectation::ChangeAtMost {
+                value: MetricValue::Count(nulls),
+            },
+            observed: count_b.map(MetricValue::Count),
+            scope: self.scope,
+            evidence: evidence.b,
+            bounds: None,
+            baseline: Some(BaselineReading {
+                observed: count_a.map(MetricValue::Count),
+                evidence: evidence.a,
+                change: change.map(MetricValue::CountChange),
+                bounds: None,
+            }),
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let reason = if b.is_none() {
+            Some(NotEvaluated::ColumnNotProfiled)
+        } else if a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else if count_b.is_none() {
+            Some(NotEvaluated::NotAssessed)
+        } else if count_a.is_none() {
+            Some(NotEvaluated::NotInBaseline)
+        } else {
+            definition_gap(
+                delta.metric_semantics.a.as_ref(),
+                delta.metric_semantics.b.as_ref(),
+                [Definition::NullTokens].iter(),
+            )
+        };
+        let subject = "this column's null count";
+        if let Some(reason) = reason {
+            return not_evaluated_change(check, reason, subject);
+        }
+        let (Some(count_a), Some(count_b)) = (count_a, count_b) else {
+            unreachable!("a decided rule has a null count on both sides")
+        };
+        // Compared in whole numbers, never through a rounded or signed
+        // difference: `b <= a + nulls`.
+        let satisfied = count_b <= count_a.saturating_add(nulls);
+        check.status = self.decide_change(&evidence, satisfied);
+        check.message = match check.status {
+            CheckStatus::Passed => {
+                format!("{subject} rose no more than allowed above the baseline")
+            }
+            CheckStatus::Failed => format!("{subject} rose more than allowed above the baseline"),
+            CheckStatus::NotEvaluated(_) => evidence_message(subject),
+        };
+        check
+    }
+
     /// How far the row count may fall or grow from the baseline's, in percent
     /// of the baseline's `rows_processed` (#1291).
     fn row_count_change_check(
@@ -2991,15 +3136,9 @@ impl QualityPolicy {
         if self.max_distinct_drop.is_empty() && self.max_distinct_drop_any.is_none() {
             return Vec::new();
         }
-        fn by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
-            side.columns()
-                .iter()
-                .map(|column| (column.name.as_str(), column))
-                .collect()
-        }
         let sides = Sides {
-            a: by_name(baseline),
-            b: by_name(current),
+            a: columns_by_name(baseline),
+            b: columns_by_name(current),
         };
         // A distinct count reads no sampled score, so the overall score's
         // sample stands in for `part_of_source`, which its rule never reads.
@@ -3549,6 +3688,21 @@ impl DistinctReading {
                 .map(|(total, nulls)| total.saturating_sub(nulls)),
         }
     }
+}
+
+/// `b - a` as a signed whole number, saturating at the ends of `i64`, which
+/// no count of rows read reaches.
+fn count_change(a: usize, b: usize) -> i64 {
+    let change = b as i128 - a as i128;
+    i64::try_from(change).unwrap_or(if change < 0 { i64::MIN } else { i64::MAX })
+}
+
+/// Each side's columns by name. A side holds the first column of each name.
+fn columns_by_name(side: &ReportSide) -> HashMap<&str, &ColumnSide> {
+    side.columns()
+        .iter()
+        .map(|column| (column.name.as_str(), column))
+        .collect()
 }
 
 /// `(b - a) / a` in percent, at the serialized precision. `a` is positive.

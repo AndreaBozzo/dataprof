@@ -1037,6 +1037,7 @@ if not result.passed:
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `max_null_count_increase` | `dict[str, int] \| int` | How many nulls a column may gain over the baseline's, decided on the exact `null_count` of both sides (0.15+). Same shape as `max_null_percentage_increase` |
 | `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
 | `max_row_count_drop` | `float` | How far the row count may fall, in percent (0--100) of the baseline's `rows_processed` (0.14+) |
 | `max_row_count_growth` | `float` | How far the row count may grow, in percent of the baseline's, 0 or more (0.14+) |
@@ -1358,6 +1359,17 @@ still settles the outcome that its unread rows could not reverse, as
 The one exception is `max_row_count_drop=100`, which passes whatever the scans
 missed, since a count cannot fall by more than all of it.
 
+**A null count that rises (0.15+).** `max_null_percentage_increase`
+compares percentages at two decimals, so from about 30,000 rows one new null
+rounds to a change of 0.00 and passes an allowance of 0.
+`max_null_count_increase={"customer_id": 0}` compares the exact `null_count`
+of both reports instead, so one new null fails at any row count. The allowance
+is a whole number of nulls. `observed` and the baseline's `observed` are the
+two null counts, and the baseline's `change` is their difference in nulls
+(negative when the count fell). A column with no values read has a null count
+of 0. A baseline summary that does not record `null_count` and `total_count`
+for the column leaves the rule `not_in_baseline`.
+
 **A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
 10}` fails when the column's distinct count fell by more than 10% of the
 baseline's, as a key that suddenly repeats. Fewer rows alone are not a
@@ -1400,7 +1412,8 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `max_distinct_drop` and the row
+drop or `change_at_most` for an increase. For `max_null_count_increase`,
+`change` and `value` are whole numbers of nulls. `max_distinct_drop` and the row
 count rules are relative instead: `change` is in percent of the baseline's
 count, and `expected` is `{"comparison": "relative_change_at_least", "value":
 -10.0}` for a drop or `relative_change_at_most` for growth. `result.baseline` names both reports
@@ -1661,6 +1674,7 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-quality-drop POINTS` | `max_quality_score_drop` |
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
+| `--max-null-count-increase COLUMN=N`, repeatable, `*=N` for every column both reports profiled (0.15+) | `max_null_count_increase` |
 | `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
 | `--max-row-drop PERCENT` | `max_row_count_drop` |
 | `--max-row-growth PERCENT` | `max_row_count_growth` |

@@ -450,6 +450,8 @@ class ProfileReport:
         max_dimension_score_drops: list[tuple[str, float]] = ...,
         max_null_percentage_increase: list[tuple[str, float]] = ...,
         max_null_percentage_increase_any: float | None = ...,
+        max_null_count_increase: list[tuple[str, int]] = ...,
+        max_null_count_increase_any: int | None = ...,
         max_distinct_drop: list[tuple[str, float]] = ...,
         max_distinct_drop_any: float | None = ...,
         max_row_count_drop: float | None = ...,
