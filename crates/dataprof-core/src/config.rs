@@ -32,6 +32,20 @@ impl Default for QualityScoreWeights {
 }
 
 impl QualityScoreWeights {
+    /// The weight of `dimension`.
+    pub fn weight(&self, dimension: crate::QualityDimension) -> f64 {
+        use crate::QualityDimension::*;
+        match dimension {
+            Completeness => self.completeness,
+            Consistency => self.consistency,
+            Uniqueness => self.uniqueness,
+            Accuracy => self.accuracy,
+            Timeliness => self.timeliness,
+            Validity => self.validity,
+            Precision => self.precision,
+        }
+    }
+
     pub fn is_default(&self) -> bool {
         self == &Self::default()
     }

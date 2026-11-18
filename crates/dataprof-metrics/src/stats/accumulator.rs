@@ -1062,17 +1062,24 @@ impl ExactDecimal {
     /// Type 7 interpolation between two sorted values, as a canonical decimal
     /// string. Whole steps of the last place are added to `self`, and the
     /// quarter of a step left over is written as trailing digits, so `self` is
-    /// never scaled up: only the two values at one scale, and their gap, need
-    /// to fit in `i128`, as they do near its top (#1186 review).
-    pub(crate) fn interpolated(self, next: Self, quarters: i128) -> Option<String> {
+    /// never scaled up: only the two values at one scale need to fit in
+    /// `i128`, as they do near its top (#1186 review). Their gap is taken in
+    /// `u128`, which holds it even when the two have opposite signs near the
+    /// top of `i128`'s range (#1341).
+    pub(crate) fn interpolated(self, next: Self, quarters: u128) -> Option<String> {
         let scale = self.scale.max(next.scale);
         let base = scale_up(self.unscaled, scale - self.scale)?;
-        // Non-negative: `next` follows `self` in sorted order.
-        let gap = scale_up(next.unscaled, scale - next.scale)?.checked_sub(base)?;
-        let steps = (gap / 4)
-            .checked_mul(quarters)?
-            .checked_add(gap % 4 * quarters / 4)?;
-        let whole = base.checked_add(steps)?;
+        let next = scale_up(next.unscaled, scale - next.scale)?;
+        // `next` follows `self` in sorted order, so the gap is between 0 and
+        // `i128::MAX - i128::MIN`, which is `u128::MAX`: the wrapping
+        // difference read as unsigned is the gap exactly.
+        debug_assert!(next >= base, "interpolated between unsorted values");
+        let gap = next.wrapping_sub(base) as u128;
+        // At most `gap`: `gap / 4 × 3` and `gap % 4 × 3 / 4` stay below it.
+        let steps = gap / 4 * quarters + gap % 4 * quarters / 4;
+        // Between `base` and `next`, so inside `i128`: the wrapping sum is
+        // exact.
+        let whole = base.wrapping_add_unsigned(steps);
         let fraction = gap % 4 * quarters % 4;
         if fraction == 0 {
             return Some(
@@ -2154,6 +2161,68 @@ mod tests {
             base.interpolated(next, 1).as_deref(),
             Some("9007199254740993.75")
         );
+    }
+
+    /// Two values of opposite sign whose gap leaves `i128`, though each fits,
+    /// interpolate exactly: the gap is taken in `u128` (#1341).
+    #[test]
+    fn a_gap_past_i128_interpolates_exactly() {
+        let integer = |unscaled: i128| ExactDecimal { unscaled, scale: 0 };
+        let a = 9 * 10_i128.pow(37);
+        let largest = 10_i128.pow(38) - 1;
+        let mut wrong = Vec::new();
+        for (base, next, quarters, expected) in [
+            // The issue's pair: -9e37 and 9e37 + 1e20.
+            (
+                integer(-a),
+                integer(a + 10_i128.pow(20)),
+                2,
+                "50000000000000000000",
+            ),
+            // The widest decimal128(38, 0) pair, each quarter.
+            (integer(-largest), integer(largest), 2, "0"),
+            (
+                integer(-largest),
+                integer(largest),
+                1,
+                "-49999999999999999999999999999999999999.5",
+            ),
+            (
+                integer(-largest),
+                integer(largest),
+                3,
+                "49999999999999999999999999999999999999.5",
+            ),
+            // The widest `i128` gap, `u128::MAX`.
+            (integer(i128::MIN), integer(i128::MAX), 2, "-0.5"),
+            (
+                integer(i128::MIN),
+                integer(i128::MAX),
+                1,
+                "-85070591730234615865843651857942052864.25",
+            ),
+            // Opposite signs at a scale: -9e35 and 9e35 + 0.01.
+            (
+                ExactDecimal {
+                    unscaled: -a,
+                    scale: 2,
+                },
+                ExactDecimal {
+                    unscaled: a + 1,
+                    scale: 2,
+                },
+                2,
+                "0.005",
+            ),
+        ] {
+            let got = base.interpolated(next, quarters);
+            if got.as_deref() != Some(expected) {
+                wrong.push(format!(
+                    "{base:?} {next:?} q{quarters}: {got:?}, expected {expected}"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// The smallest and largest value as given, past what `min` and `max`

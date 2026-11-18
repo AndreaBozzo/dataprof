@@ -1,0 +1,264 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 54.43,
+          "exact": {
+            "max": "8",
+            "median": "4.5",
+            "min": "1",
+            "q1": "2.75",
+            "q2": "4.5",
+            "q3": "6.25"
+          },
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 8.0,
+          "mean": 4.5,
+          "median": 4.5,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 3.5,
+            "q1": 2.75,
+            "q2": 4.5,
+            "q3": 6.25
+          },
+          "skewness": 0.0,
+          "std_dev": 2.4495,
+          "variance": 6.0
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 8,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "event_ns",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 0.0,
+          "exact": {
+            "max": "1759700000123457409",
+            "median": "1759700000123457003",
+            "min": "1759700000123456512",
+            "q1": "1759700000123456934",
+            "q2": "1759700000123457003",
+            "q3": "1759700000123457211.25"
+          },
+          "is_approximate": false,
+          "kurtosis": 0.8241,
+          "max": 1.7597000001234575e+18,
+          "mean": 1.75970000012e+18,
+          "median": 1.759700000123457e+18,
+          "min": 1.7597000001234565e+18,
+          "outlier_count": 1,
+          "quartiles": {
+            "iqr": 277.25,
+            "q1": 1.759700000123457e+18,
+            "q2": 1.759700000123457e+18,
+            "q3": 1.7597000001234573e+18
+          },
+          "skewness": -0.5916,
+          "std_dev": 279.3338,
+          "variance": 78027.3571
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 8,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "balance",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 0.0,
+          "is_approximate": false,
+          "kurtosis": 0.8587,
+          "max": 10000000000002.31,
+          "mean": 10000000000000.0,
+          "median": 10000000000001.156,
+          "min": 9999999999999.8,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 0.73,
+            "q1": 10000000000000.9,
+            "q2": 10000000000001.16,
+            "q3": 10000000000001.62
+          },
+          "skewness": -0.4531,
+          "std_dev": 0.7576,
+          "variance": 0.574
+        }
+      },
+      "total_count": 8,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 8,
+        "text": 0
+      },
+      "unique_count": 8,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "csv_metadata": {
+      "delimiter": ",",
+      "delimiter_detection": {
+        "delimiter": ",",
+        "header_fields": 3
+      }
+    },
+    "format": "csv",
+    "path": "wide_integers.csv",
+    "size_bytes": 338,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 338,
+    "columns_detected": 3,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 29.58203125,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 8,
+    "sampling_applied": false,
+    "scan_time_ms": 27,
+    "source_exhausted": true,
+    "throughput_rows_sec": 296.2962962962963,
+    "unterminated_quote": false
+  },
+  "generator": {
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "dirty": false,
+    "version": "0.14.0"
+  },
+  "id": "80d0242d-64a8-47d8-a3ee-b392a52bd96d",
+  "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
+    "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "columns_without_value_checks": [],
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 24,
+        "outlier_ratio": 4.17,
+        "outlier_values_checked": 24,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 24
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 24
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 87.5,
+        "inconsistent_precision_values": 1,
+        "numeric_values_checked": 8
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 8
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 95.83,
+        "completeness": 100.0,
+        "consistency": 100.0,
+        "precision": 87.5,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 98.44
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-17T18:32:07.495483700+00:00"
+}

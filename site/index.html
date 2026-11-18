@@ -43,7 +43,7 @@
     <div class="hero-copy">
       <p class="eyebrow">Local profiling · Python + Rust</p>
       <h1 id="hero-title">Know your data <em>before</em> it ships.</h1>
-      <p class="hero-sub">Find missing values, inferred types and unusual values in files or tables. Set quality limits and get a pass, fail or inconclusive result.</p>
+      <p class="hero-sub">Find missing values, inferred types and unusual values in files or tables. Gate a batch on quality limits or changes from an accepted baseline. Get a pass, fail or inconclusive result.</p>
       <div class="hero-actions">
         <a class="btn btn-primary" href="#install">Get started <span aria-hidden="true">↓</span></a>
         <a class="btn btn-ghost" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md">Read the docs <span aria-hidden="true">↗</span></a>
@@ -78,7 +78,7 @@
       <div class="profile-score"><p>Quality score<strong>93.19 <small>/ 100</small></strong></p><span class="pill gate-fail">Gate: fail</span></div>
       <figcaption>
         <p><strong>Why it fails:</strong> <code>region</code> has 2 missing cells out of 8, above the 20% null limit. The score meets the minimum of 90.</p>
-        <p>Default analysis of <a href="assets/orders.csv" download>this CSV</a> with dataprof 0.13.1. The report also flags the small sample size.</p>
+        <p>Default analysis of <a href="assets/orders.csv" download>this CSV</a> with dataprof 0.14.0. The report also flags the small sample size.</p>
       </figcaption>
     </figure>
   </section>
@@ -120,7 +120,7 @@ fail</code></pre><p>The score passes. The null check fails: 25% of <code>region<
       </div>
       <details class="ci-example"><summary>Use the same check in CI</summary>
         <div class="install-row"><code id="example-ci">python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"</code><button class="copy-btn" data-copy="example-ci" aria-label="Copy CI command">Copy</button></div>
-        <p class="note">This CSV exits with code 1. Exit codes: 0 pass, 1 fail, 2 inconclusive, 3 input, policy or output error.</p>
+        <p class="note">This CSV exits with code 1. Exit codes: 0 pass, 1 fail, 2 inconclusive, 3 argument, policy, input, baseline or output error.</p>
       </details>
     </div>
     <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" tabindex="0" hidden>
@@ -167,18 +167,43 @@ region String nulls=2</code></pre><p>Feature flags add Arrow, Parquet, async str
     <div class="section-head"><p class="eyebrow">Read the data. Keep the evidence.</p><h2 id="answers-title">A report you can use in your pipeline</h2></div>
     <div class="feature-grid">
       <article><span class="feature-number" aria-hidden="true">01</span><h3>Understand each column</h3><p>Inspect types, null counts, numeric summaries, patterns and distinct values. Save a report to compare it with a later run.</p></article>
-      <article><span class="feature-number" aria-hidden="true">02</span><h3>Choose your quality limits</h3><p>Set a minimum score or limits on missing values. Gates return pass, fail or inconclusive when the evidence cannot settle a check.</p></article>
-      <article><span class="feature-number" aria-hidden="true">03</span><h3>See what was analyzed</h3><p>Reports record the analyzed population. Uncomputed metrics stay missing, and estimates are marked so you can judge their limits.</p></article>
+      <article><span class="feature-number" aria-hidden="true">02</span><h3>Choose your quality limits</h3><p>Set a minimum score, a <code>min_rows</code> floor or limits on missing values. Compare with a saved baseline to catch score drops and removed columns.</p></article>
+      <article><span class="feature-number" aria-hidden="true">03</span><h3>See what was analyzed</h3><p>Read <code>sampling_applied</code>, <code>source_exhausted</code> and <code>quality_sampled_dimensions</code>. Numeric <code>is_approximate</code> and column <code>unique_count_is_approximate</code> mark sampled statistics and estimated distinct counts. Uncomputed metrics stay missing.</p></article>
     </div>
-    <p class="section-note">Serialized metrics are checked across input paths and engines against a documented <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract">numeric contract</a>.</p>
+    <p class="section-note">For the same logical data, schema semantics, options and analyzed population, serialized metrics agree across input paths and engines within the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract">numeric contract</a>. Provenance is compared separately. Raw floats can differ, and values near <code>f64</code>'s limits belong to an approximate domain.</p>
+  </section>
+
+  <section id="checkpoint" class="block wrap" aria-labelledby="checkpoint-title">
+    <div class="section-head"><p class="eyebrow">Keep the last accepted run</p><h2 id="checkpoint-title">A baseline checkpoint</h2><p>Save a candidate report on each run. Promote it to the baseline only on a pass. Options marked 0.14 need that release or later.</p></div>
+    <div class="card checkpoint-card">
+      <h3>Start with absolute checks</h3>
+      <pre tabindex="0" role="region" aria-label="First checkpoint run"><code>python -m dataprof.check orders.csv --min-rows 1 \
+  --unique-column order_id --max-null-count order_id=0 \
+  --report candidate.json &amp;&amp; mv candidate.json baseline.json</code></pre>
+      <h3>Compare later runs with the baseline</h3>
+      <pre tabindex="0" role="region" aria-label="Check changes from the accepted baseline"><code>python -m dataprof.check orders.csv --min-rows 1 \
+  --unique-column order_id --max-null-count order_id=0 \
+  --baseline baseline.json --max-quality-drop 5 \
+  --max-row-drop 10 --max-row-growth 20 --forbid-removed-columns \
+  --timeliness-clock rolling --report candidate.json --json &gt; verdict.json \
+  &amp;&amp; mv candidate.json baseline.json</code></pre>
+      <p>A changed or unrecorded metric definition can leave an affected check <code>definition_not_comparable</code>. Inspect the reason before deliberately refreshing the baseline. Retyped columns appear in schema diagnostics; those diagnostics alone do not fail the gate.</p>
+      <p><a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint">Read the checkpoint recipe <span aria-hidden="true">↗</span></a></p>
+    </div>
+    <div class="feature-grid">
+      <article><h3>Freshness and missing days</h3><p>In 0.14, <code>max_date_age={"published_at": 3}</code> limits the newest date's age. <code>max_date_gap={"published_at": 1}</code> rejects a gap longer than one day between consecutive distinct dates. Use <code>reference_date=</code> when profiling to fix the clock; <code>temporal_columns</code> and <code>temporal_pairs</code> declare date roles and start/end relations.</p></article>
+      <article><h3>Rows and keys</h3><p>In 0.14, <code>max_row_count_drop</code> and <code>max_row_count_growth</code> limit percentage changes from the baseline. <code>unique_columns</code> checks repeated non-null keys. <code>identifier_columns</code> selects the key for the uniqueness score and <code>key_duplicates</code> finding.</p></article>
+      <article><h3>Whole-row duplicates</h3><p>The row tracker stays exact up to 1,000,000 distinct rows by default, or fewer under memory pressure. In 0.14, raise <code>duplicate_rows_exact_limit</code> to retain a larger exact set even past the memory budget. An estimated <code>duplicate_rows</code> count leaves <code>max_duplicate_rows</code> unevaluated.</p></article>
+    </div>
+    <p class="section-note">A complete scan may still use a quality sample. <code>quality_score_bounds</code> records score intervals where available; a full-source score check can decide when the interval settles the threshold. See the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md#freshness-and-missing-days">freshness and key recipes</a>.</p>
   </section>
 
   <section id="formats" class="block wrap" aria-labelledby="formats-title">
     <div class="section-head"><p class="eyebrow">Supported inputs</p><h2 id="formats-title">Start with the data you have</h2><p>Files, in-memory tables and streams use a shared report model.</p></div>
     <div class="input-grid">
-      <article class="card input-card"><h3>Files</h3><p>CSV, JSON, JSONL and Parquet.</p><p class="note">CSV detects comma, semicolon, pipe and tab delimiters. JSON accepts an array of objects; JSONL accepts one object per line.</p></article>
-      <article class="card input-card"><h3>Python tables and bytes</h3><p>pandas and polars DataFrames, Arrow tables, batches and streams.</p><p class="note">Also accepts dictionaries, bytes and BytesIO. Byte inputs require a format. Table libraries are optional.</p></article>
-      <article class="card input-card"><h3>Async and database sources</h3><p>Async byte streams and database queries.</p><p class="note">PostgreSQL, MySQL and SQLite need a source build with connector features. The incremental engine uses bounded accumulators.</p></article>
+      <article class="card input-card"><h3>Files</h3><p>CSV, JSON, JSONL and Parquet.</p><p class="note">CSV detects comma, semicolon, pipe and tab delimiters. JSON accepts an array of objects or a single object; JSONL accepts one object per line. Native Parquet profiling needs no Python table library. Rust enables <code>parquet</code> and <code>arrow</code> by default.</p></article>
+      <article class="card input-card"><h3>Python tables and bytes</h3><p>pandas and polars DataFrames, Arrow tables, batches and C streams.</p><p class="note">Also accepts dictionaries, bytes and BytesIO. Byte inputs require a format. Install the table library you use; pandas and polars conversion also needs pyarrow. The <code>pandas</code> extra installs pandas.</p></article>
+      <article class="card input-card"><h3>Async and database sources</h3><p>Async files, bytes, HTTP URLs and database queries.</p><p class="note">The wheel includes <code>dataprof.asyncio</code>. Rust uses <code>async-streaming</code> and <code>parquet-async</code> for remote Parquet. PostgreSQL, MySQL and SQLite need connector features, and a Python source build. The incremental engine uses bounded accumulators. <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md">Connector setup</a>.</p></article>
     </div>
   </section>
 
@@ -195,6 +220,7 @@ region String nulls=2</code></pre><p>Feature flags add Arrow, Parquet, async str
         <div><dt>Precision</dt><dd>Decimal scale in floating-point columns.</dd></div>
       </dl>
     </div>
+    <p class="section-note">In 0.14, <code>native_type</code> preserves a source's declared column type where available. Declared decimal columns are read as decimals, including when the statistics pack is omitted. Nested columns contribute null and duplicate counts; <code>quality_columns_without_value_checks</code> names those whose values received no value-level quality checks.</p>
   </section>
 
   <section class="block wrap" aria-labelledby="bench-title"><div class="bench-band">

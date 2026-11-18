@@ -9,7 +9,7 @@ use std::path::Path;
 const PG_TLS_OPTIONAL: [&str; 3] = ["disable", "allow", "prefer"];
 
 /// SSL/TLS configuration for database connections
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SslConfig {
     /// Whether to require SSL/TLS
     pub require_ssl: bool,
@@ -302,6 +302,42 @@ mod tests {
             assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
         }
 
+        /// sqlx decodes query names, so an encoded `sslmode` is the caller's
+        /// mode too; appending the default after it weakened it to `prefer`.
+        #[test]
+        fn an_encoded_mode_name_in_the_url_is_not_overridden() {
+            let got = mode(
+                &SslConfig::default(),
+                "postgresql://u@h/db?ssl%6dode=verify-full",
+            );
+            assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
+        }
+
+        /// A CA path is one query value: an `&` in the filename started a
+        /// second pair that disabled TLS.
+        #[test]
+        fn a_ca_path_cannot_add_a_query_pair() {
+            let config = SslConfig {
+                ca_cert_path: Some("/certs/CA&sslmode=disable".to_string()),
+                ..SslConfig::production()
+            };
+            let got = mode(&config, "postgresql://u@h/db");
+            assert!(matches!(got, PgSslMode::VerifyFull), "{got:?}");
+        }
+
+        /// The driver ignores a `#fragment`: a mode appended after it, or a
+        /// mode written inside it, never applied.
+        #[test]
+        fn a_fragment_neither_hides_nor_fakes_the_mode() {
+            for url in [
+                "postgresql://u@h/db#x",
+                "postgresql://u@h/db#?sslmode=disable",
+            ] {
+                let got = mode(&SslConfig::production(), url);
+                assert!(matches!(got, PgSslMode::VerifyFull), "{url}: {got:?}");
+            }
+        }
+
         #[test]
         fn require_ssl_raises_an_optional_mode() {
             // ENVIRONMENT=production sets these two flags over the default
@@ -362,6 +398,25 @@ mod tests {
             };
             let got = mode(&config, "mysql://u@h/db");
             assert!(matches!(got, MySqlSslMode::Required), "{got:?}");
+        }
+
+        #[test]
+        fn an_encoded_mode_name_in_the_url_is_not_overridden() {
+            let got = mode(
+                &SslConfig::default(),
+                "mysql://u@h/db?ssl%2Dmode=VERIFY_IDENTITY",
+            );
+            assert!(matches!(got, MySqlSslMode::VerifyIdentity), "{got:?}");
+        }
+
+        #[test]
+        fn a_ca_path_cannot_add_a_query_pair() {
+            let config = SslConfig {
+                ca_cert_path: Some("/certs/CA&ssl-mode=DISABLED".to_string()),
+                ..SslConfig::production()
+            };
+            let got = mode(&config, "mysql://u@h/db");
+            assert!(matches!(got, MySqlSslMode::VerifyIdentity), "{got:?}");
         }
 
         #[test]

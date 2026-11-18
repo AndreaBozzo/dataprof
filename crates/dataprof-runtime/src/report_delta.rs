@@ -68,8 +68,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
-    DataSource, DataType, FileFormat, MetricPack, NativeType, QualityDimension,
-    QualityScoreWeights, SemanticHintBinding, SemanticHintKind,
+    ColumnStats, DataSource, DataType, FileFormat, MetricPack, NativeType, QualityDimension,
+    QualityScoreWeights, Quartiles, SemanticHintBinding, SemanticHintKind,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
@@ -83,7 +83,8 @@ use crate::profile_report::{
     ReportGenerator, SourceIdentity, TemporalPair,
 };
 use crate::quality_gate::{
-    Evidence, EvidenceGap, Provenance, sampled_component_evidence, scan_coverage, scan_evidence,
+    Evidence, EvidenceGap, Provenance, overall_left_open, sampled_component_evidence,
+    scan_coverage, scan_evidence,
 };
 
 /// The same fact about each side of a comparison.
@@ -617,6 +618,8 @@ pub struct ReportSide {
     reference: ReportReference,
     quality_score: Option<f64>,
     overall_evidence: Evidence,
+    /// [`DimensionSide::sample_evidence`] for the overall score.
+    overall_sample_evidence: Evidence,
     dimensions: Vec<DimensionSide>,
     /// The recorded intervals for the scores over every scanned row, `None`
     /// when the side recorded none: nothing was sampled, or it predates them.
@@ -642,6 +645,9 @@ pub struct ReportSide {
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
+    /// Whether the source may hold a JSON number. True when the side did not
+    /// record its kind and format.
+    json_numbers: bool,
     /// Components carrying signal that neither recorded coverage list names,
     /// so their coverage is unrecorded (#749). Empty for a flat summary that
     /// records no exact list (#1027).
@@ -662,6 +668,9 @@ struct DimensionSide {
     dimension: QualityDimension,
     score: Option<f64>,
     evidence: Evidence,
+    /// Whether the score covers every value the scan read, apart from how
+    /// much of the source the scan read (#1317).
+    sample_evidence: Evidence,
 }
 
 /// What a comparison reads about one column.
@@ -686,7 +695,19 @@ pub(crate) struct ColumnSide {
     /// Whether `unique_count` is an estimate, `None` when the side did not
     /// record it. Only `Some(false)` makes the count exact.
     pub(crate) unique_count_is_approximate: Option<bool>,
+    /// The column's exact recorded quartiles differ. False when they
+    /// coincide, are estimates, or were not recorded.
+    pub(crate) quartiles_differ: bool,
+    /// The longest value of a text column, `None` when the side recorded no
+    /// text lengths for it.
+    pub(crate) max_text_length: Option<usize>,
 }
+
+/// The fewest characters a spaced ISO datetime has when `date_forms` reads it
+/// as a date and earlier releases did not: the plain `2026-06-01 12:00:00`
+/// (19) was a date in both, and the new forms add a fraction (`.5`) or an
+/// offset (`Z`, `+00:00`).
+const SPACED_DATETIME_MIN_LENGTH: usize = 20;
 
 impl ColumnSide {
     /// The inferred type, when the side read a value for the column that is
@@ -702,6 +723,42 @@ impl ColumnSide {
     /// counts were not recorded.
     pub(crate) fn populated(&self) -> Option<bool> {
         self.counts.map(|(total, nulls)| nulls < total)
+    }
+
+    /// Whether the outlier test may have run on this column with its first
+    /// and third quartiles one value, which `outlier_spread` decides (#1304).
+    /// Only a numeric column with values is tested, and the exact quartiles
+    /// of its values settle the rest: the Type 7 quartiles coincide exactly
+    /// when the two values the test draws them from do. An unrecorded type,
+    /// count or quartile may.
+    fn may_have_coinciding_quartiles(&self) -> bool {
+        let numeric = self
+            .data_type
+            .as_ref()
+            .is_none_or(|data_type| matches!(data_type, DataType::Integer | DataType::Float));
+        numeric && self.populated() != Some(false) && !self.quartiles_differ
+    }
+
+    /// Whether the column may hold a spaced ISO datetime with a fraction or
+    /// an offset, which `date_forms` reads as a date and earlier releases as
+    /// text (#1340). Such a value moves a score only in a column the checks
+    /// read as text or as dates. A text column whose longest value is
+    /// shorter than any such datetime holds none; its lengths cover every
+    /// value read, and so every value a score reads. A date column records
+    /// no lengths. An unrecorded type or length may.
+    fn may_hold_spaced_datetime(&self) -> bool {
+        if self.populated() == Some(false) {
+            return false;
+        }
+        match self.data_type {
+            None | Some(DataType::Date) => true,
+            Some(DataType::String | DataType::Identifier) => self
+                .max_text_length
+                .is_none_or(|length| length >= SPACED_DATETIME_MIN_LENGTH),
+            Some(DataType::Integer | DataType::Float | DataType::Boolean | DataType::Nested) => {
+                false
+            }
+        }
     }
 
     /// Values were read for the column and every one is null. `None` when
@@ -723,6 +780,38 @@ fn first_of_each_name(columns: impl Iterator<Item = ColumnSide>) -> Vec<ColumnSi
         .collect()
 }
 
+/// Whether exact quartiles were recorded and differ. Quartiles that differ
+/// still differ at the serialized precision or coincide there, and equal ones
+/// stay equal, so a document read back never claims a spread it lacks.
+fn exact_quartiles_differ(quartiles: Option<&Quartiles>, approximate: Option<bool>) -> bool {
+    approximate == Some(false) && quartiles.is_some_and(|quartiles| quartiles.q1 != quartiles.q3)
+}
+
+/// Whether a source of this kind may hold a JSON number, which
+/// `json_number_reading` decides (#1243): a field of a JSON or JSONL record,
+/// or a database's JSON cell (#1168). A format this build does not know, or
+/// a stream that records none, may.
+fn may_read_json_numbers(source: &DataSource) -> bool {
+    match source {
+        DataSource::File { format, .. } | DataSource::Bytes { format, .. } => {
+            format_may_hold_json_numbers(format)
+        }
+        DataSource::Stream { format, .. } => {
+            format.as_ref().is_none_or(format_may_hold_json_numbers)
+        }
+        DataSource::Query { .. } => true,
+        DataSource::DataFrame { .. } => false,
+    }
+}
+
+/// Whether a source in this format may hold a JSON number.
+fn format_may_hold_json_numbers(format: &FileFormat) -> bool {
+    !matches!(
+        format,
+        FileFormat::Csv | FileFormat::Parquet | FileFormat::Arrow
+    )
+}
+
 /// A number at its serialized precision; a non-finite one serializes as
 /// null, so it is no number at all.
 fn at_precision(value: Option<f64>) -> Option<f64> {
@@ -742,17 +831,26 @@ impl ReportSide {
         let unlisted = quality
             .map(|assessment| assessment.unlisted_components())
             .unwrap_or_default();
+        let overall_open = quality.is_some_and(|assessment| {
+            overall_left_open(
+                assessment.recorded_score_bounds(),
+                |dimension| assessment.metrics.dimension_score(dimension).is_none(),
+                Some(&assessment.metrics.score_weights),
+            )
+        });
         // No assessment means no score for evidence to describe; the scan's
         // coverage is all there is to say.
-        let evidence = |provenance| match &sampled {
-            Some(sampled) => scan.and(sampled_component_evidence(
+        let sample_evidence = |provenance| match &sampled {
+            Some(sampled) => sampled_component_evidence(
                 sampled.as_deref(),
                 &unlisted,
                 &assessed,
+                overall_open,
                 provenance,
-            )),
-            None => scan,
+            ),
+            None => Evidence::Complete,
         };
+        let evidence = |provenance| scan.and(sample_evidence(provenance));
         let dimensions = QualityDimension::all()
             .into_iter()
             .map(|dimension| DimensionSide {
@@ -765,6 +863,7 @@ impl ReportSide {
                         .flatten(),
                 ),
                 evidence: evidence(Provenance::Dimension(dimension)),
+                sample_evidence: sample_evidence(Provenance::Dimension(dimension)),
             })
             .collect();
         Self {
@@ -779,6 +878,7 @@ impl ReportSide {
             },
             quality_score: at_precision(scores.as_ref().and_then(|scores| scores.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
+            overall_sample_evidence: sample_evidence(Provenance::Overall),
             dimensions,
             score_bounds: quality.and_then(QualityAssessment::score_bounds).cloned(),
             columns: first_of_each_name(report.column_profiles.iter().map(|column| {
@@ -792,6 +892,16 @@ impl ReportSide {
                     native_type: column.native_type.clone(),
                     unique_count: column.unique_count,
                     unique_count_is_approximate: column.unique_count_is_approximate,
+                    quartiles_differ: match &column.stats {
+                        ColumnStats::Numeric(stats) => {
+                            exact_quartiles_differ(stats.quartiles.as_ref(), stats.is_approximate)
+                        }
+                        _ => false,
+                    },
+                    max_text_length: match &column.stats {
+                        ColumnStats::Text(stats) => Some(stats.max_length),
+                        _ => None,
+                    },
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -829,6 +939,7 @@ impl ReportSide {
                 .as_ref()
                 .and_then(|settings| settings.temporal_pairs.clone()),
             schema_declared: declares_schema(&report.data_source),
+            json_numbers: may_read_json_numbers(&report.data_source),
             unlisted_components: unlisted,
         }
     }
@@ -860,6 +971,71 @@ impl ReportSide {
     /// did not record its hints.
     pub(crate) fn identifier_order(&self) -> Option<&[String]> {
         self.identifier_order.as_deref()
+    }
+
+    /// Whether a score, the overall one for `None`, covers every value the
+    /// scan read. Unlike the score's evidence, a scan that stopped early
+    /// leaves it complete.
+    pub(crate) fn sample_evidence(&self, dimension: Option<QualityDimension>) -> Evidence {
+        match dimension {
+            None => self.overall_sample_evidence,
+            Some(dimension) => self
+                .dimensions
+                .iter()
+                .find(|side| side.dimension == dimension)
+                .map_or(
+                    Evidence::Incomplete {
+                        reason: EvidenceGap::CoverageUnrecorded,
+                    },
+                    |side| side.sample_evidence,
+                ),
+        }
+    }
+
+    /// Whether the side's source may hold a JSON number, so that
+    /// `json_number_reading` may move its scores.
+    pub(crate) fn may_read_json_numbers(&self) -> bool {
+        self.json_numbers
+    }
+
+    /// Whether the side's outlier test may have run on a column whose
+    /// quartiles coincide, so that `outlier_spread` may move its accuracy
+    /// score. The recorded quartiles describe every value the scan read and
+    /// the test reads the quality sample, so they speak for the test only
+    /// where that sample held every value read. How much of the source the
+    /// scan read does not matter: both describe the same values.
+    pub(crate) fn may_test_coinciding_quartiles(&self) -> bool {
+        let every_value = self
+            .sample_evidence(Some(QualityDimension::Accuracy))
+            .is_complete();
+        !every_value
+            || self
+                .columns
+                .iter()
+                .any(ColumnSide::may_have_coinciding_quartiles)
+    }
+
+    /// Whether a column the side scored may hold a spaced ISO datetime with
+    /// a fraction or an offset, so that `date_forms` may move its consistency
+    /// and timeliness scores (#1340). Timeliness parses a column named by
+    /// `temporal_columns` or `temporal_pairs` whatever its type, so a
+    /// populated one may, a numeric one included; a side that recorded no
+    /// hints may have named any column.
+    pub(crate) fn may_hold_spaced_datetimes(&self) -> bool {
+        let temporal = self.semantic_hints.as_ref().map(|hints| {
+            hints
+                .temporal_columns
+                .iter()
+                .chain(&hints.temporal_pair_columns)
+                .collect::<HashSet<_>>()
+        });
+        self.columns.iter().any(|column| {
+            column.may_hold_spaced_datetime()
+                || (column.populated() != Some(false)
+                    && temporal
+                        .as_ref()
+                        .is_none_or(|names| names.contains(&column.name)))
+        })
     }
 
     /// Which columns the side profiled, or `None` when it did not record it.
@@ -930,12 +1106,12 @@ impl ReportSide {
         let unlisted = quality
             .map(SummaryQuality::unlisted_components)
             .unwrap_or_default();
-        let evidence = |provenance| {
+        let sample_evidence = |provenance| {
             let Some(quality) = quality else {
-                return scan;
+                return Evidence::Complete;
             };
             let sampled = quality.sampled_dimensions.as_deref();
-            let coverage = match (provenance, &assessed) {
+            match (provenance, &assessed) {
                 // Without the weights, a sampled component may or may not
                 // reach the overall score; only "nothing was sampled" settles it.
                 (Provenance::Overall, None)
@@ -950,11 +1126,21 @@ impl ReportSide {
                     sampled,
                     &unlisted,
                     assessed.as_deref().unwrap_or_default(),
+                    overall_left_open(
+                        quality.score_bounds.as_ref(),
+                        |dimension| {
+                            quality
+                                .dimension_scores
+                                .get(&dimension.to_string())
+                                .is_none_or(Option::is_none)
+                        },
+                        quality.score_weights.as_ref(),
+                    ),
                     provenance,
                 ),
-            };
-            scan.and(coverage)
+            }
         };
+        let evidence = |provenance| scan.and(sample_evidence(provenance));
         let dimensions = QualityDimension::all()
             .into_iter()
             .map(|dimension| DimensionSide {
@@ -966,6 +1152,7 @@ impl ReportSide {
                         .flatten(),
                 ),
                 evidence: evidence(Provenance::Dimension(dimension)),
+                sample_evidence: sample_evidence(Provenance::Dimension(dimension)),
             })
             .collect();
         Ok(Self {
@@ -980,6 +1167,7 @@ impl ReportSide {
             },
             quality_score: at_precision(quality.and_then(|quality| quality.overall_score)),
             overall_evidence: evidence(Provenance::Overall),
+            overall_sample_evidence: sample_evidence(Provenance::Overall),
             dimensions,
             score_bounds: quality.and_then(|quality| quality.score_bounds.clone()),
             columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
@@ -992,6 +1180,8 @@ impl ReportSide {
                 native_type: column.native_type,
                 unique_count: column.unique_count,
                 unique_count_is_approximate: column.unique_count_is_approximate,
+                quartiles_differ: column.stats.as_ref().is_some_and(summary_quartiles_differ),
+                max_text_length: column.stats.as_ref().and_then(summary_max_text_length),
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -1043,6 +1233,18 @@ impl ReportSide {
                     .as_ref()
                     .is_some_and(stream_format_declares_schema),
                 Some(SummarySourceType::Other) | None => false,
+            },
+            // The kind and format the summary recorded. One written before
+            // 0.14 has no format, so only a DataFrame settles it there.
+            json_numbers: match summary.source_type {
+                Some(SummarySourceType::Dataframe) => false,
+                Some(
+                    SummarySourceType::File | SummarySourceType::Bytes | SummarySourceType::Stream,
+                ) => summary
+                    .source_format
+                    .as_ref()
+                    .is_none_or(format_may_hold_json_numbers),
+                Some(SummarySourceType::Query | SummarySourceType::Other) | None => true,
             },
             unlisted_components: unlisted.clone(),
         })
@@ -1217,6 +1419,32 @@ struct SummaryColumn {
     /// `unique_count` is exact; that reads as unrecorded, never as exact.
     #[serde(default)]
     unique_count_is_approximate: Option<bool>,
+    /// Read only for its quartiles, through [`summary_quartiles_differ`]:
+    /// statistics no comparison reads do not make a summary unreadable.
+    #[serde(default)]
+    stats: Option<serde_json::Value>,
+}
+
+/// [`exact_quartiles_differ`] over a summary column's `stats`. A shape this
+/// build cannot read records no quartiles.
+fn summary_quartiles_differ(stats: &serde_json::Value) -> bool {
+    let quartile = |name: &str| stats.get("quartiles")?.get(name)?.as_f64();
+    stats
+        .get("is_approximate")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+        && quartile("q1")
+            .zip(quartile("q3"))
+            .is_some_and(|(q1, q3)| q1 != q3)
+}
+
+/// A summary column's recorded `max_length`, `None` when its `stats` hold no
+/// text lengths this build can read.
+fn summary_max_text_length(stats: &serde_json::Value) -> Option<usize> {
+    stats
+        .get("max_length")?
+        .as_u64()
+        .and_then(|length| usize::try_from(length).ok())
 }
 
 #[derive(serde::Deserialize)]

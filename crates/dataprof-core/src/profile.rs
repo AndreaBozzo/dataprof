@@ -186,6 +186,31 @@ impl NativeType {
             _ => false,
         }
     }
+
+    /// Whether this declares a date or a timestamp, a type every value of
+    /// the column holds whichever part of it was read (#1333): an Arrow
+    /// `date32`, `date64` or `timestamp`, a pandas `datetime64` column or an
+    /// Arrow-backed one of those, PostgreSQL `DATE`, `TIMESTAMP` and
+    /// `TIMESTAMPTZ`, and MySQL `DATE`, `DATETIME` and `TIMESTAMP`.
+    ///
+    /// A text column holding dates declares none, so the values a partial
+    /// read missed may still type it as text; so does a pandas `object`
+    /// column of `datetime` values, and an extension type over date storage.
+    pub fn declares_date(&self) -> bool {
+        let arrow_date = |name: &str| {
+            name == "date32[day]" || name == "date64[ms]" || name.starts_with("timestamp[")
+        };
+        match self.system.as_str() {
+            Self::ARROW => arrow_date(&self.name),
+            Self::PANDAS => {
+                self.name.starts_with("datetime64[")
+                    || self.name.strip_suffix("[pyarrow]").is_some_and(arrow_date)
+            }
+            Self::POSTGRESQL => matches!(self.name.as_str(), "DATE" | "TIMESTAMP" | "TIMESTAMPTZ"),
+            Self::MYSQL => matches!(self.name.as_str(), "DATE" | "DATETIME" | "TIMESTAMP"),
+            _ => false,
+        }
+    }
 }
 
 /// Quartile statistics for numeric distributions.
@@ -562,6 +587,49 @@ mod tests {
             .filter(|(system, name, want)| {
                 NativeType::new(*system, *name).declares_decimal() != *want
             })
+            .map(|(system, name, want)| format!("{system} {name}: expected {want}"))
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// Every declaration that names a date or timestamp, and the neighbours
+    /// that do not: a time of day, text, a list of dates, an extension over
+    /// one, a pandas `object` column and a system this build does not know
+    /// (#1333).
+    #[test]
+    fn declares_date_names_each_systems_date() {
+        let cases = [
+            (NativeType::ARROW, "date32[day]", true),
+            (NativeType::ARROW, "date64[ms]", true),
+            (NativeType::ARROW, "timestamp[us]", true),
+            (NativeType::ARROW, "timestamp[ns, tz=UTC]", true),
+            (NativeType::PANDAS, "datetime64[ns]", true),
+            (NativeType::PANDAS, "datetime64[us, Europe/Rome]", true),
+            (NativeType::PANDAS, "timestamp[us, tz=UTC][pyarrow]", true),
+            (NativeType::PANDAS, "date32[day][pyarrow]", true),
+            (NativeType::POSTGRESQL, "DATE", true),
+            (NativeType::POSTGRESQL, "TIMESTAMP", true),
+            (NativeType::POSTGRESQL, "TIMESTAMPTZ", true),
+            (NativeType::MYSQL, "DATE", true),
+            (NativeType::MYSQL, "DATETIME", true),
+            (NativeType::MYSQL, "TIMESTAMP", true),
+            (NativeType::ARROW, "time64[us]", false),
+            (NativeType::ARROW, "string", false),
+            (NativeType::ARROW, "large_string", false),
+            (NativeType::ARROW, "list<item: date32[day]>", false),
+            (NativeType::ARROW, "extension<example.day>", false),
+            (NativeType::PANDAS, "object", false),
+            (NativeType::PANDAS, "string", false),
+            (NativeType::PANDAS, "date32[day]", false),
+            (NativeType::POSTGRESQL, "TEXT", false),
+            (NativeType::POSTGRESQL, "TIME", false),
+            (NativeType::POSTGRESQL, "DATE[]", false),
+            (NativeType::MYSQL, "VARCHAR", false),
+            ("duckdb", "DATE", false),
+        ];
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter(|(system, name, want)| NativeType::new(*system, *name).declares_date() != *want)
             .map(|(system, name, want)| format!("{system} {name}: expected {want}"))
             .collect();
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));

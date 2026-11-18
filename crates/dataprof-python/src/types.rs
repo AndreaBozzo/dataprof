@@ -3,12 +3,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateStatistics, JsonNumberReading,
-    KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierUnits, Pattern, PatternMatchCount,
-    ProfileReport, QualityAnalysisStatus, QualityAssessment, QualityDimension, QualityMetrics,
-    QualityPolicy, QualityScores, RangeRuleCount, SampledScoreEstimator, ScoreInterval,
-    SemanticHintKind, ShapeMomentEstimator, SourceIdentity, StatisticRounding, TextLengthUnit,
-    TruncationReason,
+    AccuracyComparison, ColumnProfile, ColumnStats, DataSource, DateForms, DateStatistics,
+    JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, NullTokenSet, OutlierSpread,
+    OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
+    QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
+    RangeRuleCount, SampledScoreEstimator, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
+    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1398,6 +1398,22 @@ impl PyProfileReport {
                 },
             )?;
         }
+        if let Some(spread) = semantics.outlier_spread {
+            dict.set_item(
+                "outlier_spread",
+                match spread {
+                    OutlierSpread::NonzeroIqr => "nonzero_iqr",
+                },
+            )?;
+        }
+        if let Some(forms) = semantics.date_forms {
+            dict.set_item(
+                "date_forms",
+                match forms {
+                    DateForms::SpacedIsoDatetimes => "spaced_iso_datetimes",
+                },
+            )?;
+        }
         Ok(Some(dict))
     }
 
@@ -1593,6 +1609,7 @@ impl PyProfileReport {
         max_null_count = Vec::new(),
         max_null_count_any = None,
         max_duplicate_rows = None,
+        unique_columns = Vec::new(),
         max_date_age = Vec::new(),
         max_date_gap = Vec::new(),
         require_quality = false,
@@ -1603,6 +1620,8 @@ impl PyProfileReport {
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
         max_null_percentage_increase_any = None,
+        max_null_count_increase = Vec::new(),
+        max_null_count_increase_any = None,
         max_distinct_drop = Vec::new(),
         max_distinct_drop_any = None,
         max_row_count_drop = None,
@@ -1624,6 +1643,7 @@ impl PyProfileReport {
         max_null_count: Vec<(String, usize)>,
         max_null_count_any: Option<usize>,
         max_duplicate_rows: Option<usize>,
+        unique_columns: Vec<String>,
         max_date_age: Vec<(String, u32)>,
         max_date_gap: Vec<(String, u32)>,
         require_quality: bool,
@@ -1634,6 +1654,8 @@ impl PyProfileReport {
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
         max_null_percentage_increase_any: Option<f64>,
+        max_null_count_increase: Vec<(String, usize)>,
+        max_null_count_increase_any: Option<usize>,
         max_distinct_drop: Vec<(String, f64)>,
         max_distinct_drop_any: Option<f64>,
         max_row_count_drop: Option<f64>,
@@ -1673,6 +1695,9 @@ impl PyProfileReport {
         if let Some(max) = max_duplicate_rows {
             policy = policy.max_duplicate_rows(max);
         }
+        if !unique_columns.is_empty() {
+            policy = policy.unique_columns(unique_columns);
+        }
         for (column, days) in max_date_age {
             policy = policy.max_date_age(column, days);
         }
@@ -1696,6 +1721,12 @@ impl PyProfileReport {
         }
         if let Some(points) = max_null_percentage_increase_any {
             policy = policy.max_null_percentage_increase_any(points);
+        }
+        for (column, nulls) in max_null_count_increase {
+            policy = policy.max_null_count_increase(column, nulls);
+        }
+        if let Some(nulls) = max_null_count_increase_any {
+            policy = policy.max_null_count_increase_any(nulls);
         }
         for (column, percent) in max_distinct_drop {
             policy = policy.max_distinct_drop(column, percent);

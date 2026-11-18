@@ -147,9 +147,10 @@ sum. `mode` is counted over the exact values, so distinct values that round
 alike do not tie for it, and is reported as the nearest `f64` of the exact
 mode. `quartiles.iqr` and the fences `outlier_count` uses come from exact
 differences between neighbouring values, so a spread of a few units has an IQR
-of a few units (#1038). `min`, `max`, `median`, `q1`, `q2` and `q3` are taken from
-the nearest `f64` of each value, so `iqr` can differ from `q3 - q1` as
-reported.
+of a few units (#1038). `min` and `max` are the nearest `f64` of each value.
+`median`, `q1`, `q2` and `q3` are interpolated on the exact values and reported
+as the nearest `f64` of the result, so the median of -2^53 and 2^53 + 1 is 0.5
+(#1334). `iqr` can still differ from `q3 - q1` as reported.
 
 `stats.exact` carries the order statistics themselves, as canonical decimal
 strings (no exponent, no trailing zeros in a fraction): `min`, `max`, `median`,
@@ -167,15 +168,20 @@ Decimals with more digits than `f64` keeps get the same treatment (#1149):
 `variance`, `std_dev`, `skewness` and `kurtosis` come from their exact
 deviations, so cents on 10^15 keep their spread, `mode`, `quartiles.iqr` and
 `outlier_count` are exact as above, `mean` sums each value's remainder beyond
-its nearest `f64` in the compensated sum, as it does for integers (#1262), and
-the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
+its nearest `f64` in the compensated sum, as it does for integers (#1262),
+`median` and the quartiles of a typed decimal are interpolated on the exact
+values as for integers (#1334), and the other statistics are taken in `f64`. A column typed as a decimal (an Arrow decimal of any
 width, from `Decimal32` to `Decimal256`, read from Arrow, Parquet, pandas or
 polars, or a PostgreSQL `NUMERIC` or MySQL `DECIMAL` column) is held exactly
 from 11 significant digits. Text is held exactly
 from 18: the shortest form of an `f64`, what Python and Rust write, has at most 17 digits, so shorter text reads
 as the float it may be, as the same column typed `Float64` does. A CSV of a
 decimal column therefore serializes what the typed column does when its values
-have at most 10 significant digits or at least 18, and may differ in between. A
+have at most 10 significant digits or at least 18, and may differ in between.
+One exception from 18 digits: text interpolates `median` and the quartiles in
+`f64`, so where the typed column reports 0.01 as the median of
+-1000000000000000000.00 and 1000000000000000000.02, the CSV reports 0.0
+(#1311). A
 decimal too wide to hold exactly, past 38 digits, keeps a spread only where it
 stands well above the rounding of its nearest `f64` (2^-32 of the magnitude);
 below that, a constant column of such values included, the spread statistics
@@ -975,7 +981,10 @@ A report that records no `json_number_reading` reads back with it unknown, and
 a quality gate leaves the consistency, precision, uniqueness, accuracy and
 overall score rules over it `definition_not_comparable` (#1243), so a baseline saved by 0.13
 does not fail the gate on unchanged data. The definition is recorded for every
-source format, so this applies to a 0.13 baseline of any format. Regenerate
+source format, but the gate compares it only when either side's source may
+hold a JSON number: a JSON or JSONL source, a database query, or a source
+whose kind or format the side did not record (#1317). A CSV, Parquet, Arrow
+or DataFrame source on both sides decides those rules without it. Regenerate
 the baseline with the current release to have those rules decided again. The
 field is additive and not `required`, so stored v1 reports remain valid; an
 explicit `null` for `json_number_reading` is malformed, as for
@@ -1005,8 +1014,12 @@ A report that records no `sampled_score_estimator` reads back with it
 unknown, and a quality gate leaves the consistency, accuracy, timeliness,
 validity, precision and overall score rules over it
 `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
-gate on unchanged data. Regenerate the baseline with the current release to
-have those rules decided again. The field is additive and not `required`, so
+gate on unchanged data. The gate compares it only when either side's score
+was computed over a sample of the values the scan read, or its coverage was
+not recorded (#1317): a score over every value read is the same under either
+estimator, however much of the source the scan read.
+Regenerate the baseline with the current release to have those rules
+decided again. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for
 `sampled_score_estimator` is malformed, as for `text_length_unit`.
 
@@ -1027,12 +1040,72 @@ reported every value (#1297). The statistics are now computed over every
 non-null value read, on every engine. A source whose sample held every value
 reports as before.
 
+The timeliness score, its `score_bounds` and the start/end comparison read a
+date column's slash dates in the `slash_date_order` these statistics record
+(#1305). They used to decide an order of their own from the retained sample,
+so on a larger source a value outside it that settled the order was missed,
+and the score read every ambiguous date the other way round from the report.
+A column named as temporal but typed other than date has no date statistics,
+and its order is still decided from the values held for it.
+
 A `max_date_age` rule reads the record: with it, the newest date covers every
 value read, so a stale one fails on a complete scan. A report that records no
 `date_statistics` reads back with it unknown, and the rule keeps its earlier
 reading, `evidence_incomplete` (`quality_sampled`) for a stale date on a
 column larger than its sample. The field is additive and not `required`, so
 stored v1 reports remain valid; an explicit `null` for `date_statistics` is
+malformed, as for `text_length_unit`.
+
+## v1 additive change: `metric_semantics.outlier_spread`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `outlier_spread` | `"nonzero_iqr"` | which columns the outlier test behind `outlier_ratio` runs on |
+
+The outlier test now skips a column whose first and third quartiles are one
+value (#1304), as it skips one below `outlier_min_samples`: its values add
+nothing to `outlier_values_checked`. With an IQR of 0 the Tukey fences sit on
+that quartile, so a column of 75% zeros and 25% fives reported a quarter of
+its values as outliers, and one value more or less on either side of 75%
+moved the accuracy score between 75 and 100. Such a column now leaves the
+outlier component, and a source whose only tested columns were like it
+reports accuracy from its range and sign rules alone, or unassessed without
+them. A column's own `outlier_count` statistic is unchanged.
+
+On a sampled source the full scan's fences come from the source's quartiles,
+which the sample only estimates. The accuracy interval in `score_bounds` now
+covers them: each quartile is bounded by two sample values, and the interval
+runs from the share outside the widest fences those bounds allow to the share
+outside the narrowest. Where the bounds leave open whether the source's
+quartiles coincide, the accuracy interval is absent and a gate rule on it is
+inconclusive. An interval is as wide as before when no value lies between
+those fences, and wider on a column whose fences cut through dense values.
+
+`score_bounds` gains `open_dimensions`, the dimensions the sample left
+unassessed that a scan of every value may assess, such as accuracy on a
+sample whose quartiles coincide drawn from a source whose quartiles may not.
+Such a dimension would enter the overall score with its weight, so while one
+of them stays unassessed and carries a positive weight, the overall interval
+is absent and a gate leaves the overall score rules `evidence_incomplete`
+(`quality_sampled`). The rule reads the weights in force when the gate runs,
+so a weight set after profiling decides it too. The list is absent when the
+sample settled every dimension, and on documents written before it, which
+had no such case.
+
+A report that records no `outlier_spread` reads back with it unknown, and a
+quality gate leaves the accuracy and overall score rules over it
+`definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data. The gate compares it only when either side's outlier
+test may have met a column whose quartiles coincide (#1317): a numeric
+column with values whose exact quartiles coincide, are estimates or were not
+recorded, or any column when the accuracy score was computed over a sample
+of the values the scan read. Where every numeric column records distinct exact quartiles, both
+definitions test the same columns, and the rules decide without it.
+Regenerate the baseline with the current release to have those rules decided
+again. The field is additive and not `required`, so
+stored v1 reports remain valid; an explicit `null` for `outlier_spread` is
 malformed, as for `text_length_unit`.
 
 ## v1 additive change: `generator`
@@ -1323,3 +1396,37 @@ source has no more distinct rows than the limit.
 Absence means no row tracker counted the rows (the duplicate count came from
 the retained sample), or the report predates 0.14. The field is additive and
 not `required`, so stored v1 reports remain valid.
+
+## v1 additive change: `metric_semantics.date_forms`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `date_forms` | `"spaced_iso_datetimes"` | which text forms read as dates |
+
+The ISO datetime with a space for the `T` now reads as a date with a fraction
+and a UTC offset, as the `T` form does: `2026-06-01 12:00:00+00:00`, the form
+Python's `str()` writes for a timezone-aware datetime, and
+`2026-06-01 12:00:00.250` (#1335). Through 0.13 only the plain
+`2026-06-01 12:00:00` was a date, and these were text. Type inference, the
+consistency check and the timeliness counts read them, so the same bytes can
+type a column as a date that was text, and score differently on consistency,
+timeliness and overall.
+
+A report that records no `date_forms` reads back with it unknown, and a
+quality gate leaves the consistency, timeliness and overall score rules over
+it `definition_not_comparable`, so a baseline saved by 0.13 does not fail the
+gate on unchanged data (#1340). The gate compares it only when either side may
+hold such a value (#1317): a column typed as a date, a text column whose
+longest value has 20 characters or more (the shortest such datetime,
+`2026-06-01 12:00:00Z`, has 20), a column named by `temporal_columns` or
+`temporal_pairs` of any type, since timeliness parses it, or a column whose
+type or text lengths were not recorded, or any column on a report that
+recorded no hints. Where every column is numeric, boolean, nested or short
+text and none is named as temporal, both definitions read the same dates, and
+the rules decide without it.
+Regenerate the baseline with the current release to have those rules decided
+again. The field is additive and not `required`, so stored v1 reports remain
+valid; an explicit `null` for `date_forms` is malformed, as for
+`text_length_unit`.

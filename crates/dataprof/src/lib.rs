@@ -30,10 +30,10 @@ pub use chrono::NaiveDate;
 pub use dataprof_core::{
     AccuracyComparison, AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema,
     ColumnStats, CountMethod, CsvSourceMetadata, DATE_GAP_YEAR_LIMIT, DataFrameLibrary,
-    DataProfilerError, DataSource, DataType, DateGap, DateStatistics, DateTimeStats,
+    DataProfilerError, DataSource, DataType, DateForms, DateGap, DateStatistics, DateTimeStats,
     DelimiterDetection, ExactNumericStats, ExecutionMetadata, FileFormat, FrequencyItem,
     IsoQualityConfig, JsonNumberReading, KeyColumnSource, KeyUniquenessUnits, LexicalClass, Locale,
-    MetricPack, NULL_MARKERS, NativeType, NullTokenSet, NumericStats, OutlierUnits,
+    MetricPack, NULL_MARKERS, NativeType, NullTokenSet, NumericStats, OutlierSpread, OutlierUnits,
     ParquetMetadata, Pattern, PatternCategory, PatternMatchCount, ProgressEvent, ProgressSink,
     QualityDimension, QualityScoreWeights, Quartiles, QueryEngine, RangeRuleCount, RecoveryEvent,
     RecoveryKind, RowCountEstimate, SampledScoreEstimator, SamplingStrategy, SchemaResult,

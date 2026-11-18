@@ -625,7 +625,7 @@
               "reason": "quality_sampled"
             },
             "bounds": {
-              "lower": 99.69,
+              "lower": 99.68,
               "upper": 100.0,
               "confidence_level": 0.999
             },
@@ -1507,6 +1507,191 @@
             },
             "status": "passed",
             "message": "the finding's rule looked and found nothing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_repeated_value_fails_a_unique_column",
+      "why": "Every key in the generated input is distinct, past the quality reservoir, so the rule reads the exact distinct count rather than the sample; bucket repeats seven values over 12,000 rows; a column the report lacks is not evaluated.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "unique_columns": [
+          "key",
+          "bucket",
+          "region"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "unique_column",
+            "column": "bucket",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 11993,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "failed",
+            "message": "some non-null values of this column occur more than once"
+          },
+          {
+            "code": "unique_column",
+            "column": "key",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "no non-null value of this column occurs more than once"
+          },
+          {
+            "code": "unique_column",
+            "column": "region",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "column_not_profiled",
+            "message": "this column has no profile in the report"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_key_repeat_witnessed_by_a_capped_scan_fails",
+      "why": "The fourth row repeats order_id A-2, and a value already seen twice stays repeated when more rows are read.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "unique_columns": [
+          "order_id"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "unique_column",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "failed",
+            "message": "some non-null values of this column occur more than once"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_without_a_key_repeat_is_not_decided",
+      "why": "Three rows show no repeated order_id, and the rows not read may repeat one.",
+      "options": {
+        "max_rows": 3
+      },
+      "policy": {
+        "unique_columns": [
+          "order_id"
+        ]
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "unique_column",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "no value of this column was observed more than once, and the rows that were not read may repeat one"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_capped_scan_decides_a_unique_column_in_the_observed_scope",
+      "why": "The observed scope states the rule about the three rows read, which hold no repeat.",
+      "options": {
+        "max_rows": 3
+      },
+      "policy": {
+        "unique_columns": [
+          "order_id"
+        ],
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "unique_column",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "no non-null value of this column occurs more than once"
           }
         ]
       }

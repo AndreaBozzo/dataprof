@@ -15,6 +15,17 @@ import pytest
 FIXTURES = Path(__file__).parents[2] / "tests/fixtures"
 CLEAN = {"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]}
 WITH_NULLS = {"id": [1, 2, 3, 4], "amount": [10, None, None, 40]}
+#: A text column beside spaced ISO datetimes with an offset, and a column of
+#: them alone, which 0.14 reads as dates and 0.13 as text (#1340).
+SPACED_DATETIMES = {
+    "id": [1, 2, 3],
+    "event": ["heartbeat", "2026-06-01 12:05:00+00:00", "restart"],
+    "logged_at": [
+        "2026-06-01 12:00:00+00:00",
+        "2026-06-01 12:05:00.250Z",
+        "2026-06-02 08:30:00+02:00",
+    ],
+}
 DRIFT: dict[str, Any] = {
     "max_quality_score_drop": 0,
     "max_dimension_score_drops": {"completeness": 0},
@@ -218,27 +229,51 @@ def test_a_baseline_that_predates_a_record_leaves_what_depends_on_it_unevaluated
     assert result.verdict == "inconclusive"
 
 
+def _reached_by(run: str, tmp_path: Path) -> dp.ProfileReport:
+    """A run each definition reaches (#1317): the clean frame, a column whose
+    quartiles coincide, a JSON source, and more rows than a column's
+    10,000-value quality sample."""
+    if run == "clean":
+        return dp.profile(CLEAN)
+    if run == "flat":
+        return dp.profile({"id": [1, 2, 3, 4], "amount": [10, 10, 10, 10]})
+    if run == "spaced":
+        return dp.profile(SPACED_DATETIMES)
+    if run == "json":
+        path = tmp_path / "clean.json"
+        path.write_text(
+            json.dumps([{"id": i, "amount": a} for i, a in zip(CLEAN["id"], CLEAN["amount"])])
+        )
+        return dp.profile(str(path))
+    path = tmp_path / "sampled.csv"
+    path.write_text("id,amount\n" + "".join(f"{row},{row % 97}\n" for row in range(12_000)))
+    return dp.profile(str(path))
+
+
 @pytest.mark.parametrize(
-    ("definition", "reads", "other"),
+    ("definition", "reads", "other", "run"),
     [
-        ("range_rule_count", "accuracy", "uniqueness"),
-        ("key_uniqueness_units", "uniqueness", "accuracy"),
-        ("outlier_units", "accuracy", "uniqueness"),
-        ("key_column_source", "uniqueness", "accuracy"),
-        ("accuracy_comparison", "accuracy", "uniqueness"),
-        ("json_number_reading", "uniqueness", "completeness"),
-        ("json_number_reading", "accuracy", "completeness"),
-        ("json_number_reading", "consistency", "completeness"),
-        ("sampled_score_estimator", "consistency", "completeness"),
-        ("sampled_score_estimator", "accuracy", "uniqueness"),
+        ("date_forms", "consistency", "uniqueness", "spaced"),
+        ("date_forms", "timeliness", "uniqueness", "spaced"),
+        ("range_rule_count", "accuracy", "uniqueness", "clean"),
+        ("key_uniqueness_units", "uniqueness", "accuracy", "clean"),
+        ("outlier_units", "accuracy", "uniqueness", "clean"),
+        ("outlier_spread", "accuracy", "uniqueness", "flat"),
+        ("key_column_source", "uniqueness", "accuracy", "clean"),
+        ("accuracy_comparison", "accuracy", "uniqueness", "clean"),
+        ("json_number_reading", "uniqueness", "completeness", "json"),
+        ("json_number_reading", "accuracy", "completeness", "json"),
+        ("json_number_reading", "consistency", "completeness", "json"),
+        ("sampled_score_estimator", "consistency", "completeness", "sampled"),
+        ("sampled_score_estimator", "accuracy", "completeness", "sampled"),
     ],
 )
 def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluated(
-    definition: str, reads: str, other: str
+    definition: str, reads: str, other: str, run: str, tmp_path: Path
 ):
     # Every other definition recorded, so only the one removed separates the
     # baseline from the report (#1005). The other dimensions are still decided.
-    report = dp.profile(CLEAN)
+    report = _reached_by(run, tmp_path)
     summary = report.to_dict()
     del summary["metric_semantics"][definition]
     result = report.check(
@@ -251,6 +286,69 @@ def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unev
     assert _find(result, "max_dimension_score_drop", reads).reason == unevaluated
     assert _find(result, "max_dimension_score_drop", other).status == "passed"
     assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+
+
+@pytest.mark.parametrize(
+    "definition",
+    ["json_number_reading", "sampled_score_estimator", "outlier_spread", "date_forms"],
+)
+def test_a_definition_no_run_can_reach_does_not_hold_a_score_open(definition: str):
+    # A frame read in full, whose numeric columns all have spread: neither side
+    # holds a JSON number, scores a sample or tests a column whose quartiles
+    # coincide, so a baseline without these definitions decides every score
+    # that reads them (#1317).
+    report = dp.profile(CLEAN)
+    summary = report.to_dict()
+    del summary["metric_semantics"][definition]
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        max_quality_score_drop=0,
+        max_dimension_score_drops=dict.fromkeys(
+            ("completeness", "consistency", "uniqueness", "accuracy", "precision"), 0
+        ),
+    )
+    held = [
+        check.to_dict()
+        for check in result.checks
+        if (check.reason or {}).get("reason") == "definition_not_comparable"
+    ]
+    assert not held, held
+    assert _find(result, "max_dimension_score_drop", "accuracy").status == "passed"
+
+
+def test_short_text_does_not_reach_date_forms():
+    # A text column whose longest value is shorter than any spaced datetime
+    # `date_forms` reads differently holds none, so a baseline without the
+    # definition decides consistency. One long value holds it open (#1340).
+    for codes, held in ((["ok", "fail", "ok"], False), (["ok", "fail", "x" * 20], True)):
+        report = dp.profile({"id": [1, 2, 3], "status": codes})
+        summary = report.to_dict()
+        del summary["metric_semantics"]["date_forms"]
+        result = report.check(
+            baseline=dp.ProfileReport.from_dict(summary),
+            max_dimension_score_drops={"consistency": 0},
+        )
+        reason = _find(result, "max_dimension_score_drop", "consistency").reason
+        assert (reason is not None) == held, (codes, reason)
+
+
+def test_a_temporal_hint_on_a_numeric_column_reaches_date_forms(tmp_path: Path):
+    # Timeliness parses a column named by `temporal_columns` whatever its type:
+    # a float column holding one spaced datetime with a fraction moves it
+    # (#1340 review). Without the hint the same numeric run is not reached.
+    path = tmp_path / "readings.csv"
+    readings = "".join(f"{i}.5\n" for i in range(1, 10))
+    path.write_text(f"reading\n{readings}2026-06-01 12:00:00.5\n")
+    for temporal, held in ((None, False), (["reading"], True)):
+        report = dp.profile(str(path), temporal_columns=temporal)
+        summary = report.to_dict()
+        del summary["metric_semantics"]["date_forms"]
+        result = report.check(
+            baseline=dp.ProfileReport.from_dict(summary),
+            max_dimension_score_drops={"consistency": 0},
+        )
+        reason = _find(result, "max_dimension_score_drop", "consistency").reason
+        assert (reason is not None) == held, (temporal, reason)
 
 
 def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(tmp_path: Path):
@@ -269,6 +367,30 @@ def test_partial_evidence_on_either_side_is_unevaluated_under_full_source_only(t
             assert check.reason == {"reason": "evidence_incomplete", "gap": "truncated"}
         assert result.verdict == "inconclusive"
         assert report.check(baseline=baseline, scope="observed", **policy).verdict == "pass"
+
+
+@pytest.mark.parametrize("definition", ["sampled_score_estimator", "outlier_spread"])
+def test_a_truncated_scan_scored_in_full_does_not_reach_the_sample_definitions(
+    definition: str, tmp_path: Path
+):
+    # A scan that stopped after 50 rows, each score over every value it read:
+    # under the observed scope, a baseline without the definition decides the
+    # scores that read it. How much of the source the scan read does not
+    # decide whether those definitions move them (#1317).
+    path = tmp_path / "rows.csv"
+    path.write_text("id,amount\n" + "".join(f"{i},{i * 2}\n" for i in range(200)))
+    truncated = dp.profile(str(path), max_rows=50)
+    summary = truncated.to_dict()
+    del summary["metric_semantics"][definition]
+    result = truncated.check(
+        baseline=dp.ProfileReport.from_dict(summary),
+        scope="observed",
+        max_quality_score_drop=0,
+        max_dimension_score_drops={"accuracy": 0, "consistency": 0},
+    )
+    assert [check.status for check in result.checks] == ["passed"] * 3, [
+        check.to_dict() for check in result.checks
+    ]
 
 
 def test_a_saved_baseline_gives_the_verdict_the_live_one_does(tmp_path: Path):

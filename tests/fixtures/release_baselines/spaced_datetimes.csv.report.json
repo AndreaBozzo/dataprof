@@ -1,0 +1,312 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 51.64,
+          "exact": {
+            "max": "4",
+            "median": "2.5",
+            "min": "1",
+            "q1": "1.75",
+            "q2": "2.5",
+            "q3": "3.25"
+          },
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 4.0,
+          "mean": 2.5,
+          "median": 2.5,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 1.5,
+            "q1": 1.75,
+            "q2": 2.5,
+            "q3": 3.25
+          },
+          "skewness": 0.0,
+          "std_dev": 1.291,
+          "variance": 1.6667
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 4,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "event",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Text": {
+          "avg_length": 15.5,
+          "max_length": 25,
+          "min_length": 7
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 2,
+        "numeric": 0,
+        "text": 2
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "logged_at",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Monday": 2,
+            "Tuesday": 1,
+            "Wednesday": 1
+          },
+          "duration_days": 2.0,
+          "hour_distribution": {
+            "12": 2,
+            "4": 1,
+            "6": 1
+          },
+          "largest_gap": {
+            "days": 1,
+            "from": "2026-06-01",
+            "to": "2026-06-02"
+          },
+          "max_datetime": "2026-06-03",
+          "min_datetime": "2026-06-01",
+          "month_distribution": {
+            "6": 4
+          },
+          "year_distribution": {
+            "2026": 4
+          }
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 4,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "day",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.5,
+          "match_count": 4,
+          "match_percentage": 100.0,
+          "name": "Date (ISO)",
+          "regex": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      ],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Monday": 1,
+            "Thursday": 1,
+            "Tuesday": 1,
+            "Wednesday": 1
+          },
+          "duration_days": 3.0,
+          "largest_gap": {
+            "days": 1,
+            "from": "2026-06-01",
+            "to": "2026-06-02"
+          },
+          "max_datetime": "2026-06-04",
+          "min_datetime": "2026-06-01",
+          "month_distribution": {
+            "6": 4
+          },
+          "year_distribution": {
+            "2026": 4
+          }
+        }
+      },
+      "total_count": 4,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 4,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 4,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "csv_metadata": {
+      "delimiter": ",",
+      "delimiter_detection": {
+        "delimiter": ",",
+        "header_fields": 4
+      }
+    },
+    "format": "csv",
+    "path": "spaced_datetimes.csv",
+    "size_bytes": 244,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 244,
+    "columns_detected": 4,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 28.31640625,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 4,
+    "sampling_applied": false,
+    "scan_time_ms": 40,
+    "source_exhausted": true,
+    "throughput_rows_sec": 100.0,
+    "unterminated_quote": false
+  },
+  "generator": {
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "dirty": false,
+    "version": "0.14.0"
+  },
+  "id": "1c68c8f9-9f67-46e2-a0e9-15cc6068da56",
+  "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
+    "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "columns_without_value_checks": [],
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 4,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 4,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 16
+      },
+      "consistency": {
+        "data_type_consistency": 87.5,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 16
+      },
+      "low_sample_warning": true,
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "timeliness": {
+        "clock": {
+          "max_data_age_years": 5.0,
+          "mode": "rolling",
+          "reference_date": "2026-11-17",
+          "timezone": "UTC"
+        },
+        "date_values_checked": 8,
+        "future_dates_count": 0,
+        "invalid_date_values": 0,
+        "stale_data_ratio": 0.0,
+        "temporal_pairs_checked": 0,
+        "temporal_violations": 0
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 4
+      },
+      "validity": {
+        "invalid_values": 0,
+        "valid_values_ratio": 100.0,
+        "values_checked": 4
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 87.5,
+        "precision": null,
+        "timeliness": 100.0,
+        "uniqueness": 100.0,
+        "validity": 100.0
+      },
+      "overall_score": 97.37
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-17T18:32:07.433229200+00:00"
+}

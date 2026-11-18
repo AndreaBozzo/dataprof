@@ -316,13 +316,15 @@ fn a_newest_date_past_the_sample_is_decided_on_a_complete_scan() {
     assert!(wrong.is_empty(), "wrong decisions:\n{}", wrong.join("\n"));
 }
 
-/// A scan that stopped early: the same rule as the sample, on the scan's gap.
+/// A scan that stopped early leaves a date column typed from text open both
+/// ways: the unread rows may hold a newer date, or text that types the column
+/// as text (#1333).
 #[test]
-fn a_truncated_scan_passes_a_fresh_date_and_leaves_a_stale_one_open() {
+fn a_truncated_scan_leaves_a_fresh_and_a_stale_inferred_date_open() {
     let mut wrong = Vec::new();
     for (case, reference, expected) in [
         ("stale", "2026-09-30", "evidence_incomplete"),
-        ("fresh", "2025-12-16", "passed"),
+        ("fresh", "2025-12-16", "evidence_incomplete"),
     ] {
         let source = file(".csv", &csv_text(&DATES));
         let report = Profiler::new()
@@ -339,6 +341,181 @@ fn a_truncated_scan_passes_a_fresh_date_and_leaves_a_stale_one_open() {
         }
     }
     assert!(wrong.is_empty(), "wrong decisions:\n{}", wrong.join("\n"));
+}
+
+#[cfg(feature = "parquet")]
+fn parquet_column(column: arrow::array::ArrayRef) -> tempfile::NamedTempFile {
+    use std::sync::Arc;
+
+    use arrow::datatypes::{Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use parquet::arrow::ArrowWriter;
+
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "published_at",
+        column.data_type().clone(),
+        false,
+    )]));
+    let batch = RecordBatch::try_new(schema.clone(), vec![column]).unwrap();
+    let file = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+    let mut writer = ArrowWriter::try_new(file.reopen().unwrap(), schema, None).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+    file
+}
+
+/// The issue's case: a fresh date followed by a value that is not one. Read
+/// whole, the column is text and has no newest date; read in part, the rows
+/// left out are the ones that would type it so, and a `full_source` pass
+/// would approve the corrupt delivery (#1333). Each route is profiled capped
+/// or sampled and whole; a partial read decides only what the whole column
+/// decides. A declared date type keeps every value a date, so there a
+/// partial read still passes a fresh date.
+#[test]
+fn a_partial_read_passes_a_fresh_date_only_when_the_source_declared_its_type() {
+    use dataprof::SamplingStrategy;
+
+    const CORRUPT: &str = "published_at,x\n2026-06-01,0\ncorrupt,1\n";
+    let reference = day("2026-06-01");
+    let capped = || {
+        Profiler::new()
+            .reference_date(reference)
+            .stop_when(StopCondition::MaxRows(1))
+    };
+    let sampled = || {
+        Profiler::new()
+            .reference_date(reference)
+            .sampling(SamplingStrategy::Systematic { interval: 2 })
+    };
+    let whole = || Profiler::new().reference_date(reference);
+    let jsonl = "{\"published_at\": \"2026-06-01\", \"x\": 0}\n\
+                 {\"published_at\": \"corrupt\", \"x\": 1}\n";
+    let json = format!(
+        "[{}]",
+        jsonl.trim_end().lines().collect::<Vec<_>>().join(",")
+    );
+    let csv = file(".csv", CORRUPT);
+    let json = file(".json", &json);
+    let jsonl = file(".jsonl", jsonl);
+
+    // (route, partial read, whole read)
+    let mut runs: Vec<(String, ProfileReport, ProfileReport)> = Vec::new();
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let run = |profiler: Profiler| profiler.engine(engine).analyze_file(csv.path()).unwrap();
+        runs.push((
+            format!("csv {engine:?} capped"),
+            run(capped()),
+            run(whole()),
+        ));
+    }
+    let run = |profiler: Profiler, source: &tempfile::NamedTempFile| {
+        profiler.analyze_file(source.path()).unwrap()
+    };
+    runs.push((
+        "csv sampled".to_string(),
+        run(sampled(), &csv),
+        run(whole(), &csv),
+    ));
+    runs.push((
+        "json capped".to_string(),
+        run(capped(), &json),
+        run(whole(), &json),
+    ));
+    runs.push((
+        "jsonl capped".to_string(),
+        run(capped(), &jsonl),
+        run(whole(), &jsonl),
+    ));
+    #[cfg(feature = "async-streaming")]
+    {
+        use dataprof::{AsyncSourceInfo, BytesSource, FileFormat};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let stream = |profiler: Profiler| {
+            let source = BytesSource::new(
+                bytes::Bytes::from_static(CORRUPT.as_bytes()),
+                AsyncSourceInfo::new("upload", FileFormat::Csv),
+            );
+            rt.block_on(profiler.profile_stream(source)).unwrap()
+        };
+        runs.push((
+            "async csv bytes capped".to_string(),
+            stream(capped()),
+            stream(whole()),
+        ));
+    }
+    let mut expected: Vec<(String, &str, &str)> = runs
+        .iter()
+        .map(|(route, _, _)| (route.clone(), "evidence_incomplete", "not_assessed"))
+        .collect();
+    #[cfg(feature = "parquet")]
+    {
+        use std::sync::Arc;
+
+        use arrow::array::Date32Array;
+        // A declared text column is typed from its schema, never as a date,
+        // so it never reaches this rule. A capped Parquet read samples rows
+        // across the file, so both rows are fresh.
+        let fresh = (day("2026-06-01") - day("1970-01-01")).num_days() as i32;
+        let declared = parquet_column(Arc::new(Date32Array::from(vec![fresh, fresh])));
+        runs.push((
+            "parquet date32 capped".to_string(),
+            run(capped(), &declared),
+            run(whole(), &declared),
+        ));
+        expected.push(("parquet date32 capped".to_string(), "passed", "passed"));
+    }
+
+    let mut wrong = Vec::new();
+    for ((route, partial, whole), (_, want_partial, want_whole)) in runs.iter().zip(&expected) {
+        let got = (
+            status(&evaluate(partial, "published_at", 0)),
+            status(&evaluate(whole, "published_at", 0)),
+        );
+        if got != (want_partial.to_string(), want_whole.to_string()) {
+            wrong.push(format!("{route}: {got:?}"));
+        }
+        // The observed scope decides on the rows read, as it always has.
+        let observed = QualityPolicy::new()
+            .max_date_age("published_at", 0)
+            .scope(PolicyScope::Observed)
+            .evaluate(partial)
+            .unwrap();
+        if status(&observed) != "passed" {
+            wrong.push(format!("{route} observed: {}", status(&observed)));
+        }
+    }
+    assert!(wrong.is_empty(), "wrong decisions:\n{}", wrong.join("\n"));
+}
+
+/// A record skipped because it could not be parsed is skipped on every scan
+/// of that source, so it leaves no row unread and the inferred date type
+/// stands: a fresh date passes under `full_source` (#1333).
+#[test]
+fn a_skipped_record_leaves_an_inferred_date_decided() {
+    let jsonl = file(
+        ".jsonl",
+        "{\"published_at\": \"2026-06-01\", \"x\": 0}\n{not json\n",
+    );
+    let report = Profiler::new()
+        .reference_date(day("2026-06-01"))
+        .analyze_file(jsonl.path())
+        .unwrap();
+    let result = evaluate(&report, "published_at", 0);
+    let check = serde_json::to_value(check_of(&result)).unwrap();
+    assert_eq!(
+        (&check["status"], &check["evidence"]),
+        (
+            &json!("passed"),
+            &json!({ "coverage": "incomplete", "reason": "records_skipped" })
+        )
+    );
 }
 
 /// Absence is never a pass: each case names why the age could not be read.
@@ -497,6 +674,7 @@ fn each_outcome_carries_its_own_message() {
     let csv = csv_text(&DATES);
     let fresh = profile(&csv, "2025-12-18", None);
     let truncated = profile(&csv, "2026-09-30", Some(2));
+    let truncated_fresh = profile(&csv, "2025-12-16", Some(2));
     // A date column with no date recorded, as statistics on no parsed value
     // leave it.
     let mut document = serde_json::to_value(&fresh).unwrap();
@@ -519,6 +697,13 @@ fn each_outcome_carries_its_own_message() {
             "published_at",
             "the newest date read in this column is older than the allowed age, and the \
              values that were not read may hold a newer one",
+        ),
+        (
+            &truncated_fresh,
+            "published_at",
+            "the newest date read in this column is within the allowed age, and the rows that \
+             were not read may hold values that are not dates, which would type the column as \
+             text",
         ),
         (
             &fresh,
@@ -553,17 +738,26 @@ fn each_outcome_carries_its_own_message() {
 
 /// Slash dates are read in an order the column's values decide (#811), so on
 /// a partial read a fresh date passes only when the unread values cannot
-/// change how the dates read are read. Each case is decided on a capped scan
-/// and on the whole column; a capped pass must agree with the whole column.
+/// change how the dates read are read. A capped scan of text leaves the
+/// column's type open as well (#1333), so each capped case is unevaluated,
+/// and its message names the order when that can still change. A complete
+/// scan whose date statistics came from the retained sample leaves only the
+/// order open, and there a settled order passes.
 #[test]
-fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
+fn a_partial_read_names_an_open_slash_order_and_passes_a_settled_one() {
+    const ORDER: &str = "the newest date read in this column is within the allowed age, and the \
+                         values that were not read may change the day and month order its slash \
+                         dates are read in";
+    const TYPE: &str = "the newest date read in this column is within the allowed age, and the \
+                        rows that were not read may hold values that are not dates, which would \
+                        type the column as text";
     let cases = [
         (
             "no value decided the order: a later month-first value turns 01/10 into January",
             &["01/10/2026", "12/31/2025"][..],
             1,
             "2026-10-02",
-            "evidence_incomplete",
+            ORDER,
             "failed",
         ),
         (
@@ -571,7 +765,7 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
             &["12/31/2025", "10/01/2026", "31/12/2025"][..],
             2,
             "2026-10-02",
-            "evidence_incomplete",
+            ORDER,
             "failed",
         ),
         (
@@ -579,7 +773,7 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
             &["31/12/2025", "10/01/2026", "12/31/2025"][..],
             2,
             "2026-01-12",
-            "passed",
+            TYPE,
             "passed",
         ),
         (
@@ -587,7 +781,7 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
             &["2026-10-01", "2020-01-01"][..],
             1,
             "2026-10-02",
-            "passed",
+            TYPE,
             "passed",
         ),
     ];
@@ -601,11 +795,13 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
             }
             profiler.analyze_file(source.path()).unwrap()
         };
+        let capped_result = evaluate(&profile(Some(cap)), "published_at", 3);
         let got = (
-            status(&evaluate(&profile(Some(cap)), "published_at", 3)),
+            status(&capped_result),
+            check_of(&capped_result).message.as_str(),
             status(&evaluate(&profile(None), "published_at", 3)),
         );
-        if got != (capped.to_string(), whole.to_string()) {
+        if got != ("evidence_incomplete".to_string(), capped, whole.to_string()) {
             wrong.push(format!("{case}: {got:?}"));
         }
     }
@@ -629,15 +825,21 @@ fn a_partial_read_passes_a_fresh_slash_date_only_once_its_order_is_settled() {
         (&json!("evidence_incomplete"), &json!("quality_sampled"))
     );
 
-    let source = file(".csv", &csv_text(&["01/10/2026", "12/31/2025"]));
-    let capped = Profiler::new()
-        .reference_date(day("2026-10-02"))
-        .stop_when(StopCondition::MaxRows(1))
-        .analyze_file(source.path())
+    // Every value read day-first: the order cannot change, and the scan read
+    // every row, so the sample's newest date can only be overtaken.
+    let day_first = vec!["13/10/2026"; 30_000];
+    let settled_source = file(".csv", &csv_text(&day_first));
+    let whole = Profiler::new()
+        .reference_date(day("2026-10-14"))
+        .analyze_file(settled_source.path())
         .unwrap();
+    let saved = without_date_statistics(&whole);
+    let check = serde_json::to_value(check_of(&evaluate(&saved, "published_at", 3))).unwrap();
     assert_eq!(
-        check_of(&evaluate(&capped, "published_at", 3)).message,
-        "the newest date read in this column is within the allowed age, and the values that \
-         were not read may change the day and month order its slash dates are read in"
+        (&check["status"], &check["evidence"]),
+        (
+            &json!("passed"),
+            &json!({ "coverage": "incomplete", "reason": "quality_sampled" })
+        )
     );
 }

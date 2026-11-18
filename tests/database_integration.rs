@@ -437,6 +437,71 @@ mod postgres_tests {
         connector.disconnect().await.unwrap();
     }
 
+    /// A verifying TLS mode in the URL reaches the driver. The test server
+    /// cannot satisfy it (no TLS, or a certificate no CA here signed), so
+    /// connecting fails; the settings were dropped and it connected.
+    #[tokio::test]
+    async fn test_postgres_url_tls_verification_is_enforced() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        let config = postgres_config(&format!(
+            "{url}{separator}sslmode=verify-full&sslrootcert=no-such-dir/ca.crt"
+        ));
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// `SslConfig::production()` (verify-full) applies without the
+    /// environment too: it was only applied when credentials were loaded
+    /// from it.
+    #[tokio::test]
+    async fn test_postgres_production_ssl_config_is_enforced() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let config = DatabaseConfig {
+            ssl_config: Some(dataprof::SslConfig::production()),
+            ..postgres_config(&url)
+        };
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// sqlx reads query names decoded: an encoded `sslmode` is still the
+    /// caller's mode, and the default `prefer` appended after it connected.
+    /// A CA filename with `&` in it started a pair that disabled TLS.
+    #[tokio::test]
+    async fn test_postgres_tls_settings_survive_url_encoding() {
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        for load_credentials_from_env in [false, true] {
+            let config = DatabaseConfig {
+                load_credentials_from_env,
+                ..postgres_config(&format!(
+                    "{url}{separator}ssl%6dode=verify-full&sslrootcert=no-such-dir/ca.crt"
+                ))
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+
+            let ssl_config = dataprof::SslConfig {
+                ca_cert_path: Some("no-such-dir/CA&sslmode=disable".to_string()),
+                ..dataprof::SslConfig::production()
+            };
+            let config = DatabaseConfig {
+                ssl_config: Some(ssl_config),
+                load_credentials_from_env,
+                ..postgres_config(&url)
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+        }
+    }
+
     #[tokio::test]
     async fn test_postgres_profile_query() {
         let Some(url) = postgres_url() else {
@@ -602,6 +667,72 @@ mod mysql_tests {
         assert!(result);
 
         connector.disconnect().await.unwrap();
+    }
+
+    /// A verifying TLS mode in the URL reaches the driver. The test server
+    /// cannot satisfy it (no TLS, or a certificate no CA here signed), so
+    /// connecting fails; the settings were dropped and it connected.
+    #[tokio::test]
+    async fn test_mysql_url_tls_verification_is_enforced() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        let config = mysql_config(&format!(
+            "{url}{separator}ssl-mode=VERIFY_CA&ssl-ca=no-such-dir/ca.crt"
+        ));
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// `SslConfig::production()` (verify-full) applies without the
+    /// environment too: it was only applied when credentials were loaded
+    /// from it.
+    #[tokio::test]
+    async fn test_mysql_production_ssl_config_is_enforced() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let config = DatabaseConfig {
+            ssl_config: Some(dataprof::SslConfig::production()),
+            ..mysql_config(&url)
+        };
+        let mut connector = create_connector(config).unwrap();
+        assert!(connector.connect().await.is_err());
+    }
+
+    /// sqlx reads query names decoded: an encoded `ssl-mode` is still the
+    /// caller's mode, and the default `PREFERRED` appended after it
+    /// connected. A CA filename with `&` in it started a pair that disabled
+    /// TLS.
+    #[tokio::test]
+    async fn test_mysql_tls_settings_survive_url_encoding() {
+        let Some(url) = mysql_url() else {
+            return;
+        };
+        let separator = if url.contains('?') { '&' } else { '?' };
+        for load_credentials_from_env in [false, true] {
+            let config = DatabaseConfig {
+                load_credentials_from_env,
+                ..mysql_config(&format!(
+                    "{url}{separator}ssl%2Dmode=VERIFY_CA&ssl-ca=no-such-dir/ca.crt"
+                ))
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+
+            let ssl_config = dataprof::SslConfig {
+                ca_cert_path: Some("no-such-dir/CA&ssl-mode=DISABLED".to_string()),
+                ..dataprof::SslConfig::production()
+            };
+            let config = DatabaseConfig {
+                ssl_config: Some(ssl_config),
+                load_credentials_from_env,
+                ..mysql_config(&url)
+            };
+            let mut connector = create_connector(config).unwrap();
+            assert!(connector.connect().await.is_err());
+        }
     }
 
     #[tokio::test]

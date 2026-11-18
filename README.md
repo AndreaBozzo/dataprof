@@ -12,9 +12,10 @@
 
 </div>
 
-dataprof profiles CSV, JSON, Parquet, DataFrames and Arrow tables in one call: types, nulls, distributions, patterns and a quality score. Then it can gate your pipeline on what it found. It runs locally, gives the same numbers for the same data whichever way you load it, and says "can't tell" instead of guessing.
+dataprof profiles CSV, JSON, JSONL, Parquet, DataFrames and Arrow tables in one call: types, nulls, distributions, patterns and a quality score. Then it can gate your pipeline on what it found, including changes from a saved baseline. It runs locally and records when the evidence cannot settle a check.
 
-A Rust library with a Python package on top. No server, no account, no network.
+A Rust library with a Python package on top. Local file profiling needs no
+server, account or network access.
 
 ## Install
 
@@ -70,6 +71,21 @@ python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"
 python -m dataprof.check orders.csv --baseline accepted.json --max-quality-drop 5 --timeliness-clock rolling
 ```
 
+Keep the candidate report with `--report candidate.json`. Promote it to the
+baseline only on a pass, including the first run, which uses absolute rules
+alone. A changed or unrecorded metric definition can leave a comparison
+`definition_not_comparable`; inspect the reason and regenerate the baseline
+deliberately. See the [checkpoint recipe](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint).
+
+0.14 adds these checks:
+
+- **Freshness and missing periods:** `check(max_date_age={"published_at": 3}, max_date_gap={"published_at": 1})` limits the age of the newest date and the largest gap between consecutive distinct days. `dp.profile("orders.csv", reference_date="2026-06-10")` fixes the timeliness clock.
+- **Volume:** `check(baseline=baseline, max_row_count_drop=10, max_row_count_growth=20)` limits percentage changes in row count; `min_rows=1` sets an absolute floor.
+- **Keys:** `check(unique_columns=["order_id"], max_null_count={"order_id": 0})` requires distinct non-null keys and no nulls. From CI, use `--unique-column order_id --max-null-count order_id=0`. `identifier_columns=["order_id"]` selects the key for the uniqueness score and `key_duplicates` finding.
+- **Schema drift:** `forbid_removed_columns=True` rejects removed columns. `compare()` and baseline diagnostics also report inferred type changes; these diagnostics alone do not fail a gate. A column's `native_type` records its source's declared type where available.
+
+See the [cookbook](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md#freshness-and-missing-days) for complete examples.
+
 ## Hand it to an agent
 
 A token-bounded summary for an LLM. Values that look like personal data are never echoed:
@@ -99,11 +115,17 @@ Minimum supported Rust: 1.96.
 
 ## What you can count on
 
-- **Same data, same numbers.** CSV, Parquet, pandas, polars and Arrow of the same values produce the same profile, on every engine. CI checks it. One limit for now: when a column holds more values than its retained sample (10,000 non-null values, fewer under memory pressure), some routes read the sample and others every value. What comes from the sample can then differ between routes: the median, quartiles, mode, skewness, kurtosis and outlier counts, the pattern counts, `type_homogeneity`, and the accuracy, consistency, precision, timeliness and validity scores. The report flags sampled numeric statistics with `is_approximate`.
+- **Same data, same serialized numbers.** Rust Serde output and Python `to_dict()` / `to_json()` agree across routes and engines for the same logical data, schema semantics, options and analyzed population, within the [numeric contract](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract). Source and execution provenance are compared separately. Raw floats may differ in their final digits; extreme values near the limits of `f64` belong to an approximate domain. A retained sample and a full scan need not agree. Reports flag sampled numeric statistics with `is_approximate`, estimated distinct counts with `unique_count_is_approximate`, and sampled quality components with `quality_sampled_dimensions`.
 - **Bounded memory.** Files larger than RAM stream through fixed-size accumulators. The exact duplicate-row count holds up to 1,000,000 distinct rows by default, about 10 to 20 bytes each, inside the memory budget, and becomes an estimate under memory pressure. A `duplicate_rows_exact_limit` you set yourself is the exception: those rows stay exact and are kept outside the budget.
 - **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it, such as a row minimum it reached; otherwise the check is inconclusive. A sampled score carries an interval in `score_bounds` whenever it can be bounded.
 - **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
 - **Local by default.** Profiling runs on your machine. Reports carry statistics, including numeric minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
+
+The Python wheels include file and bytes profiling, Arrow C array and stream
+inputs, and `dataprof.asyncio` file, bytes and HTTP helpers. Install the table
+library you use, plus pyarrow for pandas and polars conversion; native Parquet file and bytes
+profiling needs none of them. PostgreSQL, MySQL and SQLite require a source
+build with connector features. See [input routes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md#working-with-different-formats).
 
 ## Status
 

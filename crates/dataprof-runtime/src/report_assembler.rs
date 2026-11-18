@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
-    QualityDimension, SemanticHintBinding, SemanticHintKind, SemanticHints,
+    AnalysisOptions, ColumnProfile, ColumnStats, DataProfilerError, DataSource, DataType,
+    ExecutionMetadata, QualityDimension, SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
@@ -38,6 +38,10 @@ pub struct ReportAssembler {
     analysis_settings: Option<AnalysisSettings>,
     /// The fixed date timeliness measures against; `None` reads today's.
     reference_date: Option<chrono::NaiveDate>,
+    /// Whether the report carries column statistics. When it does not, the
+    /// date statistics an engine kept for the quality pass are dropped once
+    /// quality is computed (#1305).
+    include_statistics: bool,
     /// Test seam for the failure branch. No input path can currently make
     /// `MetricsCalculator` return `Err`: both of its error constructions sit
     /// behind an emptiness check that has already returned by then. The branch
@@ -64,6 +68,7 @@ impl ReportAssembler {
             row_completeness: None,
             analysis_settings: None,
             reference_date: None,
+            include_statistics: true,
             #[cfg(test)]
             forced_quality_failure: None,
         }
@@ -180,6 +185,7 @@ impl ReportAssembler {
     /// the options calls it on its own.
     pub fn record_analysis_settings(mut self, options: &AnalysisOptions) -> Self {
         self.analysis_settings = Some(AnalysisSettings::from_options(options));
+        self.include_statistics = options.include_statistics();
         self
     }
 
@@ -225,6 +231,13 @@ impl ReportAssembler {
             },
         };
         let bindings = self.compute_hint_bindings();
+        if !self.include_statistics {
+            for column in &mut self.columns {
+                if matches!(column.stats, ColumnStats::DateTime(_)) {
+                    column.stats = ColumnStats::None;
+                }
+            }
+        }
 
         ProfileReport::new(self.source, self.columns, self.execution, quality)
             .with_quality_status(status)

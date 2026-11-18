@@ -1,0 +1,217 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 54.01,
+          "exact": {
+            "max": "7",
+            "median": "4",
+            "min": "1",
+            "q1": "2.5",
+            "q2": "4",
+            "q3": "5.5"
+          },
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 7.0,
+          "mean": 4.0,
+          "median": 4.0,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 3.0,
+            "q1": 2.5,
+            "q2": 4.0,
+            "q3": 5.5
+          },
+          "skewness": 0.0,
+          "std_dev": 2.1602,
+          "variance": 4.6667
+        }
+      },
+      "total_count": 7,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 7,
+        "text": 0
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 1,
+      "locale_number_count": 0,
+      "name": "v",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.11428571428571428,
+          "match_count": 2,
+          "match_percentage": 28.57142857142857,
+          "name": "Scientific Notation",
+          "regex": "^[-+]?\\d+(\\.\\d+)?[eE][-+]?\\d+$"
+        }
+      ],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 109.54,
+          "is_approximate": false,
+          "kurtosis": -3.3333,
+          "max": 1000000000000000.0,
+          "mean": 500000000000000.0,
+          "median": 500000000000000.7,
+          "min": 0.0,
+          "mode": 0.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 999999999999999.6,
+            "q1": 0.38,
+            "q2": 500000000000000.75,
+            "q3": 1000000000000000.0
+          },
+          "skewness": 0.0,
+          "std_dev": 547722557505000.0,
+          "variance": 3e+29
+        }
+      },
+      "total_count": 7,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 6,
+        "text": 1
+      },
+      "unique_count": 7,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "format": "json",
+    "path": "long_floats.json",
+    "size_bytes": 194,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 2,
+    "engine": "json",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 7,
+    "sampling_applied": false,
+    "scan_time_ms": 0,
+    "source_exhausted": true
+  },
+  "generator": {
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "dirty": false,
+    "version": "0.14.0"
+  },
+  "id": "59d4dd2c-cc9a-43f2-9e8d-e80b0e0fee32",
+  "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
+    "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "columns_without_value_checks": [],
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 13,
+        "outlier_ratio": 0.0,
+        "outlier_values_checked": 13,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 100.0,
+        "missing_values_ratio": 0.0,
+        "null_columns": [],
+        "total_cells": 14
+      },
+      "consistency": {
+        "data_type_consistency": 92.86,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 14
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 50.0,
+        "inconsistent_precision_values": 3,
+        "numeric_values_checked": 6
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 7
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 100.0,
+        "consistency": 92.86,
+        "precision": 50.0,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 95.09
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-17T18:32:07.340123700+00:00"
+}

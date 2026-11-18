@@ -6,7 +6,275 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.13.1 release notes](release-notes.md).
+the [0.14.0 release notes](release-notes.md).
+
+## [0.14.0] - 2026-11-17
+
+### Added
+
+- **Gate**: A per-column uniqueness requirement in check() (#904) (#1329) by @AndreaBozzo
+
+- **Metrics**: A configurable exact limit for the duplicate-row count (#1292) (#1303) by @AndreaBozzo
+
+- **Gate**: Report a date column's largest gap and fail a hole inside its range (#1300) (#1302) by @AndreaBozzo
+
+- **Gate**: Fail a column whose newest date is older than an allowed age (#1290) (#1298) by @AndreaBozzo
+
+- **Gate**: Decide sampled score drops on both sides' intervals (#1035) (#1296) by @AndreaBozzo
+
+- **Gate**: Fail a baseline check when the row count falls or grows too far (#1291) (#1295) by @AndreaBozzo
+
+- **Report**: Name the columns the quality score's value checks skipped (#1134) (#1277) by @AndreaBozzo
+
+- **Report**: Record which column pairs with which in temporal_pairs, and compare and gate on them (#1029) (#1276) by @AndreaBozzo
+
+- **Compare**: Name each report's build and source version in compare() and the gate result (#1063) (#1275) by @AndreaBozzo
+
+- **Gate**: Fail a baseline check when a column's distinct count collapses (#1026) (#1273) by @AndreaBozzo
+
+- **Report**: Record the metric packs a run computed, and compare and gate on them (#1030) (#1272) by @AndreaBozzo
+
+- **Compare**: List each column's inferred and declared type and the column selection (#1031) (#1271) by @AndreaBozzo
+
+- Record each column's declared type as native_type (#906) (#1267) by @AndreaBozzo
+
+- **Gate**: Forbid_findings, so a defect findings() detects can fail check() (#1066) (#1255) by @AndreaBozzo
+
+- **Findings**: A key_duplicates warning on a declared key that repeats a value (#1068) (#1254) by @AndreaBozzo
+
+- **Gate**: Declare the timeliness clock a baseline comparison reads, fixed or rolling (#1024) (#1253) by @AndreaBozzo
+
+- **Metrics**: A public timeliness reference date, recorded in the report (#903) (#1251) by @AndreaBozzo
+
+- **Gate**: Record exact_dimensions in the flat summary, so a summary applies the unlisted-component rule (#1027) (#1234) by @AndreaBozzo
+
+- Record the CSV delimiter and warn when detection was not clear (#1100) (#1215) by @AndreaBozzo
+
+- **Metrics**: Report the order statistics of integer and decimal columns exactly (#1038) (#1186) by @AndreaBozzo
+
+- **Db**: Profile queries in a read-only transaction and accept WITH (#1171) by @AndreaBozzo
+
+- **Report**: Record the caller's version of the source in the report (#866) (#1161) by @AndreaBozzo
+
+### Changed
+
+- **Security**: Accept the unmaintained chrono and chrono-tz advisories (#1343) by @AndreaBozzo
+
+- **Release**: Pin maturin and the build images, test baseline and optimized wheels on older CPUs (#1332) by @AndreaBozzo
+
+- **Deps**: Keep pyproject floors on Dependabot uv bumps (#1324) by @AndreaBozzo
+
+- **Gate**: Gate a release-baseline corpus against the last release's reports, so a score moved without a metric_semantics definition fails (#1245) (#1316) by @AndreaBozzo
+
+- **Quality**: Hold the file route's gate verdict to the dict route's above the sample size (#1307) (#1315) by @AndreaBozzo
+
+- Initialize the test databases with the service images' clients, not apt (#1274) by @AndreaBozzo
+
+- Resolve a profiling request once and pass the analysis options whole (#717) (#1265) by @AndreaBozzo
+
+- Pin actions to commits, drop persisted checkout tokens and narrow workflow permissions (#1218) by @AndreaBozzo
+
+- **Pages**: Publish only benchmark artifacts from pushes to this repository by @AndreaBozzo
+
+- **Findings**: One implementation in Rust, called from Python (#1200) by @AndreaBozzo
+
+- **Python**: Leave execution_time_ms out of the arrow stream quality comparison (#1184) by @majidninja
+
+### Dependencies
+
+- **Deps**: Bump astral-sh/setup-uv from 7.6.0 to 10.3.3 (#1326) by @dependabot[bot]
+
+- **Deps-dev**: Bump polars from 2.0.0 to 2.1.0 (#1327) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action/upload-sarif (#1325) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.95 to 0.0.102 (#1321) by @dependabot[bot]
+
+- **Deps**: Bump ipython from 9.17.1 to 9.18.1 (#1323) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.17.4 to 0.17.5 (#1322) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.60.2 to 0.61.2 (#1320) by @dependabot[bot]
+
+- **Deps**: Bump sysinfo from 0.40.1 to 0.40.3 (#1319) by @dependabot[bot]
+
+- **Deps**: Bump uuid from 1.29.0 to 1.29.2 (#1318) by @dependabot[bot]
+
+- **Deps**: Accept RUSTSEC-2026-0459 until sqlx allows libsqlite3-sys 0.39 (#1264) by @AndreaBozzo
+
+- **Deps-dev**: Bump pyarrow from 26.0.0 to 26.0.1 (#1259) by @dependabot[bot]
+
+- **Deps-dev**: Bump pandas from 3.1.0 to 3.1.1 (#1258) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.17.2 to 0.17.4 (#1257) by @dependabot[bot]
+
+- **Deps**: Bump pyarrow from 26.0.0 to 26.0.1 in /benches (#1260) by @dependabot[bot]
+
+- **Deps**: Bump log from 0.4.34 to 0.4.35 (#1256) by @dependabot[bot]
+
+- **Deps**: Bump sysinfo from 0.39.6 to 0.40.0 (#1193) by @dependabot[bot]
+
+- **Deps**: Bump polars from 2.0.0 to 2.1.0 in /benches (#1198) by @dependabot[bot]
+
+- **Deps-dev**: Bump maturin from 1.15.0 to 1.16.0 (#1197) by @dependabot[bot]
+
+- **Deps-dev**: Bump pytest from 9.1.1 to 9.2.0 (#1196) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.91 to 0.0.95 (#1195) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.60.1 to 0.60.2 (#1194) by @dependabot[bot]
+
+- **Deps**: Bump uuid from 1.28.0 to 1.29.0 (#1192) by @dependabot[bot]
+
+- **Deps**: Bump arrow from 60.0.0 to 60.1.0 (#1191) by @dependabot[bot]
+
+- **Deps**: Bump parquet from 60.0.0 to 60.1.0 (#1190) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action from 4.38.2 to 4.39.1 (#1189) by @dependabot[bot]
+
+### Documentation
+
+- Describe the 0.11 to 0.14 gate and checkpoint features on the site and guides (#1357) by @AndreaBozzo
+
+- Describe the ISO relation, sampled routes and the exact duplicate limit accurately (#1308) by @AndreaBozzo
+
+- **Agents**: Add the origin: real incident label to the board rules (#1299) by @AndreaBozzo
+
+- **Examples**: Add a CI recipe that checks a file before publishing it (#1289) by @AndreaBozzo
+
+- **Site**: Serve a 64px logo, mark the Docs link as off-site, deep-link the example tabs (#1288) by @AndreaBozzo
+
+- Fix drift between the guides and the code (#1285) by @AndreaBozzo
+
+- **Examples**: Add a key column collapse example for max_distinct_drop (#1278) by @AndreaBozzo
+
+- **Site**: Clarify the first run and improve responsive page layouts (#1250) by @AndreaBozzo
+
+- **Schema**: Define the numeric domain where cross-route parity is exact (#1248) by @AndreaBozzo
+
+- Ask each fix PR for its class of defect, covered or left out (#1247) by @AndreaBozzo
+
+- Build the extension once, with uv sync --no-install-project and uv run --no-sync as CI does (#1221) by @AndreaBozzo
+
+- **Site**: Replace stock visuals with a real dataprof profile and diagrams (#1183) by @AndreaBozzo
+
+### Fixed
+
+- **Db**: Keep the TLS settings of an environment URL and the caller's ssl_config (#1354) by @AndreaBozzo
+
+- **Db**: Read a PostgreSQL NUMERIC at its display scale (#1342) (#1351) by @AndreaBozzo
+
+- **Db**: Encode connection URL parts and keep the query order (#1350) by @AndreaBozzo
+
+- **Metrics**: Interpolate exact order statistics across a gap past i128 (#1341) (#1345) by @AndreaBozzo
+
+- **Db**: Read a NUMERIC or DECIMAL from its plain digits (#1342) (#1349) by @AndreaBozzo
+
+- **Gate**: Record the date forms as a metric_semantics definition (#1340) (#1344) by @AndreaBozzo
+
+- **Db**: Pass the configured TLS settings to the PostgreSQL and MySQL drivers by @AndreaBozzo
+
+- **Metrics**: Interpolate the plain median and quartiles of exact columns on exact values (#1334) (#1339) by @AndreaBozzo
+
+- **Metrics**: Type spaced datetimes with a UTC offset as dates (#1335) (#1338) by @AndreaBozzo
+
+- **Gate**: Leave a fresh inferred date open on a partial read under full_source (#1333) (#1337) by @AndreaBozzo
+
+- **Gate**: Compare a metric_semantics definition only on runs it can move (#1317) (#1328) by @AndreaBozzo
+
+- **Deps**: Raise the arrow and parquet floor to 60.1.0 (RUSTSEC-2026-0442) (#1314) by @AndreaBozzo
+
+- **Metrics**: Bound a sampled accuracy score over the full scan's outlier fences (#1304) (#1313) by @AndreaBozzo
+
+- **Metrics**: Read slash dates in timeliness in the order the date statistics record (#1305) (#1312) by @AndreaBozzo
+
+- **Findings**: Read an unrecorded scan fact as not evaluated, never as false (#1306) (#1309) by @AndreaBozzo
+
+- **Metrics**: Compute date statistics over every value read, not the retained sample (#1297) (#1301) by @AndreaBozzo
+
+- **Metrics**: Estimate sampled scores over every scanned value, weighting columns by their size (#1293) (#1294) by @AndreaBozzo
+
+- **Python**: Name the parameter and the accepted form in argument errors (#1283) by @AndreaBozzo
+
+- **Db**: Make SslConfig verify certificates when it says it does by @AndreaBozzo
+
+- Read a declared decimal as a decimal, with or without statistics and from the database (#1268) (#1270) by @AndreaBozzo
+
+- **Metrics**: Sum every decimal's remainder into the mean (#1262) (#1263) by @AndreaBozzo
+
+- **Gate**: Record JSON number reading in metric_semantics, so a 0.13 baseline is not comparable on precision instead of failing (#1243) (#1249) by @AndreaBozzo
+
+- **Gate**: Record exact accuracy comparison in metric_semantics, so a 0.13 baseline is not comparable on accuracy instead of failing (#1237) (#1244) by @AndreaBozzo
+
+- **Python**: Refuse a flat summary's sampled_dimensions unless it is a list of strings, so a string no longer reads as complete coverage (#1235) (#1242) by @AndreaBozzo
+
+- **Python**: Keep a missing sampling_applied absent in a loaded summary, so the gate reads its coverage as unrecorded (#1236) (#1241) by @AndreaBozzo
+
+- **Csv**: Honor configured quotes in detection (#1239) by @KingEmma7
+
+- **Python**: Csv bytes read fields past the csv module's 131,072 limit (#1222) by @majidninja
+
+- **Gate**: Record the source format in the flat summary, so a capped CSV summary baseline declares its columns (#1028) (#1233) by @AndreaBozzo
+
+- **Gate**: Record an Arrow C stream as format arrow, so a capped stream declares its columns (#1230) (#1232) by @AndreaBozzo
+
+- **Async**: Record the format a stream was parsed as, so a capped async CSV declares its columns (#1042) (#1231) by @AndreaBozzo
+
+- **Json**: Name the decoder's reason in strict JSONL errors, and the boundary rule only where it applies (#1143) (#1229) by @AndreaBozzo
+
+- **Async**: Count bytes_consumed at the reader, so a scan without a size hint reports the source length (#1223) (#1226) by @AndreaBozzo
+
+- **Async**: Record in-memory async bytes as a bytes source, and no http for an undeclared stream system (#1224) by @AndreaBozzo
+
+- **Build**: Drop the forced opt-level from the local rustflags, so dev builds keep debug assertions (#1220) by @AndreaBozzo
+
+- **Ci**: Restrict release workflow permissions (#1217) by @JuananAlonso
+
+- **Json**: Accept Unicode white space around an array, and around a document on sync bytes (#1146) (#1216) by @AndreaBozzo
+
+- **Streaming**: Strict CSV parsing on the incremental engine refuses a ragged record that starts a chunk (#1202) (#1213) by @AndreaBozzo
+
+- **Streaming**: A row cap under systematic sampling counts kept rows in the chunk-level check too (#1208) (#1212) by @AndreaBozzo
+
+- **Python**: Exit 3 when a dataprof.check path is a symlink loop (#1204) by @majidninja
+
+- **Streaming**: Async JSON judges a malformed record only when the row cap reaches it (#1206) (#1211) by @AndreaBozzo
+
+- **Streaming**: Async JSON judges a malformed record only when the row cap reaches it (#1206) (#1209) by @AndreaBozzo
+
+- **Streaming**: Async CSV counts ragged rows the processor consumed, none past max_rows (#1203) (#1207) by @AndreaBozzo
+
+- **Csv**: Strict parsing does not judge a record past max_rows (#1205) by @AndreaBozzo
+
+- **Serde**: Round moment statistics at 12 significant digits, so routes serialize alike at large magnitudes (#1201) by @AndreaBozzo
+
+- **Metrics**: Count accuracy outliers and rule violations on exact values (#1199) by @AndreaBozzo
+
+- **Metrics**: Order values that share an f64 by their exact difference (#1185) by @AndreaBozzo
+
+- **Metrics**: Take the mode, IQR and outlier fences of wide columns from exact values (#1038) (#1180) by @AndreaBozzo
+
+- **Metrics**: Report the standard deviation of a variance past f64::MAX (#1150) (#1179) by @AndreaBozzo
+
+- Name Arrow IPC, Feather and lazy Arrow sources in refusal errors (#1163) by @majidninja
+
+- **Core**: Write error-hint shell commands for the platform that prints them (#1164) (#1175) by @AndreaBozzo
+
+- **Csv**: Read a header past the 4 KB detection sample, refuse one past 1 MiB (#1098) (#1172) by @AndreaBozzo
+
+- **Db**: Match query keywords as whole words, so created_at and updated_at pass (#1170) by @AndreaBozzo
+
+- **Db**: Read JSON cells with float literals past f64 digits from their text (#1168) by @AndreaBozzo
+
+- **Json**: Keep the digits of a float literal its f64 does not hold (#1166) by @AndreaBozzo
+
+- **Metrics**: Read Arrow Decimal32 and Decimal64 columns as decimals (#1160) by @AndreaBozzo
+
+- **Metrics**: Keep the spread of decimals past the digits f64 holds (#1159) by @AndreaBozzo
+
+### Reverted
+
+- Async JSON judges a malformed record only when the row cap reaches it (#1209) (#1210) by @AndreaBozzo
 
 ## [0.13.1] - 2026-10-28
 

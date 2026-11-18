@@ -12,15 +12,46 @@ When analyzing tabular data with dataprof:
 1. Call `dp.capabilities()` before profiling Parquet, a URL, or a database -- optional features are compiled in, not always present.
 2. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
 3. Use `dp.profile(path)` for full profiling. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
-4. Before reporting any number, check `report.sampling_applied`, `report.truncation_reason`, `report.source_exhausted`, `report.low_sample_warning`, `report.error_count`, `report.ragged_row_count`, and `report.unterminated_quote`. A truncated or sampled read still returns confident-looking numbers.
+4. Before reporting any number, check `report.sampling_applied`, `report.truncation_reason`, `report.source_exhausted`, `report.low_sample_warning`, `report.error_count`, `report.ragged_row_count`, and `report.unterminated_quote`. Also read `report.quality_sampled_dimensions`, `report.quality_score_bounds`, and `report.quality_columns_without_value_checks`: a complete scan may still use sampled quality evidence or skip nested values. On columns, `is_approximate` flags sampled numeric statistics and `unique_count_is_approximate` flags estimated distinct counts.
 5. Export compact context with `report.to_llm_context()` -- the only export that enforces redaction -- or `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`); its `columns` entry grows with table width.
 6. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
-7. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+7. Read `report.findings()` and its `not_evaluated` list. For acceptance decisions use `report.check(...)`, inspect both `violations` and `unevaluated`, and proceed only when `result.passed` is true. A high score alone does not establish the requested requirements.
+8. For a checkpoint, load the last accepted report with `dp.ProfileReport.load(path)` and pass `baseline=` to `check()`. Save a separate candidate and promote it only on a pass. Inspect `definition_not_comparable` before deliberately refreshing an older baseline. Inspect schema diagnostics too; a type-change diagnostic alone does not fail a gate.
+9. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
 
 `None` means "not analyzed" and empty means "analyzed, found nothing" -- never present a `None` score as perfect or replace it with zero.
 
 Always report the source path, metrics requested, and any sampling or max-row limit.
 ```
+
+The workflow above includes fields added in 0.14. Choose explicit checks for the question being asked:
+
+| Question | Profiling option or gate rule |
+|---|---|
+| Did a feed stop advancing? | `max_date_age={"published_at": 3}`; `reference_date=` fixes the profiling clock |
+| Is a period missing inside its date range? | `max_date_gap={"published_at": 1}` checks consecutive distinct days |
+| Did volume fall or grow? | `baseline=...`, `max_row_count_drop=10`, `max_row_count_growth=20`; `min_rows=1` sets a floor |
+| Did a business key repeat? | `unique_columns=["order_id"]`, paired with `max_null_count={"order_id": 0}`; `identifier_columns` supplies the key for the score and `key_duplicates` finding |
+| Did a reported defect occur? | `forbid_findings=["key_duplicates"]` |
+
+Keep profiling settings consistent between runs. `temporal_columns` adds
+explicit date roles and `temporal_pairs` declares start/end relations. For
+baseline score rules, use the same fixed `reference_date` on both runs or
+`timeliness_clock="rolling"` for clocks that each used their own run day.
+`source_version=` records a caller-supplied batch identity, without verifying
+it; retain that identity with the gate's evidence. See the
+[checkpoint and freshness recipes](examples.md#checkpoint-and-volume-changes).
+
+For CI, `python -m dataprof.check` exits `0` on pass, `1` on fail, `2` on
+inconclusive, and `3` on argument, policy, input, baseline or output errors.
+`--report candidate.json --json` retains the report and emits the verdict as
+JSON. Direct `check()` calls return a result and do not exit the process.
+
+Compare serialized metrics only for the same logical data, schema semantics,
+options and analyzed population. The [numeric contract](../schema/README.md#numeric-equality-contract)
+covers Rust Serde output and Python `to_dict()` / `to_json()`; provenance is
+compared separately, raw floats can differ, and values near `f64`'s limits are
+an approximate domain.
 
 ## Cursor rule
 

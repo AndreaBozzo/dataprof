@@ -427,6 +427,7 @@ def test_policy_file_supports_all_library_keywords(source: Path, tmp_path: Path)
         "max_null_percentage": {"*": 100, "amount": 50},
         "max_null_count": {"*": 0, "amount": 1},
         "max_duplicate_rows": 0,
+        "unique_columns": ["id"],
         "require_metrics": ["quality", "completeness"],
         "forbid_findings": ["records_skipped"],
         "scope": "observed",

@@ -4,6 +4,8 @@ Copy-pasteable recipes for common dataprof tasks, organized by interface.
 These examples focus on the current Rust crate and Python package; pre-0.8 CLI
 usage lives in the archived guide.
 
+Recipes marked **0.14** need dataprof 0.14 or later.
+
 ## Python Recipes
 
 ### Basic file profiling
@@ -315,31 +317,194 @@ import dataprof as dp
 
 report = dp.profile("s3_landing/orders_2024-03-17.csv")
 
-# Bail out early on tiny samples: the score is computed but not statistically
-# meaningful below 10 rows.
-if report.low_sample_warning:
-    print(f"WARN: sample too small ({report.rows} rows), skipping quality gate")
-    sys.exit(0)
-
-score = report.quality_score or 0.0
-
-if score < 90.0:
-    q = report.quality
-    completeness = q.completeness if q else None
-    uniqueness = q.uniqueness if q else None
-    accuracy = q.accuracy if q else None
-    failures = []
-    if completeness and completeness["missing_values_ratio"] > 10.0:
-        failures.append(f"missing values: {completeness['missing_values_ratio']:.1f}%")
-    if uniqueness and uniqueness["duplicate_rows"] > 0:
-        failures.append(f"{uniqueness['duplicate_rows']} duplicate rows")
-    if accuracy and accuracy["outlier_ratio"] > 5.0:
-        failures.append(f"outlier ratio: {accuracy['outlier_ratio']:.1f}%")
-    print(f"REJECTED (score={score:.2f}): {', '.join(failures)}")
-    sys.exit(1)
-
-print(f"ACCEPTED (score={score:.2f}), {report.rows} rows")
+result = report.check(
+    min_rows=10,
+    min_quality_score=90,
+    max_null_count={"order_id": 0},
+    max_duplicate_rows=0,
+    require_metrics=["quality"],
+)
+report.save("candidate.json")
+for check in [*result.violations, *result.unevaluated]:
+    print(check.code, check.column, check.observed, check.reason)
+print(result.verdict)
+sys.exit({"pass": 0, "fail": 1, "inconclusive": 2}[result.verdict])
 ```
+
+The gate retains missing or incomplete evidence as unevaluated. Only a pass
+exits zero. For a shell job, `python -m dataprof.check` also returns `3` on an
+argument, policy, input, baseline or output error.
+
+### Checkpoint and volume changes
+
+Compare against the last accepted report, then promote only a passing
+candidate. The row-count rules below need **0.14** and measure changes as
+percentages of the baseline's count.
+
+```python
+from pathlib import Path
+import dataprof as dp
+
+baseline_path = Path("baseline.json")
+candidate_path = Path("candidate.json")
+report = dp.profile("orders.csv")
+report.save(candidate_path)
+policy = {"min_rows": 1, "max_null_count": {"order_id": 0}}
+if baseline_path.exists():
+    result = report.check(
+        **policy,
+        baseline=dp.ProfileReport.load(baseline_path),
+        max_quality_score_drop=5,
+        max_row_count_drop=10,
+        max_row_count_growth=20,
+        forbid_removed_columns=True,
+        timeliness_clock="rolling",
+    )
+else:
+    result = report.check(**policy)
+print(result.verdict)
+for check in [*result.violations, *result.unevaluated]:
+    print(check.code, check.reason)
+if result.passed:
+    candidate_path.replace(baseline_path)
+```
+
+`definition_not_comparable` means an affected metric definition changed or
+was not recorded. Review the reason before refreshing the baseline on purpose.
+The [runnable checkpoint](../../python/examples/baseline_checkpoint.py) covers
+older reports and schema changes too. `min_rows` gives an absolute floor;
+relative row-count checks catch loss or growth even when null shares stay the
+same. In CI, their flags are `--max-row-drop 10` and `--max-row-growth 20`.
+
+### Freshness and missing days
+
+These rules need **0.14**. This example fixes the clock so its result does not
+depend on when you run it:
+
+```python
+import dataprof as dp
+
+report = dp.profile(
+    {"published_at": ["2026-06-01", "2026-06-02", "2026-06-10"]},
+    reference_date="2026-06-10",
+)
+result = report.check(
+    max_date_age={"published_at": 3},
+    max_date_gap={"published_at": 1},
+)
+for check in result:
+    print(check.code, check.status, check.observed)
+# max_date_age passed 0
+# max_date_gap failed 8
+```
+
+`max_date_age` reads the newest date against the report's recorded reference
+date. `max_date_gap` reads the largest gap between consecutive distinct UTC
+days, in calendar days. A contiguous daily column has
+a gap of `1`. Under `full_source`, a partial scan leaves the gap rule
+inconclusive because unread rows could fill or extend a gap.
+
+Inferred date columns contribute to timeliness automatically. For explicit
+roles and a start/end relation, pass hints when profiling:
+
+```python
+report = dp.profile(
+    "contracts.csv",
+    temporal_columns=["reviewed_at"],
+    temporal_pairs=[("valid_from", "valid_until")],
+    reference_date="2026-06-10",
+)
+print(report.quality.timeliness)
+```
+
+`temporal_violations` counts compared rows whose start follows their end.
+Without `reference_date`, profiling uses the run's UTC day and records it in
+`quality.timeliness["clock"]`. For baseline score comparisons, use the same
+fixed date on both runs or `timeliness_clock="rolling"` for two rolling clocks.
+The CLI offers `--max-date-age published_at=3` and
+`--max-date-gap published_at=1`; it uses today's UTC date and has no reference
+date flag.
+
+### Whole-row duplicates and unique keys
+
+In **0.14**, the whole-row tracker can keep a larger exact set. This does not
+raise the separate per-column distinct-count limit.
+
+```python
+import dataprof as dp
+
+report = dp.profile(
+    "orders.csv",
+    identifier_columns=["order_id"],
+    duplicate_rows_exact_limit=2_000_000,
+)
+result = report.check(
+    max_duplicate_rows=0,
+    unique_columns=["order_id"],
+    max_null_count={"order_id": 0},
+    forbid_findings=["key_duplicates"],
+)
+print(result.verdict)
+print(report.quality.uniqueness)
+```
+
+`max_duplicate_rows` compares complete rows; `unique_columns` checks repeated
+non-null values in each named column, even when another column differs.
+`identifier_columns` selects the first present key for the uniqueness score
+and the `key_duplicates` finding. `forbid_findings` lets a detected finding fail
+the gate. The example names the key in both places to show the two APIs; the
+direct uniqueness rule suffices to enforce the key.
+
+The row tracker defaults to 1,000,000 distinct rows and can estimate earlier
+under memory pressure. An explicit `duplicate_rows_exact_limit` retains its
+set even past the memory budget, at about 10 to 20 bytes per distinct row.
+Read `duplicate_rows_approximate` in the uniqueness metrics. Estimated counts
+leave `max_duplicate_rows` unevaluated. A per-column estimated distinct count,
+marked `unique_count_is_approximate`, leaves `unique_columns` unevaluated too.
+
+```bash
+python -m dataprof.check orders.csv --unique-column order_id \
+  --max-null-count order_id=0 --max-duplicate-rows 0 \
+  --duplicate-rows-exact-limit 2000000
+```
+
+### Inspect schema drift and declared decimals
+
+`forbid_removed_columns=True` rejects a removed column against a baseline.
+Retyping is reported as a diagnostic; it does not itself fail a gate.
+
+```python
+import dataprof as dp
+
+baseline = dp.ProfileReport.load("baseline.json")
+report = dp.profile("orders.csv")
+print(baseline.compare(report)["schema"])
+result = report.check(baseline=baseline, forbid_removed_columns=True)
+print(result.baseline["diagnostics"])
+```
+
+In **0.14**, `native_type` records the source's declaration independently of
+the inferred `data_type`. Arrow and Parquet decimals and database
+`NUMERIC` / `DECIMAL` columns are read from their decimal digits. Declared
+decimal columns remain decimal-aware when the statistics pack is omitted.
+For example, with pyarrow installed:
+
+```python
+from decimal import Decimal
+import pyarrow as pa
+import dataprof as dp
+
+table = pa.table({
+    "amount": pa.array([Decimal("10.25"), Decimal("20.50")], type=pa.decimal128(12, 2)),
+})
+report = dp.profile(table, metrics=["quality"])
+print(report["amount"].native_type)
+# {'name': 'decimal128(12, 2)', 'system': 'arrow'}
+```
+
+`native_type` is absent for CSV, JSON, JSONL and SQLite, which provide no
+usable declared type to the profiler. A pandas `object` column does not declare
+a decimal type; use an Arrow decimal dtype when that declaration matters.
 
 ### Per-column outlier triage
 
@@ -705,7 +870,7 @@ Enable `async-streaming` for CSV and JSON byte streams, and add `bytes` directly
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["async-streaming"] }
+dataprof = { version = "0.14", features = ["async-streaming"] }
 bytes = "1.10"
 ```
 
@@ -728,7 +893,7 @@ Remote Parquet needs `parquet-async`, which also enables `async-streaming`:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["parquet-async"] }
+dataprof = { version = "0.14", features = ["parquet-async"] }
 ```
 
 ```rust
@@ -749,7 +914,7 @@ Enable the PostgreSQL connector:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.13", features = ["postgres"] }
+dataprof = { version = "0.14", features = ["postgres"] }
 ```
 
 ```rust

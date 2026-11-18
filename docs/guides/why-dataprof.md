@@ -27,6 +27,12 @@ and where dataprof fits. It makes no performance comparisons.
   sample with a full scan or promise parity with another profiling tool.
 - **Reports you can retain.** `save()`, `load()` and `compare()` support
   inspecting changes between runs without re-profiling the earlier input.
+- **A checkpoint against the last accepted run.** Pass `baseline=` to
+  `check()` to limit score drops, null-percentage increases and removed
+  columns. Save a candidate separately and promote it only on a pass. A
+  changed or unrecorded metric definition can leave an affected rule
+  `definition_not_comparable`, which calls for inspecting and refreshing the
+  baseline deliberately.
 - **A summary for an agent.** `to_llm_context()` emits shape, provenance
   caveats, quality flags, schema and detected pattern names. Raw cell values
   are redacted by default; detected sensitive-pattern values are never echoed.
@@ -42,6 +48,18 @@ are nonnegative or that status values belong to your business vocabulary.
 A newly empty optional column can affect a score while a business-critical
 defect needs its own rule. Inspect the relevant metrics and use a validation
 tool when the rule cannot be expressed by dataprof's profile thresholds.
+
+0.14 adds checks for properties a score alone can miss: `max_date_age` limits how old the newest date is, `max_date_gap` limits
+the largest internal gap between distinct days, and `max_row_count_drop` /
+`max_row_count_growth` limit volume changes against a baseline. `min_rows`
+sets an absolute floor. `unique_columns` checks repeated non-null keys, while
+`max_duplicate_rows` checks complete rows. See the
+[cookbook](examples.md#checkpoint-and-volume-changes) for policies and promotion.
+
+`compare()` and baseline diagnostics expose inferred type changes; these
+diagnostics alone do not reject a batch. In 0.14, `native_type` also records
+the source's declared type where available, so an Arrow decimal declaration
+remains visible beside the profiler's `float` type.
 
 ## What an inconclusive gate means
 
@@ -129,8 +147,9 @@ when it already expresses the requirements you need to enforce.
 dataprof fits when the requirement is a threshold over the profile it already
 produces, and you want the decision tied to the available evidence. It does
 not replace arbitrary row-level expectations or business logic in these tools.
-Declare the key with `identifier_columns`, then use
-`check(forbid_findings=["key_duplicates"])` to reject repeated non-null keys.
+Use `check(unique_columns=["order_id"])` to reject repeated non-null keys, or
+declare the key with `identifier_columns` and use
+`check(forbid_findings=["key_duplicates"])`.
 `check()` has no rule for per-column value bounds, allowed-value sets or declared
 column types. Use a validation tool for those requirements. `max_duplicate_rows`
 checks repeated whole rows, which does not establish that a business key is unique.

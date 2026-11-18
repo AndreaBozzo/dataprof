@@ -132,6 +132,10 @@ fn policy_from(spec: &Value) -> QualityPolicy {
     if let Some(max) = spec.get("max_duplicate_rows") {
         policy = policy.max_duplicate_rows(max.as_u64().expect("a whole number") as usize);
     }
+    let unique = strings(spec.get("unique_columns"));
+    if !unique.is_empty() {
+        policy = policy.unique_columns(unique);
+    }
     for metric in strings(spec.get("require_metrics")) {
         policy = match metric.as_str() {
             "quality" => policy.require_quality(),

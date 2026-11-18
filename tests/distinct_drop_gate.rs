@@ -409,3 +409,44 @@ fn a_column_without_a_distinct_count_is_not_assessed() {
         "the report counted no distinct values for this column"
     );
 }
+
+/// A distinct count reads `json_number_reading` only where the source may
+/// hold a JSON number (#1317): against a baseline that predates it, the CSV
+/// route decides and the JSONL route stays unevaluated, in both document
+/// forms.
+#[test]
+fn json_number_reading_holds_the_rule_only_on_a_json_source() {
+    let values = keys(100, 100);
+    let policy = QualityPolicy::new().max_distinct_drop("k", 0.0);
+    let mut wrong = Vec::new();
+    for (route, report) in routes(&values) {
+        let expected = if route == "csv" {
+            "passed"
+        } else {
+            "definition_not_comparable"
+        };
+        let mut document: Value = serde_json::to_value(&report).unwrap();
+        let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        for form in [&mut document, &mut summary] {
+            form["metric_semantics"]
+                .as_object_mut()
+                .unwrap()
+                .remove("json_number_reading")
+                .expect("reports record json_number_reading");
+        }
+        let document: ProfileReport = serde_json::from_value(document).unwrap();
+        for (form, baseline) in [
+            ("document", ReportSide::from_report(&document)),
+            (
+                "summary",
+                ReportSide::from_summary_json(&summary.to_string()).unwrap(),
+            ),
+        ] {
+            let got = status(&evaluate(&policy, &report, &baseline));
+            if got != expected {
+                wrong.push(format!("{route} {form}: {got}, expected {expected}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

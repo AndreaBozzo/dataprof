@@ -1179,6 +1179,7 @@ fn key_duplicates(input: &FindingsInput, quality: &QualityFacts, out: &mut Colle
         quality.sampled_dimensions.as_deref(),
         &quality.unlisted_components,
         &[],
+        false,
         Provenance::Component("key_uniqueness"),
     );
     // The key component is filed as sampled exactly when the key's distinct
@@ -1239,6 +1240,7 @@ fn skip_unless_complete(
         quality.sampled_dimensions.as_deref(),
         &quality.unlisted_components,
         &[],
+        false,
         Provenance::Component(component),
     );
     match coverage {

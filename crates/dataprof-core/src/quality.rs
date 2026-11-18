@@ -197,6 +197,44 @@ pub enum DateStatistics {
     EveryValue,
 }
 
+/// Which columns the outlier test behind `outlier_ratio` runs on, as
+/// recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.13 a column whose first
+/// and third quartiles were one value was tested too: its IQR was 0, so
+/// every value off that quartile was an outlier, and a column of 75% zeros
+/// and 25% fives reported a quarter of its values as outliers. Those releases
+/// recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlierSpread {
+    /// Columns whose first and third quartiles differ (#1304). A column whose
+    /// quartiles coincide is not tested, as one below `outlier_min_samples`
+    /// is not, and adds nothing to `outlier_values_checked`.
+    NonzeroIqr,
+}
+
+/// Which text forms read as dates, as recorded in a report's metric
+/// semantics. Type inference, the consistency check and the timeliness
+/// counts read them.
+///
+/// Only the current definition has a value. Through 0.13, and on 0.14
+/// release candidates before #1340, the ISO datetime with a space for the `T`
+/// was a date only in its plain whole-second form: with a fraction or an
+/// offset (`2026-06-01 12:00:00+00:00`, what Python's `str()` writes for an
+/// aware datetime) it was text. Those reports recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DateForms {
+    /// The spaced ISO datetime reads as a date with a fraction and an offset,
+    /// as the `T` form does (#1335).
+    SpacedIsoDatetimes,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(
     Debug,

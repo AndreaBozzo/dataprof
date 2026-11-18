@@ -17,7 +17,7 @@ reads as a baseline.
 
 ### 1. Messy CSV inspection
 
-A partner sends you `orders.csv`. Is `order_id` really unique? Is `customer_email`
+An `orders.csv` file arrives. Is `order_id` really unique? Is `customer_email`
 populated? Why are the finance team's totals wrong? One pass answers all three:
 null-heavy columns, a duplicated key, a negative amount in a positive-only column,
 a cell that does not match its column's type, and PII that gets *flagged* but
@@ -52,7 +52,7 @@ uv run --no-sync python python/examples/etl_quality_gate.py
 #### Check a file before publishing it in CI
 
 Add these steps after your extract creates `orders.csv` and before the step
-that publishes it. This recipe uses the published 0.13.1 wheel and absolute
+that publishes it. This recipe uses the published 0.14.0 wheel and absolute
 checks: the file must have at least one row, both named columns must exist,
 and `customer_id` must have no nulls. Choose columns and limits with the feed's
 owner. For Parquet, replace `orders.csv` with `orders.parquet`.
@@ -62,7 +62,7 @@ owner. For Parquet, replace `orders.csv` with `orders.parquet`.
         with:
           python-version: '3.12'
       - run: |
-          python -m pip install --only-binary=:all: dataprof==0.13.1
+          python -m pip install --only-binary=:all: dataprof==0.14.0
       - name: Check the extracted file
         shell: bash
         run: |
@@ -96,7 +96,7 @@ dataprof development checkout:
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --only-binary=:all: dataprof==0.13.1
+python -m pip install --only-binary=:all: dataprof==0.14.0
 printf 'order_id,customer_id\n1,C001\n2,C002\n' > orders.csv
 mkdir -p quality-evidence
 python -m dataprof.check orders.csv \
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: python -m pip install dataprof==0.13.1
+      - run: python -m pip install dataprof==0.14.0
       - run: ./fetch_drop.sh orders.csv  # your extract step
       - name: Check against the accepted baseline
         run: |
@@ -244,6 +244,22 @@ uv run --no-sync python python/examples/key_collapse_gate.py
 
 ## Running them
 
+### More checks in 0.14
+
+The cookbook covers these checks, added in 0.14:
+
+| Requirement | API and recipe |
+|---|---|
+| A newest date no more than three days old | `max_date_age={"published_at": 3}` in [freshness and missing days](../docs/guides/examples.md#freshness-and-missing-days); `reference_date=` fixes the clock |
+| No missing period inside a daily range | `max_date_gap={"published_at": 1}` in the same recipe; it reads the largest gap between consecutive distinct days |
+| Row loss or growth against the accepted run | `max_row_count_drop` and `max_row_count_growth` in [checkpoint and volume changes](../docs/guides/examples.md#checkpoint-and-volume-changes); `min_rows` sets an absolute floor |
+| Repeated non-null keys | `unique_columns=["order_id"]`, or `--unique-column order_id` in CI, in [whole-row duplicates and unique keys](../docs/guides/examples.md#whole-row-duplicates-and-unique-keys) |
+| Exact whole-row duplicate counts on larger sources | `duplicate_rows_exact_limit` in the same recipe; the default is 1,000,000 distinct rows, or fewer under memory pressure, and an explicit limit retains the set even past the memory budget |
+| Removed or retyped columns | `forbid_removed_columns` rejects removals; `compare()` and baseline diagnostics report inferred type changes without rejecting them on their own, in [schema drift and declared decimals](../docs/guides/examples.md#inspect-schema-drift-and-declared-decimals) |
+| A finding that should reject the batch | `forbid_findings=["key_duplicates"]` in the key recipe; `identifier_columns` supplies the key for that finding |
+
+### Setup
+
 The Rust examples need nothing beyond the default feature set:
 
 ```bash
@@ -258,8 +274,8 @@ uv run --no-sync maturin develop
 uv run --no-sync python python/examples/messy_csv_inspection.py
 ```
 
-They use only the base wheel API, so `pip install dataprof` is enough outside a
-development checkout — no pandas, no source build.
+They use only the base wheel API, with no pandas dependency. The key-collapse
+example needs 0.14 or later.
 
 ## A note on the numbers
 

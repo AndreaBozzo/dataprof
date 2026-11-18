@@ -113,14 +113,14 @@ macro_rules! db_column_to_string {
             v.map(|x| x.to_string())
         }
         // Arms the shared chain cannot express because the type has no impl
-        // for one of the backends. `to_string` is exact for both of today's
-        // callers: `u64` prints its digits, and `BigDecimal` keeps the
-        // database's value rather than rounding through f64. Its scale can
-        // differ: sqlx pads a PostgreSQL `NUMERIC` to whole groups of four
-        // decimals and drops the declared scale (`NUMERIC(10,2)` 1.50 reads
-        // `1.5000`, 4.00 reads `4`; transact-rs/sqlx#468).
+        // for one of the backends, each rendered by its `BackendText`. The text
+        // is exact: `u64` prints its digits, and `BigDecimal` keeps the
+        // database's value in plain digits rather than rounding through f64.
+        // A PostgreSQL `NUMERIC` reads through `PgNumericText`, at its display
+        // scale: sqlx's `BigDecimal` pads it to whole groups of four decimals
+        // and drops that scale (transact-rs/sqlx#468).
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
-            v.map(|x| x.to_string())
+            v.map(|x| $crate::BackendText::backend_text(&x))
         })*
         else if let Ok(v) = row.try_get::<Option<f64>, _>(index) {
             // `{:?}` keeps the decimal point on integral floats ("100.0", not
@@ -319,6 +319,95 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
     value.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
 }
 
+/// The text of a value decoded through one of a connector's own arms of
+/// [`db_column_to_string!`](crate::db_column_to_string), for the types the
+/// shared chain cannot hold.
+pub trait BackendText {
+    /// The value as the profiler reads it.
+    fn backend_text(&self) -> String;
+}
+
+impl BackendText for u64 {
+    fn backend_text(&self) -> String {
+        self.to_string()
+    }
+}
+
+/// A `NUMERIC` or `DECIMAL` in plain digits. `Display` writes an exponent past
+/// 15 trailing zeros or 5 leading ones (`-900e+20`, `1E-7`), and how many is
+/// set when `bigdecimal` is built. The profiler holds a declared decimal
+/// exactly from its digits as written, so a value written short read as a
+/// float beside its exactly held neighbours, and their mean kept its rounding
+/// (#1342).
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+impl BackendText for ::sqlx::types::BigDecimal {
+    fn backend_text(&self) -> String {
+        self.to_plain_string()
+    }
+}
+
+/// A PostgreSQL `NUMERIC` in plain digits at its own display scale, as
+/// PostgreSQL prints it and as an Arrow or Parquet decimal is rendered.
+///
+/// sqlx's `BigDecimal` takes its scale from whole groups of four decimals and
+/// ignores the display scale the value carries (transact-rs/sqlx#468):
+/// `NUMERIC(9,2)` 0.01 reads `0.0100`, 4.00 reads `4`. The profiler keeps a
+/// declared decimal exact from 11 written digits, so the padding turned
+/// `1000000.01` exact beside its neighbours read as floats, and moved the
+/// quartiles off the other routes (#1342). The digits past the display scale
+/// are zero, so setting it drops only padding.
+#[cfg(feature = "postgres")]
+pub struct PgNumericText(String);
+
+#[cfg(feature = "postgres")]
+impl ::sqlx::Type<::sqlx::Postgres> for PgNumericText {
+    fn type_info() -> ::sqlx::postgres::PgTypeInfo {
+        <::sqlx::types::BigDecimal as ::sqlx::Type<::sqlx::Postgres>>::type_info()
+    }
+
+    fn compatible(ty: &::sqlx::postgres::PgTypeInfo) -> bool {
+        <::sqlx::types::BigDecimal as ::sqlx::Type<::sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'r> ::sqlx::Decode<'r, ::sqlx::Postgres> for PgNumericText {
+    fn decode(value: ::sqlx::postgres::PgValueRef<'r>) -> Result<Self, ::sqlx::error::BoxDynError> {
+        use std::str::FromStr;
+        match value.format() {
+            ::sqlx::postgres::PgValueFormat::Binary => {
+                // The header is four 16-bit fields: digit count, weight, sign
+                // and display scale.
+                let bytes = value.as_bytes()?;
+                let scale = bytes
+                    .get(6..8)
+                    .map(|field| i16::from_be_bytes([field[0], field[1]]))
+                    .ok_or("NUMERIC value shorter than its header")?;
+                let decimal =
+                    <::sqlx::types::BigDecimal as ::sqlx::Decode<::sqlx::Postgres>>::decode(value)?;
+                Ok(Self(decimal.with_scale(i64::from(scale)).to_plain_string()))
+            }
+            ::sqlx::postgres::PgValueFormat::Text => Ok(Self(
+                ::sqlx::types::BigDecimal::from_str(value.as_str()?)?.to_plain_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl BackendText for PgNumericText {
+    fn backend_text(&self) -> String {
+        self.0.clone()
+    }
+}
+
+#[cfg(feature = "mysql")]
+impl BackendText for ::sqlx::mysql::types::MySqlTime {
+    fn backend_text(&self) -> String {
+        self.to_string()
+    }
+}
+
 /// Macro to fetch a profiled query's result in one execution, read as a stream.
 ///
 /// The result comes from a single execution. Paging it as `LIMIT n OFFSET k`
@@ -468,6 +557,72 @@ pub fn build_select_query(query: &str) -> Result<String, DataProfilerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A decimal in plain digits, where `Display` writes an exponent (#1342).
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn a_big_decimal_is_written_in_plain_digits() {
+        use std::str::FromStr;
+        for (value, plain) in [
+            ("-9E+22", "-90000000000000000000000"),
+            ("1E-7", "0.0000001"),
+            ("90000000000000000000001", "90000000000000000000001"),
+            ("1.5000", "1.5000"),
+        ] {
+            let decimal = ::sqlx::types::BigDecimal::from_str(value).unwrap();
+            assert_eq!(BackendText::backend_text(&decimal), plain, "{value}");
+        }
+    }
+
+    /// A PostgreSQL `NUMERIC` reads at its display scale, as `psql` prints
+    /// it: sqlx alone pads to groups of four decimals or drops trailing
+    /// zeros. `NaN` stays a decode error. Needs `POSTGRES_TEST_URL`.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_postgresql_numeric_reads_at_its_display_scale() {
+        use sqlx::Row;
+
+        let Ok(url) = std::env::var("POSTGRES_TEST_URL") else {
+            eprintln!("POSTGRES_TEST_URL not set; skipping");
+            return;
+        };
+        let mut connection = <::sqlx::PgConnection as ::sqlx::Connection>::connect(&url)
+            .await
+            .expect("postgres connection");
+        for (literal, text) in [
+            ("0.01::numeric(9,2)", "0.01"),
+            ("4.00::numeric(9,2)", "4.00"),
+            ("1000000.01::numeric(9,2)", "1000000.01"),
+            ("0.00000001::numeric", "0.00000001"),
+            ("'-0.0'::numeric(3,1)", "0.0"),
+            (
+                "'-90000000000000000000000'::numeric",
+                "-90000000000000000000000",
+            ),
+            (
+                "'1e40'::numeric",
+                "10000000000000000000000000000000000000000",
+            ),
+            (
+                "'-9000000000000000000000000000000000000.0'::numeric(38,1)",
+                "-9000000000000000000000000000000000000.0",
+            ),
+            ("0::numeric", "0"),
+            ("12.3400::numeric", "12.3400"),
+        ] {
+            let row = sqlx::query(&format!("SELECT {literal}"))
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            let got: PgNumericText = row.try_get(0).unwrap();
+            assert_eq!(got.backend_text(), text, "{literal}");
+        }
+        let row = sqlx::query("SELECT 'NaN'::numeric")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert!(row.try_get::<PgNumericText, _>(0).is_err());
+    }
 
     #[test]
     fn test_build_select_query() {

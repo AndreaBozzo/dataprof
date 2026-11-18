@@ -196,15 +196,58 @@ gh run watch
 
 A pull request that changes `.github/python-interpreters.json`,
 `wheel_interpreters.py`, `rust-toolchain.toml`, `python-dist.yml` or
-`release-rehearsal.yml` runs it on its own. The release builds with the newest
-maturin that `[build-system] requires` in `pyproject.toml` allows, in manylinux
-images selected by floating tags, so an upstream release changes the build
-without any change here. The rehearsal therefore also runs weekly on `master`;
-run it there before tagging as well.
+`release-rehearsal.yml` runs it on its own. The runner images and the CPython
+patch releases installed on Windows and macOS still change without any change
+here, so the rehearsal also runs weekly on `master`; run it there before
+tagging as well.
+
+The maturin version and the two Linux build images are pinned in the `env:`
+block at the top of `python-dist.yml`, so each bump is a pull request that runs
+the rehearsal. Dependabot tracks neither, so bump them by hand:
+
+- **maturin**: set `MATURIN_VERSION` to a release from
+  [the maturin releases](https://github.com/PyO3/maturin/releases), and raise
+  the floor of `[build-system] requires` in `pyproject.toml` and the
+  `build-constraint-dependencies` pin in `benches/pyproject.toml` to the same
+  version, then run `uv lock` in `benches/`.
+  `python/tests/test_release_build_pins.py` fails if they disagree.
+- **x86_64 image** (`MANYLINUX_X86_64_IMAGE`): pick a dated tag of
+  `quay.io/pypa/manylinux2014_x86_64` and keep the tag with its digest, which is
+  the one Docker uses:
+
+  ```bash
+  docker buildx imagetools inspect quay.io/pypa/manylinux2014_x86_64:<tag> --format '{{json .Manifest.Digest}}'
+  ```
+
+- **aarch64 image** (`MANYLINUX_AARCH64_IMAGE`): the cross image publishes no
+  dated tags, so take the current digest of
+  `ghcr.io/rust-cross/manylinux_2_28-cross:aarch64` the same way.
 
 Each install job's summary shows, per interpreter, whether the wheel was built,
 whether it installs and whether the smoke test passed; an interpreter maturin
 cannot resolve fails the build step before compilation.
+
+### Release baselines
+
+`tests/release_baselines.rs` and `python/tests/test_release_baselines.py`
+gate each file in `tests/fixtures/release_baselines/` against the report the
+last published release saved for it, with no score drop allowed. When a change
+moves a score on those unchanged bytes, the test fails unless the change also
+records a `metric_semantics` definition (`MetricSemantics::current()` and the
+lists in `score_definitions`), so that a gate against an older baseline reads
+`definition_not_comparable` instead of failing on identical data.
+
+After each release is on PyPI, rewrite the reports from the published wheel
+and commit them:
+
+```bash
+uv run --no-sync python .github/scripts/release_baselines.py <version>
+```
+
+The script runs the wheel in an isolated environment and refuses to use the
+local build. Until this runs, the tests compare against the release before it,
+and each definition that release did not record leaves the rules reading it
+undecided.
 
 ### Database regression tests
 

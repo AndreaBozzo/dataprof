@@ -87,6 +87,14 @@ pub fn create_connector(
 ) -> Result<Box<dyn DatabaseConnector>, DataProfilerError> {
     if config.load_credentials_from_env || config.connection_string.is_empty() {
         config = apply_environment_configuration(config)?;
+    } else if let Some(ssl_config) = &config.ssl_config {
+        // Without the environment, the TLS settings still apply: skipping
+        // them left `SslConfig::production()` unenforced.
+        let database_type = ConnectionInfo::parse(&config.connection_string)?
+            .database_type()
+            .to_string();
+        config.connection_string =
+            ssl_config.apply_to_connection_string(config.connection_string.clone(), &database_type);
     }
 
     let connection_str = config.connection_string.as_str();
@@ -124,7 +132,9 @@ fn apply_environment_configuration(
                 .unwrap_or(false)
         {
             "postgresql".to_string()
-        } else if std::env::var("MYSQL_URL").is_ok() {
+        } else if std::env::var("MYSQL_URL").is_ok()
+            || std::env::var("DATABASE_URL").is_ok_and(|url| url.starts_with("mysql"))
+        {
             "mysql".to_string()
         } else {
             "postgresql".to_string()
@@ -136,7 +146,15 @@ fn apply_environment_configuration(
     let database_type = database_type.as_str();
 
     if config.connection_string.is_empty() {
-        let (secure_connection_string, ssl_config) = load_secure_database_config(database_type)?;
+        // A configuration other than the default is the caller's choice, as
+        // `SslConfig::production()` is: replacing it with the environment's
+        // connected unverified.
+        let requested = config
+            .ssl_config
+            .take()
+            .filter(|ssl_config| *ssl_config != SslConfig::default());
+        let (secure_connection_string, ssl_config) =
+            security::load_secure_database_config_with_ssl(database_type, requested)?;
         config.connection_string = secure_connection_string;
         config.ssl_config = Some(ssl_config);
     } else {

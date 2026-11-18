@@ -21,6 +21,14 @@ env:
   CARGO_NET_RETRY: 10
   RUST_BACKTRACE: short
   RUSTUP_MAX_RETRIES: 10
+  # The maturin that builds every wheel and the sdist, and the images the
+  # Linux wheels are built in. Each is pinned here so that an upstream release
+  # changes the build only through a pull request, which runs the release
+  # rehearsal. `[build-system] requires` in pyproject.toml starts at this
+  # maturin version. How to bump each: docs/CONTRIBUTING.md (#1076).
+  MATURIN_VERSION: 1.16.0
+  MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64:2026.11.14-1@sha256:e6a785657009c612fe2a85fa933051d03a50ba62b1c5e47d62abcab546a2e423
+  MANYLINUX_AARCH64_IMAGE: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64@sha256:ca53fa07ecf1c3e6408c51fbca64c036d9d29af832d3f8bb954910e89097f275
 
 jobs:
   python-interpreters:
@@ -82,19 +90,22 @@ jobs:
             # bought no compatibility and cost performance.
             rustflags: "-C opt-level=2"
 
-          # Optimized builds (performance optimized)
+          # Optimized builds. x86_64 targets the named level x86-64-v3 (AVX2,
+          # FMA, BMI2), never `native`: a `native` build takes whatever CPU the
+          # runner happens to have, and one built on an AMD runner carried
+          # AMD-only SSE4a instructions that crash every Intel CPU (#1331).
           - os: ubuntu-latest
             target: x86_64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: windows-latest
             target: x64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: macos-15-intel
             target: x86_64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            rustflags: "-C target-cpu=x86-64-v3"
           - os: macos-latest
             target: aarch64
             cpu_profile: optimized
@@ -119,7 +130,9 @@ jobs:
 
     - name: Install uv for host interpreter discovery
       if: runner.os != 'Linux'
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        prune-cache: true
 
     - name: Select build interpreters
       id: build-interpreters
@@ -147,7 +160,10 @@ jobs:
         # PEP 517 sdist build from silently diverging (see issue #589).
         args: --release --out dist --interpreter ${{ steps.build-interpreters.outputs.interpreters }}
         sccache: ${{ inputs.sccache }}
+        maturin-version: ${{ env.MATURIN_VERSION }}
         manylinux: ${{ matrix.manylinux || 'auto' }}
+        # Windows and macOS build on the host and ignore this input.
+        container: ${{ runner.os == 'Linux' && (matrix.target == 'aarch64' && env.MANYLINUX_AARCH64_IMAGE || env.MANYLINUX_X86_64_IMAGE) || '' }}
         # Ensure compatibility flags are properly set
         rust-toolchain: ${{ steps.toolchain.outputs.channel }}
       env:
@@ -164,40 +180,6 @@ jobs:
 
     - name: Verify published interpreter and ABI set
       run: python .github/scripts/wheel_interpreters.py --wheels dist
-      shell: bash
-
-    - name: Verify wheel compatibility (baseline only)
-      if: matrix.cpu_profile == 'baseline'
-      run: |
-        # Install objdump/readelf for analysis (Linux only for now)
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          echo "Verifying baseline wheel has no advanced CPU instructions..."
-          cd dist
-
-          for wheel in *.whl; do
-            if [ -f "$wheel" ]; then
-              echo "Analyzing wheel: $wheel"
-
-              # Extract wheel and find .so files
-              python -m zipfile -e "$wheel" wheel_extracted/
-
-              # Check for advanced CPU instructions in shared libraries
-              find wheel_extracted/ -name "*.so" -exec sh -c '
-                echo "Checking $1 for advanced CPU instructions..."
-                if objdump -d "$1" 2>/dev/null | grep -E "(vzeroupper|vmovdqu|vpor|vpaddd)" >/dev/null; then
-                  echo "WARNING: Found AVX instructions in $1"
-                  echo "This wheel may not be compatible with older CPUs"
-                else
-                  echo "OK: No advanced CPU instructions found in $1"
-                fi
-              ' _ {} \;
-
-              rm -rf wheel_extracted/
-            fi
-          done
-        else
-          echo "Skipping compatibility check on ${{ matrix.os }}"
-        fi
       shell: bash
 
     - name: Rename wheels with CPU profile suffix
@@ -252,6 +234,8 @@ jobs:
       with:
         command: sdist
         args: --out dist
+        # The sdist is built on the host, never in a manylinux image.
+        maturin-version: ${{ env.MATURIN_VERSION }}
         manylinux: auto
         rust-toolchain: ${{ steps.toolchain.outputs.channel }}
 
@@ -265,9 +249,27 @@ jobs:
   # the aarch64 Linux leg is cross-compiled, so before this job nothing ran its
   # wheels before users did. Each baseline wheel goes into a bare venv on its
   # own platform, one interpreter at a time, and runs the wheel smoke test,
-  # which also checks the wheel names the commit it was built from. Optimized
-  # wheels target the build runner's CPU, which another runner need not share,
-  # so they are not installed here.
+  # which also checks the wheel names the commit it was built from.
+  #
+  # The x86_64 baseline wheels promise to run on a CPU without AVX, which is why
+  # they are the ones on PyPI. On Linux the smoke test runs a second time under
+  # qemu-user emulating a Westmere CPU (no AVX), where an AVX instruction raises
+  # SIGILL (#1077). That run happens inside the manylinux image the wheels were
+  # built in, with its own interpreters, because setup-python's ubuntu-26.04
+  # interpreters require x86-64-v3 and cannot start on a CPU without AVX2
+  # (.github/scripts/wheel_smoke_emulated.sh). Dependencies may still carry AVX
+  # code behind runtime CPU detection, which is safe and which this run does not
+  # flag. Not covered: the subprocess the smoke test starts (`python -m
+  # dataprof.check`) runs natively, since qemu-user does not follow exec; and
+  # the Windows and macOS x86_64 baseline wheels, which have no user-mode
+  # emulator on their runners.
+  #
+  # The optimized wheels are release assets too, so each runs the same smoke
+  # test (#1331). The x86_64 Linux ones run under an emulated Haswell CPU, an
+  # x86-64-v3 CPU with no vendor-only extensions, so an instruction outside
+  # what they promise raises SIGILL whichever CPU the runner has. The Windows
+  # and macOS ones run natively on their runner: that shows they install and
+  # run, not that they stay within x86-64-v3.
   wheel-install:
     name: Install Wheels (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
@@ -278,14 +280,20 @@ jobs:
         include:
           - runner: ubuntu-latest
             artifact: wheels-ubuntu-latest-x86_64-baseline
+            emulated_cpu: Westmere
+            optimized_artifact: wheels-ubuntu-latest-x86_64-optimized
+            optimized_cpu: Haswell
           - runner: ubuntu-24.04-arm
             artifact: wheels-ubuntu-latest-aarch64-baseline
           - runner: windows-latest
             artifact: wheels-windows-latest-x64-baseline
+            optimized_artifact: wheels-windows-latest-x64-optimized
           - runner: macos-15-intel
             artifact: wheels-macos-15-intel-x86_64-baseline
+            optimized_artifact: wheels-macos-15-intel-x86_64-optimized
           - runner: macos-latest
             artifact: wheels-macos-latest-aarch64-baseline
+            optimized_artifact: wheels-macos-latest-aarch64-optimized
     defaults:
       run:
         shell: bash
@@ -299,13 +307,29 @@ jobs:
         python-version: ${{ needs.python-interpreters.outputs.setup-versions }}
 
     - name: Install uv for interpreter discovery
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        prune-cache: true
 
     - name: Download this platform's baseline wheels
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: ${{ matrix.artifact }}
         path: dist
+
+    - name: Download this platform's optimized wheels
+      if: matrix.optimized_artifact
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ matrix.optimized_artifact }}
+        path: dist-optimized
+
+    - name: Install qemu-user to emulate older CPUs
+      if: matrix.emulated_cpu || matrix.optimized_cpu
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q qemu-user
+        qemu-x86_64 --version
 
     - name: Install and smoke-test each interpreter's wheel
       env:
@@ -359,6 +383,94 @@ jobs:
         done
         exit "$failed"
 
+    - name: Smoke-test each baseline wheel on an emulated CPU without AVX
+      # Also after a native failure, so both results show in one run.
+      if: ${{ !cancelled() && matrix.emulated_cpu }}
+      env:
+        VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
+        EMULATED_CPU: ${{ matrix.emulated_cpu }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/emulated"
+        status=0
+        # The runner's qemu-user is statically linked, so it runs inside the image.
+        qemu=$(readlink -f "$(command -v qemu-x86_64)")
+        if ! ldd "$qemu" 2>&1 | grep -q -e "statically linked" -e "not a dynamic executable"; then
+          echo "::error::$qemu is dynamically linked and cannot run inside the manylinux image"
+          exit 1
+        fi
+        docker run --rm -e VERSIONS -e EMULATED_CPU \
+          -v "$PWD/dist:/dist:ro" \
+          -v "$PWD/.github/scripts:/scripts:ro" \
+          -v "$qemu:/usr/local/bin/qemu-x86_64:ro" \
+          -v "$RUNNER_TEMP/emulated:/out" \
+          "$MANYLINUX_X86_64_IMAGE" bash /scripts/wheel_smoke_emulated.sh || status=$?
+        {
+          echo "### ${{ matrix.artifact }} on an emulated $EMULATED_CPU CPU (no AVX)"
+          echo ""
+          cat "$RUNNER_TEMP/emulated/summary.md"
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit "$status"
+
+    - name: Install and smoke-test each interpreter's optimized wheel
+      # Also after a baseline failure, so both results show in one run.
+      if: ${{ !cancelled() && matrix.optimized_artifact }}
+      env:
+        DATAPROF_EXPECTED_COMMIT: ${{ github.sha }}
+        VERSIONS: ${{ needs.python-interpreters.outputs.setup-versions }}
+        OPTIMIZED_CPU: ${{ matrix.optimized_cpu }}
+      run: |
+        cp .github/scripts/wheel_smoke.py "$RUNNER_TEMP/wheel_smoke.py"
+        if [ -n "$OPTIMIZED_CPU" ]; then where="on an emulated $OPTIMIZED_CPU CPU"; else where="on this runner"; fi
+        failed=0
+        {
+          echo "### ${{ matrix.optimized_artifact }}"
+          echo ""
+          echo "| Interpreter | Wheel | Installs | Smoke test $where |"
+          echo "|---|---|---|---|"
+        } >> "$GITHUB_STEP_SUMMARY"
+        for version in $VERSIONS; do
+          tag="cp${version/./}"
+          asset=$(find dist-optimized -maxdepth 1 -name "dataprof-*-${tag}-${tag}-*-optimized.whl" | head -n 1)
+          built="missing"
+          installs="not run"
+          smoke="not run"
+          if [ -n "$asset" ]; then
+            built="$(basename "$asset")"
+            # pip refuses the asset name; the wheel inside is a standard one.
+            wheel="$RUNNER_TEMP/${built%-optimized.whl}.whl"
+            cp "$asset" "$wheel"
+            python=$(uv python find --system --no-python-downloads "$version")
+            venv="$RUNNER_TEMP/venv-optimized-$tag"
+            "$python" -m venv "$venv"
+            venv_python="$venv/bin/python"
+            [ -x "$venv_python" ] || venv_python="$venv/Scripts/python.exe"
+            echo "::group::CPython $version: $built"
+            if "$venv_python" -m pip install --no-index "$wheel"; then
+              installs="yes"
+              if [ -n "$OPTIMIZED_CPU" ]; then
+                run=(qemu-x86_64 -cpu "$OPTIMIZED_CPU" "$venv_python" wheel_smoke.py)
+              else
+                run=("$venv_python" wheel_smoke.py)
+              fi
+              if (cd "$RUNNER_TEMP" && "${run[@]}"); then
+                smoke="passed"
+              else
+                # SIGILL (exit 132) means an instruction this CPU lacks.
+                smoke="failed (exit $?)"
+              fi
+            else
+              installs="failed"
+            fi
+            echo "::endgroup::"
+          fi
+          echo "| $version | $built | $installs | $smoke |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$smoke" != "passed" ]; then
+            echo "::error::CPython $version on ${{ matrix.runner }}: optimized wheel $built, installs $installs, smoke test $where $smoke"
+            failed=1
+          fi
+        done
+        exit "$failed"
+
   # The sdist is the install path everywhere no wheel fits. Build and install
   # it the way pip does there, then run the same smoke test. It carries no git
   # metadata, so the package built from it records no commit.
@@ -377,6 +489,14 @@ jobs:
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.11'
+
+    - name: Install the pinned Rust toolchain
+      # The sdist carries rust-toolchain.toml, so pip's build asks rustup for
+      # that toolchain. Installed on first use in the middle of the build, it
+      # once came up without cargo and the build failed; install it here.
+      run: |
+        rustup toolchain install
+        cargo --version
 
     - name: Download sdist
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

@@ -875,6 +875,7 @@ class ProfileReport:
         max_null_percentage: _Mapping[str, float] | float | None = None,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
+        unique_columns: _Sequence[str] | None = None,
         max_date_age: _Mapping[str, int] | None = None,
         max_date_gap: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
@@ -883,6 +884,7 @@ class ProfileReport:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_null_count_increase: _Mapping[str, int] | int | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
         max_row_count_drop: float | None = None,
         max_row_count_growth: float | None = None,
@@ -933,6 +935,22 @@ class ProfileReport:
                 exact count. Same mapping shape as ``max_null_percentage``.
                 ``{"customer_id": 0}`` states "no nulls" at any row count.
             max_duplicate_rows: Ceiling for the duplicate-row count.
+            unique_columns: Columns whose non-null values must not repeat,
+                such as a business key: ``["order_id"]``. One
+                ``unique_column`` check per name, in name order, observing
+                the column's non-null values minus its distinct values
+                against an allowance of zero. Whole-row duplicates miss a
+                reused key whenever another column differs. Nulls never
+                repeat; use ``max_null_count`` to rule them out. A repeat the
+                scan witnessed fails under any scope, and none passes under
+                ``"full_source"`` only when every row was read. A distinct
+                count that is an estimate (past one million distinct values,
+                or sooner under memory pressure) or not recorded as exact
+                is ``approximate_count``, and a column with no distinct
+                count (a nested column) is ``not_assessed``. Independent of
+                the ``identifier_columns`` profiling option, which picks the
+                key the uniqueness score and the ``key_duplicates`` finding
+                read; declaring one does not imply the other.
             max_date_age: Days a column's newest date (its ``max_datetime``)
                 may lie before the timeliness reference date the report
                 recorded, so a feed that stopped moving fails:
@@ -941,15 +959,18 @@ class ProfileReport:
                 given, and the age is counted in calendar days. A date after
                 the reference date is fresh. A newest date read on part of a
                 source can only be overtaken by a newer one, so under
-                ``"full_source"`` a fresh date passes on any scan, and a stale
-                one fails only when every row was read and the column's date
-                statistics saw every value; otherwise it is
-                ``evidence_incomplete``. Slash dates are the exception: their
-                day and month order is decided from the values read, so a
-                fresh one read on part of a column is ``evidence_incomplete``
-                while the unread values could still change that order. A
-                column with no newest date (not typed as a date, all null) is
-                ``not_assessed``.
+                ``"full_source"`` a fresh date passes on a capped or sampled
+                read when the source declared a date type (an Arrow date or
+                timestamp, a pandas ``datetime64``); a date column typed from
+                text is ``evidence_incomplete`` there, since the rows not read
+                may type it as text. A stale date fails only when every row
+                was read and the column's date statistics saw every value;
+                otherwise it is ``evidence_incomplete``. Slash dates are read
+                in a day and month order decided from the values read, so a
+                fresh one whose statistics left values out is
+                ``evidence_incomplete`` while those values could still change
+                that order. A column with no newest date (not typed as a date,
+                all null) is ``not_assessed``.
             max_date_gap: Days the largest gap between a column's
                 consecutive distinct dates may span, so a daily file that lost
                 a period from the middle of its range fails:
@@ -987,6 +1008,12 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            max_null_count_increase: How many nulls a column may gain over
+                the baseline's, a whole number. Same mapping shape as
+                ``max_null_percentage_increase``. Decided on the exact
+                ``null_count`` of both sides, so one new null fails a limit of
+                0 at any row count, where the percentage rule compares changes
+                rounded to two decimals.
             max_distinct_drop: How far a column's distinct count may fall,
                 in percent (0-100) of the baseline's count, as a key that
                 suddenly repeats. Same mapping shape as
@@ -1060,7 +1087,7 @@ class ProfileReport:
         in the check: ``not_in_baseline``; ``schema_changed`` for a score
         when the column sets differ (a column's own rule still decides);
         ``definition_not_comparable`` for a ``metric_semantics`` key the rule
-        depends on; ``setting_changed`` or ``setting_unrecorded`` for a
+        depends on for these two runs; ``setting_changed`` or ``setting_unrecorded`` for a
         setting that moves the score on unchanged data, such as a semantic
         hint; or, under ``"full_source"``, ``evidence_incomplete`` when either
         side does not cover its whole source. A score drop rule reads a
@@ -1098,6 +1125,7 @@ class ProfileReport:
                 max_null_percentage=max_null_percentage,
                 max_null_count=max_null_count,
                 max_duplicate_rows=max_duplicate_rows,
+                unique_columns=unique_columns,
                 max_date_age=max_date_age,
                 max_date_gap=max_date_gap,
                 require_metrics=require_metrics,
@@ -1106,6 +1134,7 @@ class ProfileReport:
                 max_quality_score_drop=max_quality_score_drop,
                 max_dimension_score_drops=max_dimension_score_drops,
                 max_null_percentage_increase=max_null_percentage_increase,
+                max_null_count_increase=max_null_count_increase,
                 max_distinct_drop=max_distinct_drop,
                 max_row_count_drop=max_row_count_drop,
                 max_row_count_growth=max_row_count_growth,

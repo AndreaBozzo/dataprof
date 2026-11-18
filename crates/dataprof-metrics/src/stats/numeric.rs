@@ -167,6 +167,47 @@ fn compute_parsed_stats(
         )
     };
 
+    // An integer or decimal column's values are held exactly, so its median
+    // and quartiles are interpolated on them and rounded to `f64` once.
+    // Rounding the two values first cancels their difference: the midpoint of
+    // -2^53 and 2^53 + 1 is 0.5, and of their nearest `f64` values 0 (#1334).
+    //
+    // A float column stays on `f64` even when it is wide. Its text may be an
+    // Arrow double written out in digits (`44918740094933100000` for
+    // 4.49187400949331e19), which reads as an exact integer that is not the
+    // double, so interpolating on it would move a correct median.
+    //
+    // A column whose values all fit `f64` also stays on it: there the two
+    // agree up to the last bit, which can still decide a serialized digit
+    // (0.145 against 0.14500000000000002), and its CSV and `Float64` twins
+    // are interpolated in `f64`.
+    let order = if exact {
+        exact_order_stats(
+            &sorted_sample,
+            (base.min_value(), base.max_value()),
+            exact_mode,
+        )
+    } else {
+        None
+    };
+    let mut median = median;
+    if let Some(order) = order.as_ref().filter(|_| wide) {
+        if let Some(exact_median) = order.median.as_deref() {
+            median = Some(rounded(exact_median));
+        }
+        if let Some(reported) = quartiles.as_mut() {
+            for (field, exact_value) in [
+                (&mut reported.q1, &order.q1),
+                (&mut reported.q2, &order.q2),
+                (&mut reported.q3, &order.q3),
+            ] {
+                if let Some(exact_value) = exact_value.as_deref() {
+                    *field = rounded(exact_value);
+                }
+            }
+        }
+    }
+
     (
         NumericStats {
             min,
@@ -182,18 +223,19 @@ fn compute_parsed_stats(
             kurtosis,
             is_approximate,
             outlier_count,
-            exact: if exact {
-                exact_order_stats(
-                    &sorted_sample,
-                    (base.min_value(), base.max_value()),
-                    exact_mode,
-                )
-            } else {
-                None
-            },
+            exact: if exact { order } else { None },
         },
         parsed_count,
     )
+}
+
+/// The `f64` nearest an exact order statistic. The text is a canonical
+/// decimal [`exact_order_stats`] wrote, digits with an optional sign and
+/// point, which `f64` parsing reads correctly rounded.
+fn rounded(canonical: &str) -> f64 {
+    canonical
+        .parse()
+        .expect("a canonical decimal string parses as f64")
 }
 
 /// The order statistics of a sample sorted by value, exactly (#1038): Type 7
@@ -219,7 +261,7 @@ fn exact_order_stats(
     // quarters so that it stays an integer.
     let quartile = |quarter: usize| -> Option<String> {
         let position = (values.len() - 1) * quarter;
-        let (lower, weight) = (position / 4, (position % 4) as i128);
+        let (lower, weight) = (position / 4, (position % 4) as u128);
         let base = values[lower];
         if weight == 0 {
             return Some(base.canonical());
@@ -505,6 +547,20 @@ impl<'a> ExactTukey<'a> {
             iqr: iqr.is_finite().then_some(iqr),
             k,
         })
+    }
+
+    /// Fences drawn from two given values as the quartiles, which need not be
+    /// the quartiles of the values counted (#1304).
+    pub(crate) fn from_quartiles(q1: &'a ParsedNumber, q3: &'a ParsedNumber, k: f64) -> Self {
+        let iqr = q3.minus_value(*q1);
+        Self {
+            q1_anchor: q1,
+            q1_offset: 0.0,
+            q3_anchor: q3,
+            q3_offset: 0.0,
+            iqr: iqr.is_finite().then_some(iqr),
+            k,
+        }
     }
 
     /// Values below `q1 - k·IQR` or above `q3 + k·IQR`, each compared by its

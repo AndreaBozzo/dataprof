@@ -3,7 +3,7 @@ revision = 5
 requires-python = "==3.12.*"
 
 [manifest]
-build-constraints = [{ name = "maturin", specifier = "==1.15.0" }]
+build-constraints = [{ name = "maturin", specifier = "==1.16.0" }]
 
 [[package]]
 name = "annotated-types"

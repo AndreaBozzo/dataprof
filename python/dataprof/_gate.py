@@ -364,6 +364,19 @@ def _dimension_name(name: _Any, *, setting: str) -> str:
     return str(name)
 
 
+def _column_names(key: str, value: _Sequence[str] | None) -> list[str]:
+    """A list of column names, sorted and without repeats."""
+    # A bare string is a sequence of characters, never a list of columns,
+    # and a one-shot iterator would be consumed by the check below.
+    if value is not None and (
+        not isinstance(value, _Sequence)
+        or isinstance(value, (str, bytes))
+        or not all(isinstance(column, str) for column in value)
+    ):
+        raise _PolicyFieldError(key, f"{key} must be a list of column names, got {value!r}")
+    return sorted(set(value or ()))
+
+
 class _Policy:
     """The evaluator. Constructed from :meth:`ProfileReport.check` keywords."""
 
@@ -380,10 +393,12 @@ class _Policy:
         max_null_count: _Mapping[str, int] | int | None = None,
         max_date_age: _Mapping[str, int] | None = None,
         max_date_gap: _Mapping[str, int] | None = None,
+        unique_columns: _Sequence[str] | None = None,
         baseline: _RustProfileReport | str | None = None,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_null_count_increase: _Mapping[str, int] | int | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
         max_row_count_drop: float | None = None,
         max_row_count_growth: float | None = None,
@@ -457,6 +472,8 @@ class _Policy:
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
 
+        self.unique_columns = _column_names("unique_columns", unique_columns)
+
         self.max_date_age = _date_columns("max_date_age", max_date_age)
         self.max_date_gap = _date_columns("max_date_gap", max_date_gap)
 
@@ -494,6 +511,22 @@ class _Policy:
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
 
+        self.max_null_count_increase: dict[str, int] = {}
+        self.max_null_count_increase_any: int | None = None
+        if isinstance(max_null_count_increase, _Mapping):
+            for column, value in max_null_count_increase.items():
+                limit = _count(
+                    "max_null_count_increase", value, None if column == "*" else str(column)
+                )
+                if column == "*":
+                    self.max_null_count_increase_any = limit
+                else:
+                    self.max_null_count_increase[str(column)] = limit
+        elif max_null_count_increase is not None:
+            self.max_null_count_increase_any = _count(
+                "max_null_count_increase", max_null_count_increase
+            )
+
         self.max_distinct_drop: dict[str, float] = {}
         self.max_distinct_drop_any: float | None = None
         if isinstance(max_distinct_drop, _Mapping):
@@ -521,18 +554,7 @@ class _Policy:
             else _growth_percentage("max_row_count_growth", max_row_count_growth)
         )
 
-        # A bare string is a sequence of characters, never a list of columns,
-        # and a one-shot iterator would be consumed by the check below.
-        if require_columns is not None and (
-            not isinstance(require_columns, _Sequence)
-            or isinstance(require_columns, (str, bytes))
-            or not all(isinstance(column, str) for column in require_columns)
-        ):
-            raise _PolicyFieldError(
-                "require_columns",
-                f"require_columns must be a list of column names, got {require_columns!r}",
-            )
-        self.require_columns = sorted(set(require_columns or ()))
+        self.require_columns = _column_names("require_columns", require_columns)
         for key, value in (
             ("forbid_removed_columns", forbid_removed_columns),
             ("forbid_added_columns", forbid_added_columns),
@@ -565,8 +587,9 @@ class _Policy:
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase, max_distinct_drop, max_row_count_drop, "
-                "max_row_count_growth, forbid_removed_columns, forbid_added_columns) "
+                "max_null_percentage_increase, max_null_count_increase, max_distinct_drop, "
+                "max_row_count_drop, max_row_count_growth, forbid_removed_columns, "
+                "forbid_added_columns) "
                 "needs a baseline report to compare against",
             )
 
@@ -587,6 +610,7 @@ class _Policy:
             or self.max_null_count
             or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
+            or self.unique_columns
             or self.max_date_age
             or self.max_date_gap
             or self.require_quality
@@ -603,6 +627,8 @@ class _Policy:
             or bool(self.max_dimension_score_drops)
             or bool(self.max_null_percentage_increase)
             or self.max_null_percentage_increase_any is not None
+            or bool(self.max_null_count_increase)
+            or self.max_null_count_increase_any is not None
             or bool(self.max_distinct_drop)
             or self.max_distinct_drop_any is not None
             or self.max_row_count_drop is not None
@@ -636,6 +662,7 @@ class _Policy:
                 max_null_count=list(self.max_null_count.items()),
                 max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
+                unique_columns=self.unique_columns,
                 max_date_age=list(self.max_date_age.items()),
                 max_date_gap=list(self.max_date_gap.items()),
                 require_quality=self.require_quality,
@@ -646,6 +673,8 @@ class _Policy:
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
+                max_null_count_increase=list(self.max_null_count_increase.items()),
+                max_null_count_increase_any=self.max_null_count_increase_any,
                 max_distinct_drop=list(self.max_distinct_drop.items()),
                 max_distinct_drop_any=self.max_distinct_drop_any,
                 max_row_count_drop=self.max_row_count_drop,

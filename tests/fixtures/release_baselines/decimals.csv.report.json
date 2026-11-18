@@ -1,0 +1,415 @@
+{
+  "analysis_settings": {
+    "columns": {
+      "selection": "all"
+    },
+    "metric_packs": [
+      "schema",
+      "statistics",
+      "patterns",
+      "quality"
+    ],
+    "pattern_locale": "none",
+    "temporal_pairs": []
+  },
+  "column_profiles": [
+    {
+      "data_type": "Integer",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "id",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 53.45,
+          "exact": {
+            "max": "6",
+            "median": "3.5",
+            "min": "1",
+            "q1": "2.25",
+            "q2": "3.5",
+            "q3": "4.75"
+          },
+          "is_approximate": false,
+          "kurtosis": -1.2,
+          "max": 6.0,
+          "mean": 3.5,
+          "median": 3.5,
+          "min": 1.0,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 2.5,
+            "q1": 2.25,
+            "q2": 3.5,
+            "q3": 4.75
+          },
+          "skewness": 0.0,
+          "std_dev": 1.8708,
+          "variance": 3.5
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 6,
+        "text": 0
+      },
+      "unique_count": 6,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "price",
+      "null_count": 1,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 76.5,
+          "is_approximate": false,
+          "kurtosis": 2.4774,
+          "max": 10.0,
+          "mean": 4.4,
+          "median": 3.5,
+          "min": 1.5,
+          "outlier_count": 1,
+          "quartiles": {
+            "iqr": 2.5,
+            "q1": 2.25,
+            "q2": 3.5,
+            "q3": 4.75
+          },
+          "skewness": 1.5359,
+          "std_dev": 3.3662,
+          "variance": 11.3312
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 5,
+        "text": 0
+      },
+      "unique_count": 5,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "rate",
+      "null_count": 1,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "coefficient_of_variation": 89.2,
+          "is_approximate": false,
+          "kurtosis": 1.3557,
+          "max": 1.0,
+          "mean": 0.4117,
+          "median": 0.3333,
+          "min": 0.1,
+          "outlier_count": 0,
+          "quartiles": {
+            "iqr": 0.38,
+            "q1": 0.13,
+            "q2": 0.33,
+            "q3": 0.5
+          },
+          "skewness": 1.2623,
+          "std_dev": 0.3672,
+          "variance": 0.1348
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 5,
+        "text": 0
+      },
+      "unique_count": 5,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "locale_number_count": 0,
+      "name": "email",
+      "null_count": 0,
+      "patterns": [
+        {
+          "category": "contact",
+          "confidence": 0.8,
+          "match_count": 5,
+          "match_percentage": 83.33333333333334,
+          "name": "Email",
+          "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        }
+      ],
+      "stats": {
+        "Text": {
+          "avg_length": 12.8333,
+          "max_length": 13,
+          "min_length": 12
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 6
+      },
+      "unique_count": 6,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "signup",
+      "null_count": 1,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.5,
+          "match_count": 5,
+          "match_percentage": 100.0,
+          "name": "Date (slash)",
+          "regex": "^\\d{2}/\\d{2}/\\d{4}$"
+        }
+      ],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Monday": 2,
+            "Saturday": 1,
+            "Sunday": 1,
+            "Wednesday": 1
+          },
+          "duration_days": 188.0,
+          "largest_gap": {
+            "days": 93,
+            "from": "2024-01-01",
+            "to": "2024-04-03"
+          },
+          "max_datetime": "2024-06-30",
+          "min_datetime": "2023-12-25",
+          "month_distribution": {
+            "1": 1,
+            "12": 1,
+            "4": 2,
+            "6": 1
+          },
+          "slash_date_order": "day_first",
+          "year_distribution": {
+            "2023": 1,
+            "2024": 4
+          }
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 5,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 5,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "Date",
+      "invalid_count": 0,
+      "locale_number_count": 0,
+      "name": "shipped",
+      "null_count": 1,
+      "patterns": [
+        {
+          "category": "other",
+          "confidence": 0.5,
+          "match_count": 5,
+          "match_percentage": 100.0,
+          "name": "Date (ISO)",
+          "regex": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      ],
+      "stats": {
+        "DateTime": {
+          "day_of_week_distribution": {
+            "Monday": 1,
+            "Sunday": 2,
+            "Tuesday": 2
+          },
+          "duration_days": 181.0,
+          "largest_gap": {
+            "days": 77,
+            "from": "2024-04-14",
+            "to": "2024-06-30"
+          },
+          "max_datetime": "2024-07-01",
+          "min_datetime": "2024-01-02",
+          "month_distribution": {
+            "1": 1,
+            "3": 1,
+            "4": 1,
+            "6": 1,
+            "7": 1
+          },
+          "year_distribution": {
+            "2024": 5
+          }
+        }
+      },
+      "total_count": 6,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 5,
+        "numeric": 0,
+        "text": 0
+      },
+      "unique_count": 5,
+      "unique_count_is_approximate": false
+    }
+  ],
+  "data_source": {
+    "csv_metadata": {
+      "delimiter": ",",
+      "delimiter_detection": {
+        "delimiter": ",",
+        "header_fields": 6
+      }
+    },
+    "format": "csv",
+    "path": "decimals.csv",
+    "size_bytes": 293,
+    "type": "file"
+  },
+  "execution": {
+    "bytes_consumed": 293,
+    "columns_detected": 6,
+    "engine": "incremental",
+    "error_count": 0,
+    "memory_peak_mb": 22.47265625,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 6,
+    "sampling_applied": false,
+    "scan_time_ms": 59,
+    "source_exhausted": true,
+    "throughput_rows_sec": 101.69491525423729,
+    "unterminated_quote": false
+  },
+  "generator": {
+    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "dirty": false,
+    "version": "0.14.0"
+  },
+  "id": "59553788-4b56-458b-a397-b5b06ad478de",
+  "metric_semantics": {
+    "accuracy_comparison": "exact_values",
+    "date_forms": "spaced_iso_datetimes",
+    "date_statistics": "every_value",
+    "json_number_reading": "literal_digits",
+    "key_column_source": "declared",
+    "key_uniqueness_units": "non_null_values",
+    "null_tokens": "common_markers",
+    "outlier_spread": "nonzero_iqr",
+    "outlier_units": "tested_values",
+    "pattern_match_count": "validated",
+    "range_rule_count": "violating_values",
+    "sampled_score_estimator": "population_weighted",
+    "shape_moments": "adjusted_sample",
+    "statistic_rounding": "four_decimals_twelve_significant",
+    "text_length_unit": "unicode_scalar"
+  },
+  "quality": {
+    "columns_without_value_checks": [],
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 16,
+        "outlier_ratio": 6.25,
+        "outlier_values_checked": 16,
+        "range_violations": 0,
+        "rule_values_checked": 0,
+        "rule_violating_values": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 66.67,
+        "missing_values_ratio": 11.11,
+        "null_columns": [],
+        "total_cells": 36
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 32
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 40.0,
+        "inconsistent_precision_values": 6,
+        "numeric_values_checked": 10
+      },
+      "score_weights": {
+        "accuracy": 0.15,
+        "completeness": 0.25,
+        "consistency": 0.2,
+        "precision": 0.05,
+        "timeliness": 0.1,
+        "uniqueness": 0.15,
+        "validity": 0.1
+      },
+      "timeliness": {
+        "clock": {
+          "max_data_age_years": 5.0,
+          "mode": "rolling",
+          "reference_date": "2026-11-17",
+          "timezone": "UTC"
+        },
+        "date_values_checked": 10,
+        "future_dates_count": 0,
+        "invalid_date_values": 0,
+        "stale_data_ratio": 0.0,
+        "temporal_pairs_checked": 0,
+        "temporal_violations": 0
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "duplicate_rows_exact_limit": 1000000,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 6
+      },
+      "validity": {
+        "invalid_values": 1,
+        "valid_values_ratio": 93.75,
+        "values_checked": 16
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 93.75,
+        "completeness": 77.78,
+        "consistency": 100.0,
+        "precision": 40.0,
+        "timeliness": 100.0,
+        "uniqueness": 100.0,
+        "validity": 93.75
+      },
+      "overall_score": 89.88
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-11-17T18:32:07.302434100+00:00"
+}

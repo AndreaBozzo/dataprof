@@ -1,10 +1,11 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.13.1).
+Complete reference for the `dataprof` Python package (v0.14.0). Options
+marked 0.14 need that release or later.
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
-[release notes](../release-notes.md): 0.13.1, then the 0.13.0 migration guide.
+[release notes](../release-notes.md) for 0.14.0 and their upgrade notes.
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -23,6 +24,12 @@ The package ships pre-built wheels for Linux, macOS, and Windows, and declares *
 
 The wheel also carries the async API: `dataprof.asyncio`, HTTP URL profiling,
 and remote Parquet all work on a bare `pip install dataprof`.
+
+Install the producer library for DataFrame and Arrow inputs. The pandas
+adapter uses pyarrow, and the polars adapter calls `to_arrow()`, which also
+needs pyarrow. The `pandas` extra installs pandas; install pyarrow too for input
+conversion.
+Parquet file and bytes profiling uses the compiled reader and needs neither.
 
 Database profiling is the one documented feature the wheel does not contain.
 Connectors are a compile-time feature rather than a Python dependency, so no
@@ -338,7 +345,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
 | `quality_columns_without_value_checks` | `list[dict] \| None` | Columns whose values no value-level check read, each `{"column": ..., "reason": "nested"}`: a struct, list or map column counts toward completeness and duplicate rows only. `[]` when every column was checked; `None` when there is no assessment or the report was written before 0.14. `repr()`, `to_markdown()`, `to_html()` and `to_llm_context()` print a note next to the score when it is not empty |
 | `analysis_settings` | `dict[str, Any] \| None` | The settings it was profiled with that change what a score measures and are recorded nowhere else: `{"pattern_locale": "IT", "columns": {"selection": "all"}, "metric_packs": ["schema", "statistics", "patterns", "quality"], "temporal_pairs": []}`, where `"none"` means no locale, a `columns=` projection reads `{"selection": "listed", "names": [...]}`, `metric_packs` lists the packs the run computed (`"schema"` always), and `temporal_pairs` the declared start/end pairs as `[{"start": ..., "end": ...}]`, sorted, each once, both absent before 0.14; `None` for a report written before 0.13, whose settings are unknown |
-| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits", "sampled_score_estimator": "population_weighted", "date_statistics": "every_value"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar", "null_tokens": "common_markers", "pattern_match_count": "validated", "shape_moments": "adjusted_sample", "range_rule_count": "violating_values", "key_uniqueness_units": "non_null_values", "outlier_units": "tested_values", "key_column_source": "declared", "accuracy_comparison": "exact_values", "json_number_reading": "literal_digits", "sampled_score_estimator": "population_weighted", "date_statistics": "every_value", "outlier_spread": "nonzero_iqr", "date_forms": "spaced_iso_datetimes"}`; `None` for a report written before 0.12, whose definitions are unknown. A 0.12 report records only `text_length_unit`: it counted only empty, `null` and `nan` as missing, counted every regex match as a pattern match, and used another skewness and kurtosis estimator |
 | `generator` | `dict[str, Any] \| None` | The dataprof build that produced it: `{"version": "0.13.0", "commit": "<40-hex>", "dirty": False}`. A development build carries the version of the release it follows; `commit` and `dirty` (uncommitted changes in the compiled Rust sources) tell them apart, and are absent where the build did not record them, as from an sdist. `None` for a report written before 0.13 |
 | `source_identity` | `dict[str, Any] \| None` | Which data the report describes: `{"version": "..."}` holds the `source_version=` the caller passed, verbatim. A later release may add other kinds of identity under their own keys. `None` when nothing was recorded |
 | `execution_time_ms` | `int` | Total processing time |
@@ -551,6 +558,12 @@ Segmenting grapheme clusters instead would need a Unicode segmentation table and
 a policy for which version of it; encoded size is a property of the encoding
 rather than of the value, and is reported at the source level instead.
 
+Declared decimals in Arrow, Parquet, PostgreSQL `NUMERIC` and MySQL `DECIMAL`
+are read from their decimal digits (0.14), including quality-only runs that
+omit the statistics pack. A pandas `object` column does not declare its
+values as decimals; use an Arrow decimal dtype to retain that declaration.
+See the [declared decimal example](../guides/examples.md#inspect-schema-drift-and-declared-decimals).
+
 ## `Pattern`
 
 Represents a pattern found in a column. Matches pass both the regular expression
@@ -596,10 +609,11 @@ SamplingStrategy.reservoir(size=10000)               # same guarantee, Algorithm
 SamplingStrategy.systematic(interval=10)             # every Nth row
 ```
 
-Sampling applies to CSV sources on the `auto` and `incremental` engines and to
-every `dataprof.asyncio` entry point. The columnar engine and the JSON/Parquet
-readers cannot sample row by row and raise `ValueError` rather than silently
-returning a full profile.
+Row sampling works for CSV files on the `auto` and `incremental` engines and
+for CSV, JSON and JSONL inputs in `dataprof.asyncio`. Columnar CSV, synchronous
+JSON/JSONL, every Parquet reader and synchronous in-memory routes reject
+nontrivial sampling requests with `ValueError`. `SamplingStrategy.none()` is
+accepted.
 
 `random` and `reservoir` give the same guarantee — a uniform sample of exactly
 `size` rows — and both hold `size` rows in memory, because which rows belong in
@@ -988,7 +1002,8 @@ the Rust `FindingPolicy` writes for the same report and thresholds.
 
 State a policy as data and get a structured verdict back. Nothing is printed,
 the process is not exited, and the report is not modified, so this composes
-into Airflow, Dagster, a GitHub Action, or a shell script -- no CLI involved.
+into a pipeline or application. The same policy is available through
+`python -m dataprof.check`.
 
 ```python
 report = dp.profile("daily_drop.csv")
@@ -1013,6 +1028,7 @@ if not result.passed:
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
 | `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
+| `unique_columns` | `list[str]` | Columns whose non-null values must not repeat, such as a business key; whole-row duplicates miss a reused key whenever another column differs (0.14+) |
 | `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
 | `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
@@ -1021,6 +1037,7 @@ if not result.passed:
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
+| `max_null_count_increase` | `dict[str, int] \| int` | How many nulls a column may gain over the baseline's, decided on the exact `null_count` of both sides (0.15+). Same shape as `max_null_percentage_increase` |
 | `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
 | `max_row_count_drop` | `float` | How far the row count may fall, in percent (0--100) of the baseline's `rows_processed` (0.14+) |
 | `max_row_count_growth` | `float` | How far the row count may grow, in percent of the baseline's, 0 or more (0.14+) |
@@ -1041,18 +1058,38 @@ which compares the exact count and needs no rounding. Like `max_duplicate_rows`,
 it fails a truncated or sampled scan that already counted more nulls than
 allowed, and otherwise leaves a full-source rule unevaluated on such a scan.
 
+`unique_columns=["order_id"]` (0.14+) checks a business key directly.
+`max_duplicate_rows=0` counts whole rows, so it passes a reused key whenever
+another column differs, and always when a loader adds a row id. Each named
+column gets a `unique_column` check that observes its non-null values minus
+its distinct values against an allowance of zero, read from the exact
+distinct count. Nulls never repeat; pair it with
+`max_null_count={"order_id": 0}` for a key that must also be present. A repeat the scan witnessed fails
+whatever the scan missed, and none passes under `"full_source"` only when
+every row was read. A distinct count that is an estimate, past one million
+distinct values or sooner under memory pressure, settles neither direction
+(`approximate_count`).
+`unique_columns` is a gate requirement, while `identifier_columns=` is a
+profiling option that picks the key the uniqueness score and the
+`key_duplicates` finding read. Neither implies the other: a pipeline that
+wants both scores and gates its key names it in both.
+
 `max_date_age` reads the column's `max_datetime` against the reference date
 the report's timeliness clock recorded: the `reference_date=` of the profiling
 call, or the run's date when none was given. The age is counted in calendar
 days, a date after the reference date is fresh, and a saved report decides as
 the run did. A newest date read on part of a source can only be overtaken by
-a newer one, so under `"full_source"` a fresh date passes on any scan, and a
-stale one fails only when every row was read and the column's date statistics
-saw every value. Slash dates (`01/10/2026`) are the exception: their day and
-month order is decided from the column's values, so a fresh one read on part
-of a column is `evidence_incomplete` while the unread values could still
-change that order. The date statistics cover every value read
-(`metric_semantics["date_statistics"]`), so a stale date on a complete scan
+a newer one, so under `"full_source"` a fresh date passes on any scan of a
+column whose source declared a date type (an Arrow date or timestamp, a pandas
+`datetime64`, a database date or timestamp). A date column typed from text
+(CSV, JSON, strings in memory) passes only on a scan of every row: on a capped
+or sampled read it is `evidence_incomplete`, since the rows not read may hold
+values that type the column as text. A stale date fails only when every row
+was read and the column's date statistics saw every value. Slash dates
+(`01/10/2026`) are read in a day and month order decided from the column's
+values, so a fresh one is also `evidence_incomplete` while values the
+statistics left out could still change that order. The date statistics cover
+every value read (`metric_semantics["date_statistics"]`), so a stale date on a complete scan
 fails at any size. A report saved before that record computed them from the
 retained sample, and on a file larger than the sample a stale date there is
 `evidence_incomplete` (`quality_sampled`). A column not typed as a date, or with no dates, is
@@ -1265,8 +1302,20 @@ unevaluated, with one of these reasons:
   `json_number_reading` also for consistency, precision, uniqueness, accuracy,
   the overall score and the distinct count, `sampled_score_estimator` also for
   consistency, accuracy, timeliness, validity, precision and the overall
-  score), when the two reports do not both record it identically. A
-  baseline saved before 0.13 records neither;
+  score, `outlier_spread` also for accuracy and the overall score,
+  `date_forms` also for consistency, timeliness and the overall score), when
+  the two reports do not both record it identically. A
+  baseline saved before 0.13 records neither. The last four are compared
+  only on runs they can move: `json_number_reading` when either source may
+  hold a JSON number (JSON, JSONL, a database, or a format not recorded),
+  `sampled_score_estimator` when either score was computed over a sample of
+  the values the scan read, `outlier_spread` when either side has a
+  numeric column whose exact quartiles coincide or were not recorded, or an
+  accuracy score over such a sample, and `date_forms` when either side has a
+  date column, a text column with a value of 20 characters or more, a column
+  named by `temporal_columns` or `temporal_pairs`, or a column whose type or
+  lengths were not recorded. A scan that stopped early
+  reaches none of them by itself;
 - `setting_changed` or `setting_unrecorded`, with the setting, when a setting
   that moves the score on unchanged data differs or is not recorded on a side:
   the score weights for the overall score, `identifier_columns` (in the order
@@ -1310,6 +1359,17 @@ still settles the outcome that its unread rows could not reverse, as
 The one exception is `max_row_count_drop=100`, which passes whatever the scans
 missed, since a count cannot fall by more than all of it.
 
+**A null count that rises (0.15+).** `max_null_percentage_increase`
+compares percentages at two decimals, so from about 30,000 rows one new null
+rounds to a change of 0.00 and passes an allowance of 0.
+`max_null_count_increase={"customer_id": 0}` compares the exact `null_count`
+of both reports instead, so one new null fails at any row count. The allowance
+is a whole number of nulls. `observed` and the baseline's `observed` are the
+two null counts, and the baseline's `change` is their difference in nulls
+(negative when the count fell). A column with no values read has a null count
+of 0. A baseline summary that does not record `null_count` and `total_count`
+for the column leaves the rule `not_in_baseline`.
+
 **A distinct count that collapses (0.14+).** `max_distinct_drop={"customer_id":
 10}` fails when the column's distinct count fell by more than 10% of the
 baseline's, as a key that suddenly repeats. Fewer rows alone are not a
@@ -1352,7 +1412,8 @@ result = dp.profile("daily_drop.csv").check(
 Each such check carries `baseline`, holding the baseline's `observed` value,
 its `evidence`, and `change` (this report minus the baseline, in points), and
 its `expected` is `{"comparison": "change_at_least", "value": -2.0}` for a
-drop or `change_at_most` for an increase. `max_distinct_drop` and the row
+drop or `change_at_most` for an increase. For `max_null_count_increase`,
+`change` and `value` are whole numbers of nulls. `max_distinct_drop` and the row
 count rules are relative instead: `change` is in percent of the baseline's
 count, and `expected` is `{"comparison": "relative_change_at_least", "value":
 -10.0}` for a drop or `relative_change_at_most` for growth. `result.baseline` names both reports
@@ -1569,7 +1630,7 @@ Flags replace the corresponding policy-file key in full. For example,
 `--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
 any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
-`--require-metric NAME`, `--require-column NAME`,
+`--require-metric NAME`, `--require-column NAME`, `--unique-column NAME` (0.14+),
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
 `--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
 today's date, since the command line takes no reference date.
@@ -1613,6 +1674,7 @@ every flag and code. `--version` prints `dataprof <version>` to stdout and exits
 | `--max-quality-drop POINTS` | `max_quality_score_drop` |
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
+| `--max-null-count-increase COLUMN=N`, repeatable, `*=N` for every column both reports profiled (0.15+) | `max_null_count_increase` |
 | `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
 | `--max-row-drop PERCENT` | `max_row_count_drop` |
 | `--max-row-growth PERCENT` | `max_row_count_growth` |
@@ -1652,7 +1714,7 @@ runs this cycle over seven drops, including the ones that must not become the
 baseline, and shows it as a CI job that keeps the baseline in the repository.
 
 The [file publication CI recipe](../../examples/README.md#check-a-file-before-publishing-it-in-ci)
-uses a pinned 0.13.1 wheel, required columns and a per-column null limit, and
+uses a pinned 0.14.0 wheel, required columns and a per-column null limit, and
 retains both the profile and verdict on a rejected run. To run the current
 checkout instead, build the extension with `uv sync --no-install-project` and
 `uv run --no-sync maturin develop`, then invoke the module with

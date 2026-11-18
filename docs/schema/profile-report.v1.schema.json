@@ -763,6 +763,16 @@
         }
       ]
     },
+    "DateForms": {
+      "description": "Which text forms read as dates, as recorded in a report's metric\nsemantics. Type inference, the consistency check and the timeliness\ncounts read them.\n\nOnly the current definition has a value. Through 0.13, and on 0.14\nrelease candidates before #1340, the ISO datetime with a space for the `T`\nwas a date only in its plain whole-second form: with a fraction or an\noffset (`2026-06-01 12:00:00+00:00`, what Python's `str()` writes for an\naware datetime) it was text. Those reports recorded no definition.",
+      "oneOf": [
+        {
+          "const": "spaced_iso_datetimes",
+          "description": "The spaced ISO datetime reads as a date with a fraction and an offset,\nas the `T` form does (#1335).",
+          "type": "string"
+        }
+      ]
+    },
     "DateGap": {
       "description": "Two consecutive distinct days of a date column, and the days between\nthem.",
       "properties": {
@@ -1295,6 +1305,10 @@
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
         },
+        "date_forms": {
+          "$ref": "#/$defs/DateForms",
+          "description": "Which text forms read as dates.\n\nAbsent means not recorded: through 0.13 the spaced ISO datetime with a\nfraction or an offset (`2026-06-01 12:00:00+00:00`) was text."
+        },
         "date_statistics": {
           "$ref": "#/$defs/DateStatistics",
           "description": "Which values a date column's `min_datetime`, `max_datetime`,\n`duration_days`, distributions, `slash_date_order` and `largest_gap`\nare computed over.\n\nAbsent means not recorded: through 0.13 an engine that retained a\nbounded sample computed them from it, so on a source larger than the\nsample a date outside it was missing."
@@ -1314,6 +1328,10 @@
         "null_tokens": {
           "$ref": "#/$defs/NullTokenSet",
           "description": "The text values counted as null, which every `null_count` and every\ncompleteness figure depend on.\n\nAbsent means not recorded: the release that wrote the report counted\nonly empty, `null` and `nan`, or recorded nothing at all."
+        },
+        "outlier_spread": {
+          "$ref": "#/$defs/OutlierSpread",
+          "description": "Which columns the outlier test behind `outlier_ratio` runs on.\n\nAbsent means not recorded: through 0.13 a column whose quartiles\ncoincided was tested, and every value off them was an outlier."
         },
         "outlier_units": {
           "$ref": "#/$defs/OutlierUnits",
@@ -1483,6 +1501,16 @@
         "variance"
       ],
       "type": "object"
+    },
+    "OutlierSpread": {
+      "description": "Which columns the outlier test behind `outlier_ratio` runs on, as\nrecorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.13 a column whose first\nand third quartiles were one value was tested too: its IQR was 0, so\nevery value off that quartile was an outlier, and a column of 75% zeros\nand 25% fives reported a quarter of its values as outliers. Those releases\nrecorded no definition.",
+      "oneOf": [
+        {
+          "const": "nonzero_iqr",
+          "description": "Columns whose first and third quartiles differ (#1304). A column whose\nquartiles coincide is not tested, as one below `outlier_min_samples`\nis not, and adds nothing to `outlier_values_checked`.",
+          "type": "string"
+        }
+      ]
     },
     "OutlierUnits": {
       "description": "What `outlier_ratio` is measured over, as recorded in a report's metric\nsemantics.\n\nOnly the current definition has a value. Through 0.12 a source in which no\ncolumn reached `outlier_min_samples` reported `outlier_ratio` 0, and its\nnumeric values alone made the accuracy dimension assessed; those releases\nrecorded no definition.",
@@ -3007,7 +3035,7 @@
       ]
     },
     "ScoreBounds": {
-      "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
+      "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe intervals cover the scores a scan of every value gives, and all of\nthem hold at once with probability at least `confidence_level`. The\noutlier fences such a scan draws from the source's quartiles are covered\ntoo (#1304): the accuracy interval spans every fence the source's\nquartiles may give, and is `None` when the sample cannot tell whether the\nscan tests a column at all. The sample still fixes the other checks: a\ncolumn's type, dominant form and decimal scale, and detected pattern. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
       "properties": {
         "confidence_level": {
           "description": "Probability that every interval here holds at once.",
@@ -3028,6 +3056,13 @@
           "description": "Interval per dimension, keyed like `QualityScores::dimension_scores`.\nAn exactly computed dimension's interval is its score. `None` for a\ndimension that was not assessed, or a sampled one with no bound: a\nduplicate scan over a sample, or an estimated count with no recorded\nfloor. Start/end ordering is compared only between date columns whose\nsamples hold the same rows, so a pair where either column has nulls is\nnot compared.",
           "type": "object"
         },
+        "open_dimensions": {
+          "description": "Dimensions the sample left unassessed that a scan of every value may\nassess, keyed like `dimension_scores` (#1304). Such a dimension would\nenter the overall score with its weight, so the overall score is open\nwhile one of them stays unassessed and weighted, whatever weights are\nset after profiling. Empty, and absent from the document, when the\nsample settled every dimension.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "overall_score": {
           "anyOf": [
             {
@@ -3037,7 +3072,7 @@
               "type": "null"
             }
           ],
-          "description": "Interval for the overall score. `None` when there is no overall score,\nor when a sampled dimension behind it has no bound."
+          "description": "Interval for the overall score. `None` when there is no overall score,\nwhen a sampled dimension behind it has no bound, or when one of\n`open_dimensions` carries a positive weight."
         }
       },
       "required": [
