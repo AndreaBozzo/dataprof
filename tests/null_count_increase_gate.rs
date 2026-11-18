@@ -197,6 +197,10 @@ fn the_check_carries_both_counts_and_a_signed_change() {
     assert_eq!(check["baseline"]["observed"], 5);
     assert_eq!(check["baseline"]["change"], 3);
     assert_eq!(check["status"], "failed");
+    assert_eq!(
+        check["message"],
+        "this column's null count rose more than allowed above the baseline"
+    );
 
     // Fewer nulls is a negative change, still a whole number.
     let fell = evaluate(
@@ -207,6 +211,10 @@ fn the_check_carries_both_counts_and_a_signed_change() {
     let check = serde_json::to_value(&fell.checks[0]).unwrap();
     assert_eq!(check["baseline"]["change"], json!(-3));
     assert_eq!(check["status"], "passed");
+    assert_eq!(
+        check["message"],
+        "this column's null count rose no more than allowed above the baseline"
+    );
 
     // The allowance is added, never subtracted, so the largest one cannot
     // overflow.
