@@ -172,6 +172,7 @@ class ProfileReport:
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,
+        max_null_count_increase: Mapping[str, int] | int | None = ...,
         max_distinct_drop: Mapping[str, float] | float | None = ...,
         max_row_count_drop: float | None = ...,
         max_row_count_growth: float | None = ...,

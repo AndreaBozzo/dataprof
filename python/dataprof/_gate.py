@@ -398,6 +398,7 @@ class _Policy:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_null_count_increase: _Mapping[str, int] | int | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
         max_row_count_drop: float | None = None,
         max_row_count_growth: float | None = None,
@@ -510,6 +511,22 @@ class _Policy:
                 "max_null_percentage_increase", None, max_null_percentage_increase
             )
 
+        self.max_null_count_increase: dict[str, int] = {}
+        self.max_null_count_increase_any: int | None = None
+        if isinstance(max_null_count_increase, _Mapping):
+            for column, value in max_null_count_increase.items():
+                limit = _count(
+                    "max_null_count_increase", value, None if column == "*" else str(column)
+                )
+                if column == "*":
+                    self.max_null_count_increase_any = limit
+                else:
+                    self.max_null_count_increase[str(column)] = limit
+        elif max_null_count_increase is not None:
+            self.max_null_count_increase_any = _count(
+                "max_null_count_increase", max_null_count_increase
+            )
+
         self.max_distinct_drop: dict[str, float] = {}
         self.max_distinct_drop_any: float | None = None
         if isinstance(max_distinct_drop, _Mapping):
@@ -570,8 +587,9 @@ class _Policy:
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
-                "max_null_percentage_increase, max_distinct_drop, max_row_count_drop, "
-                "max_row_count_growth, forbid_removed_columns, forbid_added_columns) "
+                "max_null_percentage_increase, max_null_count_increase, max_distinct_drop, "
+                "max_row_count_drop, max_row_count_growth, forbid_removed_columns, "
+                "forbid_added_columns) "
                 "needs a baseline report to compare against",
             )
 
@@ -609,6 +627,8 @@ class _Policy:
             or bool(self.max_dimension_score_drops)
             or bool(self.max_null_percentage_increase)
             or self.max_null_percentage_increase_any is not None
+            or bool(self.max_null_count_increase)
+            or self.max_null_count_increase_any is not None
             or bool(self.max_distinct_drop)
             or self.max_distinct_drop_any is not None
             or self.max_row_count_drop is not None
@@ -653,6 +673,8 @@ class _Policy:
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
                 max_null_percentage_increase_any=self.max_null_percentage_increase_any,
+                max_null_count_increase=list(self.max_null_count_increase.items()),
+                max_null_count_increase_any=self.max_null_count_increase_any,
                 max_distinct_drop=list(self.max_distinct_drop.items()),
                 max_distinct_drop_any=self.max_distinct_drop_any,
                 max_row_count_drop=self.max_row_count_drop,

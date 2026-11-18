@@ -34,6 +34,7 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "max_quality_score_drop": None,
     "max_dimension_score_drops": None,
     "max_null_percentage_increase": None,
+    "max_null_count_increase": None,
     "max_distinct_drop": None,
     "max_row_count_drop": None,
     "max_row_count_growth": None,
@@ -422,6 +423,17 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-null-count-increase",
+        dest="max_null_count_increase",
+        type=_named_count,
+        action="append",
+        metavar="COLUMN=N",
+        help=(
+            "how many nulls a column may gain over the baseline's, decided on the exact counts; "
+            "use *=N for every column both reports profiled; repeatable"
+        ),
+    )
+    parser.add_argument(
         "--max-distinct-drop",
         dest="max_distinct_drop",
         type=_named_percentage,
@@ -509,6 +521,7 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
                 "max_date_gap",
                 "max_dimension_score_drops",
                 "max_null_percentage_increase",
+                "max_null_count_increase",
                 "max_distinct_drop",
             ):
                 value = dict(value)

@@ -884,6 +884,7 @@ class ProfileReport:
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
+        max_null_count_increase: _Mapping[str, int] | int | None = None,
         max_distinct_drop: _Mapping[str, float] | float | None = None,
         max_row_count_drop: float | None = None,
         max_row_count_growth: float | None = None,
@@ -1007,6 +1008,12 @@ class ProfileReport:
                 other column both reports profiled; a bare number is the same
                 as ``{"*": number}``. A column only this report has is checked
                 only when named.
+            max_null_count_increase: How many nulls a column may gain over
+                the baseline's, a whole number. Same mapping shape as
+                ``max_null_percentage_increase``. Decided on the exact
+                ``null_count`` of both sides, so one new null fails a limit of
+                0 at any row count, where the percentage rule compares changes
+                rounded to two decimals.
             max_distinct_drop: How far a column's distinct count may fall,
                 in percent (0-100) of the baseline's count, as a key that
                 suddenly repeats. Same mapping shape as
@@ -1127,6 +1134,7 @@ class ProfileReport:
                 max_quality_score_drop=max_quality_score_drop,
                 max_dimension_score_drops=max_dimension_score_drops,
                 max_null_percentage_increase=max_null_percentage_increase,
+                max_null_count_increase=max_null_count_increase,
                 max_distinct_drop=max_distinct_drop,
                 max_row_count_drop=max_row_count_drop,
                 max_row_count_growth=max_row_count_growth,
