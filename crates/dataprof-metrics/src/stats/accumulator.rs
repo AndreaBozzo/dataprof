@@ -1298,9 +1298,13 @@ impl<'a> DecimalLiteral<'a> {
             unscaled = scale_up(unscaled, u32::try_from(-self.scale).ok()?)?;
             0
         } else {
-            u32::try_from(self.scale)
-                .ok()
-                .filter(|&scale| scale <= MAX_DECIMAL_SCALE)?
+            let mut scale = u32::try_from(self.scale).ok()?;
+            // Trailing zeros add scale but no value: 1.0e-600 is 1e-600.
+            while scale > MAX_DECIMAL_SCALE && unscaled != 0 && unscaled % 10 == 0 {
+                unscaled /= 10;
+                scale -= 1;
+            }
+            (scale <= MAX_DECIMAL_SCALE).then_some(scale)?
         };
         Some(ExactDecimal {
             unscaled: if self.negative { -unscaled } else { unscaled },
@@ -1572,6 +1576,10 @@ mod tests {
             ("-3.5E-330", -35, 331),
             // A subnormal, but not the one these digits write.
             ("1.2345678e-320", 12_345_678, 327),
+            // Trailing zeros don't count against the largest scale held.
+            ("1e-600", 1, 600),
+            ("1.0e-600", 1, 600),
+            ("-2.500e-599", -25, 600),
         ] {
             let expected = Some(ExactDecimal { unscaled, scale });
             for parsed in [ParsedNumber::parse(text), ParsedNumber::parse_decimal(text)] {
@@ -1583,12 +1591,16 @@ mod tests {
         let key = |text| ParsedNumber::parse(text).unwrap().value_key();
         assert_ne!(key("1e-400"), key("2e-400"));
         assert_ne!(key("1e-400"), key("0"));
+        assert_eq!(key("1e-600"), key("1.0e-600"));
 
         // Past the largest scale held: unheld, still not a float.
-        assert_eq!(
-            ParsedNumber::parse("1e-700"),
-            Some(ParsedNumber::Unheld(0.0))
-        );
+        for text in ["1e-700", "1e-601", "1.0e-601"] {
+            assert_eq!(
+                ParsedNumber::parse(text),
+                Some(ParsedNumber::Unheld(0.0)),
+                "{text:?}"
+            );
+        }
         // Zeros, and subnormals as a float writes them, stay floats.
         for (text, value) in [
             ("0", 0.0),
