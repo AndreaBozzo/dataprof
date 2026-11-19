@@ -339,12 +339,32 @@ class TestAsyncArgumentErrors:
 
     def test_a_float_row_cap_names_the_parameter(self):
         calls = (
-            lambda: profile_file(INCIDENTS_CSV, max_rows=1.5),
-            lambda: profile_bytes(b"id\n1\n", format="csv", max_rows=1.5),
-            lambda: profile_url("http://127.0.0.1:9/x.csv", max_rows=1.5),
-            lambda: profile_file(INCIDENTS_CSV, max_rows=2.0),
-            lambda: profile_bytes(b"id\n1\n", format="csv", max_rows=2.0),
-            lambda: profile_url("http://127.0.0.1:9/x.csv", max_rows=2.0),
+            lambda: profile_file(
+                INCIDENTS_CSV,
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_bytes(
+                b"id\n1\n",
+                format="csv",
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_url(
+                "http://127.0.0.1:9/x.csv",
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_file(
+                INCIDENTS_CSV,
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_bytes(
+                b"id\n1\n",
+                format="csv",
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_url(
+                "http://127.0.0.1:9/x.csv",
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
         )
         for call in calls:
             with pytest.raises(
