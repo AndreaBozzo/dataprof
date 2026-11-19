@@ -717,21 +717,28 @@ class TestOptionErrors:
             ({"amount": [1, 2]}, {}),
             (b"amount\n1\n", {"format": "csv"}),
         ]
-        for source, extra in sources:
-            with pytest.raises(ValueError) as caught:
-                dataprof.profile(source, **{option: 1.5}, **extra)  # ty: ignore[invalid-argument-type]
-            message = str(caught.value)
-            assert message.startswith(f"{option} must be an integer between 0 and ")
-            assert message.endswith(", got 1.5.")
+        for value in (1.5, 2.0):
+            for source, extra in sources:
+                with pytest.raises(TypeError) as caught:
+                    dataprof.profile(source, **{option: value}, **extra)  # ty: ignore[invalid-argument-type]
+                message = str(caught.value)
+                assert message.startswith(f"{option} must be an integer between 0 and ")
+                assert message.endswith(", got float.")
+            if option == "max_rows":
+                with pytest.raises(
+                    TypeError, match=r"^max_rows must be an integer between 0 and .*, got float\.$"
+                ):
+                    dataprof.analyze_structure(CSV_FILE, value)  # ty: ignore[invalid-argument-type]
+                with pytest.raises(
+                    TypeError, match=r"^max_rows must be an integer between 0 and .*, got float\.$"
+                ):
+                    dataprof.profile_file(CSV_FILE, max_rows=value)  # ty: ignore[invalid-argument-type]
         if option == "max_rows":
+            numpy = pytest.importorskip("numpy")
             with pytest.raises(
-                ValueError, match=r"^max_rows must be an integer between 0 and .*, got 1\.5\.$"
+                TypeError, match=r"^max_rows must be an integer between 0 and .*, got float64\.$"
             ):
-                dataprof.analyze_structure(CSV_FILE, 1.5)  # ty: ignore[invalid-argument-type]
-            with pytest.raises(
-                ValueError, match=r"^max_rows must be an integer between 0 and .*, got 1\.5\.$"
-            ):
-                dataprof.profile_file(CSV_FILE, max_rows=1.5)  # ty: ignore[invalid-argument-type]
+                dataprof.profile(CSV_FILE, max_rows=numpy.float64(1.5))
 
 
 class TestNamespace:

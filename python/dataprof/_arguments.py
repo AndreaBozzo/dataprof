@@ -42,9 +42,12 @@ def _check_unsigned(name: str, value: _Any) -> None:
         return
     limit = _UNSIGNED_LIMITS[name]
     # A bool is an int. True and False stay on the integer path, as they do
-    # when the native conversion accepts them.
+    # when the native conversion accepts them. A float, including 2.0, is the
+    # wrong type. The constructors raise TypeError and name that type.
     if isinstance(value, float):
-        raise ValueError(f"{name} must be an integer between 0 and {limit}, got {value}.")
+        raise TypeError(
+            f"{name} must be an integer between 0 and {limit}, got {type(value).__name__}."
+        )
     if not isinstance(value, int):
         return
     if not 0 <= value <= limit:

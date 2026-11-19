@@ -342,10 +342,13 @@ class TestAsyncArgumentErrors:
             lambda: profile_file(INCIDENTS_CSV, max_rows=1.5),
             lambda: profile_bytes(b"id\n1\n", format="csv", max_rows=1.5),
             lambda: profile_url("http://127.0.0.1:9/x.csv", max_rows=1.5),
+            lambda: profile_file(INCIDENTS_CSV, max_rows=2.0),
+            lambda: profile_bytes(b"id\n1\n", format="csv", max_rows=2.0),
+            lambda: profile_url("http://127.0.0.1:9/x.csv", max_rows=2.0),
         )
         for call in calls:
             with pytest.raises(
-                ValueError, match=r"^max_rows must be an integer between 0 and .*, got 1\.5\.$"
+                TypeError, match=r"^max_rows must be an integer between 0 and .*, got float\.$"
             ):
                 asyncio.run(call())
 
