@@ -390,11 +390,12 @@ pull request, with or without them:
   (see [Picking an Issue](#picking-an-issue)).
 - **One open pull request until your first merges.** Until a pull request of
   yours merges here, you can have one open at a time. A workflow closes a
-  newer one with a comment, and you can reopen it after the first merges.
+  newer one with a comment. After the first merges, open a new pull request from
+  the same branch.
   After that, GitHub allows up to three open pull requests per contributor.
 
 A pull request that does not follow these rules is closed with a short note.
-You are welcome to reopen it, or open a new one, once it does.
+You are welcome to open a new one once it does.
 
 ### Submit Pull Request
 
