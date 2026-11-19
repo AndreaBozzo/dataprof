@@ -213,3 +213,16 @@ def test_review_cases_keep_exact_values():
         column["stats"]["exact"]["mode"] = None
     restored = dp.ProfileReport.from_dict(stored)
     assert "mode" not in restored["tiny"].exact
+
+
+def test_zero_and_scale_39_decimal_keep_exact_median():
+    """#1376: a scale-0 zero aligned with a scale-39 decimal must survive the
+    i128 ``POW10`` table lookup during interpolation, through the Python
+    report path (not only the Rust ``interpolated`` unit test)."""
+    pa = pytest.importorskip("pyarrow")
+    expected = Decimal("0.0000000000000000000000000000000000000005")
+    report = dp.profile(
+        pa.table({"tiny": pa.array([Decimal(0), Decimal("1e-39")], pa.decimal256(76, 39))})
+    )
+    exact = report["tiny"].exact
+    assert exact["median"] == expected, exact
