@@ -219,6 +219,127 @@ fn a_misnamed_parquet_file_profiles_once_the_format_is_selected() {
     assert_eq!(report.execution.rows_processed, 3);
 }
 
+fn suggestion_of(result: Result<(), DataProfilerError>) -> String {
+    result
+        .expect_err("a Parquet file read as text should fail")
+        .suggestion()
+        .unwrap_or_default()
+}
+
+/// `--format` on a path that already ends in `.parquet` overrode the
+/// extension. The hint says so and names `--format parquet`; it does not tell
+/// the caller to add the extension the file has (#1356).
+#[test]
+fn an_explicit_text_format_on_a_parquet_path_names_the_override() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.parquet");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let overridden = "The format was overridden and set to JSON; select `--format parquet`, \
+                      or leave the format out to use the `.parquet` extension.";
+
+    let read_as_json = |run: fn(&Path) -> Result<(), DataProfilerError>| suggestion_of(run(&path));
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_file(p)
+            .map(drop)),
+        overridden
+    );
+    // The partial routes share the hint: the format they were given is not
+    // the one the extension names.
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .infer_schema(p)
+            .map(drop)),
+        overridden
+    );
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .quick_row_count(p)
+            .map(drop)),
+        overridden
+    );
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_structure(p, None)
+            .map(drop)),
+        overridden
+    );
+
+    // The extension match is case-insensitive, and the selected format is named.
+    let upper = dir.path().join("DATA.PARQUET");
+    std::fs::write(&upper, parquet_bytes()).unwrap();
+    assert_eq!(
+        suggestion_of(
+            Profiler::new()
+                .format(FileFormat::Csv)
+                .analyze_file(&upper)
+                .map(drop)
+        ),
+        "The format was overridden and set to CSV; select `--format parquet`, \
+         or leave the format out to use the `.parquet` extension."
+    );
+
+    // A direct text reader has no format override to name. The extension is
+    // still not suggested again.
+    assert_eq!(
+        suggestion_of(analyze_csv_file(&path, &CsvParserConfig::default()).map(drop)),
+        "The format was overridden. Select `--format parquet`, or leave the \
+         format out to use the `.parquet` extension."
+    );
+    assert_eq!(
+        suggestion_of(analyze_json_file(&path, &JsonParserConfig::default()).map(drop)),
+        "The format was overridden. Select `--format parquet`, or leave the \
+         format out to use the `.parquet` extension."
+    );
+}
+
+/// An explicit format on a file that is not already `.parquet` says which
+/// format was set and still gives the extension advice.
+#[test]
+fn an_explicit_text_format_on_a_misnamed_parquet_file_keeps_the_extension_hint() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("export.csv");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let suggestion = suggestion_of(
+        Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_file(&path)
+            .map(drop),
+    );
+    assert_eq!(
+        suggestion,
+        "The format was set to JSON. Read it as Parquet: give it a `.parquet` extension, or \
+         select `--format parquet`."
+    );
+    assert!(
+        !suggestion.contains(".format(FileFormat::Parquet)"),
+        "{suggestion}"
+    );
+}
+
+#[cfg(feature = "async-streaming")]
+#[test]
+fn an_explicit_text_format_on_a_parquet_path_names_the_override_on_the_async_route() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.parquet");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let suggestion = suggestion_of(
+        runtime
+            .block_on(Profiler::new().format(FileFormat::Json).profile_file(&path))
+            .map(drop),
+    );
+    assert_eq!(
+        suggestion,
+        "The format was overridden and set to JSON; select `--format parquet`, \
+         or leave the format out to use the `.parquet` extension."
+    );
+}
+
 /// The pyarrow calls in the Arrow IPC and Feather suggestions are pasted into
 /// Python, so the path goes in as a literal Python reads back unchanged: a
 /// backslash (every Windows path) or an apostrophe must not break it.

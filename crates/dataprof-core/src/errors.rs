@@ -1,5 +1,6 @@
 use crate::binary_input::BinarySignature;
 use crate::shell_hint::Shell;
+use crate::source::FileFormat;
 use thiserror::Error;
 
 /// The re-encode remedy for a non-UTF-8 file at `path` that looks like
@@ -371,10 +372,21 @@ impl DataProfilerError {
     /// A file at `path` whose bytes carry `signature`, refused before a text
     /// reader parses it.
     pub fn binary_input(path: &std::path::Path, signature: BinarySignature) -> Self {
+        Self::binary_input_with_format(path, signature, None)
+    }
+
+    /// [`binary_input`](Self::binary_input), naming `explicit_format` when the
+    /// caller selected a format. The Parquet hint uses it to say that a
+    /// `.parquet` path was overridden (#1356).
+    pub(crate) fn binary_input_with_format(
+        path: &std::path::Path,
+        signature: BinarySignature,
+        explicit_format: Option<&FileFormat>,
+    ) -> Self {
         let path = path.display().to_string();
         DataProfilerError::BinaryInput {
             detected: signature.description().to_string(),
-            suggestion: signature.suggestion(&path),
+            suggestion: signature.suggestion_for(&path, explicit_format),
             path,
         }
     }

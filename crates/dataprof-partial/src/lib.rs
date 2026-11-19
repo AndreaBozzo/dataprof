@@ -148,7 +148,11 @@ fn reject_binary_text_input(path: &Path, format: &FileFormat) -> Result<(), Data
     if matches!(format, FileFormat::Parquet) {
         return Ok(());
     }
-    dataprof_core::binary_input::reject_binary_input(path)
+    // A format other than the one the extension names was selected. The
+    // Parquet hint then says so, and only tells the caller to add a
+    // `.parquet` extension when the path does not already have one (#1356).
+    let explicit = (detect_format(path) != *format).then_some(format);
+    dataprof_core::binary_input::reject_binary_input_with_format(path, explicit)
 }
 
 pub fn infer_schema_with_format(

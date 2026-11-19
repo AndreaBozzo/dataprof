@@ -125,6 +125,62 @@ def test_a_misnamed_parquet_file_profiles_once_the_format_is_selected(tmp_path: 
     assert report.rows == 3
 
 
+_OVERRIDDEN_PARQUET = (
+    "The format was overridden and set to JSON; select `--format parquet`, "
+    "or leave the format out to use the `.parquet` extension."
+)
+
+
+def test_an_explicit_text_format_on_a_parquet_path_names_the_override(tmp_path: Path) -> None:
+    """``--format`` on a path that already ends in ``.parquet`` overrode it.
+
+    The hint names ``--format parquet`` and does not tell the caller to add
+    the extension the file already has (#1356).
+    """
+    path = tmp_path / "data.parquet"
+    path.write_bytes(_parquet())
+    with pytest.raises(ValueError) as excinfo:
+        dp.profile(path, format="json")
+    message = str(excinfo.value)
+    assert _OVERRIDDEN_PARQUET in message
+    assert "give it a `.parquet` extension" not in message
+    assert ".format(FileFormat::Parquet)" not in message
+    assert 'format="parquet"' not in message
+
+    upper = tmp_path / "DATA.PARQUET"
+    upper.write_bytes(_parquet())
+    with pytest.raises(ValueError, match=r"set to CSV") as upper_error:
+        dp.profile(upper, format="csv")
+    assert "give it a `.parquet` extension" not in str(upper_error.value)
+
+    other = tmp_path / "export.csv"
+    other.write_bytes(_parquet())
+    with pytest.raises(ValueError) as other_error:
+        dp.profile(other, format="json")
+    other_message = str(other_error.value)
+    assert "The format was set to JSON." in other_message
+    assert "give it a `.parquet` extension" in other_message
+    assert "--format parquet" in other_message
+
+
+def test_check_names_the_format_override_for_a_parquet_path(tmp_path: Path) -> None:
+    path = tmp_path / "data.parquet"
+    path.write_bytes(_parquet())
+    # A gate requirement is what lets the command reach the read. With none,
+    # it stops on the empty policy before it opens the file.
+    result = subprocess.run(
+        [sys.executable, "-m", "dataprof.check", str(path), "--format", "json", "--min-rows", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 3, result.stderr
+    assert result.stdout == ""
+    assert _OVERRIDDEN_PARQUET in result.stderr
+    assert "give it a `.parquet` extension" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_arrow_ipc_suggestions_run_as_pasted(tmp_path: Path) -> None:
     """Each pyarrow call in the Arrow IPC refusal runs in a fresh interpreter.
 

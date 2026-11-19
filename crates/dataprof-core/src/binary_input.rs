@@ -13,6 +13,7 @@ use std::path::Path;
 
 use crate::errors::DataProfilerError;
 use crate::shell_hint::Shell;
+use crate::source::FileFormat;
 
 /// The formats recognized by a marker at both ends of the file. Each marker is
 /// plain ASCII, so a text file may start with it; only one that also ends with
@@ -86,6 +87,12 @@ impl BinarySignature {
     /// The way forward for a file at `path` carrying this signature, with a
     /// command for the shell of the platform this build runs on.
     pub fn suggestion(self, path: &str) -> String {
+        self.suggestion_for(path, None)
+    }
+
+    /// [`suggestion`](Self::suggestion), naming `explicit_format` when the
+    /// caller selected a format instead of taking it from the path (#1356).
+    pub(crate) fn suggestion_for(self, path: &str, explicit_format: Option<&FileFormat>) -> String {
         let shell = Shell::HOST;
         let suggestion = match self {
             Self::Gzip => format!(
@@ -101,7 +108,7 @@ impl BinarySignature {
                  (.xlsx, .ods) is a zip archive too: export the sheet as CSV first.",
                 shell.unzip(path)
             ),
-            Self::Parquet => return parquet_suggestion(),
+            Self::Parquet => return parquet_suggestion(path, explicit_format),
             // Python calls, not shell commands: a Python string expands nothing,
             // so these need no placeholder note.
             Self::ArrowIpc => {
@@ -147,15 +154,62 @@ fn python_str(path: &str) -> String {
     literal
 }
 
+/// A path whose own extension is `.parquet`, in any ASCII case.
 #[cfg(feature = "parquet")]
-fn parquet_suggestion() -> String {
-    "Read it as Parquet: give it a `.parquet` extension, or select the format \
-     (`.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python)."
-        .to_string()
+fn has_parquet_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("parquet"))
+}
+
+/// The format name as the hint speaks it: `JSON`, not the enum's `json`.
+#[cfg(feature = "parquet")]
+fn format_label(format: &FileFormat) -> String {
+    match format {
+        FileFormat::Csv => "CSV".to_string(),
+        FileFormat::Json => "JSON".to_string(),
+        FileFormat::Jsonl => "JSONL".to_string(),
+        FileFormat::Parquet => "Parquet".to_string(),
+        FileFormat::Arrow => "Arrow".to_string(),
+        FileFormat::Unknown(name) => name.clone(),
+    }
+}
+
+/// How to read a file whose bytes are Parquet.
+///
+/// A path that already ends in `.parquet` reached a text reader only because a
+/// format was selected over that extension, so the hint says the selection was
+/// overridden and names `--format parquet`. It tells the caller to give the
+/// file a `.parquet` extension only when the path does not have one (#1356).
+#[cfg(feature = "parquet")]
+fn parquet_suggestion(path: &str, explicit_format: Option<&FileFormat>) -> String {
+    let selected = explicit_format.filter(|format| !matches!(format, FileFormat::Parquet));
+    let already_parquet = has_parquet_extension(path);
+    match (already_parquet, selected) {
+        (true, Some(format)) => format!(
+            "The format was overridden and set to {}; select `--format parquet`, or leave the \
+             format out to use the `.parquet` extension.",
+            format_label(format)
+        ),
+        (true, None) => "The format was overridden. Select `--format parquet`, or leave the \
+                         format out to use the `.parquet` extension."
+            .to_string(),
+        (false, Some(format)) => format!(
+            "The format was set to {}. Read it as Parquet: give it a `.parquet` extension, or \
+             select `--format parquet`.",
+            format_label(format)
+        ),
+        (false, None) => {
+            "Read it as Parquet: give it a `.parquet` extension, or select the format \
+                          (`.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python)."
+                .to_string()
+        }
+    }
 }
 
 #[cfg(not(feature = "parquet"))]
-fn parquet_suggestion() -> String {
+fn parquet_suggestion(_path: &str, _explicit_format: Option<&FileFormat>) -> String {
     "This build does not read Parquet; rebuild with the `parquet` feature to profile it."
         .to_string()
 }
@@ -193,8 +247,22 @@ pub fn sniff_binary_file(path: &Path) -> Option<BinarySignature> {
 /// Fail with [`DataProfilerError::BinaryInput`] when `path` carries a binary
 /// signature. Call it before a file reaches a text reader.
 pub fn reject_binary_input(path: &Path) -> Result<(), DataProfilerError> {
+    reject_binary_input_with_format(path, None)
+}
+
+/// [`reject_binary_input`](reject_binary_input), naming `explicit_format` when
+/// the caller selected it. A Parquet path read as some other format is then
+/// told that the selection overrode the extension (#1356).
+pub fn reject_binary_input_with_format(
+    path: &Path,
+    explicit_format: Option<&FileFormat>,
+) -> Result<(), DataProfilerError> {
     match sniff_binary_file(path) {
-        Some(signature) => Err(DataProfilerError::binary_input(path, signature)),
+        Some(signature) => Err(DataProfilerError::binary_input_with_format(
+            path,
+            signature,
+            explicit_format,
+        )),
         None => Ok(()),
     }
 }

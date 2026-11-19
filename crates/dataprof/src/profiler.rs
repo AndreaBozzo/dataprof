@@ -443,7 +443,10 @@ impl Profiler {
         // A binary file bound for a text reader fails here with what it is,
         // before every engine fails on it with parsing advice (#893).
         if !matches!(format, FileFormat::Parquet) {
-            dataprof_core::binary_input::reject_binary_input(path)?;
+            dataprof_core::binary_input::reject_binary_input_with_format(
+                path,
+                self.config.format_override.as_ref(),
+            )?;
         }
         let is_csv = matches!(format, FileFormat::Csv);
 
@@ -1197,7 +1200,10 @@ impl Profiler {
         let path = file_path.as_ref();
         let format = self.resolve_format(path);
         if !matches!(format, FileFormat::Parquet) {
-            dataprof_core::binary_input::reject_binary_input(path)?;
+            dataprof_core::binary_input::reject_binary_input_with_format(
+                path,
+                self.config.format_override.as_ref(),
+            )?;
         }
 
         match format {
