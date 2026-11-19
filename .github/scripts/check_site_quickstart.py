@@ -27,6 +27,7 @@ SAMPLE = Path("site/assets/orders.csv")
 _CHECK_START = "report.check("
 _COMMAND_PREFIX = ("python", "-m", "dataprof.check")
 _NUMBER = r"[0-9]+(?:\.[0-9]+)?"
+_PRINT_CALL = re.compile(r"print\s*\(")
 _PRINT_QUALITY = re.compile(r"print\(\s*report\.quality_score\s*\)")
 _PRINT_NULL = re.compile(
     r"""print\(\s*report\[\s*(['"])(?P<column>[^'"]+)\1\s*\]\.null_percentage\s*\)"""
@@ -163,7 +164,7 @@ def _prints(source: str) -> tuple[_Print, ...]:
     prints: list[_Print] = []
     for line in source.splitlines():
         text = line.strip()
-        if not text.startswith("print("):
+        if _PRINT_CALL.match(text) is None:
             continue
         if _PRINT_QUALITY.fullmatch(text):
             prints.append(_Print("quality-score"))
@@ -193,14 +194,19 @@ def _matching_paren(source: str, open_paren: int) -> int:
 def _rust_prints(source: str) -> tuple[_Print, ...]:
     """The println! lines the Rust example shows, in order.
 
-    Each one has to be a line ``rust_output`` can reproduce. Anything else is
-    reported on its own, the way ``_prints`` reports a Python print.
+    Each one has to be a line ``rust_output`` can reproduce. Anything else,
+    including a ``print!`` call, is reported on its own, the way ``_prints``
+    reports a Python print.
     """
 
     prints: list[_Print] = []
     index = 0
     while True:
+        printed = source.find("print!", index)
         start = source.find("println!", index)
+        if printed >= 0 and (start < 0 or printed < start):
+            snippet = source[printed:].splitlines()[0].strip()
+            raise PageError(f"the Rust example has a print this check cannot replay: {snippet}")
         if start < 0:
             break
         open_paren = start + len("println!")
@@ -256,6 +262,13 @@ def _check_arguments(source: str) -> dict[str, float | dict[str, float]]:
         if name in arguments:
             raise PageError(f"the Python example sets {name} twice")
         arguments[name] = float(number)
+        consumed = consumed.replace(match.group(0), " ", 1)
+    shown = " ".join(consumed.replace(",", " ").split())
+    if shown:
+        raise PageError(
+            "the Python example's report.check() call has an argument this check cannot read: "
+            + shown
+        )
     if not arguments:
         raise PageError("the Python example's report.check() call has no arguments")
     return arguments

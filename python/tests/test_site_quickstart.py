@@ -207,11 +207,40 @@ def test_rust_output_follows_the_prints_on_the_page():
     assert site.rust_output(page, run).splitlines() == ["Quality: 93.19", "Rows: 8"]
 
 
+def test_a_print_with_space_before_the_paren_is_not_skipped():
+    page = _page(_run()).replace("print(result.verdict)", 'print ("extra")', 1)
+    with pytest.raises(site.PageError, match="cannot replay"):
+        site.parse_page(page)
+
+
 def test_a_rust_print_this_check_cannot_replay_fails():
     example = 'println!("rows: {}", report.execution.rows_processed);'
     page = _page(_run()).replace(_RUST_EXAMPLE, example, 1)
     with pytest.raises(site.PageError, match="cannot replay"):
         site.parse_page(page)
+
+
+def test_a_rust_print_macro_is_not_skipped():
+    example = "\n".join(
+        (
+            'println!("Rows: {}", report.execution.rows_processed);',
+            'print!("extra");',
+        )
+    )
+    page = _page(_run()).replace(_RUST_EXAMPLE, example, 1)
+    with pytest.raises(site.PageError, match="cannot replay"):
+        site.parse_page(page)
+
+
+def test_an_unparsed_check_argument_is_not_dropped():
+    page = _page(_run()).replace(
+        'max_null_percentage={"*": 20}',
+        'max_null_percentage={"*": 10 + 10}',
+        1,
+    )
+    with pytest.raises(site.PageError, match=r"cannot read") as raised:
+        site.parse_page(page)
+    assert "10 + 10" in str(raised.value)
 
 
 def test_a_break_inside_a_marked_output_is_recorded():
