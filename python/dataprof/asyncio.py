@@ -18,6 +18,8 @@ Example::
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable as _Callable
+from datetime import date as _date
 from pathlib import Path as _Path
 from typing import Any as _Any
 
@@ -43,8 +45,11 @@ except ImportError:
 from ._arguments import _check_profile_options
 from ._dataprof import (
     ProfilerConfig as _ProfilerConfig,  # type: ignore[import-not-found]
+    ProgressEvent as _ProgressEvent,  # type: ignore[import-not-found]
     RowCountEstimate as _RowCountEstimate,
+    SamplingStrategy as _SamplingStrategy,  # type: ignore[import-not-found]
     SchemaResult as _SchemaResult,
+    StopCondition as _StopCondition,  # type: ignore[import-not-found]
 )
 from ._paths import _normalize_existing_file
 from ._report import ProfileReport as _ProfileReport, _check_source_version
@@ -66,31 +71,97 @@ def _check_async() -> None:
         )
 
 
+def _config_from_keywords(options: dict[str, _Any]) -> _ProfilerConfig | None:
+    """Turn spelled profile keywords into a ``ProfilerConfig``.
+
+    ``engine="auto"``, ``jsonl_on_error="skip"`` and ``None`` are the unset
+    defaults, so a call that passes none of the others still builds no config.
+    Unknown names never reach this function: the profile signatures list the
+    keywords, and the interpreter suggests a misspelling the way ``profile()``
+    does.
+    """
+    _check_profile_options(options)
+    provided: dict[str, _Any] = {}
+    for name, value in options.items():
+        if value is None or (name == "engine" and value == "auto"):
+            continue
+        if name == "jsonl_on_error" and value == "skip":
+            continue
+        provided[name] = value
+    if not provided:
+        return None
+    return _ProfilerConfig(**provided)
+
+
 async def profile_bytes(
     data: bytes,
     *,
     format: str,
-    **kwargs: _Any,
+    engine: str = "auto",
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    max_rows: int | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
+    sampling: _SamplingStrategy | None = None,
+    stop_condition: _StopCondition | None = None,
+    on_progress: _Callable[[_ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    columns: list[str] | None = None,
+    locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: _date | str | None = None,
+    duplicate_rows_exact_limit: int | None = None,
+    source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile in-memory bytes asynchronously.
 
     Args:
         data: Raw bytes to profile.
         format: Data format ("csv", "json", "jsonl", "parquet").
-        **kwargs: Additional config options (passed to ProfilerConfig).
-            The async stream always uses the incremental engine, so
-            ``engine="columnar"`` is rejected.
-            ``source_version`` is taken out first and recorded verbatim as
-            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
+        engine: File profiling engine. The async stream always uses the
+            incremental engine, so ``engine="columnar"`` is rejected.
+        source_version: The version of the source being profiled, recorded
+            verbatim as ``report.source_identity["version"]``; see
+            :func:`dataprof.profile`. The other keyword arguments are the
+            ones :func:`dataprof.profile_file` accepts.
 
     Returns:
         ProfileReport with analysis results.
     """
     _check_async()
-    source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
-    _check_profile_options(kwargs)
-    config = _ProfilerConfig(**kwargs) if kwargs else None
+    config = _config_from_keywords(
+        {
+            "engine": engine,
+            "chunk_size": chunk_size,
+            "memory_limit_mb": memory_limit_mb,
+            "max_rows": max_rows,
+            "csv_delimiter": csv_delimiter,
+            "csv_flexible": csv_flexible,
+            "jsonl_on_error": jsonl_on_error,
+            "sampling": sampling,
+            "stop_condition": stop_condition,
+            "on_progress": on_progress,
+            "progress_interval_ms": progress_interval_ms,
+            "quality_dimensions": quality_dimensions,
+            "metrics": metrics,
+            "columns": columns,
+            "locale": locale,
+            "positive_columns": positive_columns,
+            "identifier_columns": identifier_columns,
+            "temporal_columns": temporal_columns,
+            "temporal_pairs": temporal_pairs,
+            "reference_date": reference_date,
+            "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
+        }
+    )
     if config is not None and config.engine == "columnar":
         raise ValueError(
             "engine='columnar' is not available for async bytes input; "
@@ -102,7 +173,30 @@ async def profile_bytes(
 
 async def profile_file(
     path: str | _Path,
-    **kwargs: _Any,
+    *,
+    engine: str = "auto",
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    format: str | None = None,
+    max_rows: int | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
+    sampling: _SamplingStrategy | None = None,
+    stop_condition: _StopCondition | None = None,
+    on_progress: _Callable[[_ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    columns: list[str] | None = None,
+    locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: _date | str | None = None,
+    duplicate_rows_exact_limit: int | None = None,
+    source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile a local file asynchronously.
 
@@ -114,9 +208,10 @@ async def profile_file(
 
     Args:
         path: File path to profile.
-        **kwargs: Additional config options (passed to ProfilerConfig).
-            ``source_version`` is taken out first and recorded verbatim as
-            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
+        source_version: The version of the source being profiled, recorded
+            verbatim as ``report.source_identity["version"]``; see
+            :func:`dataprof.profile`. The other keyword arguments are the
+            ones :func:`dataprof.profile_file` accepts.
 
     Returns:
         ProfileReport with analysis results.
@@ -125,10 +220,33 @@ async def profile_file(
         FileNotFoundError: If ``path`` does not exist.
     """
     _check_async()
-    source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
-    _check_profile_options(kwargs)
-    config = _ProfilerConfig(**kwargs) if kwargs else None
+    config = _config_from_keywords(
+        {
+            "engine": engine,
+            "chunk_size": chunk_size,
+            "memory_limit_mb": memory_limit_mb,
+            "format": format,
+            "max_rows": max_rows,
+            "csv_delimiter": csv_delimiter,
+            "csv_flexible": csv_flexible,
+            "jsonl_on_error": jsonl_on_error,
+            "sampling": sampling,
+            "stop_condition": stop_condition,
+            "on_progress": on_progress,
+            "progress_interval_ms": progress_interval_ms,
+            "quality_dimensions": quality_dimensions,
+            "metrics": metrics,
+            "columns": columns,
+            "locale": locale,
+            "positive_columns": positive_columns,
+            "identifier_columns": identifier_columns,
+            "temporal_columns": temporal_columns,
+            "temporal_pairs": temporal_pairs,
+            "reference_date": reference_date,
+            "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
+        }
+    )
     # Name a missing file the way the sync API does, not as a Rust I/O error.
     normalized_path = _normalize_existing_file(path)
     rust_report = await _profile_file_async(normalized_path, config)
@@ -139,7 +257,28 @@ async def profile_url(
     url: str,
     *,
     format: str | None = None,
-    **kwargs: _Any,
+    engine: str = "auto",
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    max_rows: int | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
+    sampling: _SamplingStrategy | None = None,
+    stop_condition: _StopCondition | None = None,
+    on_progress: _Callable[[_ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    columns: list[str] | None = None,
+    locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
+    temporal_pairs: list[tuple[str, str]] | None = None,
+    reference_date: _date | str | None = None,
+    duplicate_rows_exact_limit: int | None = None,
+    source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile data from a remote URL asynchronously.
 
@@ -154,9 +293,10 @@ async def profile_url(
     Args:
         url: URL to profile.
         format: Override format detection (optional).
-        **kwargs: Additional config options (passed to ProfilerConfig).
-            ``source_version`` is taken out first and recorded verbatim as
-            ``report.source_identity["version"]``; see :func:`dataprof.profile`.
+        source_version: The version of the source being profiled, recorded
+            verbatim as ``report.source_identity["version"]``; see
+            :func:`dataprof.profile`. The other keyword arguments are the
+            ones :func:`dataprof.profile_file` accepts.
 
     Returns:
         ProfileReport with analysis results.
@@ -167,10 +307,32 @@ async def profile_url(
             "--features 'python-async,async-streaming'. Remote Parquet "
             "also requires 'parquet-async'."
         )
-    source_version = kwargs.pop("source_version", None)
     _check_source_version(source_version)
-    _check_profile_options(kwargs)
-    config = _ProfilerConfig(**kwargs) if kwargs else None
+    config = _config_from_keywords(
+        {
+            "engine": engine,
+            "chunk_size": chunk_size,
+            "memory_limit_mb": memory_limit_mb,
+            "max_rows": max_rows,
+            "csv_delimiter": csv_delimiter,
+            "csv_flexible": csv_flexible,
+            "jsonl_on_error": jsonl_on_error,
+            "sampling": sampling,
+            "stop_condition": stop_condition,
+            "on_progress": on_progress,
+            "progress_interval_ms": progress_interval_ms,
+            "quality_dimensions": quality_dimensions,
+            "metrics": metrics,
+            "columns": columns,
+            "locale": locale,
+            "positive_columns": positive_columns,
+            "identifier_columns": identifier_columns,
+            "temporal_columns": temporal_columns,
+            "temporal_pairs": temporal_pairs,
+            "reference_date": reference_date,
+            "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
+        }
+    )
     rust_report = await _profile_url_async(url, format, config)
     return _ProfileReport(rust_report)._record_source_version(source_version)
 

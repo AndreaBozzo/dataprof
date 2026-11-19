@@ -70,10 +70,12 @@ def test_exact_async_count_marks_eof(tmp_path: Path):
     }.items():
         path = tmp_path / f"{case}.csv"
         path.write_bytes(text.encode())
-        options = {"chunk_size": 4096, "stop_condition": dp.StopCondition.confidence_threshold(1.0)}
+        stop = dp.StopCondition.confidence_threshold(1.0)
         for route, call in {
-            "bytes": profile_bytes(text.encode(), format="csv", **options),
-            "file": profile_file(path, **options),
+            "bytes": profile_bytes(
+                text.encode(), format="csv", chunk_size=4096, stop_condition=stop
+            ),
+            "file": profile_file(path, chunk_size=4096, stop_condition=stop),
         }.items():
             report = asyncio.run(call)
             if not report.source_exhausted or report.truncation_reason is not None:
