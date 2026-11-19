@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ SPEC = importlib.util.spec_from_file_location(
 )
 assert SPEC is not None and SPEC.loader is not None
 site = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = site
 SPEC.loader.exec_module(site)
 
 PAGE = (ROOT / "site/index.html").read_text(encoding="utf-8")
@@ -25,6 +27,19 @@ _RUST_EXAMPLE = "\n".join(
         'println!("{} {:?} nulls={}", col.name, col.data_type, col.null_count);',
     )
 )
+
+
+def test_the_script_is_registered_before_its_dataclasses_run():
+    """3.11 to 3.14 look a postponed dataclass up in sys.modules."""
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    loader = (
+        "site = importlib.util.module_from_spec(SPEC)\n"
+        "sys.modules[SPEC.name] = site\n"
+        "SPEC.loader.exec_module(site)\n"
+    )
+    assert loader in source
+    assert sys.modules[SPEC.name] is site
 
 
 def _run(**overrides: object) -> site.Run:
