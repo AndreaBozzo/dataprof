@@ -156,7 +156,8 @@ def main() -> int:
         print(
             "\nEither keep the code within Rust "
             f"{declared}, or raise `rust-version` in Cargo.toml (and the pins "
-            "in README.md, AGENTS.md, docs/CONTRIBUTING.md and the MSRV jobs) "
+            "in README.md, crates/dataprof/README.md, AGENTS.md, "
+            "docs/CONTRIBUTING.md and the MSRV jobs) "
             "deliberately.",
             file=sys.stderr,
         )

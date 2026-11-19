@@ -1,4 +1,10 @@
 #![doc = include_str!("../README.md")]
+//!
+//! ## Arrow batches and Python
+//!
+//! Rust callers with Arrow `RecordBatch` values use
+//! `dataprof_parquet::RecordBatchAnalyzer`. The Python package profiles
+//! DataFrames and Arrow objects.
 
 mod profiler;
 
