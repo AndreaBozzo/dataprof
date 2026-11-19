@@ -39,16 +39,17 @@ def test_a_late_key_profiles_as_on_the_sync_path_at_every_chunk_size():
     wrong = []
     for name, data in CASES.items():
         expected = _measured(dp.profile(data, format="jsonl"))
-        for chunk in ({"chunk_size": 1}, {"chunk_size": 64}, {}):
-            report = asyncio.run(dpa.profile_bytes(data, format="jsonl", **chunk))
+        for chunk_size in (1, 64, None):
+            report = asyncio.run(dpa.profile_bytes(data, format="jsonl", chunk_size=chunk_size))
             if _measured(report) != expected:
                 columns = [column["name"] for column in report.to_dict()["columns"]]
-                wrong.append((name, chunk, columns))
+                wrong.append((name, chunk_size, columns))
     array = json.dumps([{"id": 1}, {"id": 2, "note": "a"}]).encode()
     expected = _measured(dp.profile(array, format="json"))
-    for chunk in ({"chunk_size": 1}, {}):
-        if _measured(asyncio.run(dpa.profile_bytes(array, format="json", **chunk))) != expected:
-            wrong.append(("json array", chunk, None))
+    for chunk_size in (1, None):
+        report = asyncio.run(dpa.profile_bytes(array, format="json", chunk_size=chunk_size))
+        if _measured(report) != expected:
+            wrong.append(("json array", chunk_size, None))
     assert wrong == []
 
 

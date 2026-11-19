@@ -310,10 +310,22 @@ class TestAsyncArgumentErrors:
 
     @pytest.mark.parametrize("option", ["columns", "metrics", "quality_dimensions"])
     def test_a_string_for_a_list_option_suggests_the_list(self, option):
+        # ``option`` is the parameter name, so the value is one string. ty sees
+        # a ``dict[str, str]`` and cannot tell which keyword receives it.
         calls = (
-            lambda: profile_file(INCIDENTS_CSV, **{option: "id"}),
-            lambda: profile_bytes(b"id\n1\n", format="csv", **{option: "id"}),
-            lambda: profile_url("http://127.0.0.1:9/x.csv", **{option: "id"}),
+            lambda: profile_file(
+                INCIDENTS_CSV,
+                **{option: "id"},  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_bytes(
+                b"id\n1\n",
+                format="csv",
+                **{option: "id"},  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_url(
+                "http://127.0.0.1:9/x.csv",
+                **{option: "id"},  # ty: ignore[invalid-argument-type]
+            ),
         )
         for call in calls:
             with pytest.raises(TypeError) as caught:
