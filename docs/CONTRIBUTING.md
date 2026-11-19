@@ -354,9 +354,11 @@ If you are new to the project, start with issues labelled `good first issue`,
 `difficulty: beginner`, or `mentor available`. These are expected to have a
 small scope and enough context for a first PR.
 
-Before opening a PR, leave a short comment on the issue saying which slice you
-want to take. Some larger issues are intentionally split into independent
-subtasks, so a focused partial PR is welcome.
+Before you start, leave a short comment on the issue saying which slice you
+want to take, and wait until a maintainer assigns the issue to you. A pull
+request for an issue assigned to someone else, or to nobody, may be closed.
+Some larger issues are intentionally split into independent subtasks, so a
+focused partial PR is welcome.
 
 Good first issues in this repository usually mean:
 
@@ -364,6 +366,29 @@ Good first issues in this repository usually mean:
 - the desired behavior is described in the issue body
 - maintainers are happy to answer API or setup questions
 - a small PR is better than a sweeping rewrite
+
+### Contributions and AI tools
+
+You may use AI tools to write code, tests or text. These rules apply to every
+pull request, with or without them:
+
+- **Say what you used.** The pull request template asks which tools you used
+  and for what. "None" is a fine answer.
+- **You answer for the pull request.** You have read every line, can explain
+  each change, and reply to the review yourself. A review is a conversation
+  with you, not with a tool.
+- **No autonomous agents.** A pull request, or a reply to a review, has to come
+  from a person. One opened or answered by an agent acting on its own is
+  closed.
+- **Assignment first.** Start once a maintainer has assigned the issue to you
+  (see [Picking an Issue](#picking-an-issue)).
+- **One open pull request until your first merges.** Until a pull request of
+  yours merges here, you can have one open at a time. A workflow closes a
+  newer one with a comment, and you can reopen it after the first merges.
+  After that, GitHub allows up to three open pull requests per contributor.
+
+A pull request that does not follow these rules is closed with a short note.
+You are welcome to reopen it, or open a new one, once it does.
 
 ### Submit Pull Request
 
