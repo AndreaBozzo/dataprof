@@ -2,8 +2,10 @@
 
 The native extension converts every option itself, and its own failures read as
 conversion internals ("Can't extract `str` to `Vec`", "can't convert negative
-int to unsigned"). These checks run first and name the parameter and the form
-it accepts. They never change what a valid value does.
+int to unsigned", "'set' object is not an instance of 'Sequence'", "'float'
+object cannot be interpreted as an integer"). These checks run first and name
+the parameter and the form it accepts. They never change what a valid value
+does.
 """
 
 from __future__ import annotations as _annotations
@@ -36,23 +38,53 @@ _NAME_LISTS = {
 
 
 def _check_unsigned(name: str, value: _Any) -> None:
-    if value is None or not isinstance(value, int):
+    if value is None:
         return
     limit = _UNSIGNED_LIMITS[name]
+    # A bool is an int. True and False stay on the integer path, as they do
+    # when the native conversion accepts them.
+    if isinstance(value, float):
+        raise ValueError(f"{name} must be an integer between 0 and {limit}, got {value}.")
+    if not isinstance(value, int):
+        return
     if not 0 <= value <= limit:
         raise ValueError(f"{name} must be an integer between 0 and {limit}, got {value}.")
 
 
+def _non_sequence(value: _Any) -> bool:
+    """A set, a mapping, or another iterable that has no sequence protocol.
+
+    An object with ``__getitem__`` is left to the native conversion. A pandas
+    Index or a numpy array of names is a sequence there, and rejecting it here
+    would change a value that already works.
+    """
+    if isinstance(value, (set, frozenset, _Mapping)):
+        return True
+    return not hasattr(value, "__getitem__")
+
+
 def _check_name_list(name: str, value: _Any) -> None:
+    if value is None:
+        return
+    held = _NAME_LISTS[name]
     if isinstance(value, (str, bytes)):
         kind = type(value).__name__
         suggestion = f"[{value!r}]"
-        raise TypeError(
-            f"{name} must be a list of {_NAME_LISTS[name]}, got {kind}; did you mean {suggestion}?"
-        )
+        raise TypeError(f"{name} must be a list of {held}, got {kind}; did you mean {suggestion}?")
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if not isinstance(item, str):
+                raise TypeError(
+                    f"{name} must be a list of {held}, got {type(item).__name__} {item!r}."
+                )
+        return
+    if _non_sequence(value):
+        raise TypeError(f"{name} must be a list of {held}, got {type(value).__name__}.")
 
 
 def _check_temporal_pairs(value: _Any) -> None:
+    if value is None:
+        return
     if isinstance(value, (str, bytes)):
         kind = type(value).__name__
         raise TypeError(
@@ -72,10 +104,21 @@ def _check_temporal_pairs(value: _Any) -> None:
                     f"got {type(entry).__name__} {entry!r}; did you mean "
                     "[('start_column', 'end_column')]?"
                 )
+            if not isinstance(entry, (list, tuple)) and _non_sequence(entry):
+                raise TypeError(
+                    "temporal_pairs entries must be (start, end) column pairs, "
+                    f"got {type(entry).__name__} {entry!r}."
+                )
+        return
+    if _non_sequence(value):
+        raise TypeError(
+            "temporal_pairs must be a list of (start, end) column pairs, "
+            f"got {type(value).__name__}."
+        )
 
 
 def _check_profile_options(options: _Mapping[str, _Any]) -> None:
-    """Reject list options given as one string and unsigned options out of range."""
+    """Reject a bad list option or integer option before native conversion."""
     for name in _NAME_LISTS:
         _check_name_list(name, options.get(name))
     _check_temporal_pairs(options.get("temporal_pairs"))

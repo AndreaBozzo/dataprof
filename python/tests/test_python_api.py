@@ -645,6 +645,94 @@ class TestOptionErrors:
     def test_zero_is_still_a_valid_row_cap(self):
         assert dataprof.profile(CSV_FILE, max_rows=0).rows == 0
 
+    @pytest.mark.parametrize(
+        "option",
+        [
+            "columns",
+            "metrics",
+            "quality_dimensions",
+            "positive_columns",
+            "identifier_columns",
+            "temporal_columns",
+        ],
+    )
+    def test_a_set_for_a_list_option_names_the_parameter(self, option):
+        options: dict[str, Any] = {option: {"amount"}}
+        for source in (CSV_FILE, {"amount": [1, 2]}):
+            with pytest.raises(TypeError) as caught:
+                dataprof.profile(source, **options)
+            message = str(caught.value)
+            assert message.startswith(f"{option} must be a list of ")
+            assert message.endswith(", got set.")
+        with pytest.raises(TypeError, match=rf"^{option} must be a list of "):
+            dataprof.profile_file(CSV_FILE, **options)
+
+    def test_a_non_sequence_for_a_list_option_names_the_parameter(self):
+        for value, kind in (
+            (frozenset({"name"}), "frozenset"),
+            ({"name": "age"}, "dict"),
+            ((name for name in ("name",)), "generator"),
+        ):
+            with pytest.raises(TypeError) as caught:
+                dataprof.profile(CSV_FILE, columns=value)  # ty: ignore[invalid-argument-type]
+            assert str(caught.value) == f"columns must be a list of column names, got {kind}."
+
+    def test_a_non_string_in_a_list_option_names_the_item(self):
+        for value in ([1, 2], (1, 2)):
+            with pytest.raises(TypeError) as caught:
+                dataprof.profile(CSV_FILE, columns=value)  # ty: ignore[invalid-argument-type]
+            assert str(caught.value) == "columns must be a list of column names, got int 1."
+        with pytest.raises(
+            TypeError, match=r"^columns must be a list of column names, got int 2\.$"
+        ):
+            dataprof.profile({"name": [1], "age": [2]}, columns=["name", 2])  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match=r"^temporal_pairs entries must be \(start, end\)"):
+            dataprof.profile(CSV_FILE, temporal_pairs=[1])  # ty: ignore[invalid-argument-type]
+        with pytest.raises(TypeError, match=r"^temporal_pairs must be a list of "):
+            dataprof.profile(CSV_FILE, temporal_pairs={"start"})  # ty: ignore[invalid-argument-type]
+
+    def test_a_list_of_names_is_unchanged(self):
+        report = dataprof.profile(CSV_FILE, columns=["name", "age"])
+        assert list(report.column_profiles) == ["name", "age"]
+        pandas = pytest.importorskip("pandas")
+        numpy = pytest.importorskip("numpy")
+        from_index = dataprof.profile(CSV_FILE, columns=pandas.Index(["name", "age"]))
+        from_array = dataprof.profile(CSV_FILE, columns=numpy.array(["name", "age"]))
+        assert list(from_index.column_profiles) == ["name", "age"]
+        assert list(from_array.column_profiles) == ["name", "age"]
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            "max_rows",
+            "chunk_size",
+            "memory_limit_mb",
+            "progress_interval_ms",
+            "duplicate_rows_exact_limit",
+        ],
+    )
+    def test_a_float_for_an_integer_option_names_the_parameter(self, option):
+        sources = [
+            (CSV_FILE, {}),
+            ({"amount": [1, 2]}, {}),
+            (b"amount\n1\n", {"format": "csv"}),
+        ]
+        for source, extra in sources:
+            with pytest.raises(ValueError) as caught:
+                dataprof.profile(source, **{option: 1.5}, **extra)  # ty: ignore[invalid-argument-type]
+            message = str(caught.value)
+            assert message.startswith(f"{option} must be an integer between 0 and ")
+            assert message.endswith(", got 1.5.")
+        if option == "max_rows":
+            with pytest.raises(
+                ValueError, match=r"^max_rows must be an integer between 0 and .*, got 1\.5\.$"
+            ):
+                dataprof.analyze_structure(CSV_FILE, 1.5)  # ty: ignore[invalid-argument-type]
+            with pytest.raises(
+                ValueError, match=r"^max_rows must be an integer between 0 and .*, got 1\.5\.$"
+            ):
+                dataprof.profile_file(CSV_FILE, max_rows=1.5)  # ty: ignore[invalid-argument-type]
+
 
 class TestNamespace:
     def test_all_exports(self):
