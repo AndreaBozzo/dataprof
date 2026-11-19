@@ -1,22 +1,4 @@
-//! Local data profiling and quality assessment.
-//!
-//! The `dataprof` crate is the user-facing facade for profiling CSV, JSON,
-//! JSONL, Parquet, database queries, and supported async byte sources.
-//! Python bindings provide DataFrame and Arrow object profiling; Rust Arrow
-//! batch callers use `dataprof_parquet::RecordBatchAnalyzer`. Implementation
-//! details live in the workspace crates under `crates/`; this package keeps the
-//! public API compact and oriented around [`Profiler`].
-//!
-//! # Quick Start
-//!
-//! ```no_run
-//! use dataprof::Profiler;
-//!
-//! let report = Profiler::new().analyze_file("data.csv")?;
-//! println!("Rows: {}", report.execution.rows_processed);
-//! println!("Quality: {:?}", report.quality_score());
-//! # Ok::<(), dataprof::DataProfilerError>(())
-//! ```
+#![doc = include_str!("../README.md")]
 
 mod profiler;
 
