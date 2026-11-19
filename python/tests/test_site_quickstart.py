@@ -39,6 +39,7 @@ def test_the_script_is_registered_before_its_dataclasses_run():
         "SPEC.loader.exec_module(site)\n"
     )
     assert loader in source
+    assert SPEC is not None
     assert sys.modules[SPEC.name] is site
 
 
