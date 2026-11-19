@@ -219,6 +219,193 @@ fn a_misnamed_parquet_file_profiles_once_the_format_is_selected() {
     assert_eq!(report.execution.rows_processed, 3);
 }
 
+fn suggestion_of(result: Result<(), DataProfilerError>) -> String {
+    result
+        .expect_err("a Parquet file read as text should fail")
+        .suggestion()
+        .unwrap_or_default()
+}
+
+/// An explicit text format on a path that already ends in `.parquet` overrode
+/// the extension. The hint says so and names the command line, Rust, and
+/// Python; it does not tell the caller to add the extension the file has
+/// (#1356).
+#[test]
+fn an_explicit_text_format_on_a_parquet_path_names_the_override() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.parquet");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let overridden = "The format was overridden and set to JSON. Select Parquet (`--format parquet` \
+                      on the command line, `.format(FileFormat::Parquet)` in Rust, \
+                      `format=\"parquet\"` in Python), or leave the format out to use the \
+                      `.parquet` extension.";
+
+    let read_as_json = |run: fn(&Path) -> Result<(), DataProfilerError>| suggestion_of(run(&path));
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_file(p)
+            .map(drop)),
+        overridden
+    );
+    // The partial routes name the same selection.
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .infer_schema(p)
+            .map(drop)),
+        overridden
+    );
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .quick_row_count(p)
+            .map(drop)),
+        overridden
+    );
+    assert_eq!(
+        read_as_json(|p| Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_structure(p, None)
+            .map(drop)),
+        overridden
+    );
+
+    // The extension match is case-insensitive, and the selected format is named.
+    let upper = dir.path().join("DATA.PARQUET");
+    std::fs::write(&upper, parquet_bytes()).unwrap();
+    assert_eq!(
+        suggestion_of(
+            Profiler::new()
+                .format(FileFormat::Csv)
+                .analyze_file(&upper)
+                .map(drop)
+        ),
+        "The format was overridden and set to CSV. Select Parquet (`--format parquet` on the \
+         command line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python), \
+         or leave the format out to use the `.parquet` extension."
+    );
+
+    // A direct text reader has no format override to name. The extension is
+    // still not suggested again, and the hint still names each front end.
+    let unnamed = "The format was overridden. Select Parquet (`--format parquet` on the command \
+                   line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in \
+                   Python), or leave the format out to use the `.parquet` extension.";
+    assert_eq!(
+        suggestion_of(analyze_csv_file(&path, &CsvParserConfig::default()).map(drop)),
+        unnamed
+    );
+    assert_eq!(
+        suggestion_of(analyze_json_file(&path, &JsonParserConfig::default()).map(drop)),
+        unnamed
+    );
+}
+
+/// An explicit format on a file that is not already `.parquet` says which
+/// format was set and still gives the extension advice.
+#[test]
+fn an_explicit_text_format_on_a_misnamed_parquet_file_keeps_the_extension_hint() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("export.csv");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let suggestion = suggestion_of(
+        Profiler::new()
+            .format(FileFormat::Json)
+            .analyze_file(&path)
+            .map(drop),
+    );
+    assert_eq!(
+        suggestion,
+        "The format was set to JSON. Read it as Parquet: give it a `.parquet` extension, or \
+         select Parquet (`--format parquet` on the command line, `.format(FileFormat::Parquet)` \
+         in Rust, `format=\"parquet\"` in Python)."
+    );
+}
+
+/// Selecting the format the extension already names is still a selection.
+///
+/// `export.csv` holding Parquet bytes, read as CSV, names CSV and how to
+/// select Parquet on each front end. Leaving the format to the extension
+/// keeps the Rust and Python spellings (#1356).
+#[test]
+fn an_explicit_format_that_matches_the_extension_is_still_named() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("export.csv");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let named = "The format was set to CSV. Read it as Parquet: give it a `.parquet` extension, or \
+                 select Parquet (`--format parquet` on the command line, \
+                 `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python).";
+    let inferred = "Read it as Parquet: give it a `.parquet` extension, or select the format \
+                    (`.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python).";
+
+    let hint = |run: fn(&Path) -> Result<(), DataProfilerError>| suggestion_of(run(&path));
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .analyze_file(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .infer_schema(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .quick_row_count(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .analyze_structure(p, None)
+            .map(drop)),
+        named
+    );
+
+    assert_eq!(
+        hint(|p| Profiler::new().analyze_file(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().infer_schema(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().quick_row_count(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().analyze_structure(p, None).map(drop)),
+        inferred
+    );
+}
+
+#[cfg(feature = "async-streaming")]
+#[test]
+fn an_explicit_text_format_on_a_parquet_path_names_the_override_on_the_async_route() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("data.parquet");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let suggestion = suggestion_of(
+        runtime
+            .block_on(Profiler::new().format(FileFormat::Json).profile_file(&path))
+            .map(drop),
+    );
+    assert_eq!(
+        suggestion,
+        "The format was overridden and set to JSON. Select Parquet (`--format parquet` on the \
+         command line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python), \
+         or leave the format out to use the `.parquet` extension."
+    );
+}
+
 /// The pyarrow calls in the Arrow IPC and Feather suggestions are pasted into
 /// Python, so the path goes in as a literal Python reads back unchanged: a
 /// backslash (every Windows path) or an apostrophe must not break it.

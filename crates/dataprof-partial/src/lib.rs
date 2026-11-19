@@ -88,7 +88,9 @@ fn map_io_error(path: &Path, error: std::io::Error) -> DataProfilerError {
 pub fn infer_schema<P: AsRef<Path>>(path: P) -> Result<SchemaResult, DataProfilerError> {
     let path = path.as_ref();
     let format = detect_format(path);
-    infer_schema_with_format(path, format)
+    // The extension chose the format. That is not a selection, so the Parquet
+    // hint keeps the Rust and Python spellings (#1356).
+    infer_schema_from_format(path, &format, None)
 }
 
 /// Quick row count (exact or estimated) for a file.
@@ -104,7 +106,9 @@ pub fn infer_schema<P: AsRef<Path>>(path: P) -> Result<SchemaResult, DataProfile
 pub fn quick_row_count<P: AsRef<Path>>(path: P) -> Result<RowCountEstimate, DataProfilerError> {
     let path = path.as_ref();
     let format = detect_format(path);
-    quick_row_count_with_format(path, format)
+    // The extension chose the format. That is not a selection, so the Parquet
+    // hint keeps the Rust and Python spellings (#1356).
+    quick_row_count_from_format(path, &format, None)
 }
 
 /// Analyze a file's structure with a bounded, lightweight pass.
@@ -118,7 +122,9 @@ pub fn analyze_structure<P: AsRef<Path>>(
 ) -> Result<StructureReport, DataProfilerError> {
     let path = path.as_ref();
     let format = detect_format(path);
-    analyze_structure_with_format(path, format, max_rows)
+    // The extension chose the format. That is not a selection, so the Parquet
+    // hint keeps the Rust and Python spellings (#1356).
+    analyze_structure_from_format(path, &format, None, max_rows)
 }
 
 /// Detect file format from extension.
@@ -144,19 +150,39 @@ pub fn detect_format(file_path: &Path) -> FileFormat {
 /// every route that would read it as text, including an unknown extension, so
 /// it fails with what the file is rather than a parse error or an unsupported
 /// extension (#893).
-fn reject_binary_text_input(path: &Path, format: &FileFormat) -> Result<(), DataProfilerError> {
+fn reject_binary_text_input(
+    path: &Path,
+    format: &FileFormat,
+    explicit: Option<&FileFormat>,
+) -> Result<(), DataProfilerError> {
     if matches!(format, FileFormat::Parquet) {
         return Ok(());
     }
-    dataprof_core::binary_input::reject_binary_input(path)
+    // `explicit` is the format the caller selected. Comparing it with the
+    // extension would drop a selection that repeats the extension, and a
+    // Parquet file named `.csv` read as CSV would keep the Rust and Python
+    // spellings. An inferred call passes `None` (#1356).
+    dataprof_core::binary_input::reject_binary_input_with_format(path, explicit)
 }
 
+/// [`infer_schema`](infer_schema) for a caller who selected `format`.
+///
+/// The selection is named in the Parquet hint even when it is the format the
+/// extension already has.
 pub fn infer_schema_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<SchemaResult, DataProfilerError> {
+    infer_schema_from_format(path, &format, Some(&format))
+}
+
+fn infer_schema_from_format(
+    path: &Path,
+    format: &FileFormat,
+    explicit: Option<&FileFormat>,
+) -> Result<SchemaResult, DataProfilerError> {
     let start = Instant::now();
-    reject_binary_text_input(path, &format)?;
+    reject_binary_text_input(path, format, explicit)?;
 
     match format {
         FileFormat::Parquet => {
@@ -172,7 +198,7 @@ pub fn infer_schema_with_format(
             }
         }
         FileFormat::Csv => infer_schema_csv(path, start),
-        FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, &format, start),
+        FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, format, start),
         // `Arrow` and any later variant have no reader on these paths.
         _ => Err(DataProfilerError::UnsupportedFormat {
             format: format.to_string(),
@@ -180,12 +206,24 @@ pub fn infer_schema_with_format(
     }
 }
 
+/// [`quick_row_count`](quick_row_count) for a caller who selected `format`.
+///
+/// The selection is named in the Parquet hint even when it is the format the
+/// extension already has.
 pub fn quick_row_count_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<RowCountEstimate, DataProfilerError> {
+    quick_row_count_from_format(path, &format, Some(&format))
+}
+
+fn quick_row_count_from_format(
+    path: &Path,
+    format: &FileFormat,
+    explicit: Option<&FileFormat>,
+) -> Result<RowCountEstimate, DataProfilerError> {
     let start = Instant::now();
-    reject_binary_text_input(path, &format)?;
+    reject_binary_text_input(path, format, explicit)?;
 
     match format {
         FileFormat::Parquet => {
@@ -201,7 +239,7 @@ pub fn quick_row_count_with_format(
             }
         }
         FileFormat::Csv => count_csv(path, start),
-        FileFormat::Json | FileFormat::Jsonl => count_json(path, format, start),
+        FileFormat::Json | FileFormat::Jsonl => count_json(path, format.clone(), start),
         // `Arrow` and any later variant have no reader on these paths.
         _ => Err(DataProfilerError::UnsupportedFormat {
             format: format.to_string(),
@@ -209,9 +247,22 @@ pub fn quick_row_count_with_format(
     }
 }
 
+/// [`analyze_structure`](analyze_structure) for a caller who selected `format`.
+///
+/// The selection is named in the Parquet hint even when it is the format the
+/// extension already has.
 pub fn analyze_structure_with_format(
     path: &Path,
     format: FileFormat,
+    max_rows: Option<usize>,
+) -> Result<StructureReport, DataProfilerError> {
+    analyze_structure_from_format(path, &format, Some(&format), max_rows)
+}
+
+fn analyze_structure_from_format(
+    path: &Path,
+    format: &FileFormat,
+    explicit: Option<&FileFormat>,
     max_rows: Option<usize>,
 ) -> Result<StructureReport, DataProfilerError> {
     // Establish file existence up front so all formats return the same
@@ -219,11 +270,11 @@ pub fn analyze_structure_with_format(
     fs::metadata(path).map_err(|error| map_io_error(path, error))?;
 
     let limit = max_rows.unwrap_or(STRUCTURE_SAMPLE_ROWS);
-    reject_binary_text_input(path, &format)?;
+    reject_binary_text_input(path, format, explicit)?;
 
     match format {
         FileFormat::Csv => analyze_structure_csv(path, limit),
-        FileFormat::Json | FileFormat::Jsonl => analyze_structure_json(path, format, limit),
+        FileFormat::Json | FileFormat::Jsonl => analyze_structure_json(path, format.clone(), limit),
         FileFormat::Parquet => analyze_structure_parquet(path, limit),
         // `Arrow` and any later variant have no reader on these paths.
         _ => Err(DataProfilerError::UnsupportedFormat {

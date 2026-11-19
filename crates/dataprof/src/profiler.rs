@@ -443,7 +443,10 @@ impl Profiler {
         // A binary file bound for a text reader fails here with what it is,
         // before every engine fails on it with parsing advice (#893).
         if !matches!(format, FileFormat::Parquet) {
-            dataprof_core::binary_input::reject_binary_input(path)?;
+            dataprof_core::binary_input::reject_binary_input_with_format(
+                path,
+                self.config.format_override.as_ref(),
+            )?;
         }
         let is_csv = matches!(format, FileFormat::Csv);
 
@@ -549,8 +552,13 @@ impl Profiler {
     /// their values decide (#693).
     pub fn infer_schema<P: AsRef<Path>>(&self, path: P) -> Result<SchemaResult, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::infer_schema_with_format(path, format)
+        // `.format()` is a selection even when it repeats the extension.
+        // `infer_schema_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::infer_schema_with_format(path, format),
+            None => partial::infer_schema(path),
+        }
     }
 
     /// Quick row count (exact or estimated) for a file.
@@ -562,8 +570,13 @@ impl Profiler {
         path: P,
     ) -> Result<RowCountEstimate, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::quick_row_count_with_format(path, format)
+        // `.format()` is a selection even when it repeats the extension.
+        // `quick_row_count_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::quick_row_count_with_format(path, format),
+            None => partial::quick_row_count(path),
+        }
     }
 
     /// Analyze file structure with a bounded, lightweight pass.
@@ -577,8 +590,13 @@ impl Profiler {
         max_rows: Option<usize>,
     ) -> Result<StructureReport, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::analyze_structure_with_format(path, format, max_rows)
+        // `.format()` is a selection even when it repeats the extension.
+        // `analyze_structure_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::analyze_structure_with_format(path, format, max_rows),
+            None => partial::analyze_structure(path, max_rows),
+        }
     }
 
     /// Detect file format from extension
@@ -587,7 +605,12 @@ impl Profiler {
     }
 
     /// The format a path is read as: the `.format()` override, else what its
-    /// extension says. Every path-taking entry point asks here.
+    /// extension says.
+    ///
+    /// Path-taking entry points ask here, except [`Self::infer_schema`],
+    /// [`Self::quick_row_count`], and [`Self::analyze_structure`]. Those three
+    /// branch on `format_override` themselves, so a `.format()` that repeats
+    /// the extension stays a selection (#1356).
     fn resolve_format(&self, path: &Path) -> FileFormat {
         self.config
             .format_override
@@ -1197,7 +1220,10 @@ impl Profiler {
         let path = file_path.as_ref();
         let format = self.resolve_format(path);
         if !matches!(format, FileFormat::Parquet) {
-            dataprof_core::binary_input::reject_binary_input(path)?;
+            dataprof_core::binary_input::reject_binary_input_with_format(
+                path,
+                self.config.format_override.as_ref(),
+            )?;
         }
 
         match format {
