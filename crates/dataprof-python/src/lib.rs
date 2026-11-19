@@ -5,6 +5,7 @@ pub mod arrow_export;
 mod arrow_stream;
 pub mod columns;
 pub mod config;
+mod count_arg;
 pub mod errors;
 pub mod partial;
 pub mod progress;

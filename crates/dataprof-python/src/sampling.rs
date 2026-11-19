@@ -1,4 +1,3 @@
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use dataprof::SamplingStrategy;
@@ -31,10 +30,9 @@ impl PySamplingStrategy {
 
     /// Simple random sampling with a fixed sample size.
     #[staticmethod]
-    fn random(size: usize) -> PyResult<Self> {
-        if size == 0 {
-            return Err(PyValueError::new_err("size must be > 0"));
-        }
+    #[pyo3(signature = (size))]
+    fn random(size: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let size = crate::count_arg::require_nonzero_usize(size, "size")?;
         Ok(Self {
             inner: SamplingStrategy::Random { size },
         })
@@ -42,10 +40,9 @@ impl PySamplingStrategy {
 
     /// Reservoir sampling for streaming data.
     #[staticmethod]
-    fn reservoir(size: usize) -> PyResult<Self> {
-        if size == 0 {
-            return Err(PyValueError::new_err("size must be > 0"));
-        }
+    #[pyo3(signature = (size))]
+    fn reservoir(size: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let size = crate::count_arg::require_nonzero_usize(size, "size")?;
         Ok(Self {
             inner: SamplingStrategy::Reservoir { size },
         })
@@ -53,10 +50,9 @@ impl PySamplingStrategy {
 
     /// Systematic sampling — every Nth row.
     #[staticmethod]
-    fn systematic(interval: usize) -> PyResult<Self> {
-        if interval == 0 {
-            return Err(PyValueError::new_err("interval must be > 0"));
-        }
+    #[pyo3(signature = (interval))]
+    fn systematic(interval: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let interval = crate::count_arg::require_nonzero_usize(interval, "interval")?;
         Ok(Self {
             inner: SamplingStrategy::Systematic { interval },
         })

@@ -203,6 +203,66 @@ class TestStopCondition:
         assert not r.source_exhausted
 
 
+class TestConstructorArgumentErrors:
+    """A bad sample size or stop count names the argument and the range."""
+
+    @pytest.mark.parametrize(
+        ("build", "argument"),
+        [
+            (dataprof.SamplingStrategy.random, "size"),
+            (dataprof.SamplingStrategy.reservoir, "size"),
+            (dataprof.SamplingStrategy.systematic, "interval"),
+            (dataprof.StopCondition.max_rows, "n"),
+            (dataprof.StopCondition.max_bytes, "n"),
+            (dataprof.StopCondition.schema_stable, "consecutive_stable_rows"),
+        ],
+    )
+    @pytest.mark.parametrize("value", [-1, 0, 2**64])
+    def test_a_count_outside_the_range_names_the_argument(self, build, argument, value):
+        with pytest.raises(ValueError) as caught:
+            build(value)
+        message = str(caught.value)
+        assert message.startswith(f"{argument} must be an integer between 1 and ")
+        assert message.endswith(f", got {value}.")
+
+    @pytest.mark.parametrize(
+        ("build", "argument"),
+        [
+            (dataprof.SamplingStrategy.random, "size"),
+            (dataprof.SamplingStrategy.reservoir, "size"),
+            (dataprof.SamplingStrategy.systematic, "interval"),
+            (dataprof.StopCondition.max_rows, "n"),
+            (dataprof.StopCondition.max_bytes, "n"),
+            (dataprof.StopCondition.schema_stable, "consecutive_stable_rows"),
+        ],
+    )
+    def test_a_non_integer_names_the_argument(self, build, argument):
+        with pytest.raises(TypeError) as caught:
+            build(1.5)
+        message = str(caught.value)
+        assert message.startswith(f"{argument} must be an integer between 1 and ")
+        assert message.endswith(", got float.")
+        with pytest.raises(TypeError, match=rf"^{argument} must be an integer between 1 and "):
+            build("1")
+
+    def test_one_is_still_a_valid_count(self):
+        assert repr(dataprof.SamplingStrategy.random(1)) == (
+            "SamplingStrategy(Random sampling (1 records))"
+        )
+        assert repr(dataprof.SamplingStrategy.reservoir(1)) == (
+            "SamplingStrategy(Reservoir sampling (1 records))"
+        )
+        assert repr(dataprof.SamplingStrategy.systematic(1)) == (
+            "SamplingStrategy(Systematic (every 1th record))"
+        )
+        assert repr(dataprof.SamplingStrategy.random(True)) == repr(
+            dataprof.SamplingStrategy.random(1)
+        )
+        assert "MaxRows(1)" in repr(dataprof.StopCondition.max_rows(1))
+        assert "MaxBytes(1)" in repr(dataprof.StopCondition.max_bytes(1))
+        assert "consecutive_stable_rows: 1" in repr(dataprof.StopCondition.schema_stable(1))
+
+
 class TestProgress:
     def test_progress_callback(self):
         events = []

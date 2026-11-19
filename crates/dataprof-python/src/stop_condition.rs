@@ -40,10 +40,9 @@ impl PyStopCondition {
     /// Under sampling, `systematic` counts the rows it keeps, while `random`
     /// and `reservoir` count the rows read and sample from those.
     #[staticmethod]
-    fn max_rows(n: u64) -> PyResult<Self> {
-        if n == 0 {
-            return Err(PyValueError::new_err("n must be > 0"));
-        }
+    #[pyo3(signature = (n))]
+    fn max_rows(n: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let n = crate::count_arg::require_nonzero_u64(n, "n")?;
         Ok(Self {
             inner: StopCondition::MaxRows(n),
         })
@@ -55,10 +54,9 @@ impl PyStopCondition {
     /// headers, so consumption can exceed the requested value; use smaller
     /// chunks for a tighter bound.
     #[staticmethod]
-    fn max_bytes(n: u64) -> PyResult<Self> {
-        if n == 0 {
-            return Err(PyValueError::new_err("n must be > 0"));
-        }
+    #[pyo3(signature = (n))]
+    fn max_bytes(n: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let n = crate::count_arg::require_nonzero_u64(n, "n")?;
         Ok(Self {
             inner: StopCondition::MaxBytes(n),
         })
@@ -66,10 +64,12 @@ impl PyStopCondition {
 
     /// Stop when column types have been stable for N consecutive rows.
     #[staticmethod]
-    fn schema_stable(consecutive_stable_rows: u64) -> PyResult<Self> {
-        if consecutive_stable_rows == 0 {
-            return Err(PyValueError::new_err("consecutive_stable_rows must be > 0"));
-        }
+    #[pyo3(signature = (consecutive_stable_rows))]
+    fn schema_stable(consecutive_stable_rows: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let consecutive_stable_rows = crate::count_arg::require_nonzero_u64(
+            consecutive_stable_rows,
+            "consecutive_stable_rows",
+        )?;
         Ok(Self {
             inner: StopCondition::SchemaStable {
                 consecutive_stable_rows,

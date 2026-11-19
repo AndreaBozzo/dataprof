@@ -333,6 +333,57 @@ class TestAsyncArgumentErrors:
             assert str(caught.value).startswith(f"{option} must be a list of ")
             assert "got str; did you mean ['id']?" in str(caught.value)
 
+    def test_a_set_or_a_non_string_list_names_the_parameter(self):
+        calls = (
+            lambda **options: profile_file(INCIDENTS_CSV, **options),
+            lambda **options: profile_bytes(b"id\n1\n", format="csv", **options),
+            lambda **options: profile_url("http://127.0.0.1:9/x.csv", **options),
+        )
+        for call in calls:
+            with pytest.raises(
+                TypeError, match=r"^columns must be a list of column names, got set\.$"
+            ):
+                asyncio.run(call(columns={"id"}))
+            with pytest.raises(
+                TypeError, match=r"^columns must be a list of column names, got int 1\.$"
+            ):
+                asyncio.run(call(columns=[1, 2]))
+
+    def test_a_float_row_cap_names_the_parameter(self):
+        calls = (
+            lambda: profile_file(
+                INCIDENTS_CSV,
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_bytes(
+                b"id\n1\n",
+                format="csv",
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_url(
+                "http://127.0.0.1:9/x.csv",
+                max_rows=1.5,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_file(
+                INCIDENTS_CSV,
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_bytes(
+                b"id\n1\n",
+                format="csv",
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
+            lambda: profile_url(
+                "http://127.0.0.1:9/x.csv",
+                max_rows=2.0,  # ty: ignore[invalid-argument-type]
+            ),
+        )
+        for call in calls:
+            with pytest.raises(
+                TypeError, match=r"^max_rows must be an integer between 0 and .*, got float\.$"
+            ):
+                asyncio.run(call())
+
     def test_a_negative_row_cap_is_a_value_error(self):
         calls = (
             lambda: profile_file(INCIDENTS_CSV, max_rows=-1),
