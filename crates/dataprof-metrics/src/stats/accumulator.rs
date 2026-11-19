@@ -743,8 +743,9 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 /// kept as an [`ExactDecimal`] where it fits one (#1149), and is
 /// [`Unheld`](Self::Unheld) where it does not: from [`TEXT_EXACT_DIGITS`]
 /// significant digits for [`parse`](Self::parse), from
-/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal).
-/// Everything else is its `f64`.
+/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal), and
+/// at any length when it underflows to 0 or to a subnormal no float writer
+/// writes as these digits (#1182). Everything else is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum ParsedNumber {
@@ -803,6 +804,24 @@ impl ParsedNumber {
             && (i128::from(i64::MIN)..=i128::from(u64::MAX)).contains(&integer)
         {
             return Some(Self::Integer(integer));
+        }
+        // A non-zero literal that reads as 0, or as a subnormal that is not
+        // its digits, underflowed: no float wrote it, so however short it is
+        // it is held as written, and 1e-400 and 2e-400 stay two values
+        // (#1182). A float written out still reads as that float, in its
+        // shortest form (5e-324) or padded to 17 digits by `%.17g`
+        // (4.9406564584124654e-324), as 0.10000000000000001 does (#783).
+        if value.abs() < f64::MIN_POSITIVE
+            && let Some(literal) = DecimalLiteral::read(text)
+            && literal.written_digits > 0
+            && !literal.round_trips(value)
+            && !literal.float_writes(value)
+        {
+            return Some(
+                literal
+                    .exact()
+                    .map_or(Self::Unheld(value), |exact| Self::from_exact(exact, value)),
+            );
         }
         // A plain integer below 2^53 is its `f64` exactly: ids and epoch
         // milliseconds skip the digit scan.
@@ -1286,9 +1305,13 @@ impl<'a> DecimalLiteral<'a> {
             unscaled = scale_up(unscaled, u32::try_from(-self.scale).ok()?)?;
             0
         } else {
-            u32::try_from(self.scale)
-                .ok()
-                .filter(|&scale| scale <= MAX_DECIMAL_SCALE)?
+            let mut scale = u32::try_from(self.scale).ok()?;
+            // Trailing zeros add scale but no value: 1.0e-600 is 1e-600.
+            while scale > MAX_DECIMAL_SCALE && unscaled != 0 && unscaled % 10 == 0 {
+                unscaled /= 10;
+                scale -= 1;
+            }
+            (scale <= MAX_DECIMAL_SCALE).then_some(scale)?
         };
         Some(ExactDecimal {
             unscaled: if self.negative { -unscaled } else { unscaled },
@@ -1301,9 +1324,27 @@ impl<'a> DecimalLiteral<'a> {
     /// padded with zeros to the units digit when it writes no exponent. Such a
     /// literal reads as that `f64`, as it did before #1149: an Arrow `Float64`
     /// sample of 1e300 is written out in 301 digits. Only called for a literal
-    /// too wide for an [`ExactDecimal`], or for text of an integer past the
-    /// 64-bit range, so the allocations stay off the common path.
+    /// too wide for an [`ExactDecimal`], for text of an integer past the
+    /// 64-bit range, or for a non-zero literal that reads as 0 or as a
+    /// subnormal (#1182), so the allocations stay off the common path.
     fn round_trips(&self, value: f64) -> bool {
+        self.writes(&format!("{:e}", value.abs()))
+    }
+
+    /// Whether a float writer could have written this literal: it has at most
+    /// 17 significant digits, and `value` formatted to that many digits, as
+    /// `%.17g` formats it, writes it. `4.9406564584124654e-324` is 5e-324 so
+    /// written; `1.2345678e-320` is not, since 8 digits of its `f64` write
+    /// `1.2346700e-320`. Only called where [`round_trips`](Self::round_trips)
+    /// is, for a literal that reads as 0 or as a subnormal.
+    fn float_writes(&self, value: f64) -> bool {
+        (1..=17).contains(&self.written_digits)
+            && self.writes(&format!("{:.*e}", self.written_digits - 1, value.abs()))
+    }
+
+    /// Whether this literal has the value `formatted` writes, which is
+    /// `{:e}`-formatted: its significant digits and its exponent agree.
+    fn writes(&self, formatted: &str) -> bool {
         let mut significant = String::new();
         let (mut whole, mut leading, mut point) = (0_i64, 0_i64, false);
         for byte in self.mantissa.bytes() {
@@ -1321,8 +1362,7 @@ impl<'a> DecimalLiteral<'a> {
                 }
             }
         }
-        let shortest = format!("{:e}", value.abs());
-        let Some((digits, exponent)) = shortest.split_once('e') else {
+        let Some((digits, exponent)) = formatted.split_once('e') else {
             return false;
         };
         let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
@@ -1530,6 +1570,60 @@ mod tests {
                 ParsedNumber::parse(&written),
                 Some(ParsedNumber::Float(value)),
                 "{written}"
+            );
+        }
+    }
+
+    /// 1e-400 and 2e-400 both read as 0.0 and were one value (#1182).
+    #[test]
+    fn parsed_numbers_hold_literals_that_underflow() {
+        for (text, unscaled, scale) in [
+            ("1e-400", 1, 400),
+            ("2e-400", 2, 400),
+            ("-3.5E-330", -35, 331),
+            // A subnormal, but not the one these digits write.
+            ("1.2345678e-320", 12_345_678, 327),
+            // Trailing zeros don't count against the largest scale held.
+            ("1e-600", 1, 600),
+            ("1.0e-600", 1, 600),
+            ("-2.500e-599", -25, 600),
+        ] {
+            let expected = Some(ExactDecimal { unscaled, scale });
+            for parsed in [ParsedNumber::parse(text), ParsedNumber::parse_decimal(text)] {
+                let parsed = parsed.unwrap();
+                assert_eq!(parsed.exact(), expected, "{text:?}");
+                assert_eq!(parsed.to_f64(), text.parse::<f64>().unwrap(), "{text:?}");
+            }
+        }
+        let key = |text| ParsedNumber::parse(text).unwrap().value_key();
+        assert_ne!(key("1e-400"), key("2e-400"));
+        assert_ne!(key("1e-400"), key("0"));
+        assert_eq!(key("1e-600"), key("1.0e-600"));
+
+        // Past the largest scale held: unheld, still not a float.
+        for text in ["1e-700", "1e-601", "1.0e-601"] {
+            assert_eq!(
+                ParsedNumber::parse(text),
+                Some(ParsedNumber::Unheld(0.0)),
+                "{text:?}"
+            );
+        }
+        // Zeros, and subnormals as a float writes them, stay floats.
+        for (text, value) in [
+            ("0", 0.0),
+            ("0.000", 0.0),
+            ("-0e-400", -0.0),
+            ("5e-324", 5e-324),
+            ("1.5e-320", 1.5e-320),
+            // The same floats as `%.17g` writes them.
+            ("4.9406564584124654e-324", 5e-324),
+            ("1.4999833007740245e-320", 1.5e-320),
+            ("-4.9406564584124654E-324", -5e-324),
+        ] {
+            assert_eq!(
+                ParsedNumber::parse(text),
+                Some(ParsedNumber::Float(value)),
+                "{text:?}"
             );
         }
     }
