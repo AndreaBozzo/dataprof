@@ -18,6 +18,13 @@ SPEC.loader.exec_module(site)
 
 PAGE = (ROOT / "site/index.html").read_text(encoding="utf-8")
 CI = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+_RUST_EXAMPLE = "\n".join(
+    (
+        'println!("Rows: {}", report.execution.rows_processed);',
+        'println!("Quality: {score:.2}");',
+        'println!("{} {:?} nulls={}", col.name, col.data_type, col.null_count);',
+    )
+)
 
 
 def _run(**overrides: object) -> site.Run:
@@ -38,7 +45,31 @@ def _run(**overrides: object) -> site.Run:
     return site.Run(**values)
 
 
-def _page(run: site.Run, *, column: str = "region", unmarked: str = "") -> str:
+def _rust_text(run: site.Run, example: str = _RUST_EXAMPLE) -> str:
+    """Replay ``example`` the way the site check does, without a full page."""
+
+    holder = site.Page(
+        versions=(),
+        quality_scores=(),
+        null_percents=(),
+        verdicts=(),
+        exit_code="",
+        python_output="",
+        rust_output="",
+        quickstart=site.Quickstart((), {}),
+        rust_prints=site._rust_prints(example),
+        command_flags=(),
+    )
+    return site.rust_output(holder, run)
+
+
+def _page(
+    run: site.Run,
+    *,
+    column: str = "region",
+    unmarked: str = "",
+    rust_example: str = _RUST_EXAMPLE,
+) -> str:
     """A page whose marked figures are exactly what ``run`` produces."""
 
     score = site._number_text(run.quality_score)
@@ -63,6 +94,7 @@ def _page(run: site.Run, *, column: str = "region", unmarked: str = "") -> str:
     )
     output = "\n".join((score, site._number_text(printed.null_percentage), run.verdict))
     command = 'python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"'
+    rust_output = _rust_text(run, rust_example)
     return f"""
     <p>{unmarked}</p>
     <span data-site-figure="version">{run.version}</span>
@@ -72,7 +104,8 @@ def _page(run: site.Run, *, column: str = "region", unmarked: str = "") -> str:
     <span data-site-figure="exit-code">{run.exit_code}</span>
     <code data-site-figure="python-example">{example}</code>
     <code data-site-figure="python-output">{output}</code>
-    <code data-site-figure="rust-output">{site.rust_output(run)}</code>
+    <code data-site-figure="rust-example">{rust_example}</code>
+    <code data-site-figure="rust-output">{rust_output}</code>
     <code data-site-figure="ci-command">{command}</code>
     """
 
@@ -102,7 +135,8 @@ def test_the_version_mark_must_be_the_package_version():
     run = _run(version="1.2.3")
     page = _page(run).replace(">1.2.3<", ">9.9.9<", 1)
     failures = site.differences(site.parse_page(page), run)
-    assert any(item.startswith("version:") for item in failures)
+    expected = "version: page shows '9.9.9', the run shows '1.2.3' (edit site/index.html)"
+    assert failures == [expected]
 
 
 def test_the_exit_code_mark_must_be_the_command_result():
@@ -134,7 +168,8 @@ def test_python_output_follows_the_column_the_example_prints():
 
 
 def test_rust_output_uses_the_example_spellings():
-    text = site.rust_output(_run())
+    run = _run()
+    text = site.rust_output(site.parse_page(_page(run)), run)
     assert text.splitlines() == [
         "Rows: 8",
         "Quality: 93.19",
@@ -142,6 +177,36 @@ def test_rust_output_uses_the_example_spellings():
         "amount Integer nulls=0",
         "region String nulls=2",
     ]
+
+
+def test_rust_output_follows_the_prints_on_the_page():
+    run = _run()
+    example = "\n".join(
+        (
+            'println!("Quality: {score:.2}");',
+            'println!("Rows: {}", report.execution.rows_processed);',
+        )
+    )
+    page = site.parse_page(_page(run, rust_example=example))
+    assert site.rust_output(page, run).splitlines() == ["Quality: 93.19", "Rows: 8"]
+
+
+def test_a_rust_print_this_check_cannot_replay_fails():
+    example = 'println!("rows: {}", report.execution.rows_processed);'
+    page = _page(_run()).replace(_RUST_EXAMPLE, example, 1)
+    with pytest.raises(site.PageError, match="cannot replay"):
+        site.parse_page(page)
+
+
+def test_a_break_inside_a_marked_output_is_recorded():
+    run = _run()
+    page = _page(run).replace(
+        'data-site-figure="python-output">',
+        'data-site-figure="python-output"><br>',
+        1,
+    )
+    parsed = site.parse_page(page)
+    assert parsed.python_output == site.python_output(parsed, run)
 
 
 def test_a_traceback_is_not_a_passing_exit():
@@ -176,6 +241,7 @@ def test_the_live_page_marks_the_quickstart_figures():
     assert page.quickstart.prints[1].column
     assert "min_quality_score" in page.quickstart.check_arguments
     assert "max_null_percentage" in page.quickstart.check_arguments
+    assert [step.kind for step in page.rust_prints] == ["rows", "quality", "column"]
     assert all(not flag.endswith(".csv") for flag in page.command_flags)
     assert any(flag.startswith("--") for flag in page.command_flags)
 

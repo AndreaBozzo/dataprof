@@ -5,7 +5,9 @@ verdict and the Python and Rust quickstart output for ``site/assets/orders.csv``
 Those figures are the text of elements marked ``data-site-figure``. This script
 profiles the sample with the dataprof it was run with — the built wheel, in
 CI — and fails when a marked figure disagrees. It does not keep a second copy
-of the numbers, so correcting the page is the edit that updates them.
+of the numbers, so correcting the page is the edit that updates them. The
+Python and Rust examples are read the same way: a print this check cannot
+replay is an error.
 """
 
 from __future__ import annotations
@@ -34,6 +36,16 @@ _KW_DICT = re.compile(
     rf"""([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{{\s*(['"])([^'"]+)\2\s*:\s*({_NUMBER})\s*\}}"""
 )
 _KW_NUMBER = re.compile(rf"""([A-Za-z_][A-Za-z0-9_]*)\s*=\s*({_NUMBER})""")
+_RUST_ROWS = re.compile(
+    r"""println!\(\s*"Rows: \{\}"\s*,\s*report\.execution\.rows_processed\s*,?\s*\)"""
+)
+_RUST_QUALITY = re.compile(r"""println!\(\s*"Quality: \{score:\.2\}"\s*\)""")
+_RUST_COLUMN = re.compile(
+    r"""println!\(\s*"\{\} \{:\?\} nulls=\{\}"\s*,\s*"""
+    r"""col\.name\s*,\s*col\.data_type\s*,\s*col\.null_count\s*,?\s*\)"""
+)
+# html.parser does not treat these as empty, so counting one leaves the mark open.
+_VOID_TAGS = frozenset({"br", "hr", "img", "input", "wbr"})
 
 
 class PageError(Exception):
@@ -66,6 +78,7 @@ class Page:
     python_output: str
     rust_output: str
     quickstart: Quickstart
+    rust_prints: tuple[_Print, ...]
     command_flags: tuple[str, ...]
 
 
@@ -107,12 +120,19 @@ class _Marks(html.parser.HTMLParser):
         self.found: list[tuple[str, str | None, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _VOID_TAGS:
+            return
         if self._open:
             self._open[-1].depth += 1
         attr = {key: value or "" for key, value in attrs}
         kind = attr.get("data-site-figure")
         if kind:
             self._open.append(_Frame(tag, kind, attr.get("data-site-column") or None, []))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _VOID_TAGS:
+            return
+        super().handle_startendtag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if not self._open:
@@ -155,6 +175,54 @@ def _prints(source: str) -> tuple[_Print, ...]:
             raise PageError(f"the Python example has a print this check cannot replay: {text}")
     if not prints:
         raise PageError("the Python example does not print a figure")
+    return tuple(prints)
+
+
+def _matching_paren(source: str, open_paren: int) -> int:
+    depth = 0
+    for end, character in enumerate(source[open_paren:], start=open_paren):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return end
+    raise PageError("the Rust example's println! does not close")
+
+
+def _rust_prints(source: str) -> tuple[_Print, ...]:
+    """The println! lines the Rust example shows, in order.
+
+    Each one has to be a line ``rust_output`` can reproduce. Anything else is
+    reported on its own, the way ``_prints`` reports a Python print.
+    """
+
+    prints: list[_Print] = []
+    index = 0
+    while True:
+        start = source.find("println!", index)
+        if start < 0:
+            break
+        open_paren = start + len("println!")
+        while open_paren < len(source) and source[open_paren].isspace():
+            open_paren += 1
+        if open_paren >= len(source) or source[open_paren] != "(":
+            snippet = source[start:].splitlines()[0].strip()
+            raise PageError(f"the Rust example has a print this check cannot replay: {snippet}")
+        end = _matching_paren(source, open_paren)
+        call = source[start : end + 1]
+        if _RUST_ROWS.fullmatch(call):
+            prints.append(_Print("rows"))
+        elif _RUST_QUALITY.fullmatch(call):
+            prints.append(_Print("quality"))
+        elif _RUST_COLUMN.fullmatch(call):
+            prints.append(_Print("column"))
+        else:
+            shown = " ".join(call.split())
+            raise PageError(f"the Rust example has a print this check cannot replay: {shown}")
+        index = end + 1
+    if not prints:
+        raise PageError("the Rust example does not print a figure")
     return tuple(prints)
 
 
@@ -227,6 +295,7 @@ def parse_page(html: str) -> Page:
         null_percents.append((column, text))
 
     example = _one(require("python-example"), "python-example")
+    rust_example = _one(require("rust-example"), "rust-example")
     return Page(
         versions=tuple(text for _column, text in require("version")),
         quality_scores=tuple(text for _column, text in require("quality-score")),
@@ -236,6 +305,7 @@ def parse_page(html: str) -> Page:
         python_output=_one(require("python-output"), "python-output"),
         rust_output=_one(require("rust-output"), "rust-output"),
         quickstart=Quickstart(_prints(example), _check_arguments(example)),
+        rust_prints=_rust_prints(rust_example),
         command_flags=_command_flags(_one(require("ci-command"), "ci-command")),
     )
 
@@ -286,12 +356,21 @@ def python_output(page: Page, run: Run) -> str:
     return "\n".join(lines)
 
 
-def rust_output(run: Run) -> str:
-    """The lines the Rust example prints: rows, the score to two decimals, then columns."""
+def rust_output(page: Page, run: Run) -> str:
+    """The lines the marked Rust example prints for this run."""
 
-    lines = [f"Rows: {run.rows}", f"Quality: {run.quality_score:.2f}"]
-    for column in run.columns:
-        lines.append(f"{column.name} {_rust_type(column.data_type)} nulls={column.null_count}")
+    lines: list[str] = []
+    for step in page.rust_prints:
+        if step.kind == "rows":
+            lines.append(f"Rows: {run.rows}")
+        elif step.kind == "quality":
+            lines.append(f"Quality: {run.quality_score:.2f}")
+        elif step.kind == "column":
+            for column in run.columns:
+                rust_type = _rust_type(column.data_type)
+                lines.append(f"{column.name} {rust_type} nulls={column.null_count}")
+        else:
+            raise PageError(f"the Rust example has a print this check cannot replay: {step.kind}")
     return "\n".join(lines)
 
 
@@ -302,7 +381,8 @@ def differences(page: Page, run: Run) -> list[str]:
 
     def differ(kind: str, shown: str, expected: str) -> None:
         if shown != expected:
-            found.append(f"{kind}: page shows {shown!r}, the run shows {expected!r}")
+            hint = f" (edit {PAGE.as_posix()})" if kind == "version" else ""
+            found.append(f"{kind}: page shows {shown!r}, the run shows {expected!r}{hint}")
 
     for shown in page.versions:
         differ("version", shown, run.version)
@@ -326,7 +406,7 @@ def differences(page: Page, run: Run) -> list[str]:
 
     try:
         differ("python-output", page.python_output, python_output(page, run))
-        differ("rust-output", page.rust_output, rust_output(run))
+        differ("rust-output", page.rust_output, rust_output(page, run))
     except PageError as exc:
         found.append(str(exc))
     return found
