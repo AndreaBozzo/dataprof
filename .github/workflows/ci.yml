@@ -427,6 +427,12 @@ jobs:
           ${{ matrix.venv_python }} -m pip install --upgrade pip
           ${{ matrix.venv_python }} -m pip install --no-index --find-links dist dataprof
 
+      - name: Check the project site against this wheel
+        # The marked figures on site/index.html are compared with a profile of
+        # site/assets/orders.csv. This interpreter is the wheel installed above.
+        run: |
+          "$PWD/${{ matrix.venv_python }}" .github/scripts/check_site_quickstart.py
+
       - name: Run acceptance snippets
         # Run from outside the repo so `import dataprof` cannot resolve to python/.
         # The commit the wheel must name is the one checked out, which on a pull

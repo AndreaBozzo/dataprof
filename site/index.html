@@ -61,9 +61,9 @@
         <table aria-label="Column types and null percentages">
           <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nulls</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><code>order_id</code></th><td>integer</td><td>0%</td></tr>
-            <tr><th scope="row"><code>amount</code></th><td>integer</td><td>0%</td></tr>
-            <tr><th scope="row"><code>region</code></th><td>string</td><td class="null-gap">25%</td></tr>
+            <tr><th scope="row"><code>order_id</code></th><td>integer</td><td data-site-figure="null-percent" data-site-column="order_id">0%</td></tr>
+            <tr><th scope="row"><code>amount</code></th><td>integer</td><td data-site-figure="null-percent" data-site-column="amount">0%</td></tr>
+            <tr><th scope="row"><code>region</code></th><td>string</td><td class="null-gap" data-site-figure="null-percent" data-site-column="region">25%</td></tr>
           </tbody>
         </table>
       </div>
@@ -75,10 +75,10 @@
           <g fill="currentColor"><rect x="4" y="31" width="14" height="12" rx="2"/><rect x="25" y="19" width="14" height="24" rx="2"/><rect x="46" y="7" width="14" height="36" rx="2"/><rect x="67" y="31" width="14" height="12" rx="2"/><rect x="109" y="31" width="14" height="12" rx="2"/></g>
         </svg>
       </div>
-      <div class="profile-score"><p>Quality score<strong>93.19 <small>/ 100</small></strong></p><span class="pill gate-fail">Gate: fail</span></div>
+      <div class="profile-score"><p>Quality score<strong><span data-site-figure="quality-score">93.19</span> <small>/ 100</small></strong></p><span class="pill gate-fail">Gate: <span data-site-figure="verdict">fail</span></span></div>
       <figcaption>
         <p><strong>Why it fails:</strong> <code>region</code> has 2 missing cells out of 8, above the 20% null limit. The score meets the minimum of 90.</p>
-        <p>Default analysis of <a href="assets/orders.csv" download>this CSV</a> with dataprof 0.14.0. The report also flags the small sample size.</p>
+        <p>Default analysis of <a href="assets/orders.csv" download>this CSV</a> with dataprof <span data-site-figure="version">0.14.0</span>. The report also flags the small sample size.</p>
       </figcaption>
     </figure>
   </section>
@@ -101,7 +101,7 @@
       <div class="example-grid">
         <div class="code-block">
           <div class="code-heading"><span>Python</span><button class="copy-btn" data-copy="example-python" aria-label="Copy Python example">Copy</button></div>
-          <pre tabindex="0" aria-label="Python example, scroll horizontally if needed"><code id="example-python"><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
+          <pre tabindex="0" aria-label="Python example, scroll horizontally if needed"><code id="example-python" data-site-figure="python-example"><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
 
 report = dp.<span class="t-fn">profile</span>(<span class="t-str">"orders.csv"</span>)
 <span class="t-fn">print</span>(report.quality_score)
@@ -114,13 +114,13 @@ result = report.<span class="t-fn">check</span>(
 <span class="t-fn">print</span>(result.verdict)
 report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)</code></pre>
         </div>
-        <div class="example-result"><h4>Output</h4><pre><code id="output-python">93.19
+        <div class="example-result"><h4>Output</h4><pre><code id="output-python" data-site-figure="python-output">93.19
 25.0
-fail</code></pre><p>The score passes. The null check fails: 25% of <code>region</code> is missing.</p><p>The full report is saved to <code>report.json</code>.</p><a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide <span aria-hidden="true">↗</span></a></div>
+fail</code></pre><p>The score passes. The null check fails: <span data-site-figure="null-percent" data-site-column="region">25%</span> of <code>region</code> is missing.</p><p>The full report is saved to <code>report.json</code>.</p><a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide <span aria-hidden="true">↗</span></a></div>
       </div>
       <details class="ci-example"><summary>Use the same check in CI</summary>
-        <div class="install-row"><code id="example-ci">python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"</code><button class="copy-btn" data-copy="example-ci" aria-label="Copy CI command">Copy</button></div>
-        <p class="note">This CSV exits with code 1. Exit codes: 0 pass, 1 fail, 2 inconclusive, 3 argument, policy, input, baseline or output error.</p>
+        <div class="install-row"><code id="example-ci" data-site-figure="ci-command">python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"</code><button class="copy-btn" data-copy="example-ci" aria-label="Copy CI command">Copy</button></div>
+        <p class="note">This CSV exits with code <span data-site-figure="exit-code">1</span>. Exit codes: 0 pass, 1 fail, 2 inconclusive, 3 argument, policy, input, baseline or output error.</p>
       </details>
     </div>
     <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" tabindex="0" hidden>
@@ -153,7 +153,7 @@ fail</code></pre><p>The score passes. The null check fails: 25% of <code>region<
     Ok(())
 }</code></pre>
         </div>
-        <div class="example-result"><h4>Output</h4><pre><code id="output-rust">Rows: 8
+        <div class="example-result"><h4>Output</h4><pre><code id="output-rust" data-site-figure="rust-output">Rows: 8
 Quality: 93.19
 order_id Integer nulls=0
 amount Integer nulls=0
