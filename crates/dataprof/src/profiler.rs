@@ -605,7 +605,12 @@ impl Profiler {
     }
 
     /// The format a path is read as: the `.format()` override, else what its
-    /// extension says. Every path-taking entry point asks here.
+    /// extension says.
+    ///
+    /// Path-taking entry points ask here, except [`Self::infer_schema`],
+    /// [`Self::quick_row_count`], and [`Self::analyze_structure`]. Those three
+    /// branch on `format_override` themselves, so a `.format()` that repeats
+    /// the extension stays a selection (#1356).
     fn resolve_format(&self, path: &Path) -> FileFormat {
         self.config
             .format_override

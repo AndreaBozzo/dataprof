@@ -226,16 +226,19 @@ fn suggestion_of(result: Result<(), DataProfilerError>) -> String {
         .unwrap_or_default()
 }
 
-/// `--format` on a path that already ends in `.parquet` overrode the
-/// extension. The hint says so and names `--format parquet`; it does not tell
-/// the caller to add the extension the file has (#1356).
+/// An explicit text format on a path that already ends in `.parquet` overrode
+/// the extension. The hint says so and names the command line, Rust, and
+/// Python; it does not tell the caller to add the extension the file has
+/// (#1356).
 #[test]
 fn an_explicit_text_format_on_a_parquet_path_names_the_override() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("data.parquet");
     std::fs::write(&path, parquet_bytes()).unwrap();
-    let overridden = "The format was overridden and set to JSON; select `--format parquet`, \
-                      or leave the format out to use the `.parquet` extension.";
+    let overridden = "The format was overridden and set to JSON. Select Parquet (`--format parquet` \
+                      on the command line, `.format(FileFormat::Parquet)` in Rust, \
+                      `format=\"parquet\"` in Python), or leave the format out to use the \
+                      `.parquet` extension.";
 
     let read_as_json = |run: fn(&Path) -> Result<(), DataProfilerError>| suggestion_of(run(&path));
     assert_eq!(
@@ -278,21 +281,23 @@ fn an_explicit_text_format_on_a_parquet_path_names_the_override() {
                 .analyze_file(&upper)
                 .map(drop)
         ),
-        "The format was overridden and set to CSV; select `--format parquet`, \
+        "The format was overridden and set to CSV. Select Parquet (`--format parquet` on the \
+         command line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python), \
          or leave the format out to use the `.parquet` extension."
     );
 
     // A direct text reader has no format override to name. The extension is
-    // still not suggested again.
+    // still not suggested again, and the hint still names each front end.
+    let unnamed = "The format was overridden. Select Parquet (`--format parquet` on the command \
+                   line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in \
+                   Python), or leave the format out to use the `.parquet` extension.";
     assert_eq!(
         suggestion_of(analyze_csv_file(&path, &CsvParserConfig::default()).map(drop)),
-        "The format was overridden. Select `--format parquet`, or leave the \
-         format out to use the `.parquet` extension."
+        unnamed
     );
     assert_eq!(
         suggestion_of(analyze_json_file(&path, &JsonParserConfig::default()).map(drop)),
-        "The format was overridden. Select `--format parquet`, or leave the \
-         format out to use the `.parquet` extension."
+        unnamed
     );
 }
 
@@ -312,18 +317,15 @@ fn an_explicit_text_format_on_a_misnamed_parquet_file_keeps_the_extension_hint()
     assert_eq!(
         suggestion,
         "The format was set to JSON. Read it as Parquet: give it a `.parquet` extension, or \
-         select `--format parquet`."
-    );
-    assert!(
-        !suggestion.contains(".format(FileFormat::Parquet)"),
-        "{suggestion}"
+         select Parquet (`--format parquet` on the command line, `.format(FileFormat::Parquet)` \
+         in Rust, `format=\"parquet\"` in Python)."
     );
 }
 
 /// Selecting the format the extension already names is still a selection.
 ///
-/// `export.csv` holding Parquet bytes, read as CSV, names CSV and
-/// `--format parquet` on every route. Leaving the format to the extension
+/// `export.csv` holding Parquet bytes, read as CSV, names CSV and how to
+/// select Parquet on each front end. Leaving the format to the extension
 /// keeps the Rust and Python spellings (#1356).
 #[test]
 fn an_explicit_format_that_matches_the_extension_is_still_named() {
@@ -331,7 +333,8 @@ fn an_explicit_format_that_matches_the_extension_is_still_named() {
     let path = dir.path().join("export.csv");
     std::fs::write(&path, parquet_bytes()).unwrap();
     let named = "The format was set to CSV. Read it as Parquet: give it a `.parquet` extension, or \
-                 select `--format parquet`.";
+                 select Parquet (`--format parquet` on the command line, \
+                 `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python).";
     let inferred = "Read it as Parquet: give it a `.parquet` extension, or select the format \
                     (`.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python).";
 
@@ -397,7 +400,8 @@ fn an_explicit_text_format_on_a_parquet_path_names_the_override_on_the_async_rou
     );
     assert_eq!(
         suggestion,
-        "The format was overridden and set to JSON; select `--format parquet`, \
+        "The format was overridden and set to JSON. Select Parquet (`--format parquet` on the \
+         command line, `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python), \
          or leave the format out to use the `.parquet` extension."
     );
 }

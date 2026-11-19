@@ -126,16 +126,17 @@ def test_a_misnamed_parquet_file_profiles_once_the_format_is_selected(tmp_path: 
 
 
 _OVERRIDDEN_PARQUET = (
-    "The format was overridden and set to JSON; select `--format parquet`, "
-    "or leave the format out to use the `.parquet` extension."
+    "The format was overridden and set to JSON. Select Parquet "
+    "(`--format parquet` on the command line, `.format(FileFormat::Parquet)` in Rust, "
+    '`format="parquet"` in Python), or leave the format out to use the `.parquet` extension.'
 )
 
 
 def test_an_explicit_text_format_on_a_parquet_path_names_the_override(tmp_path: Path) -> None:
-    """``--format`` on a path that already ends in ``.parquet`` overrode it.
+    """An explicit text format on a path that already ends in ``.parquet`` overrode it.
 
-    The hint names ``--format parquet`` and does not tell the caller to add
-    the extension the file already has (#1356).
+    The hint names the command line, Rust, and Python, and does not tell the
+    caller to add the extension the file already has (#1356).
     """
     path = tmp_path / "data.parquet"
     path.write_bytes(_parquet())
@@ -144,8 +145,6 @@ def test_an_explicit_text_format_on_a_parquet_path_names_the_override(tmp_path: 
     message = str(excinfo.value)
     assert _OVERRIDDEN_PARQUET in message
     assert "give it a `.parquet` extension" not in message
-    assert ".format(FileFormat::Parquet)" not in message
-    assert 'format="parquet"' not in message
 
     upper = tmp_path / "DATA.PARQUET"
     upper.write_bytes(_parquet())
@@ -161,6 +160,8 @@ def test_an_explicit_text_format_on_a_parquet_path_names_the_override(tmp_path: 
     assert "The format was set to JSON." in other_message
     assert "give it a `.parquet` extension" in other_message
     assert "--format parquet" in other_message
+    assert ".format(FileFormat::Parquet)" in other_message
+    assert 'format="parquet"' in other_message
 
 
 def test_check_names_the_format_override_for_a_parquet_path(tmp_path: Path) -> None:

@@ -176,29 +176,38 @@ fn format_label(format: &FileFormat) -> String {
     }
 }
 
+/// Spellings for selecting Parquet. The core error is one string for the
+/// command line, Rust, and Python, so it names all three (#1356).
+#[cfg(feature = "parquet")]
+const PARQUET_ON_EACH_FRONT_END: &str = "`--format parquet` on the command line, \
+    `.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python";
+
 /// How to read a file whose bytes are Parquet.
 ///
 /// A path that already ends in `.parquet` reached a text reader only because a
 /// format was selected over that extension, so the hint says the selection was
-/// overridden and names `--format parquet`. It tells the caller to give the
-/// file a `.parquet` extension only when the path does not have one (#1356).
+/// overridden and names how to select Parquet on each front end. It tells the
+/// caller to give the file a `.parquet` extension only when the path does not
+/// have one (#1356).
 #[cfg(feature = "parquet")]
 fn parquet_suggestion(path: &str, explicit_format: Option<&FileFormat>) -> String {
     let selected = explicit_format.filter(|format| !matches!(format, FileFormat::Parquet));
     let already_parquet = has_parquet_extension(path);
     match (already_parquet, selected) {
         (true, Some(format)) => format!(
-            "The format was overridden and set to {}; select `--format parquet`, or leave the \
-             format out to use the `.parquet` extension.",
-            format_label(format)
+            "The format was overridden and set to {label}. Select Parquet \
+             ({PARQUET_ON_EACH_FRONT_END}), or leave the format out to use the `.parquet` \
+             extension.",
+            label = format_label(format),
         ),
-        (true, None) => "The format was overridden. Select `--format parquet`, or leave the \
-                         format out to use the `.parquet` extension."
-            .to_string(),
+        (true, None) => format!(
+            "The format was overridden. Select Parquet ({PARQUET_ON_EACH_FRONT_END}), or leave \
+             the format out to use the `.parquet` extension."
+        ),
         (false, Some(format)) => format!(
-            "The format was set to {}. Read it as Parquet: give it a `.parquet` extension, or \
-             select `--format parquet`.",
-            format_label(format)
+            "The format was set to {label}. Read it as Parquet: give it a `.parquet` extension, \
+             or select Parquet ({PARQUET_ON_EACH_FRONT_END}).",
+            label = format_label(format),
         ),
         (false, None) => {
             "Read it as Parquet: give it a `.parquet` extension, or select the format \
