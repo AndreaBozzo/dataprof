@@ -1,0 +1,62 @@
+name: First PR limit
+
+# Until a contributor's first pull request merges here, they can have one open
+# pull request. A newer one is closed with a comment that names the one kept
+# open. After a first merge, the repository's own pull request limit applies
+# (Settings, Moderation options, Interaction limits). See "Contributions and AI
+# tools" in docs/CONTRIBUTING.md.
+#
+# `pull_request_target` lets the job comment on and close a pull request from a
+# fork. It runs the base repository's copy of this file, never checks out or
+# runs pull request code, and passes event values to the shell through `env`.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: first-pr-limit-${{ github.event.pull_request.user.login }}
+  cancel-in-progress: false
+
+jobs:
+  limit:
+    name: One open PR before a first merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      !contains(github.event.pull_request.labels.*.name, 'pr limit: exempt')
+    steps:
+      - name: Close pull requests past the first open one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          merged=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state merged --limit 1 --json number --jq 'length')
+          if [ "$merged" -gt 0 ]; then
+            echo "$AUTHOR has a merged pull request; the repository limit applies."
+            exit 0
+          fi
+          # The REST list, not search: search can miss the pull request that
+          # was opened a moment ago.
+          open=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.user.login == env.AUTHOR) | select([.labels[].name] | index("pr limit: exempt") | not) | .number' \
+            | sort -n | tr '\n' ' ')
+          read -r -a numbers <<< "$open"
+          if [ "${#numbers[@]}" -le 1 ]; then
+            echo "$AUTHOR has ${#numbers[@]} open pull request(s); nothing to do."
+            exit 0
+          fi
+          kept=${numbers[0]}
+          for number in "${numbers[@]:1}"; do
+            body="Thanks for the pull request. Until a first pull request of yours merges here, one can be open at a time, so this one was closed. #$kept stays open. Once it merges, you can open a new pull request from this branch. See [Contributions and AI tools](https://github.com/$REPO/blob/HEAD/docs/CONTRIBUTING.md#contributions-and-ai-tools)."
+            gh pr close "$number" --repo "$REPO" --comment "$body"
+            echo "closed #$number, kept #$kept"
+          done

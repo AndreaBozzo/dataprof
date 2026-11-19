@@ -5,6 +5,14 @@
 
 **Related issue:** Closes #
 
+## Author
+
+<!-- See "Contributions and AI tools" in docs/CONTRIBUTING.md. -->
+
+- [ ] The issue is assigned to me, or a maintainer asked for this PR.
+- [ ] I have read every line of this PR, can explain each change, and will answer the review myself.
+- **AI tools used, and for what:** none / ...
+
 ## Acceptance criteria
 
 <!-- One line per acceptance criterion of the issue: where it is met (the file,
