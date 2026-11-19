@@ -552,8 +552,13 @@ impl Profiler {
     /// their values decide (#693).
     pub fn infer_schema<P: AsRef<Path>>(&self, path: P) -> Result<SchemaResult, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::infer_schema_with_format(path, format)
+        // `.format()` is a selection even when it repeats the extension.
+        // `infer_schema_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::infer_schema_with_format(path, format),
+            None => partial::infer_schema(path),
+        }
     }
 
     /// Quick row count (exact or estimated) for a file.
@@ -565,8 +570,13 @@ impl Profiler {
         path: P,
     ) -> Result<RowCountEstimate, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::quick_row_count_with_format(path, format)
+        // `.format()` is a selection even when it repeats the extension.
+        // `quick_row_count_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::quick_row_count_with_format(path, format),
+            None => partial::quick_row_count(path),
+        }
     }
 
     /// Analyze file structure with a bounded, lightweight pass.
@@ -580,8 +590,13 @@ impl Profiler {
         max_rows: Option<usize>,
     ) -> Result<StructureReport, DataProfilerError> {
         let path = path.as_ref();
-        let format = self.resolve_format(path);
-        partial::analyze_structure_with_format(path, format, max_rows)
+        // `.format()` is a selection even when it repeats the extension.
+        // `analyze_structure_with_format` for an inferred read would name that
+        // format (#1356).
+        match self.config.format_override.clone() {
+            Some(format) => partial::analyze_structure_with_format(path, format, max_rows),
+            None => partial::analyze_structure(path, max_rows),
+        }
     }
 
     /// Detect file format from extension

@@ -245,8 +245,7 @@ fn an_explicit_text_format_on_a_parquet_path_names_the_override() {
             .map(drop)),
         overridden
     );
-    // The partial routes share the hint: the format they were given is not
-    // the one the extension names.
+    // The partial routes name the same selection.
     assert_eq!(
         read_as_json(|p| Profiler::new()
             .format(FileFormat::Json)
@@ -318,6 +317,69 @@ fn an_explicit_text_format_on_a_misnamed_parquet_file_keeps_the_extension_hint()
     assert!(
         !suggestion.contains(".format(FileFormat::Parquet)"),
         "{suggestion}"
+    );
+}
+
+/// Selecting the format the extension already names is still a selection.
+///
+/// `export.csv` holding Parquet bytes, read as CSV, names CSV and
+/// `--format parquet` on every route. Leaving the format to the extension
+/// keeps the Rust and Python spellings (#1356).
+#[test]
+fn an_explicit_format_that_matches_the_extension_is_still_named() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("export.csv");
+    std::fs::write(&path, parquet_bytes()).unwrap();
+    let named = "The format was set to CSV. Read it as Parquet: give it a `.parquet` extension, or \
+                 select `--format parquet`.";
+    let inferred = "Read it as Parquet: give it a `.parquet` extension, or select the format \
+                    (`.format(FileFormat::Parquet)` in Rust, `format=\"parquet\"` in Python).";
+
+    let hint = |run: fn(&Path) -> Result<(), DataProfilerError>| suggestion_of(run(&path));
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .analyze_file(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .infer_schema(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .quick_row_count(p)
+            .map(drop)),
+        named
+    );
+    assert_eq!(
+        hint(|p| Profiler::new()
+            .format(FileFormat::Csv)
+            .analyze_structure(p, None)
+            .map(drop)),
+        named
+    );
+
+    assert_eq!(
+        hint(|p| Profiler::new().analyze_file(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().infer_schema(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().quick_row_count(p).map(drop)),
+        inferred
+    );
+    assert_eq!(
+        hint(|p| Profiler::new().analyze_structure(p, None).map(drop)),
+        inferred
     );
 }
 
