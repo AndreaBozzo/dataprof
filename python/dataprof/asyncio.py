@@ -78,8 +78,12 @@ def _config_from_keywords(options: dict[str, _Any]) -> _ProfilerConfig | None:
     defaults, so a call that passes none of the others still builds no config.
     Unknown names never reach this function: the profile signatures list the
     keywords, and the interpreter suggests a misspelling the way ``profile()``
-    does.
+    does. A ``jsonl_on_error`` other than ``skip`` or ``strict`` raises the
+    same ``ValueError`` as :func:`dataprof.profile_file`.
     """
+    policy = options.get("jsonl_on_error", "skip")
+    if policy not in ("skip", "strict"):
+        raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {policy!r}.")
     _check_profile_options(options)
     provided: dict[str, _Any] = {}
     for name, value in options.items():

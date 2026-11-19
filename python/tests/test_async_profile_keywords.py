@@ -89,6 +89,12 @@ def _error(call: Callable[[], object]) -> str:
     return str(caught.value)
 
 
+def _value_error(call: Callable[[], object]) -> str:
+    with pytest.raises(ValueError) as caught:
+        call()
+    return str(caught.value)
+
+
 def test_a_misspelled_keyword_raises_the_sync_suggestion() -> None:
     """A typo raises TypeError with the suggestion ``profile()`` gives."""
     dataprof = pytest.importorskip("dataprof")
@@ -133,6 +139,22 @@ def test_a_misspelled_keyword_raises_the_sync_suggestion() -> None:
         message = _error(call)
         assert "unexpected keyword argument 'not_an_option'" in message
         assert _suggestion(message) == _suggestion(sync_far)
+
+
+def test_a_bad_jsonl_policy_matches_profile_file() -> None:
+    """``Skip`` raises the same ValueError ``profile_file`` raises."""
+    dataprof = pytest.importorskip("dataprof")
+    from dataprof.asyncio import profile_bytes, profile_file, profile_url
+
+    sync = _value_error(lambda: dataprof.profile_file("missing.csv", jsonl_on_error="Skip"))
+    assert sync == "jsonl_on_error must be 'skip' or 'strict', got 'Skip'."
+    calls = (
+        lambda: asyncio.run(profile_file("missing.csv", jsonl_on_error="Skip")),
+        lambda: asyncio.run(profile_bytes(b"id\n1\n", format="csv", jsonl_on_error="Skip")),
+        lambda: asyncio.run(profile_url("http://127.0.0.1:9/x.csv", jsonl_on_error="Skip")),
+    )
+    for call in calls:
+        assert _value_error(call) == sync
 
 
 def test_async_profile_keywords_match_profile_file() -> None:
