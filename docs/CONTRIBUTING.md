@@ -380,6 +380,12 @@ pull request, with or without them:
 - **No autonomous agents.** A pull request, or a reply to a review, has to come
   from a person. One opened or answered by an agent acting on its own is
   closed.
+- **Sign off every commit.** `git commit -s` adds a `Signed-off-by:` line with
+  your name and email. It certifies the
+  [Developer Certificate of Origin](https://developercertificate.org): you
+  have the right to submit the change under the project's licenses. A check
+  fails on a commit without one. To sign off commits already on your branch,
+  run `git rebase --signoff origin/master` and force-push.
 - **Assignment first.** Start once a maintainer has assigned the issue to you
   (see [Picking an Issue](#picking-an-issue)).
 - **One open pull request until your first merges.** Until a pull request of

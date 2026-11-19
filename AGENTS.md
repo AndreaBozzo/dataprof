@@ -95,7 +95,9 @@ change; run what matches the change and list the commands in the PR body.
 
 If you are an agent helping someone who is not a maintainer, the person opens
 the pull request and answers its review; an agent acting on its own may not.
-Work only on an issue assigned to that person. In the template's Author section,
+Work only on an issue assigned to that person. Commit with
+`git commit -s`, so each commit carries their `Signed-off-by:` line; the agent
+never signs off in its own name. In the template's Author section,
 name the tools used and what for. Until their first pull request
 merges, they can have one open. See
 [Contributions and AI tools](docs/CONTRIBUTING.md#contributions-and-ai-tools).

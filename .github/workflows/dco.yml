@@ -1,0 +1,58 @@
+name: DCO
+
+# Every commit in a pull request from an outside contributor carries a
+# `Signed-off-by:` line with its author's email: the Developer Certificate of
+# Origin (https://developercertificate.org). See "Contributions and AI tools"
+# in docs/CONTRIBUTING.md. Merge commits are not checked.
+#
+# Plain `pull_request`: the job only reads the commit list through the API, so
+# the read-only token a fork gets is enough. It never checks out the code.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signoff:
+    name: Signed-off-by on every commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+    steps:
+      - name: Check each commit's sign-off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # A sign-off counts when its email is the commit author's, compared
+          # without case. Each output line is a commit that has none.
+          missing=$(gh api --paginate "repos/$REPO/pulls/$NUMBER/commits?per_page=100" --jq '
+            .[]
+            | select((.parents | length) == 1)
+            | (.commit.author.email | ascii_downcase) as $email
+            | select([.commit.message | scan("(?m)^Signed-off-by: .*<([^>]+)>\\s*$") | .[0] | ascii_downcase] | index($email) | not)
+            | "\(.sha[0:12]) \(.commit.author.email): \(.commit.message | split("\n")[0])"')
+          if [ -z "$missing" ]; then
+            echo "Every commit is signed off."
+            exit 0
+          fi
+          echo "These commits have no Signed-off-by line with their author's email:"
+          echo "$missing"
+          echo
+          echo "Sign them off and force-push the branch:"
+          echo "  git rebase --signoff origin/master"
+          echo "  git push --force-with-lease"
+          echo "Use 'git commit -s' for new commits."
+          exit 1
