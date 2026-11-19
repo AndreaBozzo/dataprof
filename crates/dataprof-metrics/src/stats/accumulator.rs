@@ -1192,6 +1192,11 @@ fn pow10(exponent: u32) -> Option<i128> {
 /// `value × 10^exponent`, or `None` past `i128`. Factors below 2^63 multiply
 /// without the overflow check, a library call for `i128`.
 fn scale_up(value: i128, exponent: u32) -> Option<i128> {
+    if value == 0 {
+        // Zero times any power of ten is zero, even past the `POW10` table
+        // (a scale-0 zero aligned with a scale-39 decimal, #1376).
+        return Some(0);
+    }
     if exponent == 0 {
         return Some(value);
     }
@@ -2223,6 +2228,31 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// A zero has scale 0, so aligning it with a scale-39 decimal asks
+    /// `scale_up` for `10^39`, past the end of `POW10`. Zero times any power
+    /// of ten is still zero, so scaling it up must succeed (#1376).
+    #[test]
+    fn scale_up_keeps_zero_past_the_pow10_table() {
+        assert_eq!(scale_up(0, 0), Some(0));
+        assert_eq!(scale_up(0, 39), Some(0));
+        assert_eq!(scale_up(0, 100), Some(0));
+        // A non-zero value past the table still has no representable factor.
+        assert_eq!(scale_up(1, 39), None);
+    }
+
+    /// The exact median of `0` and `1e-39` is `5e-40`. The zero is scaled up
+    /// to scale 39 before interpolating, which must not be lost when `10^39`
+    /// is past `POW10` (#1376).
+    #[test]
+    fn median_of_zero_and_a_scale_39_decimal_is_kept() {
+        let zero = ExactDecimal::from_text("0").unwrap();
+        let tiny = ExactDecimal::from_text("1e-39").unwrap();
+        assert_eq!(
+            zero.interpolated(tiny, 2).as_deref(),
+            Some("0.0000000000000000000000000000000000000005")
+        );
     }
 
     /// The smallest and largest value as given, past what `min` and `max`
