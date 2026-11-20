@@ -123,10 +123,19 @@ def _wrong_routes(tmp_path: Path, limit: int | None, approximate: bool) -> list[
             wrong.append((name, "approximate", uniqueness))
         if not approximate and uniqueness["duplicate_rows"] != DUPLICATES:
             wrong.append((name, "count", uniqueness["duplicate_rows"]))
-        # An estimate decides nothing; an exact count fails on what it saw.
-        status = report.check(max_duplicate_rows=0).checks[0].status
-        if status != ("not_evaluated" if approximate else "failed"):
-            wrong.append((name, "gate", status))
+        gate = report.check(max_duplicate_rows=0)
+        (check,) = gate.checks
+        expected = (
+            ("not_evaluated", {"reason": "approximate_count"}) if approximate else ("failed", None)
+        )
+        if (check.status, check.reason) != expected:
+            wrong.append((name, "gate", check.status, check.reason))
+        if gate.evidence != {"coverage": "complete"} or check.evidence != gate.evidence:
+            wrong.append((name, "evidence", gate.evidence, check.evidence))
+        document_json = report.to_json()
+        loaded = dp.ProfileReport.from_json(document_json)
+        if loaded.check(max_duplicate_rows=0).checks != gate.checks:
+            wrong.append((name, "gate differs after document round trip"))
         # The estimate is bounded, so requirements its bounds settle still
         # pass. The duplicate floor keeps uniqueness above 32 here: 1,001 of
         # 3,040 rows are distinct.
@@ -136,7 +145,7 @@ def _wrong_routes(tmp_path: Path, limit: int | None, approximate: bool) -> list[
         if approximate and report.quality_score_bounds is None:
             wrong.append((name, "no score bounds for the estimate"))
         summary = report.to_dict()["quality"]["uniqueness"].get("duplicate_rows_exact_limit")
-        document = json.loads(report.to_json())["quality"]["metrics"]["uniqueness"].get(
+        document = json.loads(document_json)["quality"]["metrics"]["uniqueness"].get(
             "duplicate_rows_exact_limit"
         )
         restored = dp.ProfileReport.from_dict(report.to_dict()).to_dict()
@@ -236,7 +245,12 @@ def test_the_check_command_takes_the_limit(
 
     assert check_main([*argv, "--duplicate-rows-exact-limit", str(LOW_LIMIT)]) == 2
     undecided = json.loads(capsys.readouterr().out)
-    assert "duplicate_rows_exact_limit" in undecided["checks"][0]["message"]
+    assert undecided["verdict"] == "inconclusive"
+    assert undecided["evidence"] == {"coverage": "complete"}
+    (check,) = undecided["checks"]
+    assert (check["reason"], check["evidence"]) == ("approximate_count", undecided["evidence"])
+    assert "gap" not in check
+    assert "duplicate_rows_exact_limit" in check["message"]
 
     assert check_main([*argv, "--duplicate-rows-exact-limit", str(HIGH_LIMIT)]) == 1
     failed = json.loads(capsys.readouterr().out)

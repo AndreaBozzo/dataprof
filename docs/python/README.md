@@ -1212,8 +1212,9 @@ estimates rather than samples. They are bounded with certainty instead of at
 the true count cannot go under. Uniqueness then gets an interval from those
 floors, wide on a source far past a million rows (the floor is a million of
 its rows), and the overall score is bounded again. A `max_duplicate_rows`
-requirement on an estimated count stays unevaluated, since the estimate can
-neither witness duplicates nor rule them out.
+requirement with full-source scope stays unevaluated with reason
+`approximate_count` when the count is estimated. The check's `evidence`
+describes the coverage of the scan.
 
 To let `max_duplicate_rows` decide on a larger source, raise the exact limit
 when profiling: `profile(path, duplicate_rows_exact_limit=30_000_000)`, or

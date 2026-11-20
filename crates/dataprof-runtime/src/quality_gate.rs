@@ -672,11 +672,9 @@ pub enum NotEvaluated {
     /// assess the metric, did not profile the column, or read no values for
     /// it.
     NotInBaseline,
-    /// A distinct count the requirement reads is an estimate on at least one
-    /// side, because the exact set of values spilled into its sketch, or the
-    /// side does not record whether it is exact. An estimate falling is not a
-    /// column collapsing, and an estimate below the value count witnesses no
-    /// repeated value, so the requirement decides on exact counts only.
+    /// The requirement needs an exact count. A duplicate-row or distinct
+    /// count spilled into a sketch, or a report did not record whether its
+    /// distinct count is exact.
     ApproximateCount,
     /// The two reports profiled different column sets, and the requirement
     /// is about a dataset-level score, whose subject is the column set. The
@@ -2268,10 +2266,18 @@ impl QualityPolicy {
         let observed = uniqueness.duplicate_rows;
         let exceeded = observed > max;
         let estimated = uniqueness.duplicate_rows_approximate;
+        if estimated {
+            // The tracker fed every scanned row into the sketch. The quality
+            // score groups estimates with samples, but coverage follows the scan.
+            check.evidence = scan;
+        }
         check.observed = Some(MetricValue::Count(observed));
         check.status = match (self.scope, check.evidence.gap()) {
+            (PolicyScope::FullSource, _) if estimated => {
+                CheckStatus::NotEvaluated(NotEvaluated::ApproximateCount)
+            }
             // A witnessed violation is a decision, whatever the scan missed.
-            (PolicyScope::FullSource, Some(_)) if exceeded && !estimated => CheckStatus::Failed,
+            (PolicyScope::FullSource, Some(_)) if exceeded => CheckStatus::Failed,
             (PolicyScope::FullSource, Some(gap)) => {
                 CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap })
             }
@@ -5600,29 +5606,41 @@ mod tests {
     /// nothing and settles neither direction.
     #[test]
     fn an_estimated_duplicate_count_settles_neither_direction() {
-        let result = QualityPolicy::new()
-            .max_duplicate_rows(0)
-            .evaluate(&duplicate_report(2, true))
-            .unwrap();
+        for (count, max) in [(2, 0), (0, 0), (0, 1)] {
+            let report = duplicate_report(count, true);
+            let policy = QualityPolicy::new().max_duplicate_rows(max);
+            let result = policy.clone().evaluate(&report).unwrap();
 
-        assert_eq!(result.verdict, Verdict::Inconclusive);
-        let check = check_for(&result, CheckCode::MaxDuplicateRows);
-        assert_eq!(
-            check.not_evaluated(),
-            Some(&NotEvaluated::EvidenceIncomplete {
-                gap: EvidenceGap::Truncated
-            })
-        );
-        // The gap is the estimate, not unread rows: the message said "the rows
-        // that were not read" on a source read to the end (#819). It names
-        // the setting that would count every row exactly (#1292); this
-        // report records no limit, as one written before 0.14.
-        assert_eq!(
-            check.message,
-            "the duplicate-row count is an estimate, which can neither witness \
-             duplicates above the allowance nor rule them out. A \
-             duplicate_rows_exact_limit of 5, the rows checked, counts every row exactly"
-        );
+            assert_eq!(result.verdict, Verdict::Inconclusive);
+            let check = check_for(&result, CheckCode::MaxDuplicateRows);
+            assert_eq!(check.not_evaluated(), Some(&NotEvaluated::ApproximateCount));
+            assert_eq!(
+                check.evidence,
+                Evidence::Incomplete {
+                    reason: EvidenceGap::Truncated
+                }
+            );
+            assert_eq!(check.observed, Some(MetricValue::Count(count)));
+            // An older report without a recorded limit still names the limit
+            // that would count every scanned row exactly (#1292).
+            assert_eq!(
+                check.message,
+                "the duplicate-row count is an estimate, which can neither witness \
+                 duplicates above the allowance nor rule them out. A \
+                 duplicate_rows_exact_limit of 5, the rows checked, counts every row exactly"
+            );
+
+            let observed = policy
+                .scope(PolicyScope::Observed)
+                .evaluate(&report)
+                .unwrap();
+            let expected = if count > max {
+                Verdict::Fail
+            } else {
+                Verdict::Pass
+            };
+            assert_eq!(observed.verdict, expected);
+        }
     }
 
     /// One null in 20,001 rows shows as a 0.00% null percentage, so a zero
