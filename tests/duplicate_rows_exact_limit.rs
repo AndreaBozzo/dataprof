@@ -12,8 +12,8 @@
 use std::io::Write;
 
 use dataprof::{
-    CheckStatus, EngineType, FindingCode, ProfileReport, Profiler, QualityDimension, QualityPolicy,
-    UniquenessMetrics,
+    CheckStatus, EngineType, Evidence, FindingCode, NotEvaluated, ProfileReport, Profiler,
+    QualityDimension, QualityPolicy, UniquenessMetrics,
 };
 use tempfile::NamedTempFile;
 
@@ -166,8 +166,7 @@ fn wrong_routes(limit: Option<usize>, approximate: bool) -> Vec<String> {
         if !approximate && metrics.duplicate_rows != DUPLICATES {
             wrong.push(format!("{label}: {} duplicates", metrics.duplicate_rows));
         }
-        // An estimate is filed as sampled and decides nothing; an exact
-        // count fails the gate on the duplicates it saw.
+        // Score intervals use the sampled component label for estimates too.
         let sampled = report
             .quality
             .as_ref()
@@ -176,21 +175,24 @@ fn wrong_routes(limit: Option<usize>, approximate: bool) -> Vec<String> {
         if sampled.contains(&"duplicate_rows".to_string()) != approximate {
             wrong.push(format!("{label}: sampled {sampled:?}"));
         }
-        let check = QualityPolicy::new()
-            .max_duplicate_rows(0)
-            .evaluate(&report)
-            .unwrap()
-            .checks
-            .remove(0);
+        let policy = QualityPolicy::new().max_duplicate_rows(0);
+        let result = policy.evaluate(&report).unwrap();
+        let check = &result.checks[0];
         let expected = if approximate {
-            check.not_evaluated().is_some()
+            CheckStatus::NotEvaluated(NotEvaluated::ApproximateCount)
         } else {
-            check.status == CheckStatus::Failed
+            CheckStatus::Failed
         };
-        if !expected {
+        if check.status != expected {
             wrong.push(format!(
                 "{label}: gate {:?}: {}",
                 check.status, check.message
+            ));
+        }
+        if result.evidence != Evidence::Complete || check.evidence != Evidence::Complete {
+            wrong.push(format!(
+                "{label}: scan {:?}, gate evidence {:?}",
+                result.evidence, check.evidence
             ));
         }
         // The estimate is bounded, so score requirements its bounds settle
@@ -237,6 +239,10 @@ fn wrong_routes(limit: Option<usize>, approximate: bool) -> Vec<String> {
         let restored: ProfileReport = serde_json::from_value(document).unwrap();
         if uniqueness(&restored).duplicate_rows_exact_limit != Some(recorded) {
             wrong.push(format!("{label}: read back wrong"));
+        }
+        let restored_result = policy.evaluate(&restored).unwrap();
+        if restored_result.checks != result.checks {
+            wrong.push(format!("{label}: gate differs after document round trip"));
         }
     }
     wrong
