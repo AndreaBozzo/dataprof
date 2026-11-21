@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 class QualityCheck:
     """One requirement and what the report said about it."""
@@ -12,7 +12,7 @@ class QualityCheck:
     expected: dict[str, Any]
     scope: str
     evidence: dict[str, Any]
-    status: str
+    status: Literal["passed", "failed", "not_evaluated", "not_applicable"]
     message: str
     column: str | None
     dimension: str | None
@@ -29,7 +29,7 @@ class QualityCheck:
         expected: dict[str, Any],
         scope: str,
         evidence: dict[str, Any],
-        status: str,
+        status: Literal["passed", "failed", "not_evaluated", "not_applicable"],
         message: str,
         column: str | None = ...,
         dimension: str | None = ...,
@@ -54,6 +54,7 @@ class QualityGateResult:
     baseline: dict[str, Any] | None
     generator: dict[str, Any] | None
     source_identity: dict[str, Any] | None
+    baseline_missing: bool
 
     def __init__(
         self,
@@ -64,6 +65,7 @@ class QualityGateResult:
         baseline: dict[str, Any] | None = ...,
         generator: dict[str, Any] | None = ...,
         source_identity: dict[str, Any] | None = ...,
+        baseline_missing: bool = ...,
     ) -> None: ...
     @property
     def passed(self) -> bool: ...
@@ -104,6 +106,7 @@ class _Policy:
         max_date_gap: Mapping[str, int] | None = ...,
         unique_columns: Sequence[str] | None = ...,
         baseline: Any = ...,
+        allow_missing_baseline: bool = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,

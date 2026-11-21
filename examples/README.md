@@ -134,15 +134,13 @@ The same daily drop, now judged against the last report the pipeline accepted
 as well as against absolute thresholds. Absolute limits catch a broken file;
 only a comparison catches a slow slide, such as a key column going from 0% to
 15% empty under a 20% limit. Each run writes `candidate.json` whatever the
-verdict, and only a pass renames it onto `baseline.json`, so a failing or
-inconclusive run leaves the accepted baseline as it was and its own evidence
-beside the verdict.
+verdict. On a pass the checkpoint also replaces `baseline.json` atomically.
 
 Seven drops cover the cases a pipeline meets:
 
 1. a broken first drop, which must not become the baseline;
-2. the first clean drop, judged on absolute rules alone because no baseline
-   exists yet, which creates it;
+2. the first clean drop creates the baseline. The change rules are reported
+   as `not_applicable` and the absolute rules decide the verdict;
 3. a clean drop judged against it;
 4. the slow slide, which fails only the rules about change;
 5. a new column: the score now measures a different column set, so its rule is
@@ -161,14 +159,26 @@ uv run --no-sync python python/examples/baseline_checkpoint.py
 
 #### The same checkpoint as a CI job
 
-Where the baseline lives decides how it is refreshed. In a pipeline that keeps
-its own state, promote the candidate on a pass, as the example does. In a
-repository, keep it at `quality/baseline.json` beside the policy, so that
-changing it is a commit: the job below never writes it. To accept a run,
-download its `candidate.json` and commit it as `quality/baseline.json` in a pull
-request, whose review is the refresh. The first run has no baseline, and a rule
-about change without one is a policy error (exit 3), so the job applies the
-absolute rules alone until the first baseline is committed.
+In a pipeline with persistent state, set `promote` to the baseline path, and a
+pass replaces it as the Python example's rename does. For a baseline kept in a
+repository, the job below
+publishes `accepted.json` only on a pass. To refresh the baseline, download
+that file and commit it as `quality/baseline.json` in a pull request.
+
+Save this policy as `quality/policy.json`. Its change rules apply once the
+first baseline has been committed.
+
+```json
+{
+  "min_rows": 1,
+  "min_quality_score": 85,
+  "max_quality_score_drop": 2,
+  "max_null_percentage_increase": {"*": 5},
+  "forbid_removed_columns": true,
+  "allow_missing_baseline": true,
+  "promote": "accepted.json"
+}
+```
 
 ```yaml
 name: Data quality
@@ -186,19 +196,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - run: python -m pip install dataprof==0.14.0
+      - run: python -m pip install 'dataprof>=0.15.0'
       - run: ./fetch_drop.sh orders.csv  # your extract step
       - name: Check against the accepted baseline
         run: |
-          if [ -f quality/baseline.json ]; then
-            python -m dataprof.check orders.csv --policy quality/policy.json \
-              --baseline quality/baseline.json --max-quality-drop 2 \
-              --max-null-increase '*=5' --forbid-removed-columns \
-              --report candidate.json --json > verdict.json
-          else
-            python -m dataprof.check orders.csv --policy quality/policy.json \
-              --report candidate.json --json > verdict.json
-          fi
+          python -m dataprof.check orders.csv --policy quality/policy.json \
+            --baseline quality/baseline.json --report candidate.json --json > verdict.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -206,6 +209,7 @@ jobs:
           path: |
             verdict.json
             candidate.json
+            accepted.json
 ```
 
 The rules about change need dataprof 0.13 or later, and the row count
@@ -213,9 +217,9 @@ rules `--max-row-drop 10` and `--max-row-growth 10` need 0.14: they fail a drop
 that lost rows but kept every share, such as a truncated extract, and one
 that gained too many, such as a file published twice. A fixed `--min-rows`
 low enough for a quiet day misses both.
-`quality/policy.json` holds the absolute rules, with the same keys as
-`check()`; the example's `ABSOLUTE` dictionary written as JSON is a working
-one. The step exits 0 on a pass, 1 on a fail and 2 when inconclusive, so the job
+`quality/policy.json` holds both kinds of rule, with the same keys as
+`check()`; the example's `POLICY` dictionary written as JSON is a working
+one, with `promote` set to `accepted.json`. The step exits 0 on a pass, 1 on a fail and 2 when inconclusive, so the job
 fails on anything but a pass and still uploads its evidence.
 
 For a full pipeline around the same idea, with dlt loading into DuckDB and a

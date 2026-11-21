@@ -881,6 +881,7 @@ class ProfileReport:
         require_metrics: _Sequence[str] | None = None,
         scope: str = "full_source",
         baseline: ProfileReport | None = None,
+        allow_missing_baseline: bool = False,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
@@ -997,6 +998,8 @@ class ProfileReport:
                 other rules ignore it. It may be loaded from a flat
                 ``to_dict()`` summary, which leaves what it did not record
                 unrecorded.
+            allow_missing_baseline: When True and baseline is None, record change
+                rules as not applicable and let the absolute rules decide the verdict.
             max_quality_score_drop: How many points the overall score may
                 fall below the baseline's, 0-100. Under ``"full_source"``, a
                 score computed over a retained sample is read as its
@@ -1131,6 +1134,7 @@ class ProfileReport:
                 require_metrics=require_metrics,
                 scope=scope,
                 baseline=None if baseline is None else baseline._delta_input(),
+                allow_missing_baseline=allow_missing_baseline,
                 max_quality_score_drop=max_quality_score_drop,
                 max_dimension_score_drops=max_dimension_score_drops,
                 max_null_percentage_increase=max_null_percentage_increase,

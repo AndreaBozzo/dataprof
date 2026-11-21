@@ -68,12 +68,14 @@ python -m dataprof.check orders.csv --min-quality 90 --max-null "*=20"
 
 # Or against the last accepted run: fail if quality drops more than 5 points.
 # A rolling clock lets each run judge its dates against its own day.
-python -m dataprof.check orders.csv --baseline accepted.json --max-quality-drop 5 --timeliness-clock rolling
+python -m dataprof.check orders.csv --min-quality 90 --baseline accepted.json \
+  --allow-missing-baseline --max-quality-drop 5 --timeliness-clock rolling --promote accepted.json
 ```
 
-Keep the candidate report with `--report candidate.json`. Promote it to the
-baseline only on a pass, including the first run, which uses absolute rules
-alone. A changed or unrecorded metric definition can leave a comparison
+`--promote accepted.json` writes the baseline only on a pass.
+`--allow-missing-baseline` lets the same command run before that file exists.
+Keep the full profile for any verdict with `--report candidate.json`.
+A changed or unrecorded metric definition can leave a comparison
 `definition_not_comparable`; inspect the reason and regenerate the baseline
 deliberately. See the [checkpoint recipe](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint).
 

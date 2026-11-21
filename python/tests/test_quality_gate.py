@@ -305,6 +305,7 @@ def test_check_is_evaluated_by_the_runtime_gate(report):
             "require_dimensions": [],
             "scope": "full_source",
             "baseline": None,
+            "allow_missing_baseline": False,
             "max_quality_score_drop": None,
             "max_dimension_score_drops": [],
             "max_null_percentage_increase": [],

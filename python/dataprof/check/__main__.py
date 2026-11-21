@@ -52,6 +52,8 @@ _POLICY_DEFAULTS: dict[str, Any] = {
     "forbid_added_columns": False,
     "forbid_findings": None,
     "timeliness_clock": "fixed",
+    "allow_missing_baseline": False,
+    "promote": None,
 }
 
 
@@ -237,8 +239,8 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
             "In a multi-source run, unreadable sources are reported without stopping the "
             "remaining sources, and files whose format cannot be inferred from the "
             "extension (in a directory or among several sources) are reported as skipped. "
-            "Rules about change need --baseline: a report an earlier run saved with --report "
-            "(single source file only)."
+            "Rules about change need --baseline. With --allow-missing-baseline, they are "
+            "not applicable when that path is absent (single source file only)."
         ),
     )
     parser.add_argument(
@@ -258,7 +260,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--policy",
         type=Path,
         metavar="PATH",
-        help="path to a UTF-8 JSON file of check() keywords; flags replace matching keys",
+        help="path to a UTF-8 JSON policy; flags replace matching keys",
     )
     parser.add_argument(
         "--json",
@@ -279,7 +281,7 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         metavar="VERSION",
         help=(
             "the version of the source being checked (a table snapshot, commit or load ID), "
-            "recorded verbatim in the --report document and QualityGateResult.source_identity"
+            "recorded verbatim in saved reports and QualityGateResult.source_identity"
         ),
     )
     parser.add_argument(
@@ -412,9 +414,20 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         type=Path,
         metavar="PATH",
         help=(
-            "a .json report an earlier run saved (--report or save()) to measure change from "
-            "(single source file only)"
+            "a .json report an earlier run saved to measure change from (single source file only)"
         ),
+    )
+    parser.add_argument(
+        "--allow-missing-baseline",
+        action="store_const",
+        const=True,
+        help="allow an absent --baseline file; only absolute rules decide its verdict",
+    )
+    parser.add_argument(
+        "--promote",
+        type=Path,
+        metavar="PATH",
+        help="atomically save the profile to a .json path only on pass (single source file only)",
     )
     parser.add_argument(
         "--max-quality-drop",
@@ -512,7 +525,7 @@ def _unique_policy_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -> dict[str, Any]:
+def _policy(args: argparse.Namespace) -> dict[str, Any]:
     policy = dict(_POLICY_DEFAULTS)
     if args.policy is not None:
         try:
@@ -536,7 +549,8 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
             raise ValueError(f"policy file {args.policy}: {exc}") from exc
         if not isinstance(document, dict):
             raise ValueError(
-                f"policy file {args.policy} must contain a JSON object of check() keywords"
+                f"policy file {args.policy} must contain a JSON object of check() keywords "
+                "and checkpoint options"
             )
         unknown = document.keys() - policy.keys()
         if unknown:
@@ -580,7 +594,15 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
             not isinstance(names, list) or not all(isinstance(name, str) for name in names)
         ):
             raise ValueError(f"policy file {args.policy}: {key} must be a JSON array of names")
-    _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
+    if not isinstance(policy["allow_missing_baseline"], bool):
+        raise _PolicyFieldError(
+            "allow_missing_baseline", "allow_missing_baseline must be a boolean"
+        )
+    promote = policy["promote"]
+    if promote is not None and not isinstance(promote, Path):
+        if not isinstance(promote, str) or not promote:
+            raise _PolicyFieldError("promote", "promote must be a non-empty path string or null")
+        policy["promote"] = Path(promote)
     return policy
 
 
@@ -705,46 +727,52 @@ def _is_regular_file(path: Path) -> bool:
     return st is not None and stat.S_ISREG(st.st_mode)
 
 
-def _load_policy(
+def _policy_error(
     args: argparse.Namespace,
+    exc: Exception,
+    *,
+    several_sources: bool = False,
+) -> int:
+    message = str(exc)
+    if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
+        # --baseline is refused with several sources, so do not point there.
+        hint = (
+            "check one source at a time with --baseline PATH"
+            if several_sources
+            else "pass --baseline PATH"
+        )
+        message = f"{message}: {hint}"
+    # A value error names the file only when the file supplied that key
+    # and no flag replaced it. A missing baseline is no file's key.
+    from_flag = isinstance(exc, _PolicyFieldError) and (
+        exc.key == "baseline" or getattr(args, exc.key, None) is not None
+    )
+
+    if (
+        not args.json
+        and args.policy is not None
+        and isinstance(exc, _PolicyFieldError)
+        and not from_flag
+    ):
+        message = f"policy file {args.policy}: {message}"
+
+    return _report_error(
+        "policy", message, path=None if from_flag else args.policy, json_output=args.json
+    )
+
+
+def _validate_policy(
+    args: argparse.Namespace,
+    policy: dict[str, Any],
     baseline: dataprof.ProfileReport | None,
     *,
     several_sources: bool = False,
-) -> tuple[dict[str, Any] | None, int | None]:
-    """Validate and load policy configuration, reporting policy errors on failure."""
+) -> int | None:
     try:
-        return _policy(args, baseline), None
+        _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
     except (OSError, ValueError, RuntimeError) as exc:
-        message = str(exc)
-        if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
-            # --baseline is refused with several sources, so do not point there.
-            hint = (
-                "check one source at a time with --baseline PATH"
-                if several_sources
-                else "pass --baseline PATH"
-            )
-            message = f"{message}: {hint}"
-        # A value error names the file only when the file supplied that key
-        # and no flag replaced it. A missing baseline is no file's key.
-        from_flag = isinstance(exc, _PolicyFieldError) and (
-            exc.key == "baseline" or getattr(args, exc.key, None) is not None
-        )
-
-        if (
-            not args.json
-            and args.policy is not None
-            and isinstance(exc, _PolicyFieldError)
-            and not from_flag
-        ):
-            message = f"policy file {args.policy}: {message}"
-
-        code = _report_error(
-            "policy",
-            message,
-            path=None if from_flag else args.policy,
-            json_output=args.json,
-        )
-        return None, code
+        return _policy_error(args, exc, several_sources=several_sources)
+    return None
 
 
 def _multi_summary_lines(
@@ -788,54 +816,86 @@ def _multi_summary_lines(
     return lines
 
 
-def _run_single(parser: _CheckArgumentParser, args: argparse.Namespace, source: Path) -> int:
-    if args.report is not None and args.report.suffix.lower() != ".json":
-        parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
-    if args.report is not None:
-        # Up to Python 3.12, resolve() raises RuntimeError on a symlink loop
-        # even when not strict; report that like any other bad path. The
-        # report is stat'ed here too, so an error reading it (EACCES, say)
-        # is reported against the report and not the path compared with it.
+def _validate_output(
+    parser: _CheckArgumentParser,
+    args: argparse.Namespace,
+    flag: str,
+    path: Path,
+    protected: Sequence[tuple[str, str, Path | None]],
+) -> int | None:
+    if path.suffix.lower() != ".json":
+        parser.error(f"{flag} path must end in .json for a reloadable report: {path}")
+    # Older Python versions raise RuntimeError on a symlink loop in resolve().
+    try:
+        target = path.resolve()
+        target_stat = _stat_if_present(target)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _report_error(
+            "output",
+            f"could not resolve {flag.removeprefix('--')} path {path}: {exc}",
+            path=path,
+            json_output=args.json,
+        )
+    for label, kind, other in protected:
+        if other is None:
+            continue
         try:
-            target = args.report.resolve()
-            target_stat = _stat_if_present(target)
-        except (OSError, RuntimeError) as exc:
+            overwrites = target == other.resolve()
+            if not overwrites and target_stat is not None:
+                other_stat = _stat_if_present(other)
+                overwrites = other_stat is not None and os.path.samestat(target_stat, other_stat)
+        except (OSError, ValueError, RuntimeError) as exc:
             return _report_error(
-                "output",
-                f"could not resolve report path {args.report}: {exc}",
-                path=args.report,
+                kind,
+                f"could not resolve {label} path {other}: {exc}",
+                path=other,
                 json_output=args.json,
             )
-        # A report is written whatever the verdict, so writing it over the
-        # baseline would make a failing run the next run's baseline.
-        for flag, kind, other in (
-            ("source", "input", source),
-            ("--policy", "policy", args.policy),
-            ("--baseline", "baseline", args.baseline),
-        ):
-            if other is None:
-                continue
+        if overwrites:
+            parser.error(f"{flag} would overwrite the {label} file: {path}")
+    return None
+
+
+def _read_baseline(path: Path, *, allow_missing: bool) -> dataprof.ProfileReport | None:
+    try:
+        return dataprof.ProfileReport.load(path)
+    except FileNotFoundError:
+        if allow_missing:
+            # A dangling symlink occupies the path and must remain an error.
             try:
-                other_path = Path(other)
-                overwrites = target == other_path.resolve()
-                if not overwrites and target_stat is not None:
-                    other_stat = _stat_if_present(other_path)
-                    overwrites = other_stat is not None and os.path.samestat(
-                        target_stat, other_stat
-                    )
-            except (OSError, RuntimeError) as exc:
-                return _report_error(
-                    kind,
-                    f"could not resolve {flag} path {other}: {exc}",
-                    path=other,
-                    json_output=args.json,
-                )
-            if overwrites:
-                parser.error(f"--report would overwrite the {flag} file: {args.report}")
+                path.lstat()
+            except FileNotFoundError:
+                return None
+        raise
+
+
+def _run_single(
+    parser: _CheckArgumentParser, args: argparse.Namespace, source: Path, policy: dict[str, Any]
+) -> int:
+    promote: Path | None = policy.pop("promote")
+    allow_missing = policy["allow_missing_baseline"]
+    if allow_missing and args.baseline is None:
+        parser.error("--allow-missing-baseline requires --baseline PATH")
+
+    if promote is not None:
+        error = _validate_output(
+            parser,
+            args,
+            "--promote",
+            promote,
+            (
+                ("source", "input", source),
+                ("--policy", "policy", args.policy),
+                ("--report", "output", args.report),
+            ),
+        )
+        if error is not None:
+            return error
+
     baseline = None
     if args.baseline is not None:
         try:
-            baseline = dataprof.ProfileReport.load(args.baseline)
+            baseline = _read_baseline(args.baseline, allow_missing=allow_missing)
         except (OSError, ValueError, TypeError, RuntimeError) as exc:
             detail = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
             return _report_error(
@@ -844,9 +904,8 @@ def _run_single(parser: _CheckArgumentParser, args: argparse.Namespace, source: 
                 path=args.baseline,
                 json_output=args.json,
             )
-    policy, policy_err = _load_policy(args, baseline)
-    if policy is None:
-        assert policy_err is not None
+    policy_err = _validate_policy(args, policy, baseline)
+    if policy_err is not None:
         return policy_err
     try:
         report = profile_file(
@@ -875,14 +934,18 @@ def _run_single(parser: _CheckArgumentParser, args: argparse.Namespace, source: 
             )
         return _report_error("input", str(exc), path=source, json_output=args.json)
 
-    if args.report is not None:
+    # Save the unconditional report first. A failure there must leave the
+    # promotion target untouched. save() stages next to the target and replaces it.
+    for label, path in (("report", args.report), ("promotion", promote if result.passed else None)):
+        if path is None:
+            continue
         try:
-            report.save(args.report)
+            report.save(path)
         except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
             return _report_error(
                 "output",
-                f"could not write report {args.report}: {exc}",
-                path=args.report,
+                f"could not write {label} {path}: {exc}",
+                path=path,
                 json_output=args.json,
             )
 
@@ -893,14 +956,15 @@ def _run_single(parser: _CheckArgumentParser, args: argparse.Namespace, source: 
     return _EXIT_CODES[result.verdict]
 
 
-def _run_multi(parser: _CheckArgumentParser, args: argparse.Namespace) -> int:
-    if args.baseline is not None:
-        parser.error("--baseline is only supported with a single source file")
-    if args.report is not None:
-        parser.error("--report is only supported with a single source file")
-    policy, policy_err = _load_policy(args, baseline=None, several_sources=True)
-    if policy is None:
-        assert policy_err is not None
+def _run_multi(
+    parser: _CheckArgumentParser, args: argparse.Namespace, policy: dict[str, Any]
+) -> int:
+    if policy.pop("promote") is not None:
+        parser.error("--promote is only supported with a single source file")
+    if policy["allow_missing_baseline"]:
+        parser.error("--allow-missing-baseline is only supported with a single source file")
+    policy_err = _validate_policy(args, policy, baseline=None, several_sources=True)
+    if policy_err is not None:
         return policy_err
 
     items, skipped = _expand_sources(
@@ -974,9 +1038,35 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = _parser(argv)
     args = parser.parse_args(argv)
-    if len(args.sources) == 1 and not _is_directory(args.sources[0]):
-        return _run_single(parser, args, args.sources[0])
-    return _run_multi(parser, args)
+    single = len(args.sources) == 1 and not _is_directory(args.sources[0])
+    if single and args.report is not None:
+        # Validate the unconditional report path against the inputs before
+        # opening any of them, including the policy file.
+        error = _validate_output(
+            parser,
+            args,
+            "--report",
+            args.report,
+            (
+                ("source", "input", args.sources[0]),
+                ("--policy", "policy", args.policy),
+                ("--baseline", "baseline", args.baseline),
+            ),
+        )
+        if error is not None:
+            return error
+    elif not single:
+        for key in ("promote", "allow_missing_baseline", "baseline", "report"):
+            if getattr(args, key) is not None:
+                flag = "--" + key.replace("_", "-")
+                parser.error(f"{flag} is only supported with a single source file")
+    try:
+        policy = _policy(args)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _policy_error(args, exc, several_sources=not single)
+    if single:
+        return _run_single(parser, args, args.sources[0], policy)
+    return _run_multi(parser, args, policy)
 
 
 if __name__ == "__main__":

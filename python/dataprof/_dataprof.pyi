@@ -446,6 +446,7 @@ class ProfileReport:
         require_dimensions: list[str] = ...,
         scope: str = ...,
         baseline: ProfileReport | str | None = ...,
+        allow_missing_baseline: bool = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: list[tuple[str, float]] = ...,
         max_null_percentage_increase: list[tuple[str, float]] = ...,

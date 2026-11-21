@@ -169,6 +169,7 @@ class ProfileReport:
         require_metrics: Sequence[str] | None = ...,
         scope: str = ...,
         baseline: ProfileReport | None = ...,
+        allow_missing_baseline: bool = ...,
         max_quality_score_drop: float | None = ...,
         max_dimension_score_drops: Mapping[str, float] | None = ...,
         max_null_percentage_increase: Mapping[str, float] | float | None = ...,
