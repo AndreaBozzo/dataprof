@@ -32,6 +32,7 @@ anything but a pass; `python -m dataprof.check` does, with exit codes 0 pass,
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -92,7 +93,10 @@ def evaluate(workdir: Path, label: str, contents: str, **profile_options: Any) -
     report = dp.profile(str(source), identifier_columns=["order_id"], **profile_options)
     report.save(str(candidate_path))
 
-    baseline = dp.ProfileReport.load(str(baseline_path)) if baseline_path.exists() else None
+    # lexists, not exists: a dangling symlink is a broken baseline, not a
+    # missing one, so load() raises on it instead of starting over.
+    present = os.path.lexists(baseline_path)
+    baseline = dp.ProfileReport.load(str(baseline_path)) if present else None
     result = report.check(**POLICY, baseline=baseline, allow_missing_baseline=True)
     if result.baseline_missing:
         against = "no baseline yet: the rules about change are not applicable"

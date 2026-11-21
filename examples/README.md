@@ -218,8 +218,10 @@ that lost rows but kept every share, such as a truncated extract, and one
 that gained too many, such as a file published twice. A fixed `--min-rows`
 low enough for a quiet day misses both.
 `quality/policy.json` holds both kinds of rule, with the same keys as
-`check()`; the example's `POLICY` dictionary written as JSON is a working
-one, with `promote` set to `accepted.json`. The step exits 0 on a pass, 1 on a fail and 2 when inconclusive, so the job
+`check()`; the policy above is the example's `POLICY` dictionary written as
+JSON, with `allow_missing_baseline` and `promote` added, since the example
+passes the first as a keyword and promotes by renaming. The step exits 0 on a
+pass, 1 on a fail and 2 when inconclusive, so the job
 fails on anything but a pass and still uploads its evidence.
 
 For a full pipeline around the same idea, with dlt loading into DuckDB and a

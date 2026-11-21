@@ -344,6 +344,7 @@ baseline exists. The row-count rules below need **0.14** and measure changes as
 percentages of the baseline's count.
 
 ```python
+import os
 from pathlib import Path
 import dataprof as dp
 
@@ -351,7 +352,8 @@ baseline_path = Path("baseline.json")
 candidate_path = Path("candidate.json")
 report = dp.profile("orders.csv")
 report.save(candidate_path)
-baseline = dp.ProfileReport.load(baseline_path) if baseline_path.exists() else None
+# lexists: a dangling symlink is a broken baseline, so load() raises on it.
+baseline = dp.ProfileReport.load(baseline_path) if os.path.lexists(baseline_path) else None
 result = report.check(
     min_rows=1,
     max_null_count={"order_id": 0},

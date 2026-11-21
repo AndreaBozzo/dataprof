@@ -1109,7 +1109,8 @@ class ProfileReport:
         Raises:
             ValueError: the policy is unevaluable as written -- a threshold
                 outside 0-100, an unknown dimension name, a rule about change
-                without a baseline, or no requirement at all. A misconfigured
+                without a baseline (unless ``allow_missing_baseline`` is
+                True), or no requirement at all. A misconfigured
                 gate is not a failing dataset. Also raised for a report loaded
                 from a flat ``to_dict()`` summary, which the Rust gate cannot
                 read; the baseline may be one. An unknown findings code in
