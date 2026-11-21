@@ -1503,6 +1503,19 @@ def test_baseline_and_report_rejected_for_multi_source_and_directory(
         assert expected_msg in res.stderr
 
 
+def test_rule_about_change_without_baseline_in_multi_source_run_names_single_source(
+    tmp_path: Path,
+):
+    """The hint must not send the user to --baseline, which several sources refuse."""
+    a = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    b = _write_csv(tmp_path / "b.csv", "id\n2\n")
+    res = run_check(a, b, "--max-quality-drop", "5", "--json")
+    assert res.returncode == 3
+    error = json.loads(res.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["message"].endswith(": check one source at a time with --baseline PATH")
+
+
 def test_multi_source_delegates_combined_verdict_to_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

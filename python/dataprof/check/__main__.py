@@ -679,6 +679,8 @@ def _expand_sources(
 def _load_policy(
     args: argparse.Namespace,
     baseline: dataprof.ProfileReport | None,
+    *,
+    several_sources: bool = False,
 ) -> tuple[dict[str, Any] | None, int | None]:
     """Validate and load policy configuration, reporting policy errors on failure."""
     try:
@@ -686,7 +688,13 @@ def _load_policy(
     except (OSError, ValueError, RuntimeError) as exc:
         message = str(exc)
         if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
-            message = f"{message}: pass --baseline PATH"
+            # --baseline is refused with several sources, so do not point there.
+            hint = (
+                "check one source at a time with --baseline PATH"
+                if several_sources
+                else "pass --baseline PATH"
+            )
+            message = f"{message}: {hint}"
         # A value error names the file only when the file supplied that key
         # and no flag replaced it. A missing baseline is no file's key.
         from_flag = isinstance(exc, _PolicyFieldError) and (
@@ -861,7 +869,7 @@ def _run_multi(parser: _CheckArgumentParser, args: argparse.Namespace) -> int:
         parser.error("--baseline is only supported with a single source file")
     if args.report is not None:
         parser.error("--report is only supported with a single source file")
-    policy, policy_err = _load_policy(args, baseline=None)
+    policy, policy_err = _load_policy(args, baseline=None, several_sources=True)
     if policy is None:
         assert policy_err is not None
         return policy_err
