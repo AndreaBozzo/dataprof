@@ -19,10 +19,10 @@ from dataprof._gate import _Policy, _PolicyFieldError, _summary_lines
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
-# Extensions whose format dataprof infers unambiguously during directory
-# expansion. Files with any other extension (or none) are reported as skipped
-# unless --format is supplied explicitly.
-_INFERRED_EXTENSIONS = frozenset({".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".parquet"})
+# The extensions detect_format() in dataprof-partial maps to a format; keep the
+# two lists in step. Files with any other extension (or none) are reported as
+# skipped unless --format is supplied explicitly.
+_INFERRED_EXTENSIONS = frozenset({".csv", ".tsv", ".txt", ".json", ".jsonl", ".ndjson", ".parquet"})
 _POLICY_DEFAULTS: dict[str, Any] = {
     "min_rows": None,
     "min_quality_score": None,

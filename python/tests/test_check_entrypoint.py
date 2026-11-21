@@ -1391,6 +1391,8 @@ def test_directory_argument_checks_supported_files_and_reports_uninferrable(tmp_
     b = _write_csv(drop / "a_users.tsv", "id\tname\n1\talice\n2\tbob\n")
     c = drop / "c_events.ndjson"
     c.write_text('{"id": 1}\n{"id": 2}\n', encoding="utf-8")
+    # detect_format() reads .txt as CSV, so a directory checks it too.
+    d = _write_csv(drop / "d_extract.txt", "id,amount\n3,30\n")
     readme = drop / "README.md"
     readme.write_text("# drop notes\n", encoding="utf-8")
     marker = drop / "_SUCCESS"
@@ -1403,7 +1405,7 @@ def test_directory_argument_checks_supported_files_and_reports_uninferrable(tmp_
     assert res.returncode == 0, res.stderr
     doc = json.loads(res.stdout)
     assert doc["verdict"] == "pass"
-    assert [entry["path"] for entry in doc["sources"]] == [str(b), str(a), str(c)]
+    assert [entry["path"] for entry in doc["sources"]] == [str(b), str(a), str(c), str(d)]
     assert doc["skipped"] == [
         {"path": str(readme), "reason": "format_not_inferred"},
         {"path": str(marker), "reason": "format_not_inferred"},
@@ -1417,7 +1419,7 @@ def test_directory_argument_checks_supported_files_and_reports_uninferrable(tmp_
     rec_doc = json.loads(rec.stdout)
     assert rec_doc["verdict"] == "fail"
     paths = [entry["path"] for entry in rec_doc["sources"]]
-    assert paths == [str(b), str(a), str(c), str(nested)]
+    assert paths == [str(b), str(a), str(c), str(d), str(nested)]
     assert rec_doc["sources"][-1]["result"]["verdict"] == "fail"
     assert rec_doc["skipped"] == [
         {"path": str(readme), "reason": "format_not_inferred"},

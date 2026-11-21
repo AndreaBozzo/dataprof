@@ -1691,7 +1691,7 @@ argument evaluates the same policy against every source in order and combines
 their verdicts with `dp.combine_verdicts()`.
 
 - **Directories.** A directory argument checks its supported files in sorted
-  name order: `.csv`, `.tsv`, `.json`, `.jsonl`, `.ndjson`, and `.parquet`
+  name order: `.csv`, `.tsv`, `.txt`, `.json`, `.jsonl`, `.ndjson`, and `.parquet`
   (case-insensitive). Recursion into subdirectories is opt-in via `-r` /
   `--recursive`; symlinked directories are not traversed.
 - **Uninferrable files.** When `--format` is not given, files inside a directory
