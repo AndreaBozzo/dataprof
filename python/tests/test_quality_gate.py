@@ -557,3 +557,64 @@ def test_a_result_prints_the_summary_the_command_line_prints():
         "  failed: max_null_percentage [x]: "
         + next(check.message for check in result if check.status == "failed")
     ]
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "expected"),
+    [
+        (["pass"], "pass"),
+        (["pass", "pass"], "pass"),
+        (["fail"], "fail"),
+        (["pass", "fail"], "fail"),
+        (["fail", "pass"], "fail"),
+        (["inconclusive"], "inconclusive"),
+        (["pass", "inconclusive"], "inconclusive"),
+        (["inconclusive", "pass"], "inconclusive"),
+        (["inconclusive", "fail"], "fail"),
+        (["fail", "inconclusive"], "fail"),
+        (["pass", "inconclusive", "fail"], "fail"),
+    ],
+)
+def test_combine_verdicts_precedence(verdicts: list[str], expected: str):
+    """fail beats inconclusive, which beats pass, regardless of order (#836)."""
+    clean = dp.profile({"x": [1, 2, 3]})
+    by_verdict = {
+        "pass": clean.check(min_rows=1),
+        "fail": clean.check(min_rows=10),
+        "inconclusive": clean.check(max_null_percentage={"missing": 0}),
+    }
+    results = [by_verdict[v] for v in verdicts]
+    assert [r.verdict for r in results] == verdicts
+    assert dp.combine_verdicts(results) == expected
+    # Also accepts one-shot iterables such as generators.
+    assert dp.combine_verdicts(iter(results)) == expected
+
+
+def test_combine_verdicts_rejects_empty_and_invalid_inputs():
+    passed = dp.profile({"x": [1, 2]}).check(min_rows=1)
+    failed = dp.profile({"x": [1, 2]}).check(min_rows=10)
+
+    with pytest.raises(ValueError, match="at least one QualityGateResult"):
+        dp.combine_verdicts([])
+    with pytest.raises(ValueError, match="at least one QualityGateResult"):
+        dp.combine_verdicts(iter(()))
+
+    # QualityGateResult is iterable (yields QualityCheck), so passing a single
+    # result directly must fail loudly as a TypeError instead of reading checks.
+    with pytest.raises(TypeError, match="iterable of QualityGateResult"):
+        dp.combine_verdicts(passed)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="iterable of QualityGateResult"):
+        dp.combine_verdicts("pass")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="QualityGateResult"):
+        dp.combine_verdicts(["pass"])  # ty: ignore[invalid-argument-type]
+    # Invalid items after a failing result are still rejected (no silent short-circuit).
+    with pytest.raises(TypeError, match="QualityGateResult"):
+        dp.combine_verdicts([failed, "not-a-result"])  # ty: ignore[invalid-argument-type]
+
+    bogus = dp.QualityGateResult(
+        verdict="unknown",
+        scope="full_source",
+        evidence={"coverage": "complete"},
+    )
+    with pytest.raises(ValueError, match="unknown verdict"):
+        dp.combine_verdicts([failed, bogus])

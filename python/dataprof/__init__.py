@@ -39,6 +39,7 @@ from ._findings import (
 from ._gate import (
     QualityCheck as QualityCheck,
     QualityGateResult as QualityGateResult,
+    combine_verdicts as combine_verdicts,
 )
 from ._profiler import Profiler as Profiler
 from ._report import ProfileReport as ProfileReport
@@ -60,6 +61,7 @@ __all__ = [
     "FindingsResult",
     "QualityCheck",
     "QualityGateResult",
+    "combine_verdicts",
     "ProfilerConfig",
     "ColumnProfile",
     "DataQualityMetrics",

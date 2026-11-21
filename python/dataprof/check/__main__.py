@@ -6,6 +6,7 @@ import argparse
 import errno
 import json
 import os
+import stat
 import sys
 from argparse import ArgumentParser
 from collections.abc import Sequence
@@ -18,6 +19,10 @@ from dataprof._gate import _Policy, _PolicyFieldError, _summary_lines
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
+# Extensions whose format dataprof infers unambiguously during directory
+# expansion. Files with any other extension (or none) are reported as skipped
+# unless --format is supplied explicitly.
+_INFERRED_EXTENSIONS = frozenset({".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".parquet"})
 _POLICY_DEFAULTS: dict[str, Any] = {
     "min_rows": None,
     "min_quality_score": None,
@@ -215,17 +220,35 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     parser = _CheckArgumentParser(
         prog="python -m dataprof.check",
         argv=argv,
-        description="Profile a local file and evaluate a quality policy.",
+        description="Profile one or more local files and evaluate a quality policy.",
         epilog=(
-            "Exit codes: 0 = pass (also --help and --version); 1 = a proven policy violation; "
-            "2 = inconclusive (a threshold could not be evaluated); "
+            "Exit codes: 0 = pass (every source passed; also --help and --version); "
+            "1 = a proven policy violation (at least one source failed); "
+            "2 = inconclusive (nothing failed, and at least one threshold could not be evaluated); "
             "3 = an argument, policy, source, or baseline could not be read or used, "
-            "or the report could not be written. "
+            "or the report could not be written (including any unreadable source or empty "
+            "directory in a multi-source run). "
             "A proven violation takes precedence over unevaluated checks. "
-            "Rules about change need --baseline: a report an earlier run saved with --report."
+            "In a multi-source run, unreadable sources are reported without stopping the "
+            "remaining sources, and files in a directory whose format cannot be inferred "
+            "are reported as skipped. "
+            "Rules about change need --baseline: a report an earlier run saved with --report "
+            "(single source file only)."
         ),
     )
-    parser.add_argument("source", type=Path, help="CSV, JSON, JSONL, or Parquet file")
+    parser.add_argument(
+        "sources",
+        type=Path,
+        nargs="+",
+        metavar="SOURCE",
+        help="CSV, JSON, JSONL, or Parquet file, or a directory containing them",
+    )
+    parser.add_argument(
+        "-r",
+        "--recursive",
+        action="store_true",
+        help="recurse into subdirectories of directory arguments",
+    )
     parser.add_argument(
         "--policy",
         type=Path,
@@ -235,20 +258,23 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="write the QualityGateResult JSON to stdout",
+        help="write the QualityGateResult JSON (or multi-source document) to stdout",
     )
     parser.add_argument(
         "--report",
         type=Path,
         metavar="PATH",
-        help="save the full profile to a .json file, including on fail or inconclusive",
+        help=(
+            "save the full profile to a .json file, including on fail or inconclusive "
+            "(single source file only)"
+        ),
     )
     parser.add_argument(
         "--source-version",
         metavar="VERSION",
         help=(
             "the version of the source being checked (a table snapshot, commit or load ID), "
-            "recorded verbatim in the --report document"
+            "recorded verbatim in the --report document and QualityGateResult.source_identity"
         ),
     )
     parser.add_argument(
@@ -380,7 +406,10 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         "--baseline",
         type=Path,
         metavar="PATH",
-        help="a .json report an earlier run saved (--report or save()) to measure change from",
+        help=(
+            "a .json report an earlier run saved (--report or save()) to measure change from "
+            "(single source file only)"
+        ),
     )
     parser.add_argument(
         "--max-quality-drop",
@@ -550,15 +579,179 @@ def _policy(args: argparse.Namespace, baseline: dataprof.ProfileReport | None) -
     return policy
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run a gate; return 0 for pass, 1 for fail, 2 when inconclusive, 3 on error.
+def _is_directory(path: Path) -> bool:
+    """Return True when ``path`` resolves to an existing directory."""
+    try:
+        st = _stat_if_present(path)
+    except OSError:
+        return False
+    return st is not None and stat.S_ISDIR(st.st_mode)
 
-    Raises:
-        SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
-            invalid arguments.
+
+def _expand_directory(
+    directory: Path,
+    *,
+    recursive: bool,
+    explicit_format: str | None,
+) -> tuple[list[tuple[Path, str | None]], list[Path]]:
+    """Expand a directory into ``(path, pre_error)`` items and skipped paths.
+
+    Supported files are returned in deterministic sorted order. Files whose
+    format cannot be inferred (when ``explicit_format`` is None) are returned
+    in ``skipped`` rather than dropped silently. Symlinked directories are not
+    traversed so directory cycles cannot loop infinitely.
     """
-    parser = _parser(argv)
-    args = parser.parse_args(argv)
+    items: list[tuple[Path, str | None]] = []
+    skipped: list[Path] = []
+
+    def _walk(current: Path) -> None:
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: p.name)
+        except OSError as exc:
+            detail = exc.strerror or str(exc)
+            items.append((current, f"cannot list directory {current}: {detail}"))
+            return
+        for entry in entries:
+            if entry.is_symlink():
+                try:
+                    target_st = entry.stat()
+                except OSError:
+                    if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
+                        items.append((entry, None))
+                    else:
+                        skipped.append(entry)
+                    continue
+                if stat.S_ISDIR(target_st.st_mode):
+                    continue
+                if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
+                    items.append((entry, None))
+                else:
+                    skipped.append(entry)
+                continue
+            try:
+                entry_st = entry.lstat()
+            except OSError as exc:
+                detail = exc.strerror or str(exc)
+                items.append((entry, f"cannot stat {entry}: {detail}"))
+                continue
+            if stat.S_ISDIR(entry_st.st_mode):
+                if recursive:
+                    _walk(entry)
+                continue
+            if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
+                items.append((entry, None))
+            else:
+                skipped.append(entry)
+
+    _walk(directory)
+    if not items:
+        if skipped:
+            suffix = f" ({len(skipped)} file(s) whose format could not be inferred)"
+        else:
+            suffix = ""
+        items.append((directory, f"no supported files found in directory {directory}{suffix}"))
+    return items, skipped
+
+
+def _expand_sources(
+    sources: Sequence[Path],
+    *,
+    recursive: bool,
+    explicit_format: str | None,
+) -> tuple[list[tuple[Path, str | None]], list[Path]]:
+    """Expand positional arguments, turning directory arguments into their files."""
+    items: list[tuple[Path, str | None]] = []
+    skipped: list[Path] = []
+    for source in sources:
+        if _is_directory(source):
+            dir_items, dir_skipped = _expand_directory(
+                source,
+                recursive=recursive,
+                explicit_format=explicit_format,
+            )
+            items.extend(dir_items)
+            skipped.extend(dir_skipped)
+        else:
+            items.append((source, None))
+    return items, skipped
+
+
+def _load_policy(
+    args: argparse.Namespace,
+    baseline: dataprof.ProfileReport | None,
+) -> tuple[dict[str, Any] | None, int | None]:
+    """Validate and load policy configuration, reporting policy errors on failure."""
+    try:
+        return _policy(args, baseline), None
+    except (OSError, ValueError, RuntimeError) as exc:
+        message = str(exc)
+        if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
+            message = f"{message}: pass --baseline PATH"
+        # A value error names the file only when the file supplied that key
+        # and no flag replaced it. A missing baseline is no file's key.
+        from_flag = isinstance(exc, _PolicyFieldError) and (
+            exc.key == "baseline" or getattr(args, exc.key, None) is not None
+        )
+
+        if (
+            not args.json
+            and args.policy is not None
+            and isinstance(exc, _PolicyFieldError)
+            and not from_flag
+        ):
+            message = f"policy file {args.policy}: {message}"
+
+        code = _report_error(
+            "policy",
+            message,
+            path=None if from_flag else args.policy,
+            json_output=args.json,
+        )
+        return None, code
+
+
+def _multi_summary_lines(
+    verdict: str,
+    outcomes: Sequence[tuple[Path, dataprof.QualityGateResult | None, str | None]],
+    skipped: Sequence[Path],
+    *,
+    version: str,
+) -> list[str]:
+    """Format the human-readable stderr summary for a multi-source run."""
+    passed = sum(1 for _, res, _ in outcomes if res is not None and res.verdict == "pass")
+    failed = sum(1 for _, res, _ in outcomes if res is not None and res.verdict == "fail")
+    inconclusive = sum(
+        1 for _, res, _ in outcomes if res is not None and res.verdict == "inconclusive"
+    )
+    errors = sum(1 for _, _, err in outcomes if err is not None)
+    lines = [
+        f"dataprof {version}: {verdict}: {len(outcomes)} sources "
+        f"({passed} passed, {failed} failed, {inconclusive} inconclusive, {errors} errors)"
+    ]
+    for path, result, error_message in outcomes:
+        if error_message is not None:
+            lines.append(f"  error: {path}: {error_message}")
+            continue
+        assert result is not None
+        lines.append(
+            f"  {result.verdict}: {path} "
+            f"({len(result.checks)} checks, {len(result.violations)} violations, "
+            f"{len(result.unevaluated)} unevaluated)"
+        )
+        for check in result.checks:
+            if check.status != "passed":
+                subject = next(
+                    (s for s in (check.column, check.dimension, check.finding) if s is not None),
+                    None,
+                )
+                label = f" [{subject}]" if subject is not None else ""
+                lines.append(f"    {check.status}: {check.code}{label}: {check.message}")
+    for path in skipped:
+        lines.append(f"  skipped: {path}: format could not be inferred")
+    return lines
+
+
+def _run_single(parser: _CheckArgumentParser, args: argparse.Namespace, source: Path) -> int:
     if args.report is not None and args.report.suffix.lower() != ".json":
         parser.error(f"--report path must end in .json for a reloadable report: {args.report}")
     if args.report is not None:
@@ -579,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
         # A report is written whatever the verdict, so writing it over the
         # baseline would make a failing run the next run's baseline.
         for flag, kind, other in (
-            ("source", "input", args.source),
+            ("source", "input", source),
             ("--policy", "policy", args.policy),
             ("--baseline", "baseline", args.baseline),
         ):
@@ -614,35 +807,13 @@ def main(argv: list[str] | None = None) -> int:
                 path=args.baseline,
                 json_output=args.json,
             )
-    try:
-        policy = _policy(args, baseline)
-    except (OSError, ValueError, RuntimeError) as exc:
-        message = str(exc)
-        if isinstance(exc, _PolicyFieldError) and exc.key == "baseline":
-            message = f"{message}: pass --baseline PATH"
-        # A value error names the file only when the file supplied that key
-        # and no flag replaced it. A missing baseline is no file's key.
-        from_flag = isinstance(exc, _PolicyFieldError) and (
-            exc.key == "baseline" or getattr(args, exc.key, None) is not None
-        )
-
-        if (
-            not args.json
-            and args.policy is not None
-            and isinstance(exc, _PolicyFieldError)
-            and not from_flag
-        ):
-            message = f"policy file {args.policy}: {message}"
-
-        return _report_error(
-            "policy",
-            message,
-            path=None if from_flag else args.policy,
-            json_output=args.json,
-        )
+    policy, policy_err = _load_policy(args, baseline)
+    if policy is None:
+        assert policy_err is not None
+        return policy_err
     try:
         report = profile_file(
-            args.source,
+            source,
             engine=args.engine,
             format=args.format,
             max_rows=args.max_rows,
@@ -651,7 +822,7 @@ def main(argv: list[str] | None = None) -> int:
             source_version=args.source_version,
         )
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
-        return _report_error("input", str(exc), path=args.source, json_output=args.json)
+        return _report_error("input", str(exc), path=source, json_output=args.json)
     try:
         result = report.check(**policy, baseline=baseline)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
@@ -665,7 +836,7 @@ def main(argv: list[str] | None = None) -> int:
                 path=args.baseline,
                 json_output=args.json,
             )
-        return _report_error("input", str(exc), path=args.source, json_output=args.json)
+        return _report_error("input", str(exc), path=source, json_output=args.json)
 
     if args.report is not None:
         try:
@@ -683,6 +854,90 @@ def main(argv: list[str] | None = None) -> int:
     for line in _summary_lines(result, version=dataprof.__version__, baseline_path=args.baseline):
         print(line, file=sys.stderr)
     return _EXIT_CODES[result.verdict]
+
+
+def _run_multi(parser: _CheckArgumentParser, args: argparse.Namespace) -> int:
+    if args.baseline is not None:
+        parser.error("--baseline is only supported with a single source file")
+    if args.report is not None:
+        parser.error("--report is only supported with a single source file")
+    policy, policy_err = _load_policy(args, baseline=None)
+    if policy is None:
+        assert policy_err is not None
+        return policy_err
+
+    items, skipped = _expand_sources(
+        args.sources,
+        recursive=args.recursive,
+        explicit_format=args.format,
+    )
+    results: list[dataprof.QualityGateResult] = []
+    source_documents: list[dict[str, Any]] = []
+    outcomes: list[tuple[Path, dataprof.QualityGateResult | None, str | None]] = []
+    error_count = 0
+
+    for path, pre_error in items:
+        if pre_error is not None:
+            source_documents.append(
+                {"path": str(path), "error": {"kind": "input", "message": pre_error}}
+            )
+            outcomes.append((path, None, pre_error))
+            error_count += 1
+            continue
+        try:
+            report = profile_file(
+                path,
+                engine=args.engine,
+                format=args.format,
+                max_rows=args.max_rows,
+                metrics=args.metrics,
+                duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
+                source_version=args.source_version,
+            )
+            result = report.check(**policy)
+        except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
+            message = str(exc)
+            source_documents.append(
+                {"path": str(path), "error": {"kind": "input", "message": message}}
+            )
+            outcomes.append((path, None, message))
+            error_count += 1
+            continue
+        results.append(result)
+        source_documents.append({"path": str(path), "result": result.to_dict()})
+        outcomes.append((path, result, None))
+
+    if error_count > 0:
+        verdict = "error"
+        exit_code = _ERROR_EXIT_CODE
+    else:
+        verdict = dataprof.combine_verdicts(results)
+        exit_code = _EXIT_CODES[verdict]
+
+    if args.json:
+        document = {
+            "verdict": verdict,
+            "sources": source_documents,
+            "skipped": [{"path": str(path), "reason": "format_not_inferred"} for path in skipped],
+        }
+        print(json.dumps(document, indent=2))
+    for line in _multi_summary_lines(verdict, outcomes, skipped, version=dataprof.__version__):
+        print(line, file=sys.stderr)
+    return exit_code
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a gate; return 0 for pass, 1 for fail, 2 when inconclusive, 3 on error.
+
+    Raises:
+        SystemExit: Argument parsing exits with 0 for ``--help``, or 3 for
+            invalid arguments.
+    """
+    parser = _parser(argv)
+    args = parser.parse_args(argv)
+    if len(args.sources) == 1 and not _is_directory(args.sources[0]):
+        return _run_single(parser, args, args.sources[0])
+    return _run_multi(parser, args)
 
 
 if __name__ == "__main__":

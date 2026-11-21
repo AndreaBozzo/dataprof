@@ -60,6 +60,7 @@ EXPECTED_SURFACE: dict[str, frozenset[str]] = {
             "asyncio",
             "capabilities",
             "column_to_dict",
+            "combine_verdicts",
             "count_table_rows_async",
             "get_table_schema_async",
             "infer_schema",
@@ -306,6 +307,7 @@ assert dataprof.ProfileReport.from_dict(report.to_dict()).to_dict() == report.to
         "analyze_structure",
         "list_patterns",
         "column_to_dict",
+        "combine_verdicts",
     ],
 )
 def test_python_api_objects_keep_the_public_import_path(name):

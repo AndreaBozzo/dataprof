@@ -1579,6 +1579,19 @@ A score decided on its interval also carries `bounds`:
 `message` carries no numbers on purpose: `observed` and `expected` hold those,
 so nothing depends on how a float was formatted into a sentence.
 
+**Combining verdicts across several sources.** When one pipeline run checks
+several tables or partition files, `dp.combine_verdicts(results)` reduces an
+iterable of `QualityGateResult` objects to a single verdict using the same
+precedence a single result applies across its checks: `"fail"` if any result
+failed, otherwise `"inconclusive"` if any result was inconclusive, otherwise
+`"pass"`. Passing an empty iterable raises `ValueError`, and passing a single
+`QualityGateResult` or a non-result element raises `TypeError`.
+
+```python
+results = [dp.profile(path).check(min_quality_score=90) for path in paths]
+verdict = dp.combine_verdicts(results)  # "pass", "fail", or "inconclusive"
+```
+
 See [`python/examples/etl_quality_gate.py`](../../python/examples/etl_quality_gate.py)
 for a runnable gate over four drops, and
 [`python/examples/baseline_checkpoint.py`](../../python/examples/baseline_checkpoint.py)
@@ -1588,14 +1601,18 @@ baseline written by an older release reaching their verdicts.
 
 ### `python -m dataprof.check` -- CI entrypoint (0.12+)
 
-Evaluate the same policy from a shell or CI job:
+Evaluate the same policy from a shell or CI job over one source, several
+positional sources, or a directory:
 
 ```bash
 python -m dataprof.check daily_drop.csv --min-quality 90 --max-null-count 'customer_id=0' --json
 python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
+python -m dataprof.check partitions/*.parquet --min-rows 1 --max-null '*=5' --json
+python -m dataprof.check drop_dir/ --recursive --policy quality-policy.json --json > verdict.json
 ```
 
-To keep the full profile behind the verdict, add `--report PATH` (0.13+):
+To keep the full profile behind the verdict, add `--report PATH` (0.13+, single
+source file only):
 
 ```bash
 python -m dataprof.check daily_drop.csv --min-quality 90 --report profile.json --json > verdict.json
@@ -1608,7 +1625,8 @@ write failure exits `3` and names the path. `--json` stdout is unchanged.
 The report path must not refer to the source, policy or baseline file, including
 through symbolic links, hard links or case-insensitive path aliases.
 `--source-version VERSION` (0.14+) records the version of the source being
-checked in that report, as `source_version=` does for `profile()`.
+checked in that report and in each `QualityGateResult.source_identity`, as
+`source_version=` does for `profile()`.
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above;
 a leading byte-order mark (BOM) is accepted.
@@ -1646,24 +1664,113 @@ full-source requirement inconclusive. `--scope observed` explicitly limits the
 claim to the analyzed population. A threshold on an unavailable metric stays
 unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Every requirement passed; also used by `--help` and `--version` |
-| `1` | The gate found a proven violation, even if other checks are unevaluated |
-| `2` | The gate is inconclusive: a threshold could not be evaluated |
-| `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written |
+| Exit code | Single source | Multiple sources or directory |
+|---|---|---|
+| `0` | Every requirement passed; also used by `--help` and `--version` | Every source passed (via `combine_verdicts()`) |
+| `1` | The gate found a proven violation, even if other checks are unevaluated | Every source was read and at least one failed |
+| `2` | The gate is inconclusive: a threshold could not be evaluated | Every source was read, none failed, and at least one was inconclusive |
+| `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written | An argument or policy error occurred, or at least one source or directory could not be read or yielded no supported files |
 
 Human summaries go to stderr: the verdict, each check that did not pass, and
 with `--baseline` each schema-change diagnostic, which a pass can carry. With
-`--json`, stdout contains only the existing `QualityGateResult.to_json()`
-document, including inconclusive results. Errors
-(exit `3`) write an error object instead of a result document:
+`--json`, a single source file writes only the existing `QualityGateResult.to_json()`
+document to stdout, byte-identical to earlier releases, including inconclusive
+results. Top-level errors (exit `3`) write an error object instead of a result
+document:
 `{"error": {"kind": "argument" | "policy" | "input" | "baseline" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
 `path` comes from a command-line flag (for example `--min-quality 150`), not
 from the policy file. Without `--json`, errors
 go to stderr and stdout stays empty. `--help` prints usage to stdout and lists
 every flag and code. `--version` prints `dataprof <version>` to stdout and exits 0.
+
+#### Several sources and directories
+
+Passing two or more positional paths (including shell globs) or a directory
+argument evaluates the same policy against every source in order and combines
+their verdicts with `dp.combine_verdicts()`.
+
+- **Directories.** A directory argument checks its supported files in sorted
+  name order: `.csv`, `.tsv`, `.json`, `.jsonl`, `.ndjson`, and `.parquet`
+  (case-insensitive). Recursion into subdirectories is opt-in via `-r` /
+  `--recursive`; symlinked directories are not traversed.
+- **Uninferrable files.** When `--format` is not given, files inside a directory
+  whose extension does not map to a supported format (such as `README.md` or
+  `_SUCCESS`) are not checked and are reported rather than skipped silently, on
+  stderr and in the JSON `"skipped"` array. When `--format` is given, every
+  regular file in the directory is checked with that format. A directory with no
+  supported files is reported as an input error for that directory.
+- **Per-source errors.** A source that cannot be read or parsed records an
+  `"error"` entry for that path without stopping the remaining sources. Any
+  per-source error sets the combined verdict to `"error"` and exits `3`, while
+  every other source's result still appears in stdout and stderr.
+- **Column-scoped rules.** Rules naming a column (such as `--max-null amount=5`)
+  follow single-source behavior on each source: a source lacking that column
+  leaves the check `not_evaluated` with reason `column_not_profiled`, making
+  that source (and therefore the combined verdict, unless another source failed
+  or errored) `"inconclusive"`. Use `*=` wildcards or dataset-level rules when
+  checking heterogeneous tables under one policy.
+- **Single-source-only flags.** `--baseline` and `--report` are rejected as
+  argument errors (exit `3`) when checking multiple sources or a directory,
+  because each takes a single file path with no unambiguous per-source mapping.
+  `--source-version` applies to every source in the run.
+
+With `--json`, a multi-source or directory run writes one JSON document to
+stdout:
+
+```json
+{
+  "verdict": "fail",
+  "sources": [
+    {
+      "path": "drop/orders.csv",
+      "result": {
+        "verdict": "pass",
+        "scope": "full_source",
+        "evidence": {"coverage": "complete"},
+        "checks": [ ... ],
+        "generator": { ... },
+        "source_identity": null
+      }
+    },
+    {
+      "path": "drop/customers.csv",
+      "result": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {"coverage": "complete"},
+        "checks": [ ... ],
+        "generator": { ... },
+        "source_identity": null
+      }
+    }
+  ],
+  "skipped": [
+    {
+      "path": "drop/README.md",
+      "reason": "format_not_inferred"
+    }
+  ]
+}
+```
+
+When a source cannot be read, its entry in `"sources"` carries `"error"` instead
+of `"result"`:
+
+```json
+{
+  "path": "drop/corrupt.json",
+  "error": {
+    "kind": "input",
+    "message": "..."
+  }
+}
+```
+
+Top-level `"verdict"` is `"pass"`, `"fail"`, `"inconclusive"`, or `"error"` (when
+at least one source entry holds an `"error"`), mapping directly to exit codes
+`0`, `1`, `2`, and `3`. `"skipped"` is always a list (`[]` when no files were
+skipped).
 
 #### Against a baseline (0.13+)
 
