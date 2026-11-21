@@ -231,6 +231,8 @@ def test_polars_lazyframe_is_refused_by_its_own_name():
 def test_polars_lazyframe_hint_offers_collect_batches_for_flat_selections():
     """The LazyFrame hint offers .collect_batches() for flat selections and notes nested types."""
     pl = pytest.importorskip("polars")
+    if not hasattr(pl.LazyFrame, "collect_batches"):
+        pytest.skip("polars without LazyFrame.collect_batches()")
     pattern = (
         r"polars LazyFrame .*\.collect\(\).*\.collect_batches\(\)"
         r".*flat selections.*list.*struct.*map"
