@@ -1223,3 +1223,479 @@ def test_the_command_line_prints_what_str_of_the_result_returns(source: Path):
     expected = dp.profile_file(source).check(max_null_percentage={"*": 0})
     assert result.returncode == 1
     assert result.stderr.rstrip("\n") == str(expected)
+
+
+# ---------------------------------------------------------------------------
+# Multi-source and directory checks (#836)
+# ---------------------------------------------------------------------------
+
+
+def _write_csv(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_single_source_output_is_byte_identical_to_single_result(source: Path):
+    """A single positional file keeps the exact single-result JSON and stderr shape."""
+    json_run = run_check(source, "--max-null", "*=0", "--json")
+    expected = dp.profile_file(source).check(max_null_percentage={"*": 0})
+    assert json_run.returncode == 1
+    assert json_run.stdout == expected.to_json() + "\n"
+    assert json_run.stderr == str(expected) + "\n"
+
+    text_run = run_check(source, "--max-null", "*=100")
+    expected_pass = dp.profile_file(source).check(max_null_percentage={"*": 100})
+    assert text_run.returncode == 0
+    assert text_run.stdout == ""
+    assert text_run.stderr == str(expected_pass) + "\n"
+
+
+def test_multi_source_all_pass(tmp_path: Path):
+    a = _write_csv(tmp_path / "a.csv", "id,amount\n1,10\n2,20\n")
+    b = tmp_path / "b.jsonl"
+    b.write_text('{"id": 1, "amount": 10}\n{"id": 2, "amount": 20}\n', encoding="utf-8")
+
+    result = run_check(a, b, "--min-rows", "1", "--max-null", "*=0", "--json")
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc == {
+        "verdict": "pass",
+        "sources": [
+            {
+                "path": str(a),
+                "result": dp.profile_file(a)
+                .check(min_rows=1, max_null_percentage={"*": 0})
+                .to_dict(),
+            },
+            {
+                "path": str(b),
+                "result": dp.profile_file(b)
+                .check(min_rows=1, max_null_percentage={"*": 0})
+                .to_dict(),
+            },
+        ],
+        "skipped": [],
+    }
+    assert (
+        f"dataprof {dp.__version__}: pass: 2 sources (2 passed, 0 failed, 0 inconclusive, 0 errors)"
+        in result.stderr
+    )
+
+    text_run = run_check(a, b, "--min-rows", "1", "--max-null", "*=0")
+    assert text_run.returncode == 0, text_run.stderr
+    assert text_run.stdout == ""
+    assert f"  pass: {a}" in text_run.stderr
+    assert f"  pass: {b}" in text_run.stderr
+
+
+def test_multi_source_one_fail_and_fail_beats_inconclusive(tmp_path: Path):
+    clean = _write_csv(tmp_path / "clean.csv", "id,amount\n1,10\n2,20\n")
+    failing = _write_csv(tmp_path / "failing.csv", "id,amount\n1,\n2,20\n")
+    absent_col = _write_csv(tmp_path / "other.csv", "id,other\n1,x\n2,y\n")
+
+    # Pass + fail -> exit 1, verdict fail.
+    result = run_check(clean, failing, "--max-null", "amount=0", "--json")
+    assert result.returncode == 1, result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["verdict"] == "fail"
+    assert [entry["path"] for entry in doc["sources"]] == [str(clean), str(failing)]
+    assert [entry["result"]["verdict"] for entry in doc["sources"]] == ["pass", "fail"]
+    assert doc["skipped"] == []
+    assert "max_null_percentage [amount]" in result.stderr
+
+    # Pass + inconclusive (missing column) + fail -> fail wins over inconclusive.
+    mixed = run_check(clean, absent_col, failing, "--max-null", "amount=0", "--json")
+    assert mixed.returncode == 1, mixed.stderr
+    mixed_doc = json.loads(mixed.stdout)
+    assert mixed_doc["verdict"] == "fail"
+    assert [entry["result"]["verdict"] for entry in mixed_doc["sources"]] == [
+        "pass",
+        "inconclusive",
+        "fail",
+    ]
+
+
+def test_multi_source_one_inconclusive_including_column_scoped_rule(tmp_path: Path):
+    clean = _write_csv(tmp_path / "clean.csv", "id,amount\n1,10\n2,20\n")
+    empty = _write_csv(tmp_path / "empty.csv", "id,amount\n")
+    other = _write_csv(tmp_path / "other.csv", "id,label\n1,a\n2,b\n")
+
+    # Pass + empty source (unassessed quality) -> exit 2, verdict inconclusive.
+    res = run_check(clean, empty, "--min-quality", "0", "--json")
+    assert res.returncode == 2, res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "inconclusive"
+    assert [entry["result"]["verdict"] for entry in doc["sources"]] == ["pass", "inconclusive"]
+    assert "1 inconclusive" in res.stderr
+
+    # Column-scoped rule naming a column absent from one source is unevaluated
+    # (column_not_profiled -> inconclusive), matching single-source behavior.
+    col_res = run_check(clean, other, "--max-null", "amount=0", "--json")
+    assert col_res.returncode == 2, col_res.stderr
+    col_doc = json.loads(col_res.stdout)
+    assert col_doc["verdict"] == "inconclusive"
+    assert col_doc["sources"][0]["result"]["verdict"] == "pass"
+    assert col_doc["sources"][1]["result"]["verdict"] == "inconclusive"
+    assert col_doc["sources"][1]["result"]["checks"][0]["reason"] == "column_not_profiled"
+
+
+def test_multi_source_unreadable_source_does_not_stop_others(tmp_path: Path):
+    first = _write_csv(tmp_path / "first.csv", "id,amount\n1,10\n2,20\n")
+    missing = tmp_path / "missing.csv"
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not valid json", encoding="utf-8")
+    failing = _write_csv(tmp_path / "failing.csv", "id,amount\n1,\n2,20\n")
+
+    # Good + missing + corrupt + failing: every source is attempted and reported.
+    res = run_check(first, missing, corrupt, failing, "--max-null", "*=0", "--json")
+    assert res.returncode == 3, res.stderr
+    assert "Traceback" not in res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "error"
+    assert doc["skipped"] == []
+    assert len(doc["sources"]) == 4
+
+    assert doc["sources"][0]["path"] == str(first)
+    assert doc["sources"][0]["result"]["verdict"] == "pass"
+
+    assert doc["sources"][1]["path"] == str(missing)
+    assert doc["sources"][1]["error"]["kind"] == "input"
+    assert doc["sources"][1]["error"]["message"]
+    assert "result" not in doc["sources"][1]
+
+    assert doc["sources"][2]["path"] == str(corrupt)
+    assert doc["sources"][2]["error"]["kind"] == "input"
+    assert doc["sources"][2]["error"]["message"]
+
+    assert doc["sources"][3]["path"] == str(failing)
+    assert doc["sources"][3]["result"]["verdict"] == "fail"
+
+    assert "1 passed, 1 failed, 0 inconclusive, 2 errors" in res.stderr
+    assert f"  error: {missing}:" in res.stderr
+    assert f"  error: {corrupt}:" in res.stderr
+    assert f"  fail: {failing}" in res.stderr
+
+    # All sources unreadable -> all reported, exit 3.
+    all_bad = run_check(missing, corrupt, "--min-rows", "1", "--json")
+    assert all_bad.returncode == 3
+    all_bad_doc = json.loads(all_bad.stdout)
+    assert all_bad_doc["verdict"] == "error"
+    assert len(all_bad_doc["sources"]) == 2
+    assert all("error" in entry for entry in all_bad_doc["sources"])
+
+
+def test_directory_argument_checks_supported_files_and_reports_uninferrable(tmp_path: Path):
+    drop = tmp_path / "drop"
+    a = _write_csv(drop / "b_orders.csv", "id,amount\n1,10\n2,20\n")
+    b = _write_csv(drop / "a_users.tsv", "id\tname\n1\talice\n2\tbob\n")
+    c = drop / "c_events.ndjson"
+    c.write_text('{"id": 1}\n{"id": 2}\n', encoding="utf-8")
+    # detect_format() reads .txt as CSV, so a directory checks it too.
+    d = _write_csv(drop / "d_extract.txt", "id,amount\n3,30\n")
+    readme = drop / "README.md"
+    readme.write_text("# drop notes\n", encoding="utf-8")
+    marker = drop / "_SUCCESS"
+    marker.write_text("", encoding="utf-8")
+    nested = _write_csv(drop / "nested" / "deep.csv", "id,amount\n1,\n")
+
+    # Non-recursive by default: checks top-level supported files in sorted order,
+    # reports uninferrable files in skipped and stderr, does not descend into nested/.
+    res = run_check(drop, "--min-rows", "1", "--max-null", "*=0", "--json")
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "pass"
+    assert [entry["path"] for entry in doc["sources"]] == [str(b), str(a), str(c), str(d)]
+    assert doc["skipped"] == [
+        {"path": str(readme), "reason": "format_not_inferred"},
+        {"path": str(marker), "reason": "format_not_inferred"},
+    ]
+    assert f"  skipped: {readme}: format could not be inferred" in res.stderr
+    assert f"  skipped: {marker}: format could not be inferred" in res.stderr
+
+    # With --recursive: also descends into nested/ (whose file fails max-null *=0).
+    rec = run_check(drop, "--recursive", "--min-rows", "1", "--max-null", "*=0", "--json")
+    assert rec.returncode == 1, rec.stderr
+    rec_doc = json.loads(rec.stdout)
+    assert rec_doc["verdict"] == "fail"
+    paths = [entry["path"] for entry in rec_doc["sources"]]
+    assert paths == [str(b), str(a), str(c), str(d), str(nested)]
+    assert rec_doc["sources"][-1]["result"]["verdict"] == "fail"
+    assert rec_doc["skipped"] == [
+        {"path": str(readme), "reason": "format_not_inferred"},
+        {"path": str(marker), "reason": "format_not_inferred"},
+    ]
+
+
+def test_directory_with_explicit_format_checks_extensionless_files(tmp_path: Path):
+    drop = tmp_path / "raw_csvs"
+    part1 = _write_csv(drop / "part-000", "id,v\n1,10\n2,20\n")
+    part2 = _write_csv(drop / "part-001", "id,v\n3,30\n4,40\n")
+
+    res = run_check(drop, "--format", "csv", "--min-rows", "2", "--json")
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "pass"
+    assert [entry["path"] for entry in doc["sources"]] == [str(part1), str(part2)]
+    assert doc["skipped"] == []
+
+
+def test_empty_or_unsupported_only_directory_is_an_input_error(tmp_path: Path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    res = run_check(empty_dir, "--min-rows", "1", "--json")
+    assert res.returncode == 3
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "error"
+    assert doc["sources"][0]["path"] == str(empty_dir)
+    assert doc["sources"][0]["error"]["kind"] == "input"
+    assert "no supported files" in doc["sources"][0]["error"]["message"]
+    assert doc["skipped"] == []
+
+    only_unknown = tmp_path / "notes"
+    only_unknown.mkdir()
+    readme = only_unknown / "README.md"
+    readme.write_text("hello\n", encoding="utf-8")
+    res2 = run_check(only_unknown, "--min-rows", "1", "--json")
+    assert res2.returncode == 3
+    doc2 = json.loads(res2.stdout)
+    assert doc2["verdict"] == "error"
+    assert doc2["skipped"] == [{"path": str(readme), "reason": "format_not_inferred"}]
+    assert "no supported files" in doc2["sources"][0]["error"]["message"]
+
+    # Mixing an empty directory with a valid file still checks the valid file.
+    good = _write_csv(tmp_path / "good.csv", "id\n1\n")
+    mixed = run_check(empty_dir, good, "--min-rows", "1", "--json")
+    assert mixed.returncode == 3
+    mixed_doc = json.loads(mixed.stdout)
+    assert mixed_doc["verdict"] == "error"
+    assert mixed_doc["sources"][0]["error"]["kind"] == "input"
+    assert mixed_doc["sources"][1]["result"]["verdict"] == "pass"
+
+
+@pytest.mark.parametrize("flag", ["--baseline", "--report"])
+@pytest.mark.parametrize("mode", ["two-files", "directory"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_baseline_and_report_rejected_for_multi_source_and_directory(
+    tmp_path: Path, flag: str, mode: str, json_output: bool
+):
+    a = _write_csv(tmp_path / "drop" / "a.csv", "id,amount\n1,10\n")
+    b = _write_csv(tmp_path / "drop" / "b.csv", "id,amount\n2,20\n")
+    extra_path = tmp_path / "artifact.json"
+    if flag == "--baseline":
+        dp.profile_file(a).save(extra_path)
+    targets: list[Path] = [a, b] if mode == "two-files" else [tmp_path / "drop"]
+    args: list[str | Path] = [*targets, "--min-rows", "1", flag, extra_path]
+    if json_output:
+        args.append("--json")
+
+    res = run_check(*args)
+    assert res.returncode == 3
+    assert "Traceback" not in res.stderr
+    expected_msg = f"{flag} is only supported with a single source file"
+    if json_output:
+        error = json.loads(res.stdout)["error"]
+        assert error["kind"] == "argument"
+        assert error["message"] == expected_msg
+        assert res.stderr == ""
+    else:
+        assert res.stdout == ""
+        assert expected_msg in res.stderr
+
+
+def test_directory_skips_an_entry_that_is_not_a_regular_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A named pipe called a.csv would block the read and hang the whole run."""
+    import os
+    import stat as stat_module
+
+    drop = tmp_path / "drop"
+    good = _write_csv(drop / "b.csv", "id\n1\n")
+    pipe = _write_csv(drop / "a.csv", "id\n1\n")
+    real_lstat = Path.lstat
+
+    def fake_lstat(self: Path) -> os.stat_result:
+        st = real_lstat(self)
+        if self == pipe:
+            fields = list(st)
+            fields[0] = stat_module.S_IFIFO | 0o644
+            return os.stat_result(fields)
+        return st
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    for explicit_format in (None, "csv"):
+        # The stub exposes only main(); the walk is private.
+        items, skipped = entrypoint._expand_directory(  # ty: ignore[missing-attribute]
+            drop, recursive=False, explicit_format=explicit_format
+        )
+        assert items == [(good, None)]
+        assert skipped == [(pipe, "not_a_regular_file")]
+
+
+def test_positional_sources_follow_the_directory_format_rule(tmp_path: Path):
+    """A drop/* glob reports what drop/ reports: an unknown extension is skipped."""
+    good = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    notes = _write_csv(tmp_path / "notes.md", "id\n1\n")
+    missing = tmp_path / "gone.md"
+
+    res = run_check(good, notes, missing, "--min-rows", "1", "--json")
+    doc = json.loads(res.stdout)
+    assert [entry["path"] for entry in doc["sources"]] == [str(good), str(missing)]
+    assert "error" in doc["sources"][1]
+    assert doc["skipped"] == [{"path": str(notes), "reason": "format_not_inferred"}]
+    assert res.returncode == 3
+
+    # --format makes the extension irrelevant, as it does for a directory.
+    forced = run_check(good, notes, "--format", "csv", "--min-rows", "1", "--json")
+    assert forced.returncode == 0, forced.stderr
+    forced_doc = json.loads(forced.stdout)
+    assert [entry["path"] for entry in forced_doc["sources"]] == [str(good), str(notes)]
+    assert forced_doc["skipped"] == []
+
+    # Every source skipped: nothing was checked, which is not a pass.
+    none = run_check(notes, notes, "--min-rows", "1", "--json")
+    assert none.returncode == 3, none.stderr
+    assert json.loads(none.stdout)["verdict"] == "error"
+
+
+def test_directory_reports_an_entry_it_cannot_stat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """lstat() failing on one entry is that entry's error, not a traceback."""
+    drop = tmp_path / "drop"
+    good = _write_csv(drop / "b.csv", "id\n1\n")
+    locked = _write_csv(drop / "a.csv", "id\n1\n")
+    real_lstat = Path.lstat
+
+    def fake_lstat(self: Path):
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_lstat(self)
+
+    real_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(self: Path) -> bool:
+        # What Python 3.11 does: is_symlink() lets the PermissionError through.
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_is_symlink(self)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+    items, skipped = entrypoint._expand_directory(  # ty: ignore[missing-attribute]
+        drop, recursive=False, explicit_format=None
+    )
+    assert items[0][0] == locked
+    assert items[0][1] is not None and "Permission denied" in items[0][1]
+    assert items[1] == (good, None)
+    assert skipped == []
+
+
+def test_rule_about_change_without_baseline_in_multi_source_run_names_single_source(
+    tmp_path: Path,
+):
+    """The hint must not send the user to --baseline, which several sources refuse."""
+    a = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    b = _write_csv(tmp_path / "b.csv", "id\n2\n")
+    res = run_check(a, b, "--max-quality-drop", "5", "--json")
+    assert res.returncode == 3
+    error = json.loads(res.stdout)["error"]
+    assert error["kind"] == "policy"
+    assert error["message"].endswith(": check one source at a time with --baseline PATH")
+
+
+def test_multi_source_delegates_combined_verdict_to_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    """The entrypoint must call dataprof.combine_verdicts() rather than deciding itself."""
+    a = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    b = _write_csv(tmp_path / "b.csv", "id\n2\n")
+    called_with: list[list[dp.QualityGateResult]] = []
+
+    def spy_combine(results):
+        items = list(results)
+        called_with.append(items)
+        return "inconclusive"
+
+    monkeypatch.setattr(dp, "combine_verdicts", spy_combine)
+    code = entrypoint.main([str(a), str(b), "--min-rows", "1", "--json"])
+    assert code == 2
+    assert len(called_with) == 1
+    assert [r.verdict for r in called_with[0]] == ["pass", "pass"]
+    out, _ = capsys.readouterr()
+    assert json.loads(out)["verdict"] == "inconclusive"
+
+
+def test_multi_source_propagates_source_version(tmp_path: Path):
+    a = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    b = _write_csv(tmp_path / "b.csv", "id\n2\n")
+    res = run_check(a, b, "--min-rows", "1", "--source-version", "load-42", "--json")
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)
+    assert [entry["result"]["source_identity"] for entry in doc["sources"]] == [
+        {"version": "load-42"},
+        {"version": "load-42"},
+    ]
+
+
+def test_help_documents_multi_source_and_recursive_flags():
+    result = run_check("--help")
+    assert result.returncode == 0
+    for text in ("SOURCE [SOURCE ...]", "-r, --recursive", "multi-source", "skipped"):
+        assert text in result.stdout
+
+
+def test_single_file_directory_keeps_multi_source_json_shape(tmp_path: Path):
+    """A directory with one file still emits the multi-source document shape."""
+    drop = tmp_path / "one_file_drop"
+    only = _write_csv(drop / "DATA.CSV", "id,amount\n1,10\n2,20\n")
+    res = run_check(drop, "--min-rows", "1", "--json")
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "pass"
+    assert [entry["path"] for entry in doc["sources"]] == [str(only)]
+    assert doc["skipped"] == []
+
+
+def test_directory_supports_json_and_parquet_files(tmp_path: Path):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    drop = tmp_path / "formats"
+    drop.mkdir()
+    json_file = drop / "a_items.json"
+    json_file.write_text('[{"id": 1}, {"id": 2}]', encoding="utf-8")
+    parquet_file = drop / "b_items.parquet"
+    pq.write_table(pa.table({"id": [1, 2]}), parquet_file)
+
+    res = run_check(drop, "--min-rows", "2", "--json")
+    assert res.returncode == 0, res.stderr
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "pass"
+    assert [entry["path"] for entry in doc["sources"]] == [str(json_file), str(parquet_file)]
+    assert doc["skipped"] == []
+
+
+def test_unreadable_directory_does_not_stop_sibling_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    good = _write_csv(tmp_path / "good.csv", "id\n1\n")
+    orig_iterdir = Path.iterdir
+
+    def raising_iterdir(self: Path):
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return orig_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", raising_iterdir)
+    code = entrypoint.main([str(locked), str(good), "--min-rows", "1", "--json"])
+    assert code == 3
+    out, err = capsys.readouterr()
+    doc = json.loads(out)
+    assert doc["verdict"] == "error"
+    assert doc["sources"][0]["path"] == str(locked)
+    assert doc["sources"][0]["error"]["kind"] == "input"
+    assert "Permission denied" in doc["sources"][0]["error"]["message"]
+    assert doc["sources"][1]["path"] == str(good)
+    assert doc["sources"][1]["result"]["verdict"] == "pass"
+    assert "1 passed, 0 failed, 0 inconclusive, 1 errors" in err

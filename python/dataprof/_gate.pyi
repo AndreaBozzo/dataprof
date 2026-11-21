@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 class QualityCheck:
@@ -77,6 +77,7 @@ class QualityGateResult:
     def to_json(self, indent: int = ...) -> str: ...
     def __str__(self) -> str: ...
 
+def combine_verdicts(results: Iterable[QualityGateResult]) -> str: ...
 def _summary_lines(
     result: QualityGateResult, *, version: str, baseline_path: object = ...
 ) -> list[str]: ...

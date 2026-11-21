@@ -756,6 +756,7 @@ class TestNamespace:
             "FindingsResult",
             "QualityCheck",
             "QualityGateResult",
+            "combine_verdicts",
             "ColumnProfile",
             "DataQualityMetrics",
             "SamplingStrategy",

@@ -13,7 +13,12 @@ a failing gate is the caller's decision.
 from __future__ import annotations as _annotations
 
 import json as _json
-from collections.abc import Iterator as _Iterator, Mapping as _Mapping, Sequence as _Sequence
+from collections.abc import (
+    Iterable as _Iterable,
+    Iterator as _Iterator,
+    Mapping as _Mapping,
+    Sequence as _Sequence,
+)
 from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any
 
@@ -31,6 +36,8 @@ _PERCENTAGE_MAX = 100.0
 _SCOPES = ("full_source", "observed")
 #: How the timeliness clocks of a baseline and a report may differ (#1024).
 _TIMELINESS_CLOCKS = ("fixed", "rolling")
+#: Valid three-valued verdicts produced by a quality gate.
+_VERDICTS = ("pass", "fail", "inconclusive")
 
 
 class _PolicyFieldError(ValueError):
@@ -213,6 +220,56 @@ class QualityGateResult:
     def __str__(self) -> str:
         """The short summary ``python -m dataprof.check`` prints."""
         return "\n".join(_summary_lines(self, version=_version))
+
+
+def combine_verdicts(results: _Iterable[QualityGateResult]) -> str:
+    """Combine verdicts from one or more quality-gate results.
+
+    Applies the same precedence a single :class:`QualityGateResult` applies
+    across its checks:
+
+    * ``"fail"`` if any result failed;
+    * otherwise ``"inconclusive"`` if any result was inconclusive;
+    * otherwise ``"pass"``.
+
+    Args:
+        results: Non-empty iterable of :class:`QualityGateResult` objects.
+
+    Returns:
+        ``"pass"``, ``"fail"``, or ``"inconclusive"``.
+
+    Raises:
+        TypeError: If ``results`` is a single :class:`QualityGateResult` or
+            contains an item that is not a :class:`QualityGateResult`.
+        ValueError: If ``results`` is empty or any result carries an unknown
+            verdict string.
+    """
+    if isinstance(results, (QualityGateResult, str, bytes, bytearray)):
+        raise TypeError(
+            "combine_verdicts() expects an iterable of QualityGateResult objects, "
+            f"got {type(results).__name__}"
+        )
+    seen = False
+    combined = "pass"
+    for item in results:
+        if not isinstance(item, QualityGateResult):
+            raise TypeError(
+                "combine_verdicts() items must be QualityGateResult objects, "
+                f"got {type(item).__name__}"
+            )
+        if item.verdict not in _VERDICTS:
+            raise ValueError(f"unknown verdict {item.verdict!r}; expected one of {_VERDICTS}")
+        seen = True
+        if item.verdict == "fail":
+            combined = "fail"
+        elif item.verdict == "inconclusive" and combined != "fail":
+            combined = "inconclusive"
+    if not seen:
+        raise ValueError("combine_verdicts() requires at least one QualityGateResult")
+    return combined
+
+
+combine_verdicts.__module__ = "dataprof"
 
 
 def _summary_lines(
