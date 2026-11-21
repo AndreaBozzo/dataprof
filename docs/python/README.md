@@ -1694,12 +1694,18 @@ their verdicts with `dp.combine_verdicts()`.
   name order: `.csv`, `.tsv`, `.txt`, `.json`, `.jsonl`, `.ndjson`, and `.parquet`
   (case-insensitive). Recursion into subdirectories is opt-in via `-r` /
   `--recursive`; symlinked directories are not traversed.
-- **Uninferrable files.** When `--format` is not given, files inside a directory
-  whose extension does not map to a supported format (such as `README.md` or
-  `_SUCCESS`) are not checked and are reported rather than skipped silently, on
-  stderr and in the JSON `"skipped"` array. When `--format` is given, every
-  regular file in the directory is checked with that format. A directory with no
-  supported files is reported as an input error for that directory.
+- **Uninferrable files.** When `--format` is not given, files whose extension
+  does not map to a supported format (such as `README.md` or `_SUCCESS`) are not
+  checked and are reported rather than skipped silently, on stderr and in the
+  JSON `"skipped"` array with reason `format_not_inferred`. The rule is the same
+  for files inside a directory and for positional files in a run of several
+  sources, so `drop/*` and `drop/` check the same files. When `--format` is
+  given, every regular file is checked with that format. A directory with no
+  supported files is reported as an input error for that directory, and a run in
+  which every source was skipped exits `3` with verdict `"error"`.
+- **Not regular files.** A directory entry that is not a regular file (a named
+  pipe, a socket, a device) is skipped with reason `not_a_regular_file`, since
+  reading it could block the run.
 - **Per-source errors.** A source that cannot be read or parsed records an
   `"error"` entry for that path without stopping the remaining sources. Any
   per-source error sets the combined verdict to `"error"` and exits `3`, while
@@ -1768,7 +1774,7 @@ of `"result"`:
 ```
 
 Top-level `"verdict"` is `"pass"`, `"fail"`, `"inconclusive"`, or `"error"` (when
-at least one source entry holds an `"error"`), mapping directly to exit codes
+at least one source entry holds an `"error"`, or no source was checked), mapping directly to exit codes
 `0`, `1`, `2`, and `3`. `"skipped"` is always a list (`[]` when no files were
 skipped).
 

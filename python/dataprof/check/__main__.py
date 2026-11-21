@@ -23,6 +23,11 @@ _ERROR_EXIT_CODE = 3
 # two lists in step. Files with any other extension (or none) are reported as
 # skipped unless --format is supplied explicitly.
 _INFERRED_EXTENSIONS = frozenset({".csv", ".tsv", ".txt", ".json", ".jsonl", ".ndjson", ".parquet"})
+# Why a directory entry was not checked: the JSON reason and its stderr text.
+_SKIP_REASONS = {
+    "format_not_inferred": "format could not be inferred",
+    "not_a_regular_file": "not a regular file",
+}
 _POLICY_DEFAULTS: dict[str, Any] = {
     "min_rows": None,
     "min_quality_score": None,
@@ -230,8 +235,8 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
             "directory in a multi-source run). "
             "A proven violation takes precedence over unevaluated checks. "
             "In a multi-source run, unreadable sources are reported without stopping the "
-            "remaining sources, and files in a directory whose format cannot be inferred "
-            "are reported as skipped. "
+            "remaining sources, and files whose format cannot be inferred from the "
+            "extension (in a directory or among several sources) are reported as skipped. "
             "Rules about change need --baseline: a report an earlier run saved with --report "
             "(single source file only)."
         ),
@@ -593,16 +598,26 @@ def _expand_directory(
     *,
     recursive: bool,
     explicit_format: str | None,
-) -> tuple[list[tuple[Path, str | None]], list[Path]]:
+) -> tuple[list[tuple[Path, str | None]], list[tuple[Path, str]]]:
     """Expand a directory into ``(path, pre_error)`` items and skipped paths.
 
     Supported files are returned in deterministic sorted order. Files whose
-    format cannot be inferred (when ``explicit_format`` is None) are returned
-    in ``skipped`` rather than dropped silently. Symlinked directories are not
-    traversed so directory cycles cannot loop infinitely.
+    format cannot be inferred (when ``explicit_format`` is None), and entries
+    that are not regular files (a named pipe would block the read), are
+    returned in ``skipped`` with a reason rather than dropped silently.
+    Symlinked directories are not traversed so directory cycles cannot loop
+    infinitely.
     """
     items: list[tuple[Path, str | None]] = []
-    skipped: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
+
+    def _add_file(entry: Path, mode: int) -> None:
+        if not stat.S_ISREG(mode):
+            skipped.append((entry, "not_a_regular_file"))
+        elif explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
+            items.append((entry, None))
+        else:
+            skipped.append((entry, "format_not_inferred"))
 
     def _walk(current: Path) -> None:
         try:
@@ -612,41 +627,38 @@ def _expand_directory(
             items.append((current, f"cannot list directory {current}: {detail}"))
             return
         for entry in entries:
-            if entry.is_symlink():
-                try:
-                    target_st = entry.stat()
-                except OSError:
-                    if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
-                        items.append((entry, None))
-                    else:
-                        skipped.append(entry)
-                    continue
-                if stat.S_ISDIR(target_st.st_mode):
-                    continue
-                if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
-                    items.append((entry, None))
-                else:
-                    skipped.append(entry)
-                continue
+            # lstat first: is_symlink() raises PermissionError on Python 3.11
+            # for an entry in a directory that can be listed but not searched.
             try:
                 entry_st = entry.lstat()
             except OSError as exc:
                 detail = exc.strerror or str(exc)
                 items.append((entry, f"cannot stat {entry}: {detail}"))
                 continue
+            if stat.S_ISLNK(entry_st.st_mode):
+                try:
+                    target_st = entry.stat()
+                except OSError:
+                    # A broken link: queue it so its read error is reported.
+                    if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
+                        items.append((entry, None))
+                    else:
+                        skipped.append((entry, "format_not_inferred"))
+                    continue
+                if stat.S_ISDIR(target_st.st_mode):
+                    continue
+                _add_file(entry, target_st.st_mode)
+                continue
             if stat.S_ISDIR(entry_st.st_mode):
                 if recursive:
                     _walk(entry)
                 continue
-            if explicit_format is not None or entry.suffix.lower() in _INFERRED_EXTENSIONS:
-                items.append((entry, None))
-            else:
-                skipped.append(entry)
+            _add_file(entry, entry_st.st_mode)
 
     _walk(directory)
     if not items:
         if skipped:
-            suffix = f" ({len(skipped)} file(s) whose format could not be inferred)"
+            suffix = f" ({len(skipped)} skipped file(s))"
         else:
             suffix = ""
         items.append((directory, f"no supported files found in directory {directory}{suffix}"))
@@ -658,10 +670,10 @@ def _expand_sources(
     *,
     recursive: bool,
     explicit_format: str | None,
-) -> tuple[list[tuple[Path, str | None]], list[Path]]:
+) -> tuple[list[tuple[Path, str | None]], list[tuple[Path, str]]]:
     """Expand positional arguments, turning directory arguments into their files."""
     items: list[tuple[Path, str | None]] = []
-    skipped: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
     for source in sources:
         if _is_directory(source):
             dir_items, dir_skipped = _expand_directory(
@@ -671,9 +683,26 @@ def _expand_sources(
             )
             items.extend(dir_items)
             skipped.extend(dir_skipped)
+        elif (
+            explicit_format is None
+            and source.suffix.lower() not in _INFERRED_EXTENSIONS
+            and _is_regular_file(source)
+        ):
+            # The same rule as a directory, so a drop/* glob and drop/ agree.
+            # A missing or unreadable path is still queued, to report its error.
+            skipped.append((source, "format_not_inferred"))
         else:
             items.append((source, None))
     return items, skipped
+
+
+def _is_regular_file(path: Path) -> bool:
+    """Return True when ``path`` resolves to an existing regular file."""
+    try:
+        st = _stat_if_present(path)
+    except OSError:
+        return False
+    return st is not None and stat.S_ISREG(st.st_mode)
 
 
 def _load_policy(
@@ -721,7 +750,7 @@ def _load_policy(
 def _multi_summary_lines(
     verdict: str,
     outcomes: Sequence[tuple[Path, dataprof.QualityGateResult | None, str | None]],
-    skipped: Sequence[Path],
+    skipped: Sequence[tuple[Path, str]],
     *,
     version: str,
 ) -> list[str]:
@@ -754,8 +783,8 @@ def _multi_summary_lines(
                 )
                 label = f" [{subject}]" if subject is not None else ""
                 lines.append(f"    {check.status}: {check.code}{label}: {check.message}")
-    for path in skipped:
-        lines.append(f"  skipped: {path}: format could not be inferred")
+    for path, reason in skipped:
+        lines.append(f"  skipped: {path}: {_SKIP_REASONS[reason]}")
     return lines
 
 
@@ -915,7 +944,9 @@ def _run_multi(parser: _CheckArgumentParser, args: argparse.Namespace) -> int:
         source_documents.append({"path": str(path), "result": result.to_dict()})
         outcomes.append((path, result, None))
 
-    if error_count > 0:
+    if error_count > 0 or not results:
+        # No results means every positional source was skipped: nothing was
+        # checked, which must not read as a pass.
         verdict = "error"
         exit_code = _ERROR_EXIT_CODE
     else:
@@ -926,7 +957,7 @@ def _run_multi(parser: _CheckArgumentParser, args: argparse.Namespace) -> int:
         document = {
             "verdict": verdict,
             "sources": source_documents,
-            "skipped": [{"path": str(path), "reason": "format_not_inferred"} for path in skipped],
+            "skipped": [{"path": str(path), "reason": reason} for path, reason in skipped],
         }
         print(json.dumps(document, indent=2))
     for line in _multi_summary_lines(verdict, outcomes, skipped, version=dataprof.__version__):

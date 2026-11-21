@@ -1503,6 +1503,93 @@ def test_baseline_and_report_rejected_for_multi_source_and_directory(
         assert expected_msg in res.stderr
 
 
+def test_directory_skips_an_entry_that_is_not_a_regular_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A named pipe called a.csv would block the read and hang the whole run."""
+    import os
+    import stat as stat_module
+
+    drop = tmp_path / "drop"
+    good = _write_csv(drop / "b.csv", "id\n1\n")
+    pipe = _write_csv(drop / "a.csv", "id\n1\n")
+    real_lstat = Path.lstat
+
+    def fake_lstat(self: Path) -> os.stat_result:
+        st = real_lstat(self)
+        if self == pipe:
+            fields = list(st)
+            fields[0] = stat_module.S_IFIFO | 0o644
+            return os.stat_result(fields)
+        return st
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    for explicit_format in (None, "csv"):
+        # The stub exposes only main(); the walk is private.
+        items, skipped = entrypoint._expand_directory(  # ty: ignore[missing-attribute]
+            drop, recursive=False, explicit_format=explicit_format
+        )
+        assert items == [(good, None)]
+        assert skipped == [(pipe, "not_a_regular_file")]
+
+
+def test_positional_sources_follow_the_directory_format_rule(tmp_path: Path):
+    """A drop/* glob reports what drop/ reports: an unknown extension is skipped."""
+    good = _write_csv(tmp_path / "a.csv", "id\n1\n")
+    notes = _write_csv(tmp_path / "notes.md", "id\n1\n")
+    missing = tmp_path / "gone.md"
+
+    res = run_check(good, notes, missing, "--min-rows", "1", "--json")
+    doc = json.loads(res.stdout)
+    assert [entry["path"] for entry in doc["sources"]] == [str(good), str(missing)]
+    assert "error" in doc["sources"][1]
+    assert doc["skipped"] == [{"path": str(notes), "reason": "format_not_inferred"}]
+    assert res.returncode == 3
+
+    # --format makes the extension irrelevant, as it does for a directory.
+    forced = run_check(good, notes, "--format", "csv", "--min-rows", "1", "--json")
+    assert forced.returncode == 0, forced.stderr
+    forced_doc = json.loads(forced.stdout)
+    assert [entry["path"] for entry in forced_doc["sources"]] == [str(good), str(notes)]
+    assert forced_doc["skipped"] == []
+
+    # Every source skipped: nothing was checked, which is not a pass.
+    none = run_check(notes, notes, "--min-rows", "1", "--json")
+    assert none.returncode == 3, none.stderr
+    assert json.loads(none.stdout)["verdict"] == "error"
+
+
+def test_directory_reports_an_entry_it_cannot_stat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """lstat() failing on one entry is that entry's error, not a traceback."""
+    drop = tmp_path / "drop"
+    good = _write_csv(drop / "b.csv", "id\n1\n")
+    locked = _write_csv(drop / "a.csv", "id\n1\n")
+    real_lstat = Path.lstat
+
+    def fake_lstat(self: Path):
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_lstat(self)
+
+    real_is_symlink = Path.is_symlink
+
+    def fake_is_symlink(self: Path) -> bool:
+        # What Python 3.11 does: is_symlink() lets the PermissionError through.
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_is_symlink(self)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
+    items, skipped = entrypoint._expand_directory(  # ty: ignore[missing-attribute]
+        drop, recursive=False, explicit_format=None
+    )
+    assert items[0][0] == locked
+    assert items[0][1] is not None and "Permission denied" in items[0][1]
+    assert items[1] == (good, None)
+    assert skipped == []
+
+
 def test_rule_about_change_without_baseline_in_multi_source_run_names_single_source(
     tmp_path: Path,
 ):
