@@ -228,6 +228,17 @@ def test_polars_lazyframe_is_refused_by_its_own_name():
         dataprof.profile(pl.LazyFrame({"a": [1, 2, 3]}))
 
 
+def test_polars_lazyframe_hint_offers_collect_batches_for_flat_selections():
+    """The LazyFrame hint offers .collect_batches() for flat selections and notes nested types."""
+    pl = pytest.importorskip("polars")
+    pattern = (
+        r"polars LazyFrame .*\.collect\(\).*\.collect_batches\(\)"
+        r".*flat selections.*list.*struct.*map"
+    )
+    with pytest.raises(TypeError, match=pattern):
+        dataprof.profile(pl.LazyFrame({"a": [1, 2, 3]}))
+
+
 def _dictionary_column(indices, safe=True):
     """An int8-keyed dictionary column over the two-element dictionary [a, b].
 
