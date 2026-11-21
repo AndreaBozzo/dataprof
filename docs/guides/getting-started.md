@@ -123,8 +123,8 @@ than reading as clean. The codes, severities and thresholds are listed in the
 
 ## Gate a Batch and Keep a Baseline
 
-`check()` returns `pass` when every requirement is met, `fail` when at least
-one is violated, and `inconclusive` when no violation is proven but a check
+`check()` returns `pass` when every applicable requirement is met, `fail`
+when at least one is violated, and `inconclusive` when no violation is proven but a check
 cannot be evaluated. `result.passed` is true only for a pass.
 
 ```python
@@ -139,26 +139,22 @@ for check in [*result.violations, *result.unevaluated]:
     print(check.code, check.column, check.reason)
 ```
 
-For a checkpoint, compare each batch with the last accepted report. Save the
-candidate separately and promote it only on a pass. These shell commands use
-0.13 rules; the rolling clock option needs 0.14:
+For a checkpoint, compare each batch with the last accepted report and promote
+it only on a pass. The same command serves before and after the first baseline
+exists; `--allow-missing-baseline` and `--promote` need 0.15:
 
 ```bash
-# First run: absolute rules only.
-python -m dataprof.check orders.csv --min-rows 1 --min-quality 90 --report candidate.json \
-  && mv candidate.json baseline.json
-
-# Later runs: absolute rules plus changes from the accepted baseline.
 python -m dataprof.check orders.csv --min-rows 1 --min-quality 90 \
-  --baseline baseline.json --max-quality-drop 5 --forbid-removed-columns \
-  --timeliness-clock rolling --report candidate.json --json > verdict.json \
-  && mv candidate.json baseline.json
+  --baseline baseline.json --allow-missing-baseline --promote baseline.json \
+  --max-quality-drop 5 --forbid-removed-columns --timeliness-clock rolling \
+  --report candidate.json --json > verdict.json
 ```
 
 Exit codes are `0` pass, `1` fail, `2` inconclusive, and `3` for an argument,
 policy, input, baseline or output error. `--report` writes the full report for
-all three verdicts. A metric definition that changed or was not recorded can
-leave an affected change rule `definition_not_comparable`. Inspect it before
+all three verdicts. On the first run, the change rules are `not_applicable` and
+the absolute rules decide the verdict. A metric definition that changed or was
+not recorded can leave an affected change rule `definition_not_comparable`. Inspect it before
 regenerating the baseline with the current build. Retyping a column appears in
 baseline diagnostics; it does not itself fail the gate.
 

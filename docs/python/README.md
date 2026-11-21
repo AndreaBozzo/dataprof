@@ -1033,7 +1033,8 @@ if not result.passed:
 | `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
 | `scope` | `str` | `"full_source"` (default) or `"observed"` |
-| `baseline` | `ProfileReport` | A saved report to measure change from; the rules about change below need one |
+| `baseline` | `ProfileReport` | A saved report to measure change from |
+| `allow_missing_baseline` | `bool` | When true and `baseline` is absent, record change rules as `not_applicable`. Defaults to false |
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
@@ -1124,7 +1125,7 @@ does not record the provenance the gate decides on.
 |---|---|
 | `"fail"` | At least one requirement was conclusively violated |
 | `"inconclusive"` | Nothing was violated, and something could not be checked |
-| `"pass"` | Every requirement was evaluated and met |
+| `"pass"` | Every applicable requirement was evaluated and met |
 
 `result.passed` is True only for `"pass"`, so an unanswerable gate never reads
 as a green one. `"fail"` wins over `"inconclusive"`: a witnessed violation is a
@@ -1628,8 +1629,8 @@ through symbolic links, hard links or case-insensitive path aliases.
 checked in that report and in each `QualityGateResult.source_identity`, as
 `source_version=` does for `profile()`.
 
-The policy file is a UTF-8 JSON object containing the `check()` keywords above;
-a leading byte-order mark (BOM) is accepted.
+The policy file is a UTF-8 JSON object containing the `check()` keywords above
+and the `promote` checkpoint option. A leading byte-order mark (BOM) is accepted.
 Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
 (exit 3). Commit it alongside the pipeline so threshold changes can be reviewed:
 
@@ -1666,16 +1667,17 @@ unevaluated; an explicit `--require-metric` requirement fails if it is absent.
 
 | Exit code | Single source | Multiple sources or directory |
 |---|---|---|
-| `0` | Every requirement passed; also used by `--help` and `--version` | Every source passed (via `combine_verdicts()`) |
+| `0` | Every applicable requirement passed. Also used by `--help` and `--version` | Every source passed (via `combine_verdicts()`) |
 | `1` | The gate found a proven violation, even if other checks are unevaluated | Every source was read and at least one failed |
 | `2` | The gate is inconclusive: a threshold could not be evaluated | Every source was read, none failed, and at least one was inconclusive |
 | `3` | An argument, policy, source, or baseline could not be read or used, or the report could not be written | An argument or policy error occurred, or at least one source or directory could not be read or yielded no supported files |
 
-Human summaries go to stderr: the verdict, each check that did not pass, and
-with `--baseline` each schema-change diagnostic, which a pass can carry. With
-`--json`, a single source file writes only the existing `QualityGateResult.to_json()`
-document to stdout, byte-identical to earlier releases, including inconclusive
-results. Top-level errors (exit `3`) write an error object instead of a result
+Human summaries go to stderr and include the verdict, checks that did not
+pass, and any schema-change diagnostics. With `--json`, a single-source
+check writes the `QualityGateResult.to_json()` document to stdout,
+byte-identical to earlier releases unless `--allow-missing-baseline` took
+effect, which adds `"baseline_missing": true`. Top-level
+errors (exit `3`) write an error object instead of a result
 document:
 `{"error": {"kind": "argument" | "policy" | "input" | "baseline" | "output", "message": "...", "path": "..."}}`,
 where `path` is present when the error names a file. A `policy` error without
@@ -1716,9 +1718,10 @@ their verdicts with `dp.combine_verdicts()`.
   that source (and therefore the combined verdict, unless another source failed
   or errored) `"inconclusive"`. Use `*=` wildcards or dataset-level rules when
   checking heterogeneous tables under one policy.
-- **Single-source-only flags.** `--baseline` and `--report` are rejected as
-  argument errors (exit `3`) when checking multiple sources or a directory,
-  because each takes a single file path with no unambiguous per-source mapping.
+- **Single-source-only options.** `--baseline`, `--report`, `--promote` and
+  `--allow-missing-baseline` are rejected as argument errors (exit `3`) when
+  checking multiple sources or a directory. Enabled checkpoint options in the
+  policy file are rejected too.
   `--source-version` applies to every source in the run.
 
 With `--json`, a multi-source or directory run writes one JSON document to
@@ -1797,7 +1800,7 @@ skipped).
 | `--timeliness-clock fixed\|rolling` | `timeliness_clock` |
 
 A rule about change without `--baseline` is a policy error (exit `3`). The
-baseline is a `.json` report that `--report` or `save()` wrote, or a flat `to_dict()` summary,
+baseline is a `.json` report that `--report`, `--promote` or `save()` wrote, or a flat `to_dict()` summary,
 which leaves what it did not record unrecorded. A baseline that cannot be read,
 is not a report, or cannot be compared exits `3` with an error of kind `baseline`
 naming the path.
@@ -1807,20 +1810,38 @@ evidence under `full_source`), the rule is unevaluated and the run exits `2`, wi
 the reason in the check. `--json` output then carries `baseline`: both reports,
 how their columns differ, and diagnostics that never move the verdict.
 
-`--report` cannot write over the baseline, because a report is written whatever
-the verdict and a failing run would become the next baseline. Write it elsewhere
-and promote it on a pass, the first run included:
+#### First run and promotion
+
+Use `--allow-missing-baseline` or set `"allow_missing_baseline": true` in the
+policy. It requires `--baseline PATH`. If the path is absent, the absolute
+rules decide the verdict and the result includes `"baseline_missing": true`
+with no `baseline` comparison. The change rules are recorded as
+`not_applicable`, with one check per named subject and one check per wildcard
+or schema rule. A change-only policy passes on this first run. An absolute rule
+with insufficient evidence can still make the verdict inconclusive. An
+existing baseline is loaded and evaluated normally, and any error reading or
+comparing it still exits `3`.
+
+In Python, `report.check(allow_missing_baseline=True, ...)` makes the same
+explicit decision when `baseline` is `None`. `result.unevaluated` continues
+to contain just the checks with status `not_evaluated`.
+
+`--promote PATH` or `"promote": "PATH"` in the policy writes the full profile
+to a `.json` file only on a pass, using a temporary file in the target directory
+and an atomic replace. Relative paths are resolved from the current working
+directory. The promotion path can be the baseline path. If you also use
+`--report`, give it a distinct path from both the baseline and the promotion
+target. The report is written first, for all three verdicts. Either write
+failing exits `3`, and a failed write leaves the promotion target untouched.
+Both checkpoint options require a single source file.
+
+Use the same command on the first and subsequent runs.
 
 ```bash
-# First run: no baseline yet, so absolute rules only; promote the report on a pass.
-python -m dataprof.check orders.csv --min-quality 90 --report candidate.json \
-  && mv candidate.json baseline.json
-
-# Later runs: compare with the last accepted report, promote today's on a pass.
 python -m dataprof.check orders.csv --min-quality 90 \
-  --baseline baseline.json --max-quality-drop 5 --max-null-increase '*=2' \
-  --forbid-removed-columns --report candidate.json --json > verdict.json \
-  && mv candidate.json baseline.json
+  --baseline baseline.json --allow-missing-baseline --promote baseline.json \
+  --max-quality-drop 5 --max-null-increase '*=2' --forbid-removed-columns \
+  --report candidate.json --json > verdict.json
 ```
 
 The [baseline checkpoint example](../../examples/README.md#4-baseline-checkpoint)

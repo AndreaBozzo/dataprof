@@ -17,8 +17,11 @@ example:
   run leaves it as it was.
 - `candidate.json` is today's report, written whatever the verdict, so the
   evidence of a rejected drop stays available beside the verdict.
-- The policy is data. Rules about change need a baseline, so the first run,
-  with none yet, applies the absolute rules alone.
+- The policy is data, and one policy serves every run. With
+  `allow_missing_baseline=True`, the first run, with no baseline yet, records
+  the rules about change as not applicable and the absolute rules decide it.
+  `python -m dataprof.check` takes the same policy as JSON, and its
+  `--promote` option replaces the rename below.
 
 This example runs seven drops and prints every verdict. It exits 0 when each
 drop reaches the verdict the comments below describe, and 1 otherwise, so CI
@@ -29,6 +32,7 @@ anything but a pass; `python -m dataprof.check` does, with exit codes 0 pass,
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -56,18 +60,14 @@ def orders(
     return header + "\n".join(rows) + "\n"
 
 
-# Absolute rules: they hold on every run, the first included.
-ABSOLUTE: dict[str, Any] = {
+# One policy for every run. The absolute rules hold on every run, the first
+# included; the rules about change apply once a run has been accepted.
+POLICY: dict[str, Any] = {
     "min_quality_score": 85,
     "max_null_count": {"order_id": 0},
     "max_null_percentage": {"customer_id": 20},
     "max_duplicate_rows": 0,
     "require_columns": ["order_id", "customer_id", "amount_eur", "status"],
-}
-
-# Rules about change: they need a baseline, so they apply once a run has been
-# accepted.
-CHANGE: dict[str, Any] = {
     "max_quality_score_drop": 2,
     "max_null_percentage_increase": {"*": 5},
     "forbid_removed_columns": True,
@@ -93,13 +93,15 @@ def evaluate(workdir: Path, label: str, contents: str, **profile_options: Any) -
     report = dp.profile(str(source), identifier_columns=["order_id"], **profile_options)
     report.save(str(candidate_path))
 
-    if baseline_path.exists():
-        baseline = dp.ProfileReport.load(str(baseline_path))
-        result = report.check(**ABSOLUTE, baseline=baseline, **CHANGE)
-        against = "against the accepted baseline"
+    # lexists, not exists: a dangling symlink is a broken baseline, not a
+    # missing one, so load() raises on it instead of starting over.
+    present = os.path.lexists(baseline_path)
+    baseline = dp.ProfileReport.load(str(baseline_path)) if present else None
+    result = report.check(**POLICY, baseline=baseline, allow_missing_baseline=True)
+    if result.baseline_missing:
+        against = "no baseline yet: the rules about change are not applicable"
     else:
-        result = report.check(**ABSOLUTE)
-        against = "no baseline yet: absolute rules only"
+        against = "against the accepted baseline"
 
     print(f"{label} ({against})")
     show(result)

@@ -22,11 +22,15 @@
 //! - [`Verdict::Inconclusive`] — nothing was violated, and at least one
 //!   requirement could not be evaluated (a metric was not analyzed, a column
 //!   was not profiled, the evidence does not reach as far as the requirement).
-//! - [`Verdict::Pass`] — every requirement was evaluated and met.
+//! - [`Verdict::Pass`] — every applicable requirement was evaluated and met.
 //!
 //! `Fail` wins over `Inconclusive`: a witnessed violation is a decision.
 //!
 //! # Baseline-relative rules
+//!
+//! When the caller explicitly expects a missing baseline,
+//! [`QualityPolicy::evaluate_first_run`] records change rules as
+//! [`CheckStatus::NotApplicable`] and decides the verdict from absolute rules.
 //!
 //! [`QualityPolicy::evaluate_against`] also reads a saved baseline, through the
 //! [`ReportDelta`] between it and the report, and evaluates rules about change:
@@ -727,7 +731,11 @@ pub enum CheckStatus {
     Failed,
     /// Not evaluated, for this reason.
     NotEvaluated(NotEvaluated),
+    /// A change rule on an explicitly allowed first run without a baseline.
+    NotApplicable,
 }
+
+const NO_BASELINE: &str = "no baseline was used for this run";
 
 /// One requirement and what the report said about it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -771,7 +779,7 @@ pub struct Check {
     /// and not serialized, when there are none and on every other rule.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
-    /// Passed, failed, or not evaluated.
+    /// Passed, failed, not evaluated, or not applicable.
     #[serde(flatten)]
     pub status: CheckStatus,
     /// A fixed sentence naming the outcome.
@@ -958,7 +966,7 @@ pub struct CheckBounds {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Verdict {
-    /// Every requirement was evaluated and met.
+    /// Every applicable requirement was evaluated and met.
     Pass,
     /// At least one requirement was conclusively violated.
     Fail,
@@ -995,6 +1003,9 @@ pub struct GateResult {
     /// baseline. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<BaselineComparison>,
+    /// This run explicitly allowed a missing baseline and used none.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub baseline_missing: bool,
     /// The build that wrote the report evaluated, which decided the metrics
     /// the verdict reads. `None` (serialized as `null`) when the report did
     /// not record one. The build evaluating the policy can be another.
@@ -1535,16 +1546,158 @@ impl QualityPolicy {
         if self.has_change_rules() {
             return Err(PolicyError::BaselineRequired);
         }
-        let checks = self.absolute_checks(report);
-        Ok(GateResult {
+        Ok(self.evaluate_without_baseline(report, false))
+    }
+
+    /// Evaluate the policy when the caller explicitly expects no baseline.
+    /// Change rules are recorded as not applicable. The absolute rules
+    /// alone decide the verdict, which passes if there are none.
+    pub fn evaluate_first_run(&self, report: &ProfileReport) -> Result<GateResult, PolicyError> {
+        self.validate()?;
+        Ok(self.evaluate_without_baseline(report, true))
+    }
+
+    fn evaluate_without_baseline(
+        &self,
+        report: &ProfileReport,
+        baseline_missing: bool,
+    ) -> GateResult {
+        let evidence = scan_evidence(&report.execution);
+        let mut checks = self.absolute_checks(report);
+        if baseline_missing {
+            self.record_inapplicable_changes(&mut checks, evidence);
+        }
+        GateResult {
             verdict: verdict_of(&checks),
             scope: self.scope,
-            evidence: scan_evidence(&report.execution),
+            evidence,
             checks,
             baseline: None,
+            baseline_missing,
             generator: report.generator.clone(),
             source_identity: report.source_identity.clone(),
-        })
+        }
+    }
+
+    fn record_inapplicable_changes(&self, checks: &mut Vec<Check>, evidence: Evidence) {
+        let mut record = |code, column: Option<&str>, dimension, expected| {
+            checks.push(Check {
+                code,
+                column: column.map(str::to_owned),
+                dimension,
+                finding: None,
+                findings: Vec::new(),
+                expected,
+                observed: None,
+                scope: self.scope,
+                evidence,
+                bounds: None,
+                baseline: None,
+                status: CheckStatus::NotApplicable,
+                message: NO_BASELINE.to_string(),
+            });
+        };
+        if let Some(points) = self.max_quality_score_drop {
+            record(
+                CheckCode::MaxQualityScoreDrop,
+                None,
+                None,
+                score_drop_expectation(points),
+            );
+        }
+        for dimension in QualityDimension::all() {
+            if let Some((_, points)) = self.max_dimension_score_drops.get(&dimension.to_string()) {
+                record(
+                    CheckCode::MaxDimensionScoreDrop,
+                    None,
+                    Some(dimension),
+                    score_drop_expectation(*points),
+                );
+            }
+        }
+        for (rule, percent) in [
+            (RowCountRule::Drop, self.max_row_count_drop),
+            (RowCountRule::Growth, self.max_row_count_growth),
+        ] {
+            if let Some(percent) = percent {
+                let (code, expected) = rule.requirement(percent);
+                record(code, None, None, expected);
+            }
+        }
+        // Wildcards and schema rules need a baseline to enumerate subjects.
+        // Record each of those rules once, without inventing a column.
+        for (column, points) in &self.max_null_percentage_increase {
+            record(
+                CheckCode::MaxNullPercentageIncrease,
+                Some(column),
+                None,
+                Expectation::ChangeAtMost {
+                    value: MetricValue::Percentage(*points),
+                },
+            );
+        }
+        if let Some(points) = self.max_null_percentage_increase_any {
+            record(
+                CheckCode::MaxNullPercentageIncrease,
+                None,
+                None,
+                Expectation::ChangeAtMost {
+                    value: MetricValue::Percentage(points),
+                },
+            );
+        }
+        for (column, nulls) in &self.max_null_count_increase {
+            record(
+                CheckCode::MaxNullCountIncrease,
+                Some(column),
+                None,
+                Expectation::ChangeAtMost {
+                    value: MetricValue::Count(*nulls),
+                },
+            );
+        }
+        if let Some(nulls) = self.max_null_count_increase_any {
+            record(
+                CheckCode::MaxNullCountIncrease,
+                None,
+                None,
+                Expectation::ChangeAtMost {
+                    value: MetricValue::Count(nulls),
+                },
+            );
+        }
+        for (column, percent) in &self.max_distinct_drop {
+            record(
+                CheckCode::MaxDistinctDrop,
+                Some(column),
+                None,
+                distinct_drop_expectation(*percent),
+            );
+        }
+        if let Some(percent) = self.max_distinct_drop_any {
+            record(
+                CheckCode::MaxDistinctDrop,
+                None,
+                None,
+                distinct_drop_expectation(percent),
+            );
+        }
+        if self.forbid_removed_columns {
+            record(
+                CheckCode::ForbidRemovedColumn,
+                None,
+                None,
+                Expectation::Present,
+            );
+        }
+        if self.forbid_added_columns {
+            record(
+                CheckCode::ForbidAddedColumn,
+                None,
+                None,
+                Expectation::InBaseline,
+            );
+        }
     }
 
     /// Evaluate the policy against a report and a baseline it is compared
@@ -1644,6 +1797,7 @@ impl QualityPolicy {
                 diagnostics,
                 timeliness_clock: self.timeliness_clock,
             }),
+            baseline_missing: false,
             generator: report.generator.clone(),
             source_identity: report.source_identity.clone(),
         })
@@ -1899,6 +2053,7 @@ impl QualityPolicy {
             _ => CheckStatus::Failed,
         };
         let message = match status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "the scan read at least the required number of rows",
             CheckStatus::Failed => "fewer rows were read than the required minimum",
             CheckStatus::NotEvaluated(_) => {
@@ -2134,6 +2289,7 @@ impl QualityPolicy {
         check.status =
             self.decide_aggregate(check.evidence, rounded_2(percentage) <= rounded_2(max));
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "this column's null percentage is within the allowance",
             CheckStatus::Failed => "this column's null percentage is above the allowance",
             CheckStatus::NotEvaluated(_) => {
@@ -2212,6 +2368,7 @@ impl QualityPolicy {
             _ => CheckStatus::Passed,
         };
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "this column's null count is within the allowance",
             CheckStatus::Failed => "nulls were observed in this column above the allowance",
             CheckStatus::NotEvaluated(_) => {
@@ -2285,6 +2442,7 @@ impl QualityPolicy {
             _ => CheckStatus::Passed,
         };
         let message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "the duplicate-row count is within the allowance",
             CheckStatus::Failed if estimated => {
                 "the estimated duplicate-row count is above the allowance"
@@ -2359,6 +2517,7 @@ impl QualityPolicy {
             _ => CheckStatus::Passed,
         };
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "no non-null value of this column occurs more than once",
             CheckStatus::Failed => "some non-null values of this column occur more than once",
             CheckStatus::NotEvaluated(_) => {
@@ -2461,6 +2620,7 @@ impl QualityPolicy {
             _ => CheckStatus::Failed,
         };
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "this column's newest date is within the allowed age",
             CheckStatus::Failed => "this column's newest date is older than the allowed age",
             CheckStatus::NotEvaluated(_) if fresh && !order_settled => {
@@ -2546,6 +2706,7 @@ impl QualityPolicy {
             _ => CheckStatus::Failed,
         };
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => format!(
                 "this column's largest gap between dates, {} days from {} to {}, is within the                  allowance",
                 gap.days, gap.from, gap.to
@@ -2601,11 +2762,7 @@ impl QualityPolicy {
             dimension,
             finding: None,
             findings: Vec::new(),
-            // `0.0 - points`, not `-points`: a permitted drop of zero
-            // serializes as 0.0 rather than -0.0.
-            expected: Expectation::ChangeAtLeast {
-                value: MetricValue::Percentage(0.0 - points),
-            },
+            expected: score_drop_expectation(points),
             observed: change.b.map(MetricValue::Percentage),
             scope: self.scope,
             evidence: change.evidence.b,
@@ -2690,6 +2847,7 @@ impl QualityPolicy {
                 })
             };
             check.message = match check.status {
+                CheckStatus::NotApplicable => NO_BASELINE.into(),
                 CheckStatus::Passed => format!(
                     "{subject} was computed over a sample on at least one side, and every \
                      change the whole-source intervals allow is within the permitted drop"
@@ -2707,6 +2865,7 @@ impl QualityPolicy {
         }
         check.status = self.decide_change(&change.evidence, change_points >= allowance);
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => {
                 format!("{subject} dropped no more than allowed from the baseline")
             }
@@ -2874,6 +3033,7 @@ impl QualityPolicy {
             null_pct_delta.expect("a delta has a change whenever both sides have a value");
         check.status = self.decide_change(&evidence, change_points <= rounded_2(points));
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => {
                 format!("{subject} rose no more than allowed above the baseline")
             }
@@ -2985,6 +3145,7 @@ impl QualityPolicy {
         let satisfied = count_b <= count_a.saturating_add(nulls);
         check.status = self.decide_change(&evidence, satisfied);
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => {
                 format!("{subject} rose no more than allowed above the baseline")
             }
@@ -3009,22 +3170,7 @@ impl QualityPolicy {
             .zip(b.rows_processed)
             .map(|(a, b)| relative_change(a as f64, b as f64));
         let allowed = rounded_2(percent);
-        let (code, expected) = match rule {
-            // `0.0 - percent`, not `-percent`: a permitted drop of zero
-            // serializes as 0.0 rather than -0.0.
-            RowCountRule::Drop => (
-                CheckCode::MaxRowCountDrop,
-                Expectation::RelativeChangeAtLeast {
-                    value: MetricValue::Percentage(0.0 - percent),
-                },
-            ),
-            RowCountRule::Growth => (
-                CheckCode::MaxRowCountGrowth,
-                Expectation::RelativeChangeAtMost {
-                    value: MetricValue::Percentage(percent),
-                },
-            ),
-        };
+        let (code, expected) = rule.requirement(percent);
         let check = Check {
             code,
             column: None,
@@ -3079,6 +3225,7 @@ impl QualityPolicy {
             )
         };
         check.message = match check.status {
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => {
                 format!("{subject} {verb} no more than allowed from the baseline")
             }
@@ -3204,11 +3351,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
-            // `0.0 - percent`, not `-percent`: a permitted drop of zero
-            // serializes as 0.0 rather than -0.0.
-            expected: Expectation::RelativeChangeAtLeast {
-                value: MetricValue::Percentage(0.0 - percent),
-            },
+            expected: distinct_drop_expectation(percent),
             observed: count_b.map(MetricValue::Count),
             scope: self.scope,
             evidence: evidence.b,
@@ -3271,6 +3414,7 @@ impl QualityPolicy {
             CheckStatus::Passed if count_held => {
                 format!("{subject} fell no more than allowed from the baseline")
             }
+            CheckStatus::NotApplicable => NO_BASELINE.into(),
             CheckStatus::Passed => format!(
                 "{subject} fell more than allowed from the baseline, and its distinct share of \
                  non-null values fell no more than allowed, so the drop follows fewer values"
@@ -3322,6 +3466,7 @@ impl QualityPolicy {
             self.absence_status(current, column, NotEvaluated::ColumnNotProfiled)
         };
         let message = match &status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "the required column was profiled",
             CheckStatus::Failed => "the required column is not in the source the report read",
             CheckStatus::NotEvaluated(NotEvaluated::ColumnNotProfiled) => {
@@ -3366,6 +3511,7 @@ impl QualityPolicy {
             )
         };
         let message = match &status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "the column the baseline profiled is still profiled",
             CheckStatus::Failed => {
                 "a column the baseline profiled is not in the source the report read"
@@ -3412,6 +3558,7 @@ impl QualityPolicy {
             )
         };
         let message = match &status {
+            CheckStatus::NotApplicable => NO_BASELINE,
             CheckStatus::Passed => "the column is one the baseline profiled",
             CheckStatus::Failed => {
                 "the report profiled a column the baseline's source did not have"
@@ -3671,6 +3818,40 @@ fn schema_diagnostics(
 enum RowCountRule {
     Drop,
     Growth,
+}
+
+impl RowCountRule {
+    fn requirement(self, percent: f64) -> (CheckCode, Expectation) {
+        match self {
+            // `0.0 - percent`, not `-percent`: a permitted drop of zero
+            // serializes as 0.0 rather than -0.0.
+            RowCountRule::Drop => (
+                CheckCode::MaxRowCountDrop,
+                Expectation::RelativeChangeAtLeast {
+                    value: MetricValue::Percentage(0.0 - percent),
+                },
+            ),
+            RowCountRule::Growth => (
+                CheckCode::MaxRowCountGrowth,
+                Expectation::RelativeChangeAtMost {
+                    value: MetricValue::Percentage(percent),
+                },
+            ),
+        }
+    }
+}
+
+fn score_drop_expectation(points: f64) -> Expectation {
+    // Subtract from zero so a zero limit serializes as 0.0.
+    Expectation::ChangeAtLeast {
+        value: MetricValue::Percentage(0.0 - points),
+    }
+}
+
+fn distinct_drop_expectation(percent: f64) -> Expectation {
+    Expectation::RelativeChangeAtLeast {
+        value: MetricValue::Percentage(0.0 - percent),
+    }
 }
 
 /// What the distinct drop rule reads about one column on one side.
@@ -4368,6 +4549,7 @@ fn unavailable_quality(mut check: Check, report: &ProfileReport) -> Check {
 
 fn aggregate_message(status: &CheckStatus, subject: &str) -> String {
     match status {
+        CheckStatus::NotApplicable => NO_BASELINE.into(),
         CheckStatus::Passed => format!("{subject} meets the required minimum"),
         CheckStatus::Failed => format!("{subject} is below the required minimum"),
         CheckStatus::NotEvaluated(_) => format!(
@@ -4379,6 +4561,7 @@ fn aggregate_message(status: &CheckStatus, subject: &str) -> String {
 
 fn bounded_message(status: &CheckStatus, subject: &str) -> String {
     match status {
+        CheckStatus::NotApplicable => NO_BASELINE.into(),
         CheckStatus::Passed => format!(
             "{subject} was computed over a sample, and its whole-source interval meets the \
              required minimum"
@@ -4898,6 +5081,81 @@ mod tests {
             .with_quality_data(sample_data())
             .skip_quality()
             .build()
+    }
+
+    #[test]
+    fn first_run_records_every_change_rule_without_deciding_it() {
+        let policy = QualityPolicy::new()
+            .max_quality_score_drop(1.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 2.0)
+            .max_row_count_drop(3.0)
+            .max_row_count_growth(4.0)
+            .max_null_percentage_increase("note", 5.0)
+            .max_null_percentage_increase_any(6.0)
+            .max_null_count_increase("note", 7)
+            .max_null_count_increase_any(8)
+            .max_distinct_drop("id", 9.0)
+            .max_distinct_drop_any(10.0)
+            .forbid_removed_columns()
+            .forbid_added_columns();
+        let report = complete_report();
+        assert!(matches!(
+            policy.evaluate(&report),
+            Err(PolicyError::BaselineRequired)
+        ));
+        let result = policy.evaluate_first_run(&report).unwrap();
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert_eq!(result.unevaluated().count(), 0);
+        assert!(result.baseline_missing);
+        assert!(result.baseline.is_none());
+        assert_eq!(
+            result
+                .checks
+                .iter()
+                .map(|check| (check.code, check.column.as_deref(), check.dimension,))
+                .collect::<Vec<_>>(),
+            [
+                (CheckCode::MaxQualityScoreDrop, None, None),
+                (
+                    CheckCode::MaxDimensionScoreDrop,
+                    None,
+                    Some(QualityDimension::Completeness)
+                ),
+                (CheckCode::MaxRowCountDrop, None, None),
+                (CheckCode::MaxRowCountGrowth, None, None),
+                (CheckCode::MaxNullPercentageIncrease, Some("note"), None),
+                (CheckCode::MaxNullPercentageIncrease, None, None),
+                (CheckCode::MaxNullCountIncrease, Some("note"), None),
+                (CheckCode::MaxNullCountIncrease, None, None),
+                (CheckCode::MaxDistinctDrop, Some("id"), None),
+                (CheckCode::MaxDistinctDrop, None, None),
+                (CheckCode::ForbidRemovedColumn, None, None),
+                (CheckCode::ForbidAddedColumn, None, None),
+            ],
+        );
+        for check in &result.checks {
+            assert_eq!(check.status, CheckStatus::NotApplicable);
+            assert!(check.observed.is_none() && check.baseline.is_none());
+        }
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["baseline_missing"], true);
+        assert_eq!(json["checks"][0]["status"], "not_applicable");
+        assert!(json.get("baseline").is_none());
+
+        // Change-only policies pass on their first run. Absolute requirements
+        // still contribute a violation or an unevaluated check normally.
+        let policy = policy.min_rows(6);
+        assert_eq!(
+            policy.evaluate_first_run(&report).unwrap().verdict,
+            Verdict::Fail
+        );
+        assert_eq!(
+            policy
+                .evaluate_first_run(&truncated_report())
+                .unwrap()
+                .verdict,
+            Verdict::Inconclusive,
+        );
     }
 
     /// A report whose uniqueness dimension witnessed `duplicates` duplicate

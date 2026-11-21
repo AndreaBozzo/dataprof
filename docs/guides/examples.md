@@ -338,10 +338,13 @@ argument, policy, input, baseline or output error.
 ### Checkpoint and volume changes
 
 Compare against the last accepted report, then promote only a passing
-candidate. The row-count rules below need **0.14** and measure changes as
+candidate. One policy serves the first run too: `allow_missing_baseline`
+(**0.15**) records the rules about change as `not_applicable` while no
+baseline exists. The row-count rules below need **0.14** and measure changes as
 percentages of the baseline's count.
 
 ```python
+import os
 from pathlib import Path
 import dataprof as dp
 
@@ -349,19 +352,19 @@ baseline_path = Path("baseline.json")
 candidate_path = Path("candidate.json")
 report = dp.profile("orders.csv")
 report.save(candidate_path)
-policy = {"min_rows": 1, "max_null_count": {"order_id": 0}}
-if baseline_path.exists():
-    result = report.check(
-        **policy,
-        baseline=dp.ProfileReport.load(baseline_path),
-        max_quality_score_drop=5,
-        max_row_count_drop=10,
-        max_row_count_growth=20,
-        forbid_removed_columns=True,
-        timeliness_clock="rolling",
-    )
-else:
-    result = report.check(**policy)
+# lexists: a dangling symlink is a broken baseline, so load() raises on it.
+baseline = dp.ProfileReport.load(baseline_path) if os.path.lexists(baseline_path) else None
+result = report.check(
+    min_rows=1,
+    max_null_count={"order_id": 0},
+    baseline=baseline,
+    allow_missing_baseline=True,
+    max_quality_score_drop=5,
+    max_row_count_drop=10,
+    max_row_count_growth=20,
+    forbid_removed_columns=True,
+    timeliness_clock="rolling",
+)
 print(result.verdict)
 for check in [*result.violations, *result.unevaluated]:
     print(check.code, check.reason)
@@ -374,7 +377,8 @@ was not recorded. Review the reason before refreshing the baseline on purpose.
 The [runnable checkpoint](../../python/examples/baseline_checkpoint.py) covers
 older reports and schema changes too. `min_rows` gives an absolute floor;
 relative row-count checks catch loss or growth even when null shares stay the
-same. In CI, their flags are `--max-row-drop 10` and `--max-row-growth 20`.
+same. In CI, their flags are `--max-row-drop 10` and `--max-row-growth 20`,
+and `--allow-missing-baseline --promote baseline.json` replaces the rename.
 
 ### Freshness and missing days
 

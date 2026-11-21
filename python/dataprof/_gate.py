@@ -20,7 +20,7 @@ from collections.abc import (
     Sequence as _Sequence,
 )
 from dataclasses import dataclass as _dataclass, field as _field
-from typing import TYPE_CHECKING, Any as _Any
+from typing import TYPE_CHECKING, Any as _Any, Literal as _Literal
 
 from ._dataprof import __version__ as _version, finding_codes as _finding_codes
 from ._report_schema import _QUALITY_DIMENSIONS
@@ -67,8 +67,8 @@ class QualityCheck:
     scope: str
     #: Whether the data behind ``observed`` covers the whole source.
     evidence: dict[str, _Any]
-    #: ``"passed"``, ``"failed"``, or ``"not_evaluated"``.
-    status: str
+    #: The outcome of evaluating the rule, including whether it applied.
+    status: _Literal["passed", "failed", "not_evaluated", "not_applicable"]
     #: A fixed sentence naming the outcome.
     message: str
     #: The column the requirement concerns, when it concerns one.
@@ -146,7 +146,7 @@ class QualityGateResult:
         evaluated — a metric was not analyzed, a column was not profiled, or
         the evidence does not reach as far as the requirement does.
     ``"pass"``
-        Every requirement was evaluated and met.
+        Every applicable requirement was evaluated and met.
 
     ``"fail"`` wins over ``"inconclusive"``: a witnessed violation is a
     decision.
@@ -170,6 +170,8 @@ class QualityGateResult:
     #: The caller's version of the source the report describes
     #: (:attr:`ProfileReport.source_identity`), ``None`` when none was recorded.
     source_identity: dict[str, _Any] | None = None
+    #: True when a missing baseline was explicitly allowed and none was used.
+    baseline_missing: bool = False
 
     @property
     def passed(self) -> bool:
@@ -207,6 +209,8 @@ class QualityGateResult:
         }
         if self.baseline is not None:
             document["baseline"] = dict(self.baseline)
+        if self.baseline_missing:
+            document["baseline_missing"] = True
         document["generator"] = None if self.generator is None else dict(self.generator)
         document["source_identity"] = (
             None if self.source_identity is None else dict(self.source_identity)
@@ -287,7 +291,9 @@ def _summary_lines(
         f"{len(result.violations)} violations, {len(result.unevaluated)} unevaluated "
         f"(scope: {result.scope})"
     ]
-    if baseline_path is not None:
+    if result.baseline_missing:
+        lines.append("  baseline: none (missing baseline allowed)")
+    elif baseline_path is not None:
         lines.append(f"  baseline: {baseline_path}")
     for check in result.checks:
         if check.status != "passed":
@@ -452,6 +458,7 @@ class _Policy:
         max_date_gap: _Mapping[str, int] | None = None,
         unique_columns: _Sequence[str] | None = None,
         baseline: _RustProfileReport | str | None = None,
+        allow_missing_baseline: bool = False,
         max_quality_score_drop: float | None = None,
         max_dimension_score_drops: _Mapping[str, float] | None = None,
         max_null_percentage_increase: _Mapping[str, float] | float | None = None,
@@ -640,7 +647,12 @@ class _Policy:
         self.forbid_findings = sorted(set(forbid_findings or ()), key=known.index)
 
         self.baseline = baseline
-        if baseline is None and self._has_change_rules():
+        if not isinstance(allow_missing_baseline, bool):
+            raise _PolicyFieldError(
+                "allow_missing_baseline", "allow_missing_baseline must be True or False"
+            )
+        self.allow_missing_baseline = allow_missing_baseline
+        if baseline is None and not allow_missing_baseline and self._has_change_rules():
             raise _PolicyFieldError(
                 "baseline",
                 "a rule about change (max_quality_score_drop, max_dimension_score_drops, "
@@ -726,6 +738,7 @@ class _Policy:
                 require_dimensions=sorted(self.require_dimensions),
                 scope=self.scope,
                 baseline=self.baseline,
+                allow_missing_baseline=self.allow_missing_baseline,
                 max_quality_score_drop=self.max_quality_score_drop,
                 max_dimension_score_drops=list(self.max_dimension_score_drops.items()),
                 max_null_percentage_increase=list(self.max_null_percentage_increase.items()),
@@ -794,4 +807,5 @@ def _result_from_document(document: dict[str, _Any]) -> QualityGateResult:
         baseline=document.get("baseline"),
         generator=document["generator"],
         source_identity=document["source_identity"],
+        baseline_missing=document.get("baseline_missing", False),
     )

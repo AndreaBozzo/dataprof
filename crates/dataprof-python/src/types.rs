@@ -1616,6 +1616,7 @@ impl PyProfileReport {
         require_dimensions = Vec::new(),
         scope = "full_source",
         baseline = None,
+        allow_missing_baseline = false,
         max_quality_score_drop = None,
         max_dimension_score_drops = Vec::new(),
         max_null_percentage_increase = Vec::new(),
@@ -1650,6 +1651,7 @@ impl PyProfileReport {
         require_dimensions: Vec<String>,
         scope: &str,
         baseline: Option<DeltaInput<'_>>,
+        allow_missing_baseline: bool,
         max_quality_score_drop: Option<f64>,
         max_dimension_score_drops: Vec<(String, f64)>,
         max_null_percentage_increase: Vec<(String, f64)>,
@@ -1760,6 +1762,7 @@ impl PyProfileReport {
         }
         let result = match baseline {
             Some(baseline) => policy.evaluate_against(&self.inner, &baseline.side("check()")?),
+            None if allow_missing_baseline => policy.evaluate_first_run(&self.inner),
             None => policy.evaluate(&self.inner),
         }
         .map_err(|e| value_error(e.to_string()))?;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -848,6 +849,272 @@ def _clean_baseline(tmp_path: Path, text: str = "id,amount\n1,10\n2,20\n3,30\n")
     return baseline
 
 
+def test_first_run_uses_one_policy_and_reports_no_baseline(source: Path, tmp_path: Path):
+    baseline = tmp_path / "baseline.json"
+    policy = tmp_path / "policy.json"
+    rules: dict[str, Any] = {"min_rows": 1, "max_null_count_increase": {"*": 0, "amount": 0}}
+    policy.write_text(json.dumps(rules), encoding="utf-8")
+    args = (source, "--baseline", baseline, "--policy", policy, "--json")
+
+    missing = run_check(*args)
+    assert missing.returncode == 3
+    assert json.loads(missing.stdout)["error"]["kind"] == "baseline"
+
+    first = run_check(*args, "--allow-missing-baseline")
+    assert first.returncode == 0, first.stdout + first.stderr
+    document = json.loads(first.stdout)
+    result = dp.profile_file(source).check(**rules, allow_missing_baseline=True)
+    assert document == result.to_dict() == json.loads(result.to_json())
+    assert document["verdict"] == "pass"
+    assert document["baseline_missing"] is True
+    assert "baseline" not in document
+    assert result.baseline is None
+    assert result.unevaluated == []
+    assert result.violations == []
+    passed, named, wildcard = document["checks"]
+    assert passed["status"] == "passed"
+    assert named["column"] == "amount"
+    assert "column" not in wildcard
+    for check in (named, wildcard):
+        assert check["code"] == "max_null_count_increase"
+        assert check["status"] == "not_applicable"
+        assert check["expected"] == {"comparison": "change_at_most", "value": 0}
+        assert "baseline" not in check and "observed" not in check
+    for summary in (first.stderr, str(result)):
+        assert "baseline: none" in summary
+        assert "not_applicable: max_null_count_increase [amount]" in summary
+    assert not baseline.exists()
+
+    _clean_baseline(tmp_path)
+    later = run_check(*args, "--allow-missing-baseline")
+    assert later.returncode == 1, later.stdout + later.stderr
+    document = json.loads(later.stdout)
+    assert "baseline" in document and "baseline_missing" not in document
+    assert document["checks"][1]["status"] == "failed"
+
+
+@pytest.mark.parametrize("kind", ["corrupt", "directory", "dangling-symlink"])
+def test_missing_baseline_opt_in_does_not_hide_an_existing_path(
+    source: Path, tmp_path: Path, kind: str
+):
+    baseline = tmp_path / "baseline.json"
+    if kind == "corrupt":
+        baseline.write_bytes(b"{not JSON")
+    elif kind == "directory":
+        baseline.mkdir()
+    else:
+        try:
+            baseline.symlink_to(tmp_path / "missing.json")
+        except (NotImplementedError, OSError):
+            pytest.skip("creating symlinks is unavailable")
+    target = tmp_path / "accepted.json"
+    result = run_check(
+        source,
+        "--min-rows",
+        "1",
+        "--baseline",
+        baseline,
+        "--allow-missing-baseline",
+        "--promote",
+        target,
+        "--json",
+    )
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert json.loads(result.stdout)["error"]["kind"] == "baseline"
+    assert not target.exists()
+    assert not list(tmp_path.glob(".*.tmp*"))
+
+
+def test_allow_missing_baseline_requires_a_path(source: Path):
+    result = run_check(source, "--min-rows", "1", "--allow-missing-baseline", "--json")
+    assert result.returncode == 3
+    assert "requires --baseline PATH" in json.loads(result.stdout)["error"]["message"]
+
+
+def test_first_run_does_not_ignore_a_baseline_permission_error(
+    source: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    baseline = _clean_baseline(tmp_path)
+    accepted = baseline.read_bytes()
+    load = Mock(side_effect=PermissionError(13, "Permission denied", str(baseline)))
+    monkeypatch.setattr(dp.ProfileReport, "load", load)
+    assert (
+        entrypoint.main(
+            [
+                str(source),
+                "--min-rows",
+                "1",
+                "--baseline",
+                str(baseline),
+                "--allow-missing-baseline",
+                "--promote",
+                str(baseline),
+                "--json",
+            ]
+        )
+        == 3
+    )
+    load.assert_called_once_with(baseline)
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert error["kind"] == "baseline" and error["path"] == str(baseline)
+    assert "Permission denied" in error["message"]
+    assert baseline.read_bytes() == accepted
+    assert not list(tmp_path.glob(".*.tmp*"))
+
+
+def test_policy_checkpoint_options_and_cli_override(source: Path, tmp_path: Path):
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    overridden = tmp_path / "overridden.json"
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "min_rows": 1,
+                "max_row_count_drop": 0,
+                "allow_missing_baseline": True,
+                "promote": str(overridden),
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = run_check(
+        source,
+        "--baseline",
+        baseline,
+        "--policy",
+        policy,
+        "--promote",
+        baseline,
+        "--report",
+        candidate,
+        "--json",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["baseline_missing"] is True
+    assert not overridden.exists()
+    assert candidate.read_bytes() == baseline.read_bytes()
+    later = run_check(source, "--baseline", baseline, "--policy", policy, "--json")
+    assert later.returncode == 0, later.stdout + later.stderr
+    assert dp.ProfileReport.load(overridden).rows == dp.ProfileReport.load(baseline).rows
+
+
+@pytest.mark.parametrize("key,value", [("allow_missing_baseline", "true"), ("promote", True)])
+def test_invalid_checkpoint_policy_values(source: Path, tmp_path: Path, key: str, value: object):
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"min_rows": 1, key: value}), encoding="utf-8")
+    result = run_check(source, "--policy", policy, "--json")
+    assert result.returncode == 3
+    error = json.loads(result.stdout)["error"]
+    assert error["kind"] == "policy" and error["path"] == str(policy)
+    assert key in error["message"]
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, 2, 3])
+def test_promotion_replaces_only_on_pass(
+    source: Path,
+    tmp_path: Path,
+    exit_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    baseline = _clean_baseline(tmp_path)
+    accepted = baseline.read_bytes()
+    flags = {
+        0: ["--min-rows", "1"],
+        1: ["--min-rows", "4"],
+        2: ["--min-quality", "1", "--metric", "schema"],
+        3: ["--min-rows", "1"],
+    }
+    real_replace = os.replace
+    staged = []
+
+    def replace(src: str, dest: str) -> None:
+        assert Path(dest) == baseline
+        temp = Path(src)
+        assert temp.parent == baseline.parent and temp != baseline
+        assert baseline.read_bytes() == accepted
+        assert dp.ProfileReport.load(baseline).rows == 3
+        # The temporary name ends in .tmp, but the bytes are a complete report.
+        report = dp.ProfileReport.from_json(temp.read_text(encoding="utf-8"))
+        assert report.check(max_null_count={"amount": 0}).checks[0].observed == 1
+        staged.append(temp)
+        if exit_code == 3:
+            raise OSError("simulated replace failure")
+        real_replace(src, dest)
+
+    monkeypatch.setattr(os, "replace", replace)
+    assert (
+        entrypoint.main(
+            [
+                str(source),
+                "--baseline",
+                str(baseline),
+                "--promote",
+                str(baseline),
+                *flags[exit_code],
+                "--json",
+            ]
+        )
+        == exit_code
+    )
+    assert len(staged) == int(exit_code in (0, 3))
+    assert not list(tmp_path.glob(".*.tmp*"))
+    assert (baseline.read_bytes() != accepted) is (exit_code == 0)
+    if exit_code == 3:
+        error = json.loads(capsys.readouterr().out)["error"]
+        assert error["kind"] == "output"
+        assert error["path"] == str(baseline)
+        assert "simulated replace failure" in error["message"]
+
+
+def test_promotion_does_not_run_when_report_write_fails(source: Path, tmp_path: Path):
+    baseline = _clean_baseline(tmp_path)
+    accepted = baseline.read_bytes()
+    result = run_check(
+        source,
+        "--min-rows",
+        "1",
+        "--baseline",
+        baseline,
+        "--promote",
+        baseline,
+        "--report",
+        tmp_path / "missing" / "candidate.json",
+        "--json",
+    )
+    assert result.returncode == 3
+    assert json.loads(result.stdout)["error"]["kind"] == "output"
+    assert baseline.read_bytes() == accepted
+    assert not list(tmp_path.glob(".*.tmp*"))
+
+
+def test_report_cannot_target_promotion_path(source: Path, tmp_path: Path):
+    target = tmp_path / "accepted.json"
+    target.write_bytes(b"accepted")
+    alias = tmp_path / "alias.json"
+    alias.hardlink_to(target)
+    result = run_check(
+        source,
+        "--min-rows",
+        "4",
+        "--report",
+        alias,
+        "--promote",
+        target,
+        "--json",
+    )
+    assert result.returncode == 3
+    assert (
+        "--promote would overwrite the --report file"
+        in json.loads(result.stdout)["error"]["message"]
+    )
+    assert target.read_bytes() == alias.read_bytes() == b"accepted"
+
+
 def _same_result(document: dict[str, Any]) -> dict[str, Any]:
     """The result without the identity of this run's report, new on every profile."""
     reports = (document.get("baseline") or {}).get("reports") or {}
@@ -1473,10 +1740,12 @@ def test_empty_or_unsupported_only_directory_is_an_input_error(tmp_path: Path):
     assert mixed_doc["sources"][1]["result"]["verdict"] == "pass"
 
 
-@pytest.mark.parametrize("flag", ["--baseline", "--report"])
+@pytest.mark.parametrize(
+    "flag", ["--baseline", "--report", "--allow-missing-baseline", "--promote"]
+)
 @pytest.mark.parametrize("mode", ["two-files", "directory"])
 @pytest.mark.parametrize("json_output", [False, True])
-def test_baseline_and_report_rejected_for_multi_source_and_directory(
+def test_checkpoint_flags_rejected_for_multi_source_and_directory(
     tmp_path: Path, flag: str, mode: str, json_output: bool
 ):
     a = _write_csv(tmp_path / "drop" / "a.csv", "id,amount\n1,10\n")
@@ -1485,7 +1754,9 @@ def test_baseline_and_report_rejected_for_multi_source_and_directory(
     if flag == "--baseline":
         dp.profile_file(a).save(extra_path)
     targets: list[Path] = [a, b] if mode == "two-files" else [tmp_path / "drop"]
-    args: list[str | Path] = [*targets, "--min-rows", "1", flag, extra_path]
+    args: list[str | Path] = [*targets, "--min-rows", "1", flag]
+    if flag != "--allow-missing-baseline":
+        args.append(extra_path)
     if json_output:
         args.append("--json")
 
@@ -1501,6 +1772,20 @@ def test_baseline_and_report_rejected_for_multi_source_and_directory(
     else:
         assert res.stdout == ""
         assert expected_msg in res.stderr
+
+
+@pytest.mark.parametrize(
+    "key,value", [("allow_missing_baseline", True), ("promote", "accepted.json")]
+)
+def test_checkpoint_policy_options_rejected_for_multiple_sources(
+    source: Path, tmp_path: Path, key: str, value: object
+):
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"min_rows": 1, key: value}), encoding="utf-8")
+    result = run_check(source, source, "--policy", policy, "--json")
+    assert result.returncode == 3
+    message = f"--{key.replace('_', '-')} is only supported with a single source file"
+    assert json.loads(result.stdout)["error"] == {"kind": "argument", "message": message}
 
 
 def test_directory_skips_an_entry_that_is_not_a_regular_file(
