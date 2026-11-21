@@ -6,6 +6,7 @@ import io as _io
 import json as _json
 import os as _os
 import pathlib as _pathlib
+import sys as _sys
 import warnings as _warnings
 from collections.abc import Callable as _Callable
 from datetime import date as _date
@@ -45,6 +46,21 @@ from ._inputs import (
 )
 from ._paths import _normalize_existing_file
 from ._report import ProfileReport, _check_source_version
+
+
+def _is_pandas_dataframe(source: object) -> bool:
+    """Return True if ``source`` is a pandas DataFrame (including subclasses).
+
+    Looks up ``pandas`` in ``sys.modules`` without importing it, falling back
+    to the class name only when a stand-in carries a ``pandas`` module name
+    without pandas loaded.
+    """
+    pandas = _sys.modules.get("pandas")
+    if pandas is not None:
+        df_type = getattr(pandas, "DataFrame", None)
+        if isinstance(df_type, type):
+            return isinstance(source, df_type)
+    return type(source).__name__ == "DataFrame"
 
 
 def infer_schema(path: str | _os.PathLike[str]) -> SchemaResult:
@@ -671,14 +687,24 @@ def profile(
             csv_source,
         )
 
-    # DataFrame detection via module name
+    # DataFrame detection via module name. A polars or pandas object that is not
+    # a DataFrame (e.g. polars LazyFrame.collect_batches()) falls through to the
+    # Arrow protocol checks below when it exposes __arrow_c_stream__ and no
+    # to_arrow().
     source_module = type(source).__module__ or ""
+    is_arrow_c_stream_only = (
+        hasattr(source, "__arrow_c_stream__")
+        and not hasattr(source, "__arrow_c_array__")
+        and not hasattr(source, "to_arrow")
+    )
 
-    if source_module.startswith("pandas"):
+    if source_module.startswith("pandas") and (
+        _is_pandas_dataframe(source) or not is_arrow_c_stream_only
+    ):
         _warn_if_config_ignored()
         return _profile_python_dataframe(source, "dataframe")
 
-    if source_module.startswith("polars"):
+    if source_module.startswith("polars") and not is_arrow_c_stream_only:
         _warn_if_config_ignored()
         return _profile_python_dataframe(source, "dataframe")
 

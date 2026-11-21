@@ -26,7 +26,7 @@ use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, to_ffi};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict};
+use pyo3::types::{PyCapsule, PyDict, PyType};
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, EngineType, ExecutionMetadata,
@@ -659,14 +659,34 @@ pub fn profile_arrow(
 // Helper Functions
 // ============================================================================
 
+/// Return true when `obj` is a `pandas.DataFrame` (including subclasses),
+/// without importing pandas.
+fn is_pandas_dataframe(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let py = obj.py();
+    let modules = py.import("sys")?.getattr("modules")?;
+    if let Ok(pandas) = modules.get_item("pandas")
+        && let Ok(df_type) = pandas.getattr("DataFrame")
+        && df_type.is_instance_of::<PyType>()
+    {
+        return obj.is_instance(&df_type);
+    }
+    Ok(obj.get_type().name()? == "DataFrame")
+}
+
 /// Preserve the established DataFrame/Table/C Array adapters. A producer with
-/// only the stream protocol needs no library-specific adapter or materialization.
+/// only the stream protocol needs no library-specific adapter or materialization,
+/// including non-DataFrame polars/pandas objects (such as `LazyFrame.collect_batches()`).
 fn is_stream_source(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if !obj.hasattr("__arrow_c_stream__")? || obj.hasattr("__arrow_c_array__")? {
+        return Ok(false);
+    }
     let library = detect_dataframe_library(obj.py(), &obj.clone().unbind())?;
-    Ok(obj.hasattr("__arrow_c_stream__")?
-        && !obj.hasattr("__arrow_c_array__")?
-        && !matches!(library, DataFrameLibrary::Pandas | DataFrameLibrary::Polars)
-        && !(matches!(library, DataFrameLibrary::PyArrow) && obj.get_type().name()? == "Table"))
+    match library {
+        DataFrameLibrary::Pandas => Ok(!obj.hasattr("to_arrow")? && !is_pandas_dataframe(obj)?),
+        DataFrameLibrary::Polars => Ok(!obj.hasattr("to_arrow")?),
+        DataFrameLibrary::PyArrow => Ok(obj.get_type().name()? != "Table"),
+        DataFrameLibrary::Custom(_) => Ok(true),
+    }
 }
 
 /// Convert column profiles to Arrow RecordBatch for export.
@@ -1049,7 +1069,9 @@ fn convert_polars_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<
         // Name the object actually passed: a LazyFrame reaches this arm too,
         // and calling it a DataFrame sent users looking for an export bug.
         let type_name = df.get_type().name()?;
-        let hint = if df.hasattr("collect")? {
+        let hint = if df.hasattr("collect")? && df.hasattr("collect_batches")? {
+            "; call .collect() to pass a DataFrame, or .collect_batches() to stream flat selections (list, struct, or map columns require .collect())"
+        } else if df.hasattr("collect")? {
             "; call .collect() and pass the resulting DataFrame"
         } else {
             ""

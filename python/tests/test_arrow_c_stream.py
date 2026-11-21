@@ -202,6 +202,126 @@ def test_duckdb_relation():
     assert report.to_dict()["columns"] == reference.to_dict()["columns"]
 
 
+def _polars_with_collect_batches():
+    pl = pytest.importorskip("polars")
+    if not hasattr(pl.LazyFrame, "collect_batches"):
+        pytest.skip("polars without LazyFrame.collect_batches()")
+    return pl
+
+
+def _without_native_type(columns):
+    return [{k: v for k, v in col.items() if k != "native_type"} for col in columns]
+
+
+def test_polars_collect_batches_matches_dataframe():
+    pl = _polars_with_collect_batches()
+    df = pl.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5, 6],
+            "amount": [10.5, None, 20.0, 10.5, 30.25, None],
+            "city": ["Rome", "Milan", None, "Rome", "Turin", "Milan"],
+            "active": [True, False, True, True, None, False],
+        }
+    )
+    lf = df.lazy()
+    report = dataprof.profile(lf.collect_batches(chunk_size=2))
+    reference = dataprof.profile(df)
+    assert report.rows == reference.rows == 6
+    assert report.source_type == "stream"
+    assert report.engine == "columnar"
+    assert _without_native_type(report.to_dict()["columns"]) == _without_native_type(
+        reference.to_dict()["columns"]
+    )
+
+
+def test_polars_collect_batches_stream_controls_and_nested_rejection():
+    pl = _polars_with_collect_batches()
+    df = pl.DataFrame({"a": [1, 2, 3, 4, 5], "b": ["x", "y", "z", "w", "v"]})
+    lf = df.lazy()
+
+    # One-shot stream checks reject file-only options rather than warning.
+    with pytest.raises(ValueError, match="chunk_size"):
+        dataprof.profile(lf.collect_batches(chunk_size=2), chunk_size=10)
+    with pytest.raises(ValueError, match="engine"):
+        dataprof.profile(lf.collect_batches(chunk_size=2), engine="streaming")
+
+    # max_rows caps the stream cleanly.
+    capped = dataprof.profile(lf.collect_batches(chunk_size=2), max_rows=3)
+    assert capped.rows == 3
+    assert capped.source_type == "stream"
+    assert capped.truncation_reason is not None
+
+    # Nested columns are rejected on the stream route while flat projection or .collect() work.
+    nested_df = pl.DataFrame({"flat": [1, 2, 3], "items": [[1, 2], [3], []]})
+    with pytest.raises(TypeError, match="nested"):
+        dataprof.profile(nested_df.lazy().collect_batches(chunk_size=2))
+    projected = dataprof.profile(nested_df.lazy().collect_batches(chunk_size=2), columns=["flat"])
+    assert projected.rows == 3
+    assert list(projected) == ["flat"]
+    assert dataprof.profile(nested_df).rows == 3
+
+
+@pytest.mark.parametrize("entrypoint", ["profile_arrow", "profile_dataframe"])
+def test_polars_collect_batches_direct_interop_entrypoints(entrypoint):
+    pl = _polars_with_collect_batches()
+    from dataprof import interop
+
+    lf = pl.DataFrame({"a": [1, 2, 3, 4], "b": ["p", "q", "r", "s"]}).lazy()
+    report = getattr(interop, entrypoint)(lf.collect_batches(chunk_size=2), max_rows=3)
+    assert report.rows_processed == 3
+    assert report.source_type == "stream"
+
+
+def test_polars_collect_batches_profiler_builder():
+    pl = _polars_with_collect_batches()
+    lf = pl.DataFrame({"a": [1, 2, 3, 4]}).lazy()
+    report = dataprof.Profiler().max_rows(3).profile(lf.collect_batches(chunk_size=2))
+    assert report.rows == 3
+    assert report.source_type == "stream"
+
+
+def test_pandas_dataframe_stays_dataframe_while_non_dataframe_stream_routes_by_protocol():
+    pd = pytest.importorskip("pandas")
+    from dataprof import interop
+
+    df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    # pandas 3.x DataFrame implements __arrow_c_stream__ and has no to_arrow;
+    # it must still take the pandas DataFrame route.
+    with pytest.warns(UserWarning, match="chunk_size"):
+        df_report = dataprof.profile(df, chunk_size=10)
+    assert df_report.source_type == "dataframe"
+    assert df_report["a"].native_type == {"system": "pandas", "name": str(df["a"].dtype)}
+
+    # A pandas Series is not a DataFrame; where it exports __arrow_c_stream__
+    # (pandas 3.x) it takes the stream route and raises TypeError (not an
+    # AttributeError on .columns).
+    if hasattr(pd.Series, "__arrow_c_stream__"):
+        with pytest.raises(TypeError):
+            dataprof.profile(pd.Series([1, 2, 3], name="a"))
+
+    # Any non-DataFrame object in a pandas module implementing __arrow_c_stream__
+    # (without to_arrow) takes the one-shot Arrow stream route.
+    batches = _batches()
+    PandasStream = type(
+        "PandasBatchStream",
+        (StreamProducer,),
+        {"__module__": "pandas.io.arrow"},
+    )
+    stream_src = PandasStream(batches[0].schema, iter(batches))
+    with pytest.raises(ValueError, match="chunk_size"):
+        dataprof.profile(stream_src, chunk_size=10)
+    assert stream_src.exports == 0
+
+    stream_report = dataprof.profile(stream_src)
+    assert stream_report.rows == 4
+    assert stream_report.source_type == "stream"
+
+    for entrypoint in ("profile_arrow", "profile_dataframe"):
+        raw = getattr(interop, entrypoint)(PandasStream(batches[0].schema, iter(batches)))
+        assert raw.rows_processed == 4
+        assert raw.source_type == "stream"
+
+
 def test_batches_are_released_during_consumption():
     schema = pa.schema([("n", pa.int64())])
     before = pa.total_allocated_bytes()
