@@ -107,7 +107,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo bench --no-run 2>&1 | tee benchmark-results/build.txt
+          # Name the target so Cargo builds only benches/benchmarks.rs and skips the unused library test harness.
+          cargo bench --bench benchmarks --no-run 2>&1 | tee benchmark-results/build.txt
 
       - name: Run benchmarks
         id: rust
