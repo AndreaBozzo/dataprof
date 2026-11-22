@@ -266,11 +266,11 @@
     "throughput_rows_sec": 4000.0
   },
   "generator": {
-    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "commit": "f54988c02536a71312ad567c6e84e7e5c5e51efd",
     "dirty": false,
-    "version": "0.14.0"
+    "version": "0.14.1"
   },
-  "id": "422e6574-f61b-4406-a3f3-afc47d547d00",
+  "id": "c266ea8a-7508-4094-b17d-f9f875db5e6f",
   "metric_semantics": {
     "accuracy_comparison": "exact_values",
     "date_forms": "spaced_iso_datetimes",
@@ -332,7 +332,7 @@
         "clock": {
           "max_data_age_years": 5.0,
           "mode": "rolling",
-          "reference_date": "2026-11-17",
+          "reference_date": "2026-11-22",
           "timezone": "UTC"
         },
         "date_values_checked": 8,
@@ -372,5 +372,5 @@
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-17T18:32:07.460887900+00:00"
+  "timestamp": "2026-11-22T13:24:39.156740800+00:00"
 }

@@ -122,7 +122,6 @@
           "mean": 6.1225,
           "median": 2.25,
           "min": 0.0,
-          "mode": 0.0,
           "outlier_count": 0,
           "quartiles": {
             "iqr": 8.37,
@@ -164,22 +163,22 @@
     "columns_detected": 3,
     "engine": "incremental",
     "error_count": 0,
-    "memory_peak_mb": 28.28515625,
+    "memory_peak_mb": 28.77734375,
     "ragged_row_count": 0,
     "recovery_events": [],
     "rows_processed": 5,
     "sampling_applied": false,
-    "scan_time_ms": 19,
+    "scan_time_ms": 27,
     "source_exhausted": true,
-    "throughput_rows_sec": 263.15789473684214,
+    "throughput_rows_sec": 185.1851851851852,
     "unterminated_quote": false
   },
   "generator": {
-    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "commit": "f54988c02536a71312ad567c6e84e7e5c5e51efd",
     "dirty": false,
-    "version": "0.14.0"
+    "version": "0.14.1"
   },
-  "id": "bb8df5e6-3427-4889-b4bd-2287160caeb9",
+  "id": "9667f624-124e-4e04-a97b-d711a436a7bf",
   "metric_semantics": {
     "accuracy_comparison": "exact_values",
     "date_forms": "spaced_iso_datetimes",
@@ -262,5 +261,5 @@
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-17T18:32:07.376158100+00:00"
+  "timestamp": "2026-11-22T13:24:39.096795700+00:00"
 }

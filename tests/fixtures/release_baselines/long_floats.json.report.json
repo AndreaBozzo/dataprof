@@ -84,7 +84,6 @@
           "mean": 500000000000000.0,
           "median": 500000000000000.7,
           "min": 0.0,
-          "mode": 0.0,
           "outlier_count": 0,
           "quartiles": {
             "iqr": 999999999999999.6,
@@ -126,11 +125,11 @@
     "source_exhausted": true
   },
   "generator": {
-    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "commit": "f54988c02536a71312ad567c6e84e7e5c5e51efd",
     "dirty": false,
-    "version": "0.14.0"
+    "version": "0.14.1"
   },
-  "id": "59d4dd2c-cc9a-43f2-9e8d-e80b0e0fee32",
+  "id": "fb43305a-4831-4917-a3fe-3b82632197a0",
   "metric_semantics": {
     "accuracy_comparison": "exact_values",
     "date_forms": "spaced_iso_datetimes",
@@ -213,5 +212,5 @@
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-17T18:32:07.340123700+00:00"
+  "timestamp": "2026-11-22T13:24:39.050529800+00:00"
 }

@@ -162,22 +162,22 @@
     "columns_detected": 3,
     "engine": "incremental",
     "error_count": 0,
-    "memory_peak_mb": 29.58203125,
+    "memory_peak_mb": 29.9921875,
     "ragged_row_count": 0,
     "recovery_events": [],
     "rows_processed": 8,
     "sampling_applied": false,
-    "scan_time_ms": 27,
+    "scan_time_ms": 22,
     "source_exhausted": true,
-    "throughput_rows_sec": 296.2962962962963,
+    "throughput_rows_sec": 363.6363636363637,
     "unterminated_quote": false
   },
   "generator": {
-    "commit": "5384dbca66055f29094361acf3ea75d312bd114c",
+    "commit": "f54988c02536a71312ad567c6e84e7e5c5e51efd",
     "dirty": false,
-    "version": "0.14.0"
+    "version": "0.14.1"
   },
-  "id": "80d0242d-64a8-47d8-a3ee-b392a52bd96d",
+  "id": "fd0fae04-5855-473e-ab0f-d51ffc913fca",
   "metric_semantics": {
     "accuracy_comparison": "exact_values",
     "date_forms": "spaced_iso_datetimes",
@@ -260,5 +260,5 @@
     "state": "computed"
   },
   "schema_version": 1,
-  "timestamp": "2026-11-17T18:32:07.495483700+00:00"
+  "timestamp": "2026-11-22T13:24:39.197774200+00:00"
 }
