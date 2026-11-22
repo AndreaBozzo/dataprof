@@ -43,7 +43,9 @@ caps = dp.capabilities()
 Fields include `local_csv`, `local_json`, `local_jsonl`, `local_parquet`,
 `pandas_interop`, `polars_interop`, `arrow_interop`, `async_streaming`,
 `url_profiling`, `remote_parquet`, and `database`. Check the one you need before
-profiling Parquet, a URL, or a database; otherwise skip this step.
+profiling Parquet, a URL, or a database through the built-in connectors; a
+query result read through an ADBC driver (`profile(cursor.fetch_record_batch())`)
+needs only `arrow_interop` and `pyarrow_installed`. Otherwise skip this step.
 
 ### 2. Cheap structural pass
 

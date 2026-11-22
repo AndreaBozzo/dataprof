@@ -32,10 +32,14 @@ needs pyarrow. The `pandas` extra installs pandas; install pyarrow too for input
 conversion.
 Parquet file and bytes profiling uses the compiled reader and needs neither.
 
-Database profiling is the one documented feature the wheel does not contain.
-Connectors are a compile-time feature rather than a Python dependency, so no
-extra can install them; they need a build from source, either with pip from the
-published sdist or from a checkout:
+To profile a database query on the wheel, read the result through an
+[ADBC](https://arrow.apache.org/adbc/) driver and pass its Arrow stream to
+`profile()`; see [Database Query Results Through ADBC](#database-query-results-through-adbc).
+
+dataprof's own database connectors are the one documented feature the wheel
+does not contain. Connectors are a compile-time feature rather than a Python
+dependency, so no extra can install them; they need a build from source, either
+with pip from the published sdist or from a checkout:
 
 ```bash
 pip install dataprof --no-binary dataprof   --config-settings="build-args=--features python,python-async,async-streaming,parquet-async,database,sqlite"
@@ -2033,6 +2037,55 @@ from dataprof.asyncio import infer_schema_stream, quick_row_count_stream
 schema = await infer_schema_stream(csv_bytes, format="csv")
 count = await quick_row_count_stream(csv_bytes, format="csv")
 ```
+
+## Database Query Results Through ADBC
+
+This is the database route for the published wheel. An
+[ADBC](https://arrow.apache.org/adbc/) driver runs the query and returns the
+result as an Arrow `RecordBatchReader`, which `profile()` reads as a stream (see
+[Arrow Interop](#arrow-interop)). dataprof compiles in no database code on this
+route: the driver owns the connection, credentials and transaction.
+
+```python
+import adbc_driver_sqlite.dbapi as sqlite  # pip install adbc-driver-sqlite pyarrow
+import dataprof as dp
+
+with sqlite.connect() as conn, conn.cursor() as cur:
+    cur.execute("CREATE TABLE orders (id INTEGER, amount REAL, label TEXT)")
+    cur.executemany(
+        "INSERT INTO orders VALUES (?, ?, ?)",
+        [(1, 9.5, "a"), (2, None, "b"), (3, 12.0, None)],
+    )
+    conn.commit()
+
+    cur.execute("SELECT id, amount, label FROM orders")
+    report = dp.profile(cur.fetch_record_batch(), name="sqlite:orders")
+
+result = report.check(max_null_percentage={"amount": 50})
+```
+
+PostgreSQL works the same way with `adbc_driver_postgresql.dbapi.connect(uri)`.
+The drivers declare pyarrow as optional, but `fetch_record_batch()` needs it:
+install it next to the driver.
+
+Pass `cur.fetch_record_batch()`, not `cur.fetch_arrow_table()`. The reader is
+consumed one batch at a time, so memory stays bounded; a table holds the whole
+result first. Measured on PostgreSQL 17 with five columns, profiling the
+reader peaked at about 60 MiB over baseline from 1M to 16M rows, while the
+table route reached 481 MiB at 16M rows.
+
+Known limits of this route:
+
+- A PostgreSQL `numeric` arrives as an opaque string extension and is typed
+  float, so values with more significant digits than an `f64` holds report
+  rounded extrema and quantiles, with no `exact` sub-object (#1358). Arrow
+  `decimal128`/`decimal256` columns, as DuckDB returns them, keep their exact
+  extrema and quartiles in `exact`.
+- Array and other nested columns raise `TypeError`; select flat columns in the
+  query.
+
+The matrix behind these notes, per database type and driver version, is in
+[dataprof-adbc-matrix](https://github.com/AndreaBozzo/dataprof-adbc-matrix).
 
 ## Database Profiling (Source Build Only)
 

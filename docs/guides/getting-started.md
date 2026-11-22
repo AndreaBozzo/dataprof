@@ -27,7 +27,7 @@ uv pip install dataprof
 # dataprof = "0.14"
 ```
 
-The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. Database helpers are not in the wheels: build the extension from source with the corresponding Rust features.
+The published Python wheels cover the package API for local files, DataFrames, and Arrow objects, and the async helpers in `dataprof.asyncio`, URL profiling included. dataprof's own database helpers are not in the wheels: build the extension from source with the corresponding Rust features, or profile a query result on the wheel through the [ADBC route](../python/README.md#database-query-results-through-adbc).
 
 Options marked 0.14 below need dataprof 0.14 or later.
 
@@ -353,6 +353,7 @@ places a business domain requires.
 | Arrow table, batch, C array or C stream producer | `dp.profile(source)` | Install the producer, such as pyarrow; Rust `arrow` is enabled by default through `parquet` |
 | Dicts, lists of records, bytes, BytesIO | `dp.profile(source)` | Base wheel; bytes and BytesIO require `format=` |
 | Async files, bytes and HTTP URLs | `dataprof.asyncio.profile_file`, `profile_bytes`, `profile_url` | Base wheel; Rust `async-streaming`, plus `parquet-async` for remote Parquet |
+| Database query through an ADBC driver | `dp.profile(cursor.fetch_record_batch())` | Base wheel; install pyarrow and the driver, such as `adbc-driver-postgresql` or `adbc-driver-sqlite` |
 | PostgreSQL, MySQL, SQLite query | `dp.analyze_database_async(url, query)` | Source build with `python-async,database` and `postgres`, `mysql` or `sqlite`; no Python database extra |
 
 For a database source build, preserve the full wheel feature list as described
@@ -548,9 +549,12 @@ Profile data directly from PostgreSQL, MySQL, or SQLite without exporting to fil
 
 ### Python
 
-Database support is not in the published wheels. Build the Python extension from
-a checkout with `python-async,database` and the connector feature you need
-before using this API.
+On the published wheel, use the [ADBC route](../python/README.md#database-query-results-through-adbc):
+pass an ADBC cursor's `fetch_record_batch()` to `dp.profile()`.
+
+The connector API below is not in the published wheels. Build the Python
+extension from a checkout with `python-async,database` and the connector
+feature you need before using it.
 
 ```python
 report = await dp.analyze_database_async(

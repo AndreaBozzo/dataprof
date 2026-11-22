@@ -74,11 +74,31 @@ for the pip-from-sdist form.
 
 ### Python
 
-Python database functions are async and are not included in the PyPI wheel. That
-is a deliberate, standing decision (#588), not a gap waiting on the next
-release: connectors are compile-time features, so no `pip` extra can turn them
-on. Build the extension from a checkout with `python-async`, `database`, and the
-connector feature you need first:
+On the published wheel, profile a query through an
+[ADBC](https://arrow.apache.org/adbc/) driver: it returns the result as an Arrow
+stream, which `profile()` reads in bounded memory with no connector compiled
+into dataprof.
+
+```python
+import adbc_driver_postgresql.dbapi as pg  # pip install adbc-driver-postgresql pyarrow
+import dataprof as dp
+
+with pg.connect("postgresql://user:pass@localhost/mydb") as conn, conn.cursor() as cur:
+    cur.execute("SELECT * FROM users")
+    report = dp.profile(cur.fetch_record_batch(), name="postgres:users")
+```
+
+Pass the reader from `fetch_record_batch()`, not `fetch_arrow_table()`, which
+holds the whole result in memory first. Limits of this route, such as
+PostgreSQL `numeric` precision (#1358), are listed in the
+[Python API guide](../python/README.md#database-query-results-through-adbc).
+
+The connectors described in the rest of this guide are not included in the PyPI
+wheel. That is a deliberate, standing decision (#588), not a gap waiting on the
+next release: connectors are compile-time features, so no `pip` extra can turn
+them on. Python database functions are async; to use them, build the extension
+from a checkout with `python-async`, `database`, and the connector feature you
+need first:
 
 ```bash
 uv sync --no-install-project

@@ -275,7 +275,7 @@ asyncio.run(main())
 
 ### Database profiling from Python (source build)
 
-Not in the published wheels. Build the Python extension from a checkout with `python-async,database` and the connector feature you need before using this recipe.
+Not in the published wheels; on a wheel, profile the query result through the [ADBC route](../python/README.md#database-query-results-through-adbc) instead. Build the Python extension from a checkout with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio
@@ -712,7 +712,7 @@ async def profile_upload(file: UploadFile):
 
 ### Compare database vs file quality (source build)
 
-Not in the published wheels. Build the Python extension from a checkout with `python-async,database` and the connector feature you need before using this recipe.
+Not in the published wheels; on a wheel, profile the query result through the [ADBC route](../python/README.md#database-query-results-through-adbc) instead. Build the Python extension from a checkout with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio
