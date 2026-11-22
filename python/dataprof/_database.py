@@ -71,7 +71,9 @@ except ImportError:
         def _stub(*_args, **_kwargs):
             raise ImportError(
                 f"{name}() requires database support, which is not compiled into "
-                "the published wheels. Rebuild from source with the shipped feature "
+                "the published wheels. On a wheel, run the query through an ADBC "
+                "driver and pass cursor.fetch_record_batch() to dataprof.profile(). "
+                "For these functions, rebuild from source with the shipped feature "
                 "set plus the connectors you need, e.g. maturin develop --features "
                 "'python,python-async,async-streaming,parquet-async,database,sqlite'. "
                 "--features replaces the default list rather than extending it, so a "
