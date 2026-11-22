@@ -28,6 +28,10 @@ the [0.14.1 release notes](release-notes.md).
 
 - **Release**: Regenerate the release baselines from the 0.14.0 wheel by @AndreaBozzo
 
+### Dependencies
+
+- Bump url to 2.5.9 past RUSTSEC-2026-0592
+
 ### Documentation
 
 - Add a contributor policy for AI tools, assignment and open pull requests (#1379) by @AndreaBozzo

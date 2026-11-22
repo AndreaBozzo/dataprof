@@ -33,6 +33,8 @@ Each job starts on a fresh runner, so keep `baselines/` between runs; the action
 
 Four people besides the maintainer contributed to this release: @majidninja and @bfs2021 the two number fixes, @inverteum the two error messages, the async typing and the CI check of the project site's figures, and @KingEmma7 the Rust quickstart. Thank you.
 
+The wheels and the locked Rust build carry `url` 2.5.9, past RUSTSEC-2026-0592, a stack overflow in `Url::origin()` on nested `blob:` URLs. dataprof does not call `origin()` itself; the crate comes in through its HTTP and database clients. Rust projects pick the patched crate up with `cargo update -p url`.
+
 ## Install
 
 ```bash
