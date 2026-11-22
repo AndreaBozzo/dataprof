@@ -162,7 +162,9 @@ For daily runs, `timeliness_clock="rolling"` allows two clocks that each used
 their own run's UTC day. For a reproducible comparison, profile both runs with
 the same `reference_date` and keep the default `timeliness_clock="fixed"`.
 The [checkpoint example](../../examples/README.md#4-baseline-checkpoint) covers
-first runs, promotion, schema changes and older baselines.
+first runs, promotion, schema changes and older baselines. In a GitHub
+workflow, [dataprof-action](https://github.com/AndreaBozzo/dataprof-action)
+runs the same command and writes its verdict and checks to the job summary.
 
 In 0.14, add `max_row_count_drop=10` and `max_row_count_growth=20` to a
 baseline check for volume changes, and `max_date_age={"published_at": 3}` for
