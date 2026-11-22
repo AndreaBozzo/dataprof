@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "dataprof-core",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "arrow",
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-csv"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "csv",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-engines"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "csv",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-json"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "dataprof-core",
  "dataprof-runtime",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-metrics"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "dataprof-core",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-parquet"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "arrow",
@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-partial"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "csv",
  "dataprof-core",
@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-runtime"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "chrono",
  "dataprof-core",

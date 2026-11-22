@@ -339,7 +339,7 @@ argument, policy, input, baseline or output error.
 
 Compare against the last accepted report, then promote only a passing
 candidate. One policy serves the first run too: `allow_missing_baseline`
-(**0.15**) records the rules about change as `not_applicable` while no
+(**0.14.1**) records the rules about change as `not_applicable` while no
 baseline exists. The row-count rules below need **0.14** and measure changes as
 percentages of the baseline's count.
 

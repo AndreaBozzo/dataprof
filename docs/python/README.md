@@ -1,11 +1,12 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.14.0). Options
-marked 0.14 need that release or later.
+Complete reference for the `dataprof` Python package (v0.14.1). Options
+marked 0.14 need that release or later, and options marked 0.14.1 need that
+patch.
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
-[release notes](../release-notes.md) for 0.14.0 and their upgrade notes.
+[release notes](../release-notes.md): 0.14.1, then the 0.14.0 upgrade notes.
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -1038,7 +1039,7 @@ if not result.passed:
 | `max_quality_score_drop` | `float` | How many points the overall score may fall below the baseline's, 0--100 |
 | `max_dimension_score_drops` | `dict[str, float]` | The same per ISO 25012 dimension |
 | `max_null_percentage_increase` | `dict[str, float] \| float` | How many points a column's null percentage may rise above the baseline's, 0--100. `"*"` covers every other column both reports profiled |
-| `max_null_count_increase` | `dict[str, int] \| int` | How many nulls a column may gain over the baseline's, decided on the exact `null_count` of both sides (0.15+). Same shape as `max_null_percentage_increase` |
+| `max_null_count_increase` | `dict[str, int] \| int` | How many nulls a column may gain over the baseline's, decided on the exact `null_count` of both sides (0.14.1+). Same shape as `max_null_percentage_increase` |
 | `max_distinct_drop` | `dict[str, float] \| float` | How far a column's distinct count may fall, in percent (0--100) of the baseline's count; fails only when its distinct share of non-null values fell as far (0.14+). Same shape as `max_null_percentage_increase` |
 | `max_row_count_drop` | `float` | How far the row count may fall, in percent (0--100) of the baseline's `rows_processed` (0.14+) |
 | `max_row_count_growth` | `float` | How far the row count may grow, in percent of the baseline's, 0 or more (0.14+) |
@@ -1361,7 +1362,7 @@ still settles the outcome that its unread rows could not reverse, as
 The one exception is `max_row_count_drop=100`, which passes whatever the scans
 missed, since a count cannot fall by more than all of it.
 
-**A null count that rises (0.15+).** `max_null_percentage_increase`
+**A null count that rises (0.14.1+).** `max_null_percentage_increase`
 compares percentages at two decimals, so from about 30,000 rows one new null
 rounds to a change of 0.00 and passes an allowance of 0.
 `max_null_count_increase={"customer_id": 0}` compares the exact `null_count`
@@ -1791,7 +1792,7 @@ skipped).
 | `--max-quality-drop POINTS` | `max_quality_score_drop` |
 | `--max-dimension-drop NAME=POINTS`, repeatable | `max_dimension_score_drops` |
 | `--max-null-increase COLUMN=POINTS`, repeatable, `*=POINTS` for every column both reports profiled | `max_null_percentage_increase` |
-| `--max-null-count-increase COLUMN=N`, repeatable, `*=N` for every column both reports profiled (0.15+) | `max_null_count_increase` |
+| `--max-null-count-increase COLUMN=N`, repeatable, `*=N` for every column both reports profiled (0.14.1+) | `max_null_count_increase` |
 | `--max-distinct-drop COLUMN=PERCENT`, repeatable, `*=PERCENT` for every column both reports profiled | `max_distinct_drop` |
 | `--max-row-drop PERCENT` | `max_row_count_drop` |
 | `--max-row-growth PERCENT` | `max_row_count_growth` |
@@ -1849,7 +1850,7 @@ runs this cycle over seven drops, including the ones that must not become the
 baseline, and shows it as a CI job that keeps the baseline in the repository.
 
 The [file publication CI recipe](../../examples/README.md#check-a-file-before-publishing-it-in-ci)
-uses a pinned 0.14.0 wheel, required columns and a per-column null limit, and
+uses a pinned 0.14.1 wheel, required columns and a per-column null limit, and
 retains both the profile and verdict on a rejected run. To run the current
 checkout instead, build the extension with `uv sync --no-install-project` and
 `uv run --no-sync maturin develop`, then invoke the module with

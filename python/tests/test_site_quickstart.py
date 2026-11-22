@@ -293,7 +293,7 @@ def test_the_live_page_marks_the_quickstart_figures():
 
 def test_the_script_does_not_copy_the_page_figures():
     source = (ROOT / ".github/scripts/check_site_quickstart.py").read_text(encoding="utf-8")
-    for figure in ("93.19", "25.0", "0.14.0"):
+    for figure in ("93.19", "25.0", "0.14.1"):
         assert figure not in source
 
 

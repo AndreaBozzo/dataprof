@@ -141,7 +141,7 @@ for check in [*result.violations, *result.unevaluated]:
 
 For a checkpoint, compare each batch with the last accepted report and promote
 it only on a pass. The same command serves before and after the first baseline
-exists; `--allow-missing-baseline` and `--promote` need 0.15:
+exists; `--allow-missing-baseline` and `--promote` need 0.14.1:
 
 ```bash
 python -m dataprof.check orders.csv --min-rows 1 --min-quality 90 \

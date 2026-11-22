@@ -6,7 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.14.0 release notes](release-notes.md).
+the [0.14.1 release notes](release-notes.md).
+
+## [0.14.1] - 2026-11-22
+
+### Added
+
+- **Python**: First-run and promote-on-pass options for dataprof.check (#1386) by @AndreaBozzo
+
+- **Python**: Check several sources in one dataprof.check run with a combined verdict (#1385) by @AndreaBozzo
+
+- **Gate**: Fail a baseline check when a column gains more nulls than allowed, on exact counts (#1346) (#1365) by @AndreaBozzo
+
+### Changed
+
+- Build only the benchmark target the job runs (#1384) by @AndreaBozzo
+
+- Check site figures against a profile run (#1372) by @inverteum
+
+- **Gate**: Assert the null count increase check's messages (#1346) by @AndreaBozzo
+
+- **Release**: Regenerate the release baselines from the 0.14.0 wheel by @AndreaBozzo
+
+### Documentation
+
+- Add a contributor policy for AI tools, assignment and open pull requests (#1379) by @AndreaBozzo
+
+- Add a Rust quickstart for crates.io (#1375) by @KingEmma7
+
+### Fixed
+
+- **Python**: Route a polars or pandas Arrow stream that is not a DataFrame by its protocol (#1382) by @AndreaBozzo
+
+- **Core**: Report approximate_count when a duplicate-row ceiling meets an estimate (#1380) by @AndreaBozzo
+
+- Return zero from scale_up for zero decimals (#1377) by @bfs2021
+
+- **Python**: Name the argument on leftover option errors (#1374) by @inverteum
+
+- **Core**: Name a format override on a Parquet path (#1371) by @inverteum
+
+- **Python**: Type the keyword arguments of the async profile functions (#1373) by @inverteum
+
+- **Metrics**: Hold a literal that underflows f64 as written (#1182) (#1261) by @majidninja
 
 ## [0.14.0] - 2026-11-17
 
