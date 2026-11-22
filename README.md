@@ -78,6 +78,7 @@ Keep the full profile for any verdict with `--report candidate.json`.
 A changed or unrecorded metric definition can leave a comparison
 `definition_not_comparable`; inspect the reason and regenerate the baseline
 deliberately. See the [checkpoint recipe](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint).
+In GitHub Actions, use [dataprof-action](https://github.com/AndreaBozzo/dataprof-action): `uses: AndreaBozzo/dataprof-action@v2`.
 
 0.14 adds these checks:
 

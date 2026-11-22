@@ -113,6 +113,22 @@ writes both files. Save evidence per run, since the paths above are overwritten.
 For a percentage allowance, use `--max-null customer_id=5`; the count rule
 above enforces an exact zero at any row count.
 
+The same gate as one step of
+[dataprof-action](https://github.com/AndreaBozzo/dataprof-action), which
+installs the wheel itself and writes the verdict and each check to the job
+summary:
+
+```yaml
+      - uses: AndreaBozzo/dataprof-action@v2
+        with:
+          file: orders.csv
+          policy: |
+            {"min_rows": 1, "require_columns": ["order_id", "customer_id"],
+             "max_null_count": {"customer_id": 0}}
+          scope: full_source
+          export-json-path: quality-evidence/verdict.json
+```
+
 ### 3. Before/after cleaning comparison
 
 You wrote a cleaning script. Did it help? Profile the raw file, persist that
@@ -223,6 +239,24 @@ JSON, with `allow_missing_baseline` and `promote` added, since the example
 passes the first as a keyword and promotes by renaming. The step exits 0 on a
 pass, 1 on a fail and 2 when inconclusive, so the job
 fails on anything but a pass and still uploads its evidence.
+
+With [dataprof-action](https://github.com/AndreaBozzo/dataprof-action), the
+install and check steps become one step that also writes a job summary and
+step outputs such as `verdict` and `violations-count`:
+
+```yaml
+      - id: gate
+        uses: AndreaBozzo/dataprof-action@v2
+        with:
+          file: orders.csv
+          policy: quality/policy.json
+          baseline: quality/baseline.json
+          export-json-path: verdict.json
+```
+
+The policy file above already sets `promote` and `allow_missing_baseline`, so
+the step needs nothing else. The policy can also go inline as JSON, so the
+workflow needs no `quality/policy.json`.
 
 For a full pipeline around the same idea, with dlt loading into DuckDB and a
 batch published only when accepted, see
