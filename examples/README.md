@@ -127,6 +127,7 @@ summary:
              "max_null_count": {"customer_id": 0}}
           scope: full_source
           export-json-path: quality-evidence/verdict.json
+          python-version: '3.12'
 ```
 
 ### 3. Before/after cleaning comparison
@@ -252,6 +253,7 @@ step outputs such as `verdict` and `violations-count`:
           policy: quality/policy.json
           baseline: quality/baseline.json
           export-json-path: verdict.json
+          python-version: '3.12'
 ```
 
 The policy file above already sets `promote` and `allow_missing_baseline`, so
