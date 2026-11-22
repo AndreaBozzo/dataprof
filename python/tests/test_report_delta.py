@@ -276,3 +276,50 @@ def test_compare_with_something_that_is_not_a_report_says_how_to_get_one(other):
     message = str(caught.value)
     assert message.startswith(f"other must be a dataprof ProfileReport, got {type(other).__name__}")
     assert "ProfileReport.load(path)" in message
+
+
+def test_compare_where_one_side_has_a_key_and_the_other_does_not():
+    # Repeated key with distinct rows: without a declared key, uniqueness rests
+    # on duplicate_rows alone (100.0) and key_uniqueness is None; with the key
+    # declared, key_uniqueness is 75.0 and uniqueness is 87.5.
+    data = {"id": ["1", "1", "2", "3"], "name": ["a", "b", "c", "d"]}
+    without_key = dp.profile(data)
+    with_key = dp.profile(data, identifier_columns=["id"])
+
+    assert without_key.to_dict()["quality"]["uniqueness"]["key_uniqueness"] is None
+    assert with_key.to_dict()["quality"]["uniqueness"]["key_uniqueness"] == 75.0
+
+    for left, right in (
+        (without_key, with_key),
+        (_flat(without_key), _flat(with_key)),
+        (_flat(without_key), with_key),
+    ):
+        delta = left.compare(right)
+        assert delta["dimensions"]["uniqueness"]["a"] == 100.0
+        assert delta["dimensions"]["uniqueness"]["b"] == 87.5
+        assert delta["dimensions"]["uniqueness"]["abs"] == -12.5
+        assert delta["configuration"]["semantic_hints"]["same"] is False
+        assert delta["configuration"]["semantic_hints"]["a"]["identifier_columns"] == []
+        assert delta["configuration"]["semantic_hints"]["b"]["identifier_columns"] == ["id"]
+
+    # When uniqueness is assessed only by the key (rows_checked == 0 on both
+    # sides), the side without a key has no uniqueness score, so both change
+    # fields must be absent.
+    key_only_doc = json.loads(with_key.to_json())
+    key_only_doc["quality"]["metrics"]["uniqueness"]["rows_checked"] = 0
+    key_only_doc["quality"].pop("scores")
+    no_key_doc = json.loads(without_key.to_json())
+    no_key_doc["quality"]["metrics"]["uniqueness"]["rows_checked"] = 0
+    no_key_doc["quality"].pop("scores")
+
+    key_only = dp.ProfileReport.from_json(json.dumps(key_only_doc))
+    no_key = dp.ProfileReport.from_json(json.dumps(no_key_doc))
+    for left, right, expected_a, expected_b in (
+        (no_key, key_only, None, 75.0),
+        (key_only, no_key, 75.0, None),
+    ):
+        change = left.compare(right)["dimensions"]["uniqueness"]
+        assert change["a"] == expected_a
+        assert change["b"] == expected_b
+        assert change["abs"] is None
+        assert change["rel_pct"] is None

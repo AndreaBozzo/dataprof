@@ -24,7 +24,7 @@ struct Case {
     key: fn(usize) -> Option<String>,
     amount: fn(usize) -> usize,
     /// Serialized `key_uniqueness`, `key_values_checked`, uniqueness score.
-    expected: (f64, u64, f64),
+    expected: (Option<f64>, u64, f64),
 }
 
 const CASES: [Case; 3] = [
@@ -33,23 +33,23 @@ const CASES: [Case; 3] = [
         name: "half null, distinct",
         key: |row| (row < 100).then(|| format!("C{row}")),
         amount: |row| row,
-        expected: (100.0, 100, 100.0),
+        expected: (Some(100.0), 100, 100.0),
     },
     Case {
         // 100 values over 50 ids, then 100 nulls.
         name: "half null, repeated",
         key: |row| (row < 100).then(|| format!("C{}", row % 50)),
         amount: |row| row,
-        expected: (50.0, 50 * 2, 75.0),
+        expected: (Some(50.0), 50 * 2, 75.0),
     },
     Case {
-        // No value: identified, measured nothing, so only the duplicate
-        // component scores. Half the rows repeat, so that component is 50:
-        // counting the key's placeholder 100 beside it would read 75.
+        // No value: identified, measured nothing, so `key_uniqueness` is null
+        // and only the duplicate component scores. Half the rows repeat, so
+        // that component is 50.
         name: "all null",
         key: |_| None,
         amount: |row| row % 100,
-        expected: (100.0, 0, 50.0),
+        expected: (None, 0, 50.0),
     },
 ];
 
@@ -168,7 +168,7 @@ fn key_uniqueness_counts_the_key_non_null_values_on_every_path() {
             );
             let expected = (
                 &Value::from("customer_id"),
-                &Value::from(share),
+                &share.map_or(Value::Null, Value::from),
                 &Value::from(values),
                 &Value::from(score),
             );

@@ -1569,6 +1569,9 @@ impl SummaryQuality {
                     rows_checked: uniqueness.rows_checked,
                     key_column: uniqueness.key_column.clone(),
                     key_values_checked: uniqueness.key_values_checked,
+                    key_uniqueness: (uniqueness.key_column.is_some()
+                        && uniqueness.key_values_checked != Some(0))
+                    .then_some(0.0),
                     ..UniquenessMetrics::default()
                 }),
             accuracy: self.accuracy.as_ref().map(|_| AccuracyMetrics::default()),

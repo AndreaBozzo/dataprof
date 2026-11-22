@@ -5164,7 +5164,7 @@ mod tests {
         let metrics = QualityMetrics {
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: duplicates,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 5,
                 key_column: None,

@@ -1495,7 +1495,7 @@ mod tests {
         let metrics = QualityMetrics {
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 1_200,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 5_000_000,
                 key_column: None,
@@ -1617,7 +1617,7 @@ mod tests {
         let metrics = QualityMetrics {
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 0,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 60_000,
                 key_column: None,
@@ -1964,7 +1964,7 @@ mod tests {
         let metrics = QualityMetrics {
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 0,
-                key_uniqueness: unique as f64 / values as f64 * 100.0,
+                key_uniqueness: Some(unique as f64 / values as f64 * 100.0),
                 high_cardinality_warning: false,
                 rows_checked: values + 1,
                 key_column: Some("order_id".to_string()),

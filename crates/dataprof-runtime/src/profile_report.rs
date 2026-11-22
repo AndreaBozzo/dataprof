@@ -1072,7 +1072,7 @@ enum PythonQualityDimension {
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonUniquenessDocument {
     duplicate_rows: usize,
-    key_uniqueness: f64,
+    key_uniqueness: Option<f64>,
     high_cardinality_warning: bool,
     rows_checked: usize,
     key_column: Option<String>,

@@ -96,7 +96,7 @@
       "uniqueness": {
         "duplicate_rows": 0,
         "high_cardinality_warning": true,
-        "key_uniqueness": 100.0,
+        "key_uniqueness": null,
         "rows_checked": 3
       }
     },
