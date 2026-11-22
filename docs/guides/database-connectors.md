@@ -80,7 +80,7 @@ stream, which `profile()` reads in bounded memory with no connector compiled
 into dataprof.
 
 ```python
-import adbc_driver_postgresql.dbapi as pg  # pip install adbc-driver-postgresql
+import adbc_driver_postgresql.dbapi as pg  # pip install adbc-driver-postgresql pyarrow
 import dataprof as dp
 
 with pg.connect("postgresql://user:pass@localhost/mydb") as conn, conn.cursor() as cur:

@@ -2047,7 +2047,7 @@ result as an Arrow `RecordBatchReader`, which `profile()` reads as a stream (see
 route: the driver owns the connection, credentials and transaction.
 
 ```python
-import adbc_driver_sqlite.dbapi as sqlite  # pip install adbc-driver-sqlite
+import adbc_driver_sqlite.dbapi as sqlite  # pip install adbc-driver-sqlite pyarrow
 import dataprof as dp
 
 with sqlite.connect() as conn, conn.cursor() as cur:
@@ -2065,6 +2065,8 @@ result = report.check(max_null_percentage={"amount": 50})
 ```
 
 PostgreSQL works the same way with `adbc_driver_postgresql.dbapi.connect(uri)`.
+The drivers declare pyarrow as optional, but `fetch_record_batch()` needs it:
+install it next to the driver.
 
 Pass `cur.fetch_record_batch()`, not `cur.fetch_arrow_table()`. The reader is
 consumed one batch at a time, so memory stays bounded; a table holds the whole
