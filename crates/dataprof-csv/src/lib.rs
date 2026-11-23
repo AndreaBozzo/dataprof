@@ -481,7 +481,9 @@ pub fn detect_delimiter_from_path(path: &Path) -> std::io::Result<u8> {
 /// CSV profiling. Data is processed incrementally through [`StreamingColumnCollection`]
 /// with bounded memory, rather than accumulating all rows in a `HashMap`.
 ///
-/// Returns `(column_profiles, streaming_stats, rows_read)`.
+/// Returns `(column_profiles, streaming_stats, rows_read, header_names)`. These
+/// are column profiles, not a `ProfileReport`: there is no quality assessment,
+/// so the result cannot go to a quality gate.
 pub fn analyze_csv_from_reader<R: Read>(
     reader: R,
     config: &CsvParserConfig,

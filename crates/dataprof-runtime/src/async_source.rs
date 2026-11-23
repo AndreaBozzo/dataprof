@@ -5,16 +5,23 @@ use tokio::io::AsyncRead;
 
 /// Metadata about an async data source for report construction and progress tracking.
 ///
-/// Use struct update syntax with `Default` to avoid breaking when new fields are added:
-/// ```ignore
-/// AsyncSourceInfo { label: "...".into(), format: FileFormat::Csv, ..Default::default() }
+/// The struct is `#[non_exhaustive]`, so code outside this crate cannot build it
+/// with a struct literal. Use [`AsyncSourceInfo::new`] and the builder methods:
+/// ```
+/// use dataprof_core::FileFormat;
+/// use dataprof_runtime::AsyncSourceInfo;
+///
+/// let info = AsyncSourceInfo::new("orders.csv", FileFormat::Csv)
+///     .size_hint(Some(1024))
+///     .has_header(true);
+/// assert_eq!(info.size_hint, Some(1024));
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct AsyncSourceInfo {
     /// Human-readable label (e.g., URL, topic name, filename)
     pub label: String,
-    /// Format of the incoming data. Async streaming currently supports CSV.
+    /// Format of the incoming data. Async streaming supports CSV, JSON and JSONL.
     pub format: FileFormat,
     /// Optional total size in bytes — enables progress percentage calculation
     pub size_hint: Option<u64>,
