@@ -202,8 +202,10 @@ def test_both_summary_backings_write_the_count(csv_path: Path):
     assert dp.column_to_dict(report["importo"])["locale_number_count"] == 6
 
 
-def test_a_sampled_count_discloses_its_scope(tmp_path: Path):
-    """The counts come from the engine's 10k reservoir; the flag says so."""
+def test_a_count_over_every_value_past_the_sample_claims_no_scope(tmp_path: Path):
+    """The counts cover every value read, past the engine's 10k reservoir
+    (#788), so the flag claims no sample. A report saved before that, whose
+    counts came from the reservoir, still says so when read back."""
     path = tmp_path / "big.csv"
     rows = (f"{i % 900 + 1}.{i % 1000:03d},{i % 100:02d}" for i in range(50_000))
     path.write_text("importo\n" + "\n".join(f'"{row}"' for row in rows) + "\n", encoding="utf-8")
@@ -211,9 +213,19 @@ def test_a_sampled_count_discloses_its_scope(tmp_path: Path):
     report = dp.profile(str(path))
     column = report["importo"]
     assert column.total_count == 50_000
-    assert column.locale_number_count == 10_000
-
+    assert column.locale_number_count == 50_000
     assert _flags(report) == [
+        "- importo: 50,000 of 50,000 values are numbers with a decimal comma or digit "
+        "grouping, left out of numeric stats"
+    ]
+
+    # The same column as a 0.14 summary recorded it: counted over the sample.
+    saved = report.to_dict()
+    del saved["metric_semantics"]["value_facts"]
+    importo = next(c for c in saved["columns"] if c["name"] == "importo")
+    importo["type_homogeneity"] = {"boolean": 0, "date": 0, "numeric": 0, "text": 10_000}
+    importo["locale_number_count"] = 10_000
+    assert _flags(dp.ProfileReport.from_dict(saved)) == [
         "- importo: 10,000 of 10,000 values are numbers with a decimal comma or digit "
         "grouping, left out of numeric stats (sampled 10,000 of 50,000 values)"
     ]

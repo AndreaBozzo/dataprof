@@ -88,70 +88,161 @@ static LOCALE_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     .expect("BUG: Invalid hardcoded regex pattern for locale-formatted numbers")
 });
 
+/// Type a column of text values.
+///
+/// [`LexicalTally`] over `data`: the engines that stream a column count the
+/// same tally one value at a time, so a column is typed the same way whether
+/// its values arrive at once or in a stream.
 pub fn infer_type(data: &[String]) -> DataType {
-    // Filter null-like strings for more robust inference.
-    let non_empty: Vec<&String> = data
-        .iter()
-        .filter(|s| !is_null_like_token(s.trim()))
-        .collect();
+    LexicalTally::from_values(data).data_type()
+}
 
-    if non_empty.is_empty() {
-        return DataType::String;
+/// The lexical facts about a column's non-null text values that type
+/// inference, `type_homogeneity` and `locale_number_count` read, counted one
+/// value at a time (#788).
+///
+/// Every engine that reads a column as text feeds each value it reads to
+/// [`Self::record`], so the type and the shares cover every value read rather
+/// than a retained sample: one zero-padded code past the sample, or a share at
+/// a type threshold, types the column the same way from a file and from
+/// memory. Memory is a few counters per column, and parts read separately
+/// combine with [`Self::merge`] in any order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LexicalTally {
+    /// Each value's [`LexicalClass`]: the `type_homogeneity` a profile reports.
+    forms: TypeHomogeneity,
+    /// Numeric values that are integers in the signed or unsigned 64-bit range.
+    integers: usize,
+    /// Numeric values written with a leading zero, such as `007` (#814).
+    zero_padded: usize,
+    /// Numeric values that are an eight-digit `YYYYMMDD` calendar date.
+    compact_dates: usize,
+    /// Date values in a form [`is_inferred_date_token`] types a column by.
+    inferred_dates: usize,
+    /// Text values that are locale-formatted numbers.
+    locale_numbers: usize,
+}
+
+impl LexicalTally {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    // Single pass for numeric type checking (optimization)
-    // Since all integers are valid floats, we can check both in one iteration
-    let mut integer_count = 0;
-    let mut float_count = 0;
+    /// The tally of every value in `values`.
+    pub fn from_values<S: AsRef<str>>(values: &[S]) -> Self {
+        let mut tally = Self::new();
+        for value in values {
+            tally.record(value.as_ref());
+        }
+        tally
+    }
 
-    for s in &non_empty {
-        let trimmed = s.trim();
-        if is_integer_token(trimmed) {
-            integer_count += 1;
-            float_count += 1; // integers are also valid floats
-        } else if trimmed.parse::<f64>().is_ok() {
-            // Infinity is a numeric lexical form even though it cannot enter
-            // finite statistics. Classify the column as numeric and let the
-            // profile's invalid_count disclose the unusable value.
-            float_count += 1;
+    /// Count one value. Surrounding whitespace is ignored, and a null-like
+    /// value is not counted: it is absence, not a lexical form.
+    pub fn record(&mut self, value: &str) {
+        let trimmed = value.trim();
+        if is_null_like_token(trimmed) {
+            return;
+        }
+        let Classified {
+            class,
+            integer,
+            inferred_date,
+        } = classify(trimmed);
+        self.forms.record(class);
+        match class {
+            LexicalClass::Numeric => {
+                self.integers += usize::from(integer);
+                if is_zero_padded_digits(trimmed) {
+                    self.zero_padded += 1;
+                }
+                if is_compact_date_token(trimmed) {
+                    self.compact_dates += 1;
+                }
+            }
+            // The inferred forms are a subset of the date class: a value in
+            // them has a separator, so it never parses as a number first.
+            LexicalClass::Date => self.inferred_dates += usize::from(inferred_date),
+            LexicalClass::Boolean => {}
+            LexicalClass::Text => {
+                if may_be_locale_number(trimmed) && LOCALE_NUMBER_REGEX.is_match(trimmed) {
+                    self.locale_numbers += 1;
+                }
+            }
         }
     }
 
-    // Codes written in digits are text: typed numeric, they get a mean (#814).
-    let digit_codes = holds_digit_codes(non_empty.iter().map(|s| s.trim()));
-
-    if !digit_codes && integer_count == non_empty.len() {
-        return DataType::Integer;
+    /// Add the counts of a part of the same column read separately.
+    pub fn merge(&mut self, other: &Self) {
+        let TypeHomogeneity {
+            numeric,
+            date,
+            boolean,
+            text,
+        } = other.forms;
+        self.forms.numeric += numeric;
+        self.forms.date += date;
+        self.forms.boolean += boolean;
+        self.forms.text += text;
+        self.integers += other.integers;
+        self.zero_padded += other.zero_padded;
+        self.compact_dates += other.compact_dates;
+        self.inferred_dates += other.inferred_dates;
+        self.locale_numbers += other.locale_numbers;
     }
 
-    // 80% threshold: tolerates a few non-numeric values (e.g. "N/A", missing)
-    if !digit_codes && float_count as f64 / non_empty.len() as f64 > 0.8 {
-        return DataType::Float;
+    /// The counts by lexical class, which a profile reports as
+    /// `type_homogeneity`.
+    pub fn type_homogeneity(&self) -> TypeHomogeneity {
+        self.forms
     }
 
-    // Check booleans after numeric — strict string literals only (pure 0/1 columns
-    // already matched as Integer above). 90% threshold to tolerate a few nulls.
-    let bool_count = non_empty
-        .iter()
-        .filter(|s| parse_strict_boolean_token(s.trim()).is_some())
-        .count();
-
-    if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
-        return DataType::Boolean;
+    /// Of the values counted as text, how many are locale-formatted numbers
+    /// ([`is_locale_number_token`]), which a profile reports as
+    /// `locale_number_count`.
+    pub fn locale_number_count(&self) -> usize {
+        self.locale_numbers
     }
 
-    // Check dates after boolean (70% threshold, consistent with streaming inference).
-    // Treat supported date formats cumulatively so mixed date columns still infer as dates.
-    let date_matches = non_empty
-        .iter()
-        .filter(|s| is_inferred_date_token(s.trim()))
-        .count();
-
-    if date_matches as f64 / non_empty.len() as f64 > 0.7 {
-        return DataType::Date;
+    /// Of the values counted as numeric, how many keep a leading zero, which
+    /// a profile reports as `zero_padded_count`.
+    pub fn zero_padded_count(&self) -> usize {
+        self.zero_padded
     }
 
-    DataType::String
+    /// The column's type, from the shares of the values counted.
+    ///
+    /// Numbers come first, unless the values are digit codes; then booleans
+    /// (at least 90%) and dates (more than 70%), which no value can be both of,
+    /// so their order does not matter. Pure `0`/`1` columns are integers.
+    pub fn data_type(&self) -> DataType {
+        let counted = self.forms.classified_count();
+        if counted == 0 {
+            return DataType::String;
+        }
+        let share = |count: usize| count as f64 / counted as f64;
+        // Codes written in digits are text: typed numeric, they get a mean (#814).
+        let digit_codes = digit_code_rule(self.forms.numeric, self.zero_padded, self.compact_dates);
+        if !digit_codes && self.integers == counted {
+            return DataType::Integer;
+        }
+        // Infinity is a numeric lexical form even though it cannot enter
+        // finite statistics, so it counts here, and the profile's
+        // `invalid_count` discloses the unusable value. More than 80% tolerates
+        // a few non-numeric values such as "N/A".
+        if !digit_codes && share(self.forms.numeric) > 0.8 {
+            return DataType::Float;
+        }
+        if share(self.forms.boolean) >= 0.9 {
+            return DataType::Boolean;
+        }
+        // Supported date forms count together, so a column mixing them is
+        // still a date column.
+        if share(self.inferred_dates) > 0.7 {
+            return DataType::Date;
+        }
+        DataType::String
+    }
 }
 
 /// Whether a value carries one of the date forms `infer_type` counts towards
@@ -165,7 +256,17 @@ pub fn infer_type(data: &[String]) -> DataType {
 /// "is this a date" on the same set, so a file cannot be a date column through
 /// one engine and a text column through the other.
 pub fn is_inferred_date_token(value: &str) -> bool {
-    DATE_REGEXES.iter().any(|regex| regex.is_match(value))
+    may_be_date_token(value) && DATE_REGEXES.iter().any(|regex| regex.is_match(value))
+}
+
+/// A cheap necessary condition for every date form, so the regular
+/// expressions run only on values that could match one (#788 counts every
+/// value). Every pattern in [`DATE_REGEXES`] and in the validation set starts
+/// with `\d`, which is Unicode-aware here and lies inside
+/// [`char::is_numeric`], and the shortest form, `1/2/2024`, has eight
+/// characters, so at least eight bytes.
+fn may_be_date_token(value: &str) -> bool {
+    value.len() >= 8 && value.chars().next().is_some_and(char::is_numeric)
 }
 
 /// Whether a value has the lexical form of a date in any format dataprof
@@ -184,7 +285,9 @@ pub fn is_inferred_date_token(value: &str) -> bool {
 /// sets into one is tracked separately; until then this union is what "looks like
 /// a date" means for classification.
 pub(crate) fn is_date_token(value: &str) -> bool {
-    is_inferred_date_token(value) || crate::analysis::metrics::utils::is_valid_date_format(value)
+    may_be_date_token(value)
+        && (is_inferred_date_token(value)
+            || crate::analysis::metrics::utils::is_valid_date_format(value))
 }
 
 /// Whether trimmed, non-null `values` are codes written in digits rather than
@@ -192,9 +295,11 @@ pub(crate) fn is_date_token(value: &str) -> bool {
 ///
 /// Two shapes qualify:
 ///
-/// - Any value that keeps a leading zero, such as `007` or a postal code
-///   `08001`. No quantity is written that way, so one such value is evidence
-///   for the whole column. `0` alone is a quantity and does not count.
+/// - At least [`ZERO_PADDED_CODE_PERCENT`] of the numeric values keep a
+///   leading zero, such as `007` or a postal code `08001`. No quantity is
+///   written that way, but one stray code among many quantities does not make
+///   them codes (#788), so the rule is a share. `0` alone is a quantity and
+///   does not count.
 /// - Every numeric value is an eight-digit `YYYYMMDD` calendar date, such as
 ///   `20240115`. Recognizing these as dates is #815; until then they are text.
 ///
@@ -204,19 +309,41 @@ pub(crate) fn is_date_token(value: &str) -> bool {
 /// no leading zeros to see.
 pub fn holds_digit_codes<'a>(values: impl IntoIterator<Item = &'a str>) -> bool {
     let mut numeric = 0usize;
+    let mut zero_padded = 0usize;
     let mut compact_dates = 0usize;
     for value in values {
-        if is_zero_padded_digits(value) {
-            return true;
-        }
         if is_integer_token(value) || value.parse::<f64>().is_ok() {
             numeric += 1;
+            if is_zero_padded_digits(value) {
+                zero_padded += 1;
+            }
             if is_compact_date_token(value) {
                 compact_dates += 1;
             }
         }
     }
-    numeric > 0 && compact_dates == numeric
+    digit_code_rule(numeric, zero_padded, compact_dates)
+}
+
+/// The share of a column's numeric values, in percent, that must keep a
+/// leading zero for the column to be digit codes (#788).
+///
+/// Postal codes, phone numbers and product codes keep a leading zero on a
+/// few percent of their values or more: US ZIP codes of the north-eastern
+/// states, Italian CAPs of Lazio, most Italian landlines. A quantity column
+/// holds one only as a stray: a single `007` among 40,000 integers is
+/// 0.0025%.
+pub const ZERO_PADDED_CODE_PERCENT: usize = 1;
+
+/// The digit-code rule of [`holds_digit_codes`] over counts: at least
+/// [`ZERO_PADDED_CODE_PERCENT`] of the numeric values zero-padded, or every
+/// numeric value a compact date. [`LexicalTally`] applies it to the counts it
+/// keeps, so the two can never disagree. Compared in integers, so a share at
+/// the threshold is not decided by rounding.
+fn digit_code_rule(numeric: usize, zero_padded: usize, compact_dates: usize) -> bool {
+    let codes = zero_padded > 0
+        && zero_padded.saturating_mul(100) >= numeric.saturating_mul(ZERO_PADDED_CODE_PERCENT);
+    codes || (numeric > 0 && compact_dates == numeric)
 }
 
 /// `0` followed by one or more ASCII digits, and nothing else.
@@ -277,15 +404,56 @@ pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
 /// each recognize. Using only the validation set would drop ISO datetimes and
 /// dotted dates into `Text` alongside genuine junk.
 pub fn lexical_class(value: &str) -> LexicalClass {
-    if is_integer_token(value) || value.parse::<f64>().is_ok() {
-        LexicalClass::Numeric
-    } else if is_date_token(value) {
+    classify(value).class
+}
+
+/// One value's class and the facts the tally needs beside it, from a single
+/// pass: an integer is parsed once, and an inferred date form matched once.
+struct Classified {
+    class: LexicalClass,
+    /// A numeric value that is an integer token.
+    integer: bool,
+    /// A date value in a form [`is_inferred_date_token`] accepts.
+    inferred_date: bool,
+}
+
+fn classify(value: &str) -> Classified {
+    let integer = is_integer_token(value);
+    if integer || value.parse::<f64>().is_ok() {
+        return Classified {
+            class: LexicalClass::Numeric,
+            integer,
+            inferred_date: false,
+        };
+    }
+    // `is_date_token`, with the inferred forms tried first and remembered.
+    let inferred_date = is_inferred_date_token(value);
+    let class = if inferred_date
+        || (may_be_date_token(value)
+            && crate::analysis::metrics::utils::is_valid_date_format(value))
+    {
         LexicalClass::Date
     } else if parse_strict_boolean_token(value).is_some() {
         LexicalClass::Boolean
     } else {
         LexicalClass::Text
+    };
+    Classified {
+        class,
+        integer: false,
+        inferred_date,
     }
+}
+
+/// A cheap necessary condition for [`LOCALE_NUMBER_REGEX`]: an ASCII digit
+/// first, after an optional sign.
+fn may_be_locale_number(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let first = match bytes.first() {
+        Some(b'+' | b'-') => bytes.get(1),
+        other => other,
+    };
+    first.is_some_and(u8::is_ascii_digit)
 }
 
 /// Distribute `values` across the lexical classes, skipping null-like tokens.
@@ -316,7 +484,9 @@ pub fn classify_lexical_forms<S: AsRef<str>>(values: &[S]) -> TypeHomogeneity {
 pub fn is_locale_number_token(value: &str) -> bool {
     // The regex first: almost no value matches it, and `lexical_class` parses
     // and runs the date patterns.
-    LOCALE_NUMBER_REGEX.is_match(value) && lexical_class(value) == LexicalClass::Text
+    may_be_locale_number(value)
+        && LOCALE_NUMBER_REGEX.is_match(value)
+        && lexical_class(value) == LexicalClass::Text
 }
 
 /// Count the non-null `values` that [`is_locale_number_token`] accepts.
@@ -380,6 +550,68 @@ mod tests {
         ] {
             assert_eq!(infer_type(&strings(quantities)), expected, "{quantities:?}");
         }
+    }
+
+    #[test]
+    fn a_tally_merged_from_parts_is_the_tally_of_the_whole() {
+        // Zero-padded codes past the share in the second part type the whole
+        // column as codes, however the column was split (#788).
+        let values = [
+            "12",
+            " 34 ",
+            "null",
+            "1.234,56",
+            "2024-01-15",
+            "true",
+            "007",
+            "20240115",
+            "junk",
+            "",
+        ];
+        let whole = LexicalTally::from_values(&values);
+        for split in 0..=values.len() {
+            let (left, right) = values.split_at(split);
+            let mut merged = LexicalTally::from_values(right);
+            merged.merge(&LexicalTally::from_values(left));
+            assert_eq!(merged, whole, "split at {split}");
+        }
+        assert_eq!(whole.type_homogeneity(), classify_lexical_forms(&values));
+        assert_eq!(whole.locale_number_count(), count_locale_numbers(&values));
+        assert_eq!(whole.data_type(), DataType::String);
+
+        let mut quantities = LexicalTally::from_values(&["12", "34"]);
+        assert_eq!(quantities.data_type(), DataType::Integer);
+        quantities.merge(&LexicalTally::from_values(&["007"]));
+        assert_eq!(quantities.data_type(), DataType::String);
+        assert_eq!(quantities.zero_padded_count(), 1);
+    }
+
+    #[test]
+    fn zero_padded_values_make_codes_from_one_percent_of_the_numbers() {
+        // #788: one stray code among quantities no longer retypes the column;
+        // a share of them still does. 99 quantities and one code is exactly
+        // 1%; 100 quantities and one code is just under.
+        let quantities = |count: usize| (1..=count).map(|n| n.to_string());
+        let at: Vec<String> = quantities(99).chain(["007".to_string()]).collect();
+        let under: Vec<String> = quantities(100).chain(["007".to_string()]).collect();
+        let tally = LexicalTally::from_values(&at);
+        assert_eq!(
+            (tally.data_type(), tally.zero_padded_count()),
+            (DataType::String, 1)
+        );
+        let tally = LexicalTally::from_values(&under);
+        assert_eq!(
+            (tally.data_type(), tally.zero_padded_count()),
+            (DataType::Integer, 1)
+        );
+        // The sample-reading predicate applies the same rule.
+        assert!(holds_digit_codes(at.iter().map(String::as_str)));
+        assert!(!holds_digit_codes(under.iter().map(String::as_str)));
+        // Text values do not count towards the share: half the numbers are codes.
+        assert_eq!(
+            infer_type(&["007".into(), "12".into(), "N/A".into()]),
+            DataType::String
+        );
     }
 
     #[test]
@@ -931,6 +1163,61 @@ mod tests {
                 is_date_token(example),
                 "{example:?} is a recognized date form but is_date_token rejects it"
             );
+        }
+    }
+
+    #[test]
+    fn the_pre_filters_never_change_an_answer() {
+        // The cheap checks in front of the regular expressions (#788) must
+        // only skip values no pattern matches: Unicode digits included, since
+        // `\d` is Unicode-aware here.
+        let unfiltered_inferred = |v: &str| DATE_REGEXES.iter().any(|r| r.is_match(v));
+        let unfiltered_date = |v: &str| {
+            unfiltered_inferred(v)
+                || crate::analysis::metrics::utils::DATE_VALIDATION_REGEXES
+                    .iter()
+                    .any(|r| r.is_match(v))
+        };
+        let unfiltered_locale = |v: &str| {
+            LOCALE_NUMBER_REGEX.is_match(v)
+                && (if is_integer_token(v) || v.parse::<f64>().is_ok() {
+                    false
+                } else {
+                    !unfiltered_date(v) && parse_strict_boolean_token(v).is_none()
+                })
+        };
+        let mut values: Vec<String> = DATE_FORM_EXAMPLES
+            .iter()
+            .map(|(_, example)| example.to_string())
+            .collect();
+        values.extend(
+            [
+                "1/2/2024",
+                "1/2/202",
+                "\u{0662}\u{0660}\u{0662}\u{0664}-\u{0660}\u{0661}-\u{0661}\u{0665}",
+                "\u{FF12}\u{FF10}\u{FF12}\u{FF14}-01-15",
+                "x2024-01-15",
+                "2024-01-15x",
+                "user 12",
+                "1.234,56",
+                "+1.234,56",
+                "-10,50",
+                "+",
+                "-",
+                "",
+                "10,50 EUR",
+                "\u{20AC}10,50",
+                "1 234,56",
+                "true",
+                "007",
+            ]
+            .map(String::from),
+        );
+        for value in &values {
+            let v = value.as_str();
+            assert_eq!(is_inferred_date_token(v), unfiltered_inferred(v), "{v:?}");
+            assert_eq!(is_date_token(v), unfiltered_date(v), "{v:?}");
+            assert_eq!(is_locale_number_token(v), unfiltered_locale(v), "{v:?}");
         }
     }
 

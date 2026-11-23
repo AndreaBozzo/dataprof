@@ -235,6 +235,25 @@ pub enum DateForms {
     SpacedIsoDatetimes,
 }
 
+/// Which values a column's type, `type_homogeneity` and `locale_number_count`
+/// are counted over, as recorded in a report's metric semantics.
+///
+/// Only the current definition has a value. Through 0.14 the engines that
+/// retain a bounded sample of each column (files, Arrow and the streaming
+/// readers) typed a text column and classified its values from that sample,
+/// so on a source larger than the sample one zero-padded code or a share
+/// near a type threshold could type the column otherwise than the same data
+/// read in memory; and one zero-padded number made a column digit codes,
+/// where 1% of them now does. Those releases recorded no definition.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueFacts {
+    /// Every non-null value the scan read, on every engine (#788).
+    EveryValue,
+}
+
 /// High-level categories of analysis that can be selectively enabled.
 #[derive(
     Debug,

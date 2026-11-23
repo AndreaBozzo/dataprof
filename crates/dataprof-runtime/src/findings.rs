@@ -38,13 +38,14 @@ use std::fmt;
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
     DataSource, DataType, DelimiterDetection, FileFormat, KeyColumnSource, PatternCategory,
-    TypeHomogeneity,
+    TypeHomogeneity, ValueFacts,
 };
 
 use crate::profile_report::ProfileReport;
 use crate::quality_gate::{
     Evidence, EvidenceGap, Provenance, quality_status_name, sampled_component_evidence,
 };
+use crate::streaming_stats::COLUMN_SAMPLE_CAPACITY;
 
 /// Default for [`FindingPolicy::null_heavy_percentage`]. Matches the
 /// `null-heavy` flag in the Python binding's `to_llm_context()`.
@@ -428,6 +429,10 @@ pub struct FindingsInput {
     /// names (#1065).
     #[serde(default)]
     key_column_source: Option<KeyColumnSource>,
+    /// Which values the lexical forms were counted over. Absent for a report
+    /// written before 0.15, whose forms came from the retained sample (#788).
+    #[serde(default)]
+    value_facts: Option<ValueFacts>,
     /// The report's `quality_status` state, read when `quality` is absent.
     quality_status: String,
     quality: Option<QualityFacts>,
@@ -507,15 +512,23 @@ impl FindingsInput {
     /// Whether the rule for `code` read some column's retained value sample
     /// rather than all of its values.
     ///
-    /// `mixed_types`, `locale_numbers` and `sensitive_pattern` read a
-    /// column's lexical forms, locale numbers and patterns, which the
-    /// profiler takes from the same retained sample. A classified count short
-    /// of the column's non-null count says the sample did not hold every
-    /// value, even on a scan that read the whole source. Columns a rule
-    /// exempts (identifiers, for the first two) are not counted. Every other
-    /// code reads exact counters, or records its sampling itself.
+    /// `mixed_types` and `locale_numbers` read a column's lexical forms and
+    /// locale numbers, which a report recording `value_facts: every_value`
+    /// counted over every value read (#788). Through 0.14 they came from the
+    /// retained sample, and a classified count short of the column's
+    /// non-null count says the sample did not hold every value, even on a
+    /// scan that read the whole source. `sensitive_pattern` reads the
+    /// patterns, which still come from that sample: on an older report the
+    /// same classified count says whether it held every value; on a current
+    /// one, whose classified count is the non-null count, a column with more
+    /// non-null values than the sample holds may have been sampled.
+    /// Columns a rule exempts (identifiers, for the first two) are not
+    /// counted. Every other code reads exact counters, or records its
+    /// sampling itself.
     pub(crate) fn reads_a_partial_sample(&self, code: FindingCode) -> bool {
+        let every_value = self.value_facts == Some(ValueFacts::EveryValue);
         let exempts_identifiers = match code {
+            FindingCode::MixedTypes | FindingCode::LocaleNumbers if every_value => return false,
             FindingCode::MixedTypes | FindingCode::LocaleNumbers => true,
             FindingCode::SensitivePattern => false,
             _ => return false,
@@ -525,12 +538,33 @@ impl FindingsInput {
             .filter(|column| !(exempts_identifiers && column.identifier))
             .any(|column| {
                 let non_null = column.total_count.saturating_sub(column.null_count);
-                column
+                let classified = column
                     .type_homogeneity
-                    .as_ref()
-                    .is_some_and(|forms| forms.classified_count() < non_null)
+                    .map(|forms| forms.classified_count());
+                retained_sample_left_values_out(self.value_facts, non_null, classified)
+                    .unwrap_or(false)
             })
     }
+}
+
+/// Whether a column's retained sample of `non_null` values may have left some
+/// out, for the checks that still read it; `None` when the report does not
+/// record which happened.
+///
+/// Through 0.14 `type_homogeneity` classified the same retained values, so
+/// its `classified` count short of the non-null count said so. A report that
+/// records `value_facts` classified every value read (#788), and the count no
+/// longer says anything about the sample: a column with more non-null values
+/// than the sample holds may have been sampled.
+pub(crate) fn retained_sample_left_values_out(
+    value_facts: Option<ValueFacts>,
+    non_null: usize,
+    classified: Option<usize>,
+) -> Option<bool> {
+    if value_facts == Some(ValueFacts::EveryValue) {
+        return Some(non_null > COLUMN_SAMPLE_CAPACITY);
+    }
+    classified.map(|classified| classified < non_null)
 }
 
 impl From<&ProfileReport> for FindingsInput {
@@ -556,6 +590,10 @@ impl From<&ProfileReport> for FindingsInput {
                 .metric_semantics
                 .as_ref()
                 .and_then(|semantics| semantics.key_column_source),
+            value_facts: report
+                .metric_semantics
+                .as_ref()
+                .and_then(|semantics| semantics.value_facts),
             quality_status: quality_status_name(&report.quality_status).to_string(),
             quality: report.quality.as_ref().map(|quality| QualityFacts {
                 uniqueness: quality
@@ -843,9 +881,9 @@ impl FindingPolicy {
                     percentage(dominant_count as f64 / classified as f64 * 100.0),
                 ),
                 ("threshold", percentage(self.mixed_types_threshold())),
-                // Shares are counted over the values the profiler retained; a
-                // classified count short of the non-null count says they were
-                // sampled.
+                // Shares are counted over every value read (#788); on a report
+                // written before 0.15 they came from the retained sample, and a
+                // classified count short of the non-null count says so.
                 ("classified_count", EvidenceValue::Count(classified)),
                 ("non_null_count", EvidenceValue::Count(non_null)),
             ],
@@ -1461,6 +1499,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: None,

@@ -49,6 +49,6 @@ pub use report_delta::{
     Sides,
 };
 pub use streaming_stats::{
-    RowCompletenessTracker, RowSignature, RowUniquenessTracker, StreamReservoirSampler,
-    StreamingColumnCollection, StreamingStatistics, TextLengthStats,
+    COLUMN_SAMPLE_CAPACITY, RowCompletenessTracker, RowSignature, RowUniquenessTracker,
+    StreamReservoirSampler, StreamingColumnCollection, StreamingStatistics, TextLengthStats,
 };

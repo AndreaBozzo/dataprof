@@ -203,6 +203,9 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
         # Absent for a summary written before 0.13, whose key may be a guess
         # from column names (#1065).
         "key_column_source": (report.metric_semantics or {}).get("key_column_source"),
+        # Absent before 0.15, whose lexical forms came from the retained
+        # sample (#788).
+        "value_facts": (report.metric_semantics or {}).get("value_facts"),
         "quality_status": report.quality_status,
         "quality": None
         if quality is None

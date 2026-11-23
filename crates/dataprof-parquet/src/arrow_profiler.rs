@@ -8,9 +8,9 @@ use dataprof_core::{
     TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
-use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
+use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+    CardinalityEstimator, DateTimeAccumulator, LexicalTally, NumericAccumulator, ParsedNumber,
 };
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
-const NUMERIC_SAMPLE_CAP: usize = 10_000;
+const NUMERIC_SAMPLE_CAP: usize = dataprof_runtime::COLUMN_SAMPLE_CAPACITY;
 
 /// The source as `arrow-csv` must see it: UTF-8, checked as the bytes stream
 /// through, failing with an error that names UTF-8 so the facade reports the
@@ -751,6 +751,9 @@ struct ColumnAnalyzer {
     /// Date statistics over every non-null value, independent of the
     /// sample (#1297).
     dates: DateTimeAccumulator,
+    /// Lexical facts over every non-null value, independent of the sample:
+    /// the column's type and `type_homogeneity` (#788).
+    lexical: LexicalTally,
 }
 
 impl ColumnAnalyzer {
@@ -766,6 +769,7 @@ impl ColumnAnalyzer {
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
             date_matched_values: 0,
             dates: DateTimeAccumulator::new(),
+            lexical: LexicalTally::new(),
         }
     }
 
@@ -774,6 +778,7 @@ impl ColumnAnalyzer {
             self.date_matched_values += 1;
         }
         self.dates.update(value);
+        self.lexical.record(value);
         self.sample_values.offer(value);
     }
 
@@ -856,7 +861,7 @@ impl ColumnAnalyzer {
         let data_type = if semantic_hints.is_identifier_column(&name) {
             DataType::Identifier
         } else {
-            infer_type(self.sample_values.samples())
+            self.lexical.data_type()
         };
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -885,6 +890,7 @@ impl ColumnAnalyzer {
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
             exact_dates: Some(&self.dates),
+            exact_lexical: Some(&self.lexical),
             decimal_values: false,
         })
     }

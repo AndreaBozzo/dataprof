@@ -166,13 +166,13 @@ class ColumnProfile:
     unique_count_is_approximate: bool | None
     invalid_count: int | None
     #: Non-null values per lexical class -- ``numeric``, ``date``, ``boolean``,
-    #: ``text`` -- over the values the profiler retained. Answers what
-    #: ``data_type`` cannot: whether a ``string`` column is ordinary text or one
-    #: that defeated type inference. All four keys are always present; all-zero
-    #: means "classified, nothing to classify" (all-null or zero rows), while
-    #: ``None`` means the classification did not run. Sum the counts and compare
-    #: against ``total_count - null_count`` to tell an exact count from one
-    #: bounded by the engine's reservoir sample.
+    #: ``text`` -- over every value read (``metric_semantics["value_facts"]``;
+    #: a report written before 0.15 counted the engine's reservoir sample).
+    #: Answers what ``data_type`` cannot: whether a ``string`` column is
+    #: ordinary text or one that defeated type inference. All four keys are
+    #: always present; all-zero means "classified, nothing to classify"
+    #: (all-null or zero rows), while ``None`` means the classification did
+    #: not run.
     type_homogeneity: dict[str, int] | None
     #: Of the ``text`` values in ``type_homogeneity``, how many are numbers
     #: written with a decimal comma or digit-group separators (``10,50``,
@@ -180,6 +180,12 @@ class ColumnProfile:
     #: means the count did not run, including a report written before dataprof
     #: recorded it; ``0`` means none were found.
     locale_number_count: int | None
+    #: Of the ``numeric`` values in ``type_homogeneity``, how many keep a leading
+    #: zero (``007``, ``08001``). At least 1% of them types the column as digit
+    #: codes, so ``string``; fewer leave it numeric, read as the numbers they
+    #: spell. ``None`` means the count did not run, including a report written
+    #: before dataprof recorded it; ``0`` means none were found.
+    zero_padded_count: int | None
     #: The type the source declared, as ``{"system": ..., "name": ...}``:
     #: ``{"system": "arrow", "name": "decimal128(12, 2)"}``. Provenance, not a
     #: measurement. ``None`` means the source declares no type (CSV, JSON,

@@ -236,13 +236,10 @@ fn every_route_reports_the_date_statistics_of_every_value() {
     for (label, report) in reports() {
         routes += 1;
         // The fixture is past the sample on every route, or it guards nothing.
+        // `type_homogeneity` counts every value since #788, so the counts
+        // against the reservoir capacity are the witness.
         let sampled = report.column_profiles.iter().any(|column| {
-            column
-                .type_homogeneity
-                .as_ref()
-                .expect("classified")
-                .classified_count()
-                < ROWS
+            column.total_count - column.null_count > dataprof::COLUMN_SAMPLE_CAPACITY
         });
         if !sampled {
             wrong.push(format!("[{label}] held every value in its sample"));

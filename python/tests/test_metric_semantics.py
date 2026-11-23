@@ -24,6 +24,7 @@ CURRENT = {
     "date_statistics": "every_value",
     "outlier_spread": "nonzero_iqr",
     "date_forms": "spaced_iso_datetimes",
+    "value_facts": "every_value",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -178,6 +179,8 @@ def _through_both_readers(value):
         {"outlier_spread": None},
         {"date_forms": "plain_spaced_datetimes"},
         {"date_forms": None},
+        {"value_facts": "retained_sample"},
+        {"value_facts": None},
     ],
     ids=[
         "null",
@@ -211,6 +214,8 @@ def _through_both_readers(value):
         "null-outlier-spread",
         "unknown-date-forms",
         "null-date-forms",
+        "unknown-value-facts",
+        "null-value-facts",
     ],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
@@ -253,6 +258,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         {"date_statistics": None},
         {"outlier_spread": None},
         {"date_forms": None},
+        {"value_facts": None},
     ],
     ids=[
         "null",
@@ -270,6 +276,7 @@ def test_both_readers_agree_on_accepted_semantics(value):
         "null-date-statistics",
         "null-outlier-spread",
         "null-date-forms",
+        "null-value-facts",
     ],
 )
 def test_the_schema_rejects_what_the_readers_reject(dialect, value):

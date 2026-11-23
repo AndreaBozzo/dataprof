@@ -537,6 +537,7 @@ fn a_definition_no_run_can_reach_does_not_hold_a_score_open() {
         "sampled_score_estimator",
         "outlier_spread",
         "date_forms",
+        "value_facts",
     ] {
         let mut summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         summary["metric_semantics"]
@@ -1077,4 +1078,163 @@ fn a_type_change_the_identifier_hint_explains_names_the_hint() {
         document["baseline"]["diagnostics"][0]["reason"],
         json!("setting_unrecorded")
     );
+}
+
+#[test]
+fn a_baseline_that_typed_a_column_from_its_sample_holds_the_type_following_scores_open() {
+    // A 0.14 report kept a 10,000-value sample of each column past that size
+    // and typed and classified the column from it, recording no
+    // `value_facts` (#788). Its `type_homogeneity` then classified fewer
+    // values than the column holds, which is what says the type may have
+    // come from a sample. The scores whose checks follow the type go
+    // unevaluated against it; the others are still decided. The same
+    // baseline with a classification over every value typed the column from
+    // every value, and decides every score.
+    let report = profile(&sampled_csv());
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    let mut legacy = summary.clone();
+    legacy["metric_semantics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("value_facts")
+        .expect("reports record value_facts");
+    let mut sampled = legacy.clone();
+    let amount = sampled["columns"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|column| column["name"] == "amount")
+        .unwrap();
+    assert_eq!(amount["type_homogeneity"]["numeric"], 12_000);
+    amount["type_homogeneity"]["numeric"] = json!(10_000);
+
+    let policy = || {
+        QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .max_dimension_score_drop(QualityDimension::Accuracy, 0.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+            .max_dimension_score_drop(QualityDimension::Uniqueness, 0.0)
+    };
+    let against = |baseline: &Value| {
+        let side = ReportSide::from_summary_json(&baseline.to_string()).unwrap();
+        policy().evaluate_against(&report, &side).unwrap()
+    };
+
+    let held = against(&sampled);
+    for (code, subject) in [
+        (CheckCode::MaxQualityScoreDrop, None),
+        (CheckCode::MaxDimensionScoreDrop, Some("consistency")),
+        (CheckCode::MaxDimensionScoreDrop, Some("accuracy")),
+    ] {
+        assert!(
+            matches!(
+                reason(check(&held, code, subject)),
+                Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "value_facts"
+            ),
+            "{code:?} {subject:?}: {:#?}",
+            check(&held, code, subject)
+        );
+    }
+    for decided in ["completeness", "uniqueness"] {
+        assert_eq!(
+            check(&held, CheckCode::MaxDimensionScoreDrop, Some(decided)).status,
+            CheckStatus::Passed,
+            "{decided}"
+        );
+    }
+
+    // The sampled scores may leave a drop open for their interval, but no
+    // check waits on a definition.
+    let every_value = against(&legacy);
+    for check in &every_value.checks {
+        assert!(
+            !matches!(
+                reason(check),
+                Some(NotEvaluated::DefinitionNotComparable { .. })
+            ),
+            "{check:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_baseline_that_typed_numbers_as_codes_for_one_zero_padded_value_holds_them_open() {
+    // Through 0.14 one zero-padded value made a column of numbers digit
+    // codes, typed text, however few values the column held; `value_facts`
+    // needs 1% of them (#788). 200 integers with one `007` are 0.5%: an
+    // integer column now, text in a 0.14 baseline whose sample held every
+    // value. The scores whose checks follow the type go unevaluated against
+    // it. The same baseline typed as the report types it decides them.
+    let csv: String = std::iter::once("id,amount\n".to_string())
+        .chain((0..200).map(|row| {
+            let amount = if row == 150 {
+                "007".to_string()
+            } else {
+                (10 + row % 7).to_string()
+            };
+            format!("{row},{amount}\n")
+        }))
+        .collect();
+    let report = profile(&csv);
+    let amount = report
+        .column_profiles
+        .iter()
+        .find(|column| column.name == "amount")
+        .unwrap();
+    assert_eq!(
+        (&amount.data_type, amount.zero_padded_count),
+        (&dataprof::DataType::Integer, Some(1))
+    );
+
+    let mut legacy: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    legacy["metric_semantics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("value_facts")
+        .expect("reports record value_facts");
+    let mut as_codes = legacy.clone();
+    let column = as_codes["columns"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|column| column["name"] == "amount")
+        .unwrap();
+    column["data_type"] = json!("string");
+
+    let against = |baseline: &Value| {
+        let side = ReportSide::from_summary_json(&baseline.to_string()).unwrap();
+        QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+            .evaluate_against(&report, &side)
+            .unwrap()
+    };
+    let held = against(&as_codes);
+    for (code, subject) in [
+        (CheckCode::MaxQualityScoreDrop, None),
+        (CheckCode::MaxDimensionScoreDrop, Some("consistency")),
+    ] {
+        assert!(
+            matches!(
+                reason(check(&held, code, subject)),
+                Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "value_facts"
+            ),
+            "{code:?} {subject:?}: {:#?}",
+            check(&held, code, subject)
+        );
+    }
+    assert_eq!(
+        check(
+            &held,
+            CheckCode::MaxDimensionScoreDrop,
+            Some("completeness")
+        )
+        .status,
+        CheckStatus::Passed
+    );
+    for check in &against(&legacy).checks {
+        assert_eq!(check.status, CheckStatus::Passed, "{check:#?}");
+    }
 }

@@ -7,9 +7,15 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, NumericAccumulator,
-    ParsedNumber, RowCompletenessSummary, RowDuplicateSummary, value_matches_hint,
+    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, LexicalTally,
+    NumericAccumulator, ParsedNumber, RowCompletenessSummary, RowDuplicateSummary,
+    value_matches_hint,
 };
+
+/// How many values of each column the engines that read a source in parts
+/// retain for the checks that still read a sample: patterns, the quality
+/// pass and order statistics.
+pub const COLUMN_SAMPLE_CAPACITY: usize = 10_000;
 
 /// Incremental statistics computation for streaming data processing.
 ///
@@ -267,6 +273,9 @@ pub struct StreamingStatistics {
     /// Date statistics over every non-null value, independent of the
     /// reservoir (#1297).
     dates: DateTimeAccumulator,
+    /// Lexical facts over every non-null value, independent of the
+    /// reservoir: the column's type and `type_homogeneity` (#788).
+    lexical: LexicalTally,
 }
 
 impl StreamingStatistics {
@@ -278,10 +287,11 @@ impl StreamingStatistics {
             max: f64::NEG_INFINITY,
             welford: NumericAccumulator::new(),
             distinct: CardinalityEstimator::new(),
-            sampler: StreamReservoirSampler::new(10_000),
+            sampler: StreamReservoirSampler::new(COLUMN_SAMPLE_CAPACITY),
             text_length_tracker: TextLengthStats::new(),
             date_match_count: 0,
             dates: DateTimeAccumulator::new(),
+            lexical: LexicalTally::new(),
         }
     }
 
@@ -308,6 +318,7 @@ impl StreamingStatistics {
             self.date_match_count += 1;
         }
         self.dates.update(value);
+        self.lexical.record(value);
 
         if let Some(number) = ParsedNumber::parse(value) {
             self.welford.update_number(number);
@@ -333,6 +344,7 @@ impl StreamingStatistics {
         self.text_length_tracker.merge(&other.text_length_tracker);
         self.date_match_count += other.date_match_count;
         self.dates.merge(&other.dates);
+        self.lexical.merge(&other.lexical);
     }
 
     pub fn mean(&self) -> f64 {
@@ -390,6 +402,11 @@ impl StreamingStatistics {
     /// Date statistics over every non-null value this column has streamed.
     pub fn date_statistics(&self) -> &DateTimeAccumulator {
         &self.dates
+    }
+
+    /// Lexical facts over every non-null value this column has streamed.
+    pub fn lexical_tally(&self) -> &LexicalTally {
+        &self.lexical
     }
 
     /// Exact aggregates over every numeric value this column has streamed,

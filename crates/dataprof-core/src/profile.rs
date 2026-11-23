@@ -57,11 +57,11 @@ pub struct ColumnProfile {
     /// evidence, so a consumer can tell a textual column from one that defeated
     /// type inference.
     ///
-    /// Counted over the values the profiler retained — the engine's bounded
-    /// reservoir sample on a large source, the whole column on a small or
-    /// in-memory one. `classified_count()` against `total_count - null_count`
-    /// is what says which happened; treat the shares as sampled whenever it is
-    /// short.
+    /// Counted over every non-null value read, on every engine, when the
+    /// report records `metric_semantics.value_facts` (#788). A report written
+    /// before that counted the values the profiler retained, the engine's
+    /// bounded reservoir sample on a large source; there `classified_count()`
+    /// short of `total_count - null_count` says the shares were sampled.
     ///
     /// `None` means the classification did not run, never "one uniform class":
     /// a column that was classified and had nothing to classify (all-null, or
@@ -83,6 +83,18 @@ pub struct ColumnProfile {
     /// written before dataprof recorded it; `Some(0)` means none were found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale_number_count: Option<usize>,
+    /// Of the values `type_homogeneity` counted as `numeric`, how many keep a
+    /// leading zero: `007`, a postal code `08001` (#788).
+    ///
+    /// At least 1% of them makes the column digit codes, typed `string` with
+    /// no mean (#814). Fewer are strays among quantities: the column stays
+    /// numeric and reads each as the number it spells, so `007` counts as 7.
+    ///
+    /// Counted over the same values as `type_homogeneity`, and present
+    /// whenever it is. `None` means the count did not run, including a report
+    /// written before dataprof recorded it; `Some(0)` means none were found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero_padded_count: Option<usize>,
     /// The type the source declared for the column, recorded as provenance
     /// (#906). `None` when the source declares none, which is every text
     /// input (CSV, JSON, JSONL), Python objects and SQLite, and on a report
@@ -689,6 +701,7 @@ mod tests {
             invalid_count: Some(0),
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
             native_type: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
@@ -747,6 +760,7 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
             native_type: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,

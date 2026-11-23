@@ -89,10 +89,15 @@ CASES: dict[str, tuple[Callable[[int], Columns], dict[str, Any]]] = {
         },
         {},
     ),
-    # One zero-padded value makes the whole column digit codes, so text; the
+    # One stray zero-padded value among quantities, and zero-padded values at
+    # exactly the 1% that makes the column digit codes, so text (#788). The
     # hundreds are outliers once it is numeric.
     "zero padded": (
         lambda o: {"n": _placed(o, [("10", 20_000), ("20", 19_000), ("900", 999), ("007", 1)])},
+        {},
+    ),
+    "zero padded share": (
+        lambda o: {"n": _placed(o, [("10", 20_000), ("20", 18_600), ("900", 1_000), ("007", 400)])},
         {},
     ),
     # Shares exactly at each type threshold (numbers need more than 80%,
@@ -112,18 +117,10 @@ CASES: dict[str, tuple[Callable[[int], Columns], dict[str, Any]]] = {
 }
 
 # Cases that disagree today, with the issue that owns the fix and each
-# disagreement as (check group, file verdict, dict verdict). A sampled route
-# types a column from its sample, so a share at a threshold or one zero-padded
-# value can type it differently from the dict. A case must show exactly these:
-# another disagreement fails, and so does one of these going away.
-KNOWN: dict[str, tuple[str, set[tuple[str, str, str]]]] = {
-    "zero padded": ("#788", {("overall", "pass", "fail"), ("accuracy", "pass", "inconclusive")}),
-    "numeric share": (
-        "#788",
-        {("overall", "pass", "fail"), ("precision", "pass", "inconclusive")},
-    ),
-    "date share": ("#788", {("timeliness", "pass", "inconclusive")}),
-}
+# disagreement as (check group, file verdict, dict verdict). A case must show
+# exactly these: another disagreement fails, and so does one of these going
+# away. The typing cases left when every route typed from every value (#788).
+KNOWN: dict[str, tuple[str, set[tuple[str, str, str]]]] = {}
 
 # What the dict must decide, so a case keeps meaning what its comment says.
 ORACLE: dict[str, dict[str, str]] = {
@@ -133,7 +130,7 @@ ORACLE: dict[str, dict[str, str]] = {
     "slash date future": {"forbid future_dates": "fail"},
     "slash date past": {"forbid future_dates": "pass"},
     "slash date pair": {"forbid temporal_order_violations": "pass"},
-    "zero padded": {"accuracy": "inconclusive"},
+    "zero padded share": {"accuracy": "inconclusive"},
     "key duplicate": {"forbid key_duplicates": "fail"},
 }
 

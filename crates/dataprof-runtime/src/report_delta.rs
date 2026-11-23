@@ -69,7 +69,8 @@ use std::collections::{BTreeMap, HashSet};
 use dataprof_core::serde_helpers::rounded_2;
 use dataprof_core::{
     ColumnStats, DataSource, DataType, FileFormat, MetricPack, NativeType, QualityDimension,
-    QualityScoreWeights, Quartiles, SemanticHintBinding, SemanticHintKind,
+    QualityScoreWeights, Quartiles, SemanticHintBinding, SemanticHintKind, TypeHomogeneity,
+    ValueFacts,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
@@ -701,6 +702,9 @@ pub(crate) struct ColumnSide {
     /// The longest value of a text column, `None` when the side recorded no
     /// text lengths for it.
     pub(crate) max_text_length: Option<usize>,
+    /// The column's `type_homogeneity`, `None` when the side did not record
+    /// a classification this build can read.
+    pub(crate) forms: Option<TypeHomogeneity>,
 }
 
 /// The fewest characters a spaced ISO datetime has when `date_forms` reads it
@@ -759,6 +763,30 @@ impl ColumnSide {
                 false
             }
         }
+    }
+
+    /// Whether `value_facts` may type the column otherwise than the side did
+    /// (#788). Through 0.14 the type and `type_homogeneity` came from the
+    /// same retained values, so a classified count short of the non-null
+    /// count typed the column from a sample. And one zero-padded value made a
+    /// column of numbers digit codes, where `value_facts` needs 1% of them: a
+    /// text column whose classified values are more than 80% numeric, the
+    /// share a numeric type needs, may have been typed text by that rule. A
+    /// nested column is typed by its containers, and an unrecorded type, count
+    /// or classification may.
+    fn may_type_otherwise(&self) -> bool {
+        if self.populated() == Some(false) || self.data_type == Some(DataType::Nested) {
+            return false;
+        }
+        let (Some((total, nulls)), Some(forms), Some(data_type)) =
+            (self.counts, self.forms, self.data_type.as_ref())
+        else {
+            return true;
+        };
+        let classified = forms.classified_count();
+        let numeric_text = *data_type == DataType::String
+            && forms.numeric.saturating_mul(5) > classified.saturating_mul(4);
+        classified < total - nulls || numeric_text
     }
 
     /// Values were read for the column and every one is null. `None` when
@@ -902,6 +930,7 @@ impl ReportSide {
                         ColumnStats::Text(stats) => Some(stats.max_length),
                         _ => None,
                     },
+                    forms: column.type_homogeneity,
                 }
             })),
             metric_semantics: report.metric_semantics.clone(),
@@ -1038,6 +1067,18 @@ impl ReportSide {
         })
     }
 
+    /// Whether `value_facts` may type a column of the side otherwise, so that
+    /// it may move the scores whose checks follow the type (#788). A side that
+    /// records `value_facts` typed every column under it.
+    pub(crate) fn may_type_columns_otherwise(&self) -> bool {
+        let every_value = self
+            .metric_semantics
+            .as_ref()
+            .and_then(|semantics| semantics.value_facts)
+            == Some(ValueFacts::EveryValue);
+        !every_value && self.columns.iter().any(ColumnSide::may_type_otherwise)
+    }
+
     /// Which columns the side profiled, or `None` when it did not record it.
     pub(crate) fn column_selection(&self) -> Option<&ColumnSelection> {
         self.column_selection.as_ref()
@@ -1170,18 +1211,21 @@ impl ReportSide {
             overall_sample_evidence: sample_evidence(Provenance::Overall),
             dimensions,
             score_bounds: quality.and_then(|quality| quality.score_bounds.clone()),
-            columns: first_of_each_name(summary.columns.into_iter().map(|column| ColumnSide {
-                name: column.name,
-                null_pct: at_precision(column.null_percentage),
-                // A name this build does not know comes from a later release and
-                // reads as unrecorded, since this build has no type to name it with.
-                data_type: column.data_type.as_deref().and_then(DataType::from_name),
-                counts: column.total_count.zip(column.null_count),
-                native_type: column.native_type,
-                unique_count: column.unique_count,
-                unique_count_is_approximate: column.unique_count_is_approximate,
-                quartiles_differ: column.stats.as_ref().is_some_and(summary_quartiles_differ),
-                max_text_length: column.stats.as_ref().and_then(summary_max_text_length),
+            columns: first_of_each_name(summary.columns.into_iter().map(|column| {
+                ColumnSide {
+                    name: column.name,
+                    null_pct: at_precision(column.null_percentage),
+                    // A name this build does not know comes from a later release and
+                    // reads as unrecorded, since this build has no type to name it with.
+                    data_type: column.data_type.as_deref().and_then(DataType::from_name),
+                    counts: column.total_count.zip(column.null_count),
+                    native_type: column.native_type,
+                    unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
+                    quartiles_differ: column.stats.as_ref().is_some_and(summary_quartiles_differ),
+                    max_text_length: column.stats.as_ref().and_then(summary_max_text_length),
+                    forms: column.type_homogeneity.as_ref().and_then(summary_forms),
+                }
             })),
             // A 0.12 summary, the first to record `metric_semantics`, omitted
             // only default weights; earlier ones could drop custom weights too.
@@ -1423,6 +1467,33 @@ struct SummaryColumn {
     /// statistics no comparison reads do not make a summary unreadable.
     #[serde(default)]
     stats: Option<serde_json::Value>,
+    /// Read leniently, through [`summary_forms`]: a classification this build
+    /// cannot read does not make a summary unreadable.
+    #[serde(default)]
+    type_homogeneity: Option<serde_json::Value>,
+}
+
+/// A summary column's `type_homogeneity`, `None` when it does not hold the
+/// four counts this build reads, or they overflow when summed.
+fn summary_forms(forms: &serde_json::Value) -> Option<TypeHomogeneity> {
+    let count = |class: &str| {
+        forms
+            .get(class)?
+            .as_u64()
+            .and_then(|count| usize::try_from(count).ok())
+    };
+    let forms = TypeHomogeneity {
+        numeric: count("numeric")?,
+        date: count("date")?,
+        boolean: count("boolean")?,
+        text: count("text")?,
+    };
+    forms
+        .numeric
+        .checked_add(forms.date)?
+        .checked_add(forms.boolean)?
+        .checked_add(forms.text)?;
+    Some(forms)
 }
 
 /// [`exact_quartiles_differ`] over a summary column's `stats`. A shape this

@@ -251,6 +251,7 @@ pub fn profile_columns(
                 exact_numeric: None,
                 exact_date_matches: None,
                 exact_dates: None,
+                exact_lexical: None,
                 decimal_values: false,
             }));
 

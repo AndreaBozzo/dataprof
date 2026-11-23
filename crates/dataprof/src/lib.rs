@@ -27,7 +27,8 @@ pub use dataprof_core::{
     RecoveryKind, RowCountEstimate, SampledScoreEstimator, SamplingStrategy, SchemaResult,
     SemanticHintBinding, SemanticHintKind, SemanticHints, ShapeMomentEstimator, SlashDateOrder,
     StatisticRounding, StopCondition, StopEvaluator, StructureColumnSummary, StructureReport,
-    TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity, validate_unique_column_names,
+    TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity, ValueFacts,
+    validate_unique_column_names,
 };
 pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
 pub use dataprof_json::{
@@ -54,14 +55,15 @@ pub use dataprof_parquet::{
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
-    AnalysisSettings, BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode,
-    CheckStatus, ColumnSelection, DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE,
-    Diagnostic, DiagnosticCode, Evidence, EvidenceGap, EvidenceValue, Expectation, Finding,
-    FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult, GateResult,
-    MetricSemantics, MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError,
-    PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION,
-    ReportGenerator, RequiredMetric, SettingDifference, Severity, SourceIdentity, TemporalPair,
-    TimelinessClockRule, UnevaluatedRule, Verdict,
+    AnalysisSettings, BaselineComparison, BaselineReading, COLUMN_SAMPLE_CAPACITY, Check,
+    CheckBounds, CheckCode, CheckStatus, ColumnSelection, DEFAULT_MIXED_TYPES_PERCENTAGE,
+    DEFAULT_NULL_HEAVY_PERCENTAGE, Diagnostic, DiagnosticCode, Evidence, EvidenceGap,
+    EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy, FindingPolicyError,
+    FindingsInput, FindingsResult, GateResult, MetricSemantics, MetricValue, NotEvaluated,
+    NotEvaluatedReason, PatternLocale, PolicyError, PolicyScope, ProfileReport,
+    QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, ReportGenerator, RequiredMetric,
+    SettingDifference, Severity, SourceIdentity, TemporalPair, TimelinessClockRule,
+    UnevaluatedRule, Verdict,
 };
 pub use dataprof_runtime::{
     ColumnChange, ConfigurationComparison, DimensionChange, RecordedHints, ReportDelta, ReportPair,

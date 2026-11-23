@@ -122,6 +122,8 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
     # not read back as "counted, found none".
     if col.locale_number_count is not None:
         col_data["locale_number_count"] = col.locale_number_count
+    if col.zero_padded_count is not None:
+        col_data["zero_padded_count"] = col.zero_padded_count
     # Omitted when the source declared no type, as the Rust document does.
     if col.native_type is not None:
         col_data["native_type"] = {
@@ -230,6 +232,7 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
         "uniqueness_ratio": _r4(col.uniqueness_ratio),
         "invalid_count": col.invalid_count,
         "locale_number_count": col.locale_number_count,
+        "zero_padded_count": col.zero_padded_count,
         "dominant_type": dominant_type,
         "dominant_type_share": dominant_type_share,
         "min": _r4(col.min),
