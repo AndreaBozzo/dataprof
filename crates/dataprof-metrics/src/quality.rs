@@ -37,11 +37,14 @@ pub struct ConsistencyMetrics {
 }
 
 /// Uniqueness metrics (ISO 8000-110).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct UniquenessMetrics {
     pub duplicate_rows: usize,
-    #[serde(serialize_with = "crate::serde_helpers::round_2")]
-    pub key_uniqueness: f64,
+    /// Distinct non-null values of `key_column` as a percentage of
+    /// `key_values_checked`. `None` (`null` in JSON) when no key column was
+    /// identified or when the key held no non-null values.
+    #[serde(serialize_with = "crate::serde_helpers::round_2_opt")]
+    pub key_uniqueness: Option<f64>,
     pub high_cardinality_warning: bool,
     /// Rows scanned for exact duplicates. 0 means the dimension had nothing
     /// to assess and it is excluded from the overall score.
@@ -49,14 +52,14 @@ pub struct UniquenessMetrics {
     pub rows_checked: usize,
     /// Column whose uniqueness `key_uniqueness` describes: the first
     /// `identifier_columns` entry the source has. `None` means no declared
-    /// key was found; `key_uniqueness` then carries no signal and does not
+    /// key was found; `key_uniqueness` is then `None` and does not
     /// contribute to the dimension score. Before 0.13 an undeclared column
     /// with an id-like name could be the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_column: Option<String>,
     /// Non-null values of `key_column`: the units `key_uniqueness` divides
     /// the key's distinct values by. 0 means the key held no value, so
-    /// `key_uniqueness` carries no signal and does not contribute to the
+    /// `key_uniqueness` is `None` and does not contribute to the
     /// dimension score. Absent with no key column, and on documents written
     /// before 0.13, whose `key_uniqueness` divided by every row, nulls
     /// included.
@@ -73,6 +76,52 @@ pub struct UniquenessMetrics {
     /// row tracker counted the rows, and on documents written before 0.14.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_rows_exact_limit: Option<usize>,
+}
+
+impl<'de> Deserialize<'de> for UniquenessMetrics {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            duplicate_rows: usize,
+            #[serde(default)]
+            key_uniqueness: Option<f64>,
+            high_cardinality_warning: bool,
+            #[serde(default)]
+            rows_checked: usize,
+            #[serde(default)]
+            key_column: Option<String>,
+            #[serde(default)]
+            key_values_checked: Option<usize>,
+            #[serde(default)]
+            duplicate_rows_approximate: bool,
+            #[serde(default)]
+            duplicate_rows_exact_limit: Option<usize>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        // Reports from 0.14.x and earlier wrote `key_uniqueness: 100.0` as a
+        // placeholder when no key column was identified or when the key held
+        // no non-null values. Normalize that placeholder back to `None` using
+        // the same rule `key_measured()` applies, while preserving measured
+        // values (including pre-0.13 documents that name a `key_column`
+        // without `key_values_checked`).
+        let key_uniqueness = if raw.key_column.is_some() && raw.key_values_checked != Some(0) {
+            raw.key_uniqueness
+        } else {
+            None
+        };
+
+        Ok(Self {
+            duplicate_rows: raw.duplicate_rows,
+            key_uniqueness,
+            high_cardinality_warning: raw.high_cardinality_warning,
+            rows_checked: raw.rows_checked,
+            key_column: raw.key_column,
+            key_values_checked: raw.key_values_checked,
+            duplicate_rows_approximate: raw.duplicate_rows_approximate,
+            duplicate_rows_exact_limit: raw.duplicate_rows_exact_limit,
+        })
+    }
 }
 
 /// Full-stream row-duplicate counts produced by an engine's row tracker.
@@ -334,10 +383,13 @@ impl UniquenessMetrics {
     }
 
     /// True when `key_uniqueness` measured something: a key column was
-    /// identified and held at least one value. A document that predates
-    /// `key_values_checked` counts as measured whenever it names a key.
+    /// identified, held at least one value, and carries a uniqueness value.
+    /// A document that predates `key_values_checked` counts as measured
+    /// whenever it names a key and carries a value.
     pub fn key_measured(&self) -> bool {
-        self.key_column.is_some() && self.key_values_checked != Some(0)
+        self.key_column.is_some()
+            && self.key_values_checked != Some(0)
+            && self.key_uniqueness.is_some()
     }
 }
 
@@ -457,7 +509,7 @@ impl QualityMetrics {
             }),
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 0,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 0,
                 key_column: None,
@@ -542,7 +594,7 @@ impl QualityMetrics {
         let u = self.uniqueness.as_ref().filter(|u| u.is_assessed())?;
         let duplicate_score = (u.rows_checked > 0)
             .then(|| (1.0 - u.duplicate_rows as f64 / u.rows_checked as f64) * 100.0);
-        let key_score = u.key_measured().then_some(u.key_uniqueness);
+        let key_score = u.key_uniqueness.filter(|_| u.key_measured());
 
         let (sum, count) = [duplicate_score, key_score]
             .iter()
@@ -744,8 +796,8 @@ impl QualityMetrics {
         self.uniqueness.as_ref().map_or(0, |u| u.duplicate_rows)
     }
 
-    pub fn key_uniqueness(&self) -> f64 {
-        self.uniqueness.as_ref().map_or(100.0, |u| u.key_uniqueness)
+    pub fn key_uniqueness(&self) -> Option<f64> {
+        self.uniqueness.as_ref().and_then(|u| u.key_uniqueness)
     }
 
     pub fn high_cardinality_warning(&self) -> bool {
@@ -1618,7 +1670,7 @@ mod tests {
             }),
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 0,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
@@ -1827,7 +1879,7 @@ mod tests {
         if let Some(ref mut u) = metrics.uniqueness {
             u.rows_checked = 0;
             u.key_column = Some("order_id".to_string());
-            u.key_uniqueness = 90.0;
+            u.key_uniqueness = Some(90.0);
         }
         let score = metrics
             .uniqueness_score()
@@ -1840,7 +1892,7 @@ mod tests {
         let mut metrics = perfect_assessed();
         if let Some(ref mut u) = metrics.uniqueness {
             u.key_column = Some("order_id".to_string());
-            u.key_uniqueness = 60.0;
+            u.key_uniqueness = Some(60.0);
         }
         // mean(duplicate-free score 100, key uniqueness 60)
         let score = metrics
@@ -1962,7 +2014,7 @@ mod tests {
             }),
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 20,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
@@ -2097,7 +2149,7 @@ mod tests {
         let assessed = QualityMetrics {
             uniqueness: Some(UniquenessMetrics {
                 duplicate_rows: 0,
-                key_uniqueness: 100.0,
+                key_uniqueness: Some(100.0),
                 high_cardinality_warning: false,
                 rows_checked: 0,
                 // No rows scanned, but a key column was identified, so the key
@@ -2133,7 +2185,7 @@ mod tests {
 
         assert!((metrics.complete_records_ratio() - 100.0).abs() < 0.01);
         assert!((metrics.data_type_consistency() - 100.0).abs() < 0.01);
-        assert!((metrics.key_uniqueness() - 100.0).abs() < 0.01);
+        assert_eq!(metrics.key_uniqueness(), None);
         assert!((metrics.missing_values_ratio() - 0.0).abs() < 0.01);
         assert_eq!(metrics.duplicate_rows(), 0);
         assert!(!metrics.high_cardinality_warning());
@@ -2148,7 +2200,7 @@ mod tests {
             has_uniqueness: bool,
             has_accuracy: bool,
             missing_values_ratio: f64,
-            key_uniqueness: f64,
+            key_uniqueness: Option<f64>,
             outlier_ratio: f64,
         }
 
@@ -2168,7 +2220,7 @@ mod tests {
                 has_uniqueness: false,
                 has_accuracy: false,
                 missing_values_ratio: 12.5,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 outlier_ratio: 0.0,
             },
             Case {
@@ -2176,7 +2228,7 @@ mod tests {
                 metrics: QualityMetrics {
                     uniqueness: Some(UniquenessMetrics {
                         duplicate_rows: 2,
-                        key_uniqueness: 92.0,
+                        key_uniqueness: Some(92.0),
                         high_cardinality_warning: true,
                         rows_checked: 25,
                         key_column: Some("user_id".to_string()),
@@ -2190,7 +2242,7 @@ mod tests {
                 has_uniqueness: true,
                 has_accuracy: false,
                 missing_values_ratio: 0.0,
-                key_uniqueness: 92.0,
+                key_uniqueness: Some(92.0),
                 outlier_ratio: 0.0,
             },
             Case {
@@ -2211,7 +2263,7 @@ mod tests {
                 has_uniqueness: false,
                 has_accuracy: true,
                 missing_values_ratio: 0.0,
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 outlier_ratio: 6.25,
             },
         ];
@@ -2240,16 +2292,144 @@ mod tests {
                 "{} missing_values_ratio",
                 case.name
             );
-            assert!(
-                (case.metrics.key_uniqueness() - case.key_uniqueness).abs() < 0.01,
-                "{} key_uniqueness",
-                case.name
-            );
+            match (case.metrics.key_uniqueness(), case.key_uniqueness) {
+                (Some(got), Some(want)) => assert!(
+                    (got - want).abs() < 0.01,
+                    "{} key_uniqueness: got {got}, want {want}",
+                    case.name
+                ),
+                (got, want) => assert_eq!(got, want, "{} key_uniqueness", case.name),
+            }
             assert!(
                 (case.metrics.outlier_ratio() - case.outlier_ratio).abs() < 0.01,
                 "{} outlier_ratio",
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn unmeasured_key_uniqueness_serializes_as_null() {
+        let without_key = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 1,
+                key_uniqueness: None,
+                high_cardinality_warning: false,
+                rows_checked: 10,
+                key_column: None,
+                key_values_checked: None,
+                duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
+            }),
+            ..QualityMetrics::default()
+        };
+        let document = serde_json::to_value(&without_key).unwrap();
+        assert_eq!(
+            document["uniqueness"]["key_uniqueness"],
+            serde_json::Value::Null
+        );
+
+        let all_null_key = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: None,
+                high_cardinality_warning: false,
+                rows_checked: 10,
+                key_column: Some("id".to_string()),
+                key_values_checked: Some(0),
+                duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
+            }),
+            ..QualityMetrics::default()
+        };
+        let document = serde_json::to_value(&all_null_key).unwrap();
+        assert_eq!(document["uniqueness"]["key_column"], "id");
+        assert_eq!(document["uniqueness"]["key_values_checked"], 0);
+        assert_eq!(
+            document["uniqueness"]["key_uniqueness"],
+            serde_json::Value::Null
+        );
+
+        let measured_key = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: Some(66.6666),
+                high_cardinality_warning: false,
+                rows_checked: 3,
+                key_column: Some("id".to_string()),
+                key_values_checked: Some(3),
+                duplicate_rows_approximate: false,
+                duplicate_rows_exact_limit: None,
+            }),
+            ..QualityMetrics::default()
+        };
+        let document = serde_json::to_value(&measured_key).unwrap();
+        assert_eq!(document["uniqueness"]["key_uniqueness"], 66.67);
+    }
+
+    #[test]
+    fn legacy_report_placeholder_key_uniqueness_loads_as_none() {
+        // 0.14.x report with key_column: null and placeholder key_uniqueness: 100.0
+        let v014_null_key = serde_json::json!({
+            "duplicate_rows": 2,
+            "key_uniqueness": 100.0,
+            "high_cardinality_warning": false,
+            "rows_checked": 10,
+            "key_column": null
+        });
+        let loaded: UniquenessMetrics = serde_json::from_value(v014_null_key).unwrap();
+        assert_eq!(loaded.key_column, None);
+        assert_eq!(loaded.key_uniqueness, None);
+        assert!(!loaded.key_measured());
+
+        // Pre-0.13 report with no key_column field at all: follows key_measured()
+        // and reads key_uniqueness as None.
+        let pre_013_no_key = serde_json::json!({
+            "duplicate_rows": 0,
+            "key_uniqueness": 100.0,
+            "high_cardinality_warning": false,
+            "rows_checked": 10
+        });
+        let loaded: UniquenessMetrics = serde_json::from_value(pre_013_no_key).unwrap();
+        assert_eq!(loaded.key_column, None);
+        assert_eq!(loaded.key_uniqueness, None);
+
+        // 0.13/0.14 report with declared all-null key (key_values_checked: 0)
+        let all_null_key = serde_json::json!({
+            "duplicate_rows": 5,
+            "key_uniqueness": 100.0,
+            "high_cardinality_warning": false,
+            "rows_checked": 10,
+            "key_column": "id",
+            "key_values_checked": 0
+        });
+        let loaded: UniquenessMetrics = serde_json::from_value(all_null_key).unwrap();
+        assert_eq!(loaded.key_column.as_deref(), Some("id"));
+        assert_eq!(loaded.key_values_checked, Some(0));
+        assert_eq!(loaded.key_uniqueness, None);
+        assert!(!loaded.key_measured());
+
+        // Pre-0.13 report with key_column present and no key_values_checked keeps its number.
+        let pre_013_with_key = serde_json::json!({
+            "duplicate_rows": 0,
+            "key_uniqueness": 95.0,
+            "high_cardinality_warning": false,
+            "rows_checked": 20,
+            "key_column": "order_id"
+        });
+        let loaded: UniquenessMetrics = serde_json::from_value(pre_013_with_key).unwrap();
+        assert_eq!(loaded.key_column.as_deref(), Some("order_id"));
+        assert_eq!(loaded.key_uniqueness, Some(95.0));
+        assert!(loaded.key_measured());
+
+        // Saved QualityAssessment from 0.14.x with placeholder 100.0 and saved scores
+        // still passes saved-score validation and reads key_uniqueness as None.
+        let assessment = QualityAssessment::exact(perfect_assessed());
+        let mut document = serde_json::to_value(&assessment).unwrap();
+        document["metrics"]["uniqueness"]["key_uniqueness"] = serde_json::json!(100.0);
+        document["metrics"]["uniqueness"]["key_column"] = serde_json::Value::Null;
+        let restored: QualityAssessment = serde_json::from_value(document).unwrap();
+        assert_eq!(restored.metrics.key_uniqueness(), None);
+        assert_eq!(restored.score(), Some(100.0));
     }
 }

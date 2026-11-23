@@ -849,8 +849,9 @@ additive and not `required`, so stored v1 reports remain valid; an explicit
 so a nullable key no longer loses uniqueness for the nulls completeness already
 counts: 100 distinct ids and 100 nulls score 100, where 0.12 reported 50. A key
 column holding no value is still named, with `key_values_checked` 0, and its
-`key_uniqueness` carries no signal: the uniqueness score then rests on the
-duplicate-row component alone, or the dimension is unassessed without one.
+`key_uniqueness` is `null` (through 0.14 it held a placeholder `100.0`): the
+uniqueness score then rests on the duplicate-row component alone, or the
+dimension is unassessed without one.
 
 A report that records no `key_uniqueness_units` reads back with it unknown, and
 a quality gate leaves the uniqueness and overall score rules over it
@@ -902,7 +903,8 @@ whose name had an `id`, `key` or `pk` word was the key. A name cannot tell a
 table's key from a foreign key, so a `customer_id` listed before `order_id` was
 scored as the table key, and the same clean orders table scored 100 or 94.38
 depending on column order. Without a declared key, `key_column` and
-`key_values_checked` are absent, `key_uniqueness` carries no signal, and the
+`key_values_checked` are absent, `key_uniqueness` is `null` (through 0.14 it
+held a placeholder `100.0`), and the
 uniqueness score rests on the duplicate-row component alone, or the dimension
 is unassessed without one. Declare the key to have it scored:
 `profile(..., identifier_columns=["order_id"])`.
@@ -1430,3 +1432,17 @@ Regenerate the baseline with the current release to have those rules decided
 again. The field is additive and not `required`, so stored v1 reports remain
 valid; an explicit `null` for `date_forms` is malformed, as for
 `text_length_unit`.
+
+## v1 change: nullable `uniqueness.key_uniqueness`
+
+`quality.metrics.uniqueness.key_uniqueness` (and `quality.uniqueness.key_uniqueness`
+in the flat summary) now accepts `number` or `null`, and is emitted as `null`
+whenever no key column was measured (no `key_column` identified, or
+`key_values_checked` is `0`). Through 0.14.x it was serialized as a placeholder
+`100.0` even though `uniqueness_score()` ignored it. Scores are unchanged.
+
+When reading a saved report from 0.14.x or earlier that carries `key_uniqueness:
+100.0` with `key_column: null` (or omitted, or with `key_values_checked: 0`),
+both the Rust reader and Python's `from_dict()` normalize `key_uniqueness` to
+`None`. Reports that name a `key_column` and either have `key_values_checked > 0`
+or predate `key_values_checked` retain their recorded `key_uniqueness` value.

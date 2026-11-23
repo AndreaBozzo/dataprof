@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug)]
 pub(crate) struct UniquenessMetrics {
     pub duplicate_rows: usize,
-    pub key_uniqueness: f64,
+    pub key_uniqueness: Option<f64>,
     pub high_cardinality_warning: bool,
     pub rows_checked: usize,
     pub key_column: Option<String>,
@@ -28,7 +28,7 @@ pub(crate) struct UniquenessMetrics {
 /// The key uniqueness component: its share, the column it describes and the
 /// values it was measured over.
 struct KeyUniqueness {
-    share: f64,
+    share: Option<f64>,
     column: Option<String>,
     values_checked: Option<usize>,
 }
@@ -37,7 +37,7 @@ impl KeyUniqueness {
     /// No key signal: no column, so nothing was measured.
     fn none() -> Self {
         Self {
-            share: 100.0,
+            share: None,
             column: None,
             values_checked: None,
         }
@@ -180,11 +180,7 @@ impl<'a> UniquenessCalculator<'a> {
         // them: a null is completeness's finding, not a repeated key (#1005).
         // A key holding no value has no uniqueness to measure.
         let values = key_col.total_count.saturating_sub(key_col.null_count);
-        let share = if values == 0 {
-            100.0
-        } else {
-            unique_count as f64 / values as f64 * 100.0
-        };
+        let share = (values > 0).then(|| unique_count as f64 / values as f64 * 100.0);
         Ok(KeyUniqueness {
             share,
             column: Some(key_col.name.clone()),
@@ -262,7 +258,7 @@ mod tests {
             rows_checked: usize,
             /// `identifier_columns`, the only source of a key.
             declared: &'static [&'static str],
-            key_uniqueness: f64,
+            key_uniqueness: Option<f64>,
             key_column: Option<&'static str>,
             high_cardinality_warning: bool,
         }
@@ -276,7 +272,7 @@ mod tests {
                 duplicate_rows: 0,
                 rows_checked: 3,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: true, // 3/3 unique, non-id column
             },
@@ -288,7 +284,7 @@ mod tests {
                 duplicate_rows: 1,
                 rows_checked: 3,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: false,
             },
@@ -300,7 +296,7 @@ mod tests {
                 duplicate_rows: 3,
                 rows_checked: 4,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: false,
             },
@@ -312,7 +308,7 @@ mod tests {
                 duplicate_rows: 0,
                 rows_checked: 3,
                 declared: &["user_id"],
-                key_uniqueness: 100.0,
+                key_uniqueness: Some(100.0),
                 key_column: Some("user_id"),
                 high_cardinality_warning: false, // id columns are excluded
             },
@@ -324,7 +320,7 @@ mod tests {
                 duplicate_rows: 1,
                 rows_checked: 4,
                 declared: &["user_id"],
-                key_uniqueness: 75.0,
+                key_uniqueness: Some(75.0),
                 key_column: Some("user_id"),
                 high_cardinality_warning: false,
             },
@@ -337,7 +333,7 @@ mod tests {
                 duplicate_rows: 1,
                 rows_checked: 4,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: false,
             },
@@ -349,7 +345,7 @@ mod tests {
                 duplicate_rows: 6,
                 rows_checked: 100,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: false,
             },
@@ -361,7 +357,7 @@ mod tests {
                 duplicate_rows: 5,
                 rows_checked: 100,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 // 95/100 == threshold exactly; the check requires strictly above
                 high_cardinality_warning: false,
@@ -374,7 +370,7 @@ mod tests {
                 duplicate_rows: 4,
                 rows_checked: 100,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: true,
             },
@@ -386,7 +382,7 @@ mod tests {
                 duplicate_rows: 0,
                 rows_checked: 0,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: false,
             },
@@ -398,7 +394,7 @@ mod tests {
                 duplicate_rows: 0,
                 rows_checked: 1,
                 declared: &[],
-                key_uniqueness: 100.0,
+                key_uniqueness: None,
                 key_column: None,
                 high_cardinality_warning: true, // 1/1 unique, non-id column
             },
@@ -432,13 +428,14 @@ mod tests {
                 "{}: rows_checked",
                 case.name
             );
-            assert!(
-                (metrics.key_uniqueness - case.key_uniqueness).abs() < 0.01,
-                "{}: key_uniqueness {} != {}",
-                case.name,
-                metrics.key_uniqueness,
-                case.key_uniqueness
-            );
+            match (metrics.key_uniqueness, case.key_uniqueness) {
+                (Some(got), Some(want)) => assert!(
+                    (got - want).abs() < 0.01,
+                    "{}: key_uniqueness {got} != {want}",
+                    case.name
+                ),
+                (got, want) => assert_eq!(got, want, "{}: key_uniqueness", case.name),
+            }
             assert_eq!(
                 metrics.key_column.as_deref(),
                 case.key_column,
@@ -504,5 +501,40 @@ mod tests {
             .expect("metrics");
         assert_eq!(metrics.duplicate_rows, 0);
         assert_eq!(metrics.rows_checked, 0);
+    }
+
+    #[test]
+    fn no_key_gives_none_and_declared_key_gives_its_share() {
+        let thresholds = IsoQualityConfig::default();
+        let calculator = UniquenessCalculator::new(&thresholds);
+        let data = HashMap::from([("id".to_string(), column(&["1", "2", "2", "3"]))]);
+        let profiles = vec![profile("id", 4, Some(3))];
+
+        let no_key = calculator
+            .calculate(&data, &profiles, 4, &[], None)
+            .expect("no key");
+        assert_eq!(no_key.key_column, None);
+        assert_eq!(no_key.key_uniqueness, None);
+
+        let declared = calculator
+            .calculate(&data, &profiles, 4, &["id".to_string()], None)
+            .expect("declared key");
+        assert_eq!(declared.key_column.as_deref(), Some("id"));
+        assert_eq!(declared.key_uniqueness, Some(75.0));
+
+        let mut all_null_profile = profile("id", 4, Some(0));
+        all_null_profile.null_count = 4;
+        let all_null = calculator
+            .calculate(
+                &HashMap::new(),
+                &[all_null_profile],
+                4,
+                &["id".to_string()],
+                None,
+            )
+            .expect("all-null declared key");
+        assert_eq!(all_null.key_column.as_deref(), Some("id"));
+        assert_eq!(all_null.key_values_checked, Some(0));
+        assert_eq!(all_null.key_uniqueness, None);
     }
 }

@@ -2578,7 +2578,10 @@
         },
         "key_uniqueness": {
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "key_values_checked": {
           "format": "uint",
@@ -3534,18 +3537,22 @@
           "type": "boolean"
         },
         "key_column": {
-          "description": "Column whose uniqueness `key_uniqueness` describes: the first\n`identifier_columns` entry the source has. `None` means no declared\nkey was found; `key_uniqueness` then carries no signal and does not\ncontribute to the dimension score. Before 0.13 an undeclared column\nwith an id-like name could be the key.",
+          "description": "Column whose uniqueness `key_uniqueness` describes: the first\n`identifier_columns` entry the source has. `None` means no declared\nkey was found; `key_uniqueness` is then `None` and does not\ncontribute to the dimension score. Before 0.13 an undeclared column\nwith an id-like name could be the key.",
           "type": [
             "string",
             "null"
           ]
         },
         "key_uniqueness": {
+          "description": "Distinct non-null values of `key_column` as a percentage of\n`key_values_checked`. `None` (`null` in JSON) when no key column was\nidentified or when the key held no non-null values.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "key_values_checked": {
-          "description": "Non-null values of `key_column`: the units `key_uniqueness` divides\nthe key's distinct values by. 0 means the key held no value, so\n`key_uniqueness` carries no signal and does not contribute to the\ndimension score. Absent with no key column, and on documents written\nbefore 0.13, whose `key_uniqueness` divided by every row, nulls\nincluded.",
+          "description": "Non-null values of `key_column`: the units `key_uniqueness` divides\nthe key's distinct values by. 0 means the key held no value, so\n`key_uniqueness` is `None` and does not contribute to the\ndimension score. Absent with no key column, and on documents written\nbefore 0.13, whose `key_uniqueness` divided by every row, nulls\nincluded.",
           "format": "uint",
           "minimum": 0,
           "type": [

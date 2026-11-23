@@ -34,8 +34,8 @@ ORDERS = [("order_id", "customer_id", "amount"), ("customer_id", "order_id", "am
 #: A declaration and the key column, ``key_uniqueness`` and uniqueness score it
 #: must give in either order. ``order_id`` is unique, ``customer_id`` repeats
 #: over 80 customers, and a distinct ``amount`` keeps every row unique.
-CASES: list[tuple[list[str], tuple[str | None, float, float]]] = [
-    ([], (None, 100.0, 100.0)),
+CASES: list[tuple[list[str], tuple[str | None, float | None, float]]] = [
+    ([], (None, None, 100.0)),
     (["order_id"], ("order_id", 100.0, 100.0)),
     (["customer_id"], ("customer_id", 40.0, 70.0)),
 ]
@@ -158,3 +158,65 @@ def test_only_a_declared_key_is_measured_whatever_the_column_order(tmp_path: Pat
                 if report.metric_semantics.get("key_column_source") != "declared":
                     wrong.append(f"[{label}] metric_semantics {report.metric_semantics}")
     assert not wrong, "\n".join(wrong)
+
+
+def test_csv_without_identifier_column_reports_none_key_uniqueness(tmp_path: Path):
+    csv_bytes = b"id,name\n1,a\n2,b\n"
+    csv_path = tmp_path / "no_key.csv"
+    csv_path.write_bytes(csv_bytes)
+
+    for report in (dp.profile(csv_bytes, format="csv"), dp.profile(str(csv_path))):
+        assert report.quality is not None
+        assert report.quality.uniqueness is not None
+        assert report.quality.uniqueness["key_column"] is None
+        assert report.quality.uniqueness["key_uniqueness"] is None
+
+        summary = report.to_dict()
+        assert summary["quality"]["uniqueness"]["key_column"] is None
+        assert summary["quality"]["uniqueness"]["key_uniqueness"] is None
+
+        canonical = json.loads(report.to_json())
+        assert "key_column" not in canonical["quality"]["metrics"]["uniqueness"]
+        assert canonical["quality"]["metrics"]["uniqueness"]["key_uniqueness"] is None
+
+        for restored in (
+            dp.ProfileReport.from_dict(summary),
+            dp.ProfileReport.from_json(report.to_json()),
+        ):
+            assert restored.quality is not None
+            assert restored.quality.uniqueness is not None
+            assert restored.quality.uniqueness["key_uniqueness"] is None
+            assert restored.to_dict()["quality"]["uniqueness"]["key_uniqueness"] is None
+
+
+def test_legacy_report_with_placeholder_key_uniqueness_loads_as_none():
+    base = dp.profile(b"id,name\n1,a\n2,b\n", format="csv")
+    canonical = json.loads(base.to_json())
+    canonical["quality"]["metrics"]["uniqueness"]["key_uniqueness"] = 100.0
+    canonical["quality"]["metrics"]["uniqueness"]["key_column"] = None
+
+    restored_canonical = dp.ProfileReport.from_json(json.dumps(canonical))
+    assert restored_canonical.quality is not None
+    assert restored_canonical.quality.uniqueness is not None
+    assert restored_canonical.quality.uniqueness["key_uniqueness"] is None
+    assert restored_canonical.to_dict()["quality"]["uniqueness"]["key_uniqueness"] is None
+
+    summary = base.to_dict()
+    summary["quality"]["uniqueness"]["key_uniqueness"] = 100.0
+    summary["quality"]["uniqueness"]["key_column"] = None
+
+    restored_summary = dp.ProfileReport.from_dict(summary)
+    assert restored_summary.quality is not None
+    assert restored_summary.quality.uniqueness is not None
+    assert restored_summary.quality.uniqueness["key_uniqueness"] is None
+    assert restored_summary.to_dict()["quality"]["uniqueness"]["key_uniqueness"] is None
+
+    with_key = dp.profile(b"id,name\n1,a\n1,b\n2,c\n3,d\n", format="csv", identifier_columns=["id"])
+    for restored in (
+        dp.ProfileReport.from_json(with_key.to_json()),
+        dp.ProfileReport.from_dict(with_key.to_dict()),
+    ):
+        assert restored.quality is not None
+        assert restored.quality.uniqueness is not None
+        assert restored.quality.uniqueness["key_column"] == "id"
+        assert restored.quality.uniqueness["key_uniqueness"] == 75.0

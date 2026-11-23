@@ -124,6 +124,7 @@ fn identifier_columns_drive_key_uniqueness_without_name_guessing() {
         .and_then(|quality| quality.metrics.uniqueness.as_ref())
         .expect("uniqueness metrics");
     assert_eq!(without_uniqueness.key_column, None);
+    assert_eq!(without_uniqueness.key_uniqueness, None);
 
     let with_hint = Profiler::new()
         .engine(EngineType::Incremental)
@@ -136,7 +137,7 @@ fn identifier_columns_drive_key_uniqueness_without_name_guessing() {
         .and_then(|quality| quality.metrics.uniqueness.as_ref())
         .expect("uniqueness metrics");
     assert_eq!(uniqueness.key_column.as_deref(), Some("invoice_number"));
-    assert!((uniqueness.key_uniqueness - 75.0).abs() < 0.01);
+    assert!((uniqueness.key_uniqueness.expect("measured key") - 75.0).abs() < 0.01);
 }
 
 #[test]

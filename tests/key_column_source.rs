@@ -37,23 +37,23 @@ fn value(column: &str, row: usize) -> String {
 /// uniqueness score it must give in either column order.
 struct Case {
     declared: &'static [&'static str],
-    expected: (Option<&'static str>, f64, f64),
+    expected: (Option<&'static str>, Option<f64>, f64),
 }
 
 const CASES: [Case; 3] = [
     Case {
         // No key component: uniqueness rests on the duplicate rows.
         declared: &[],
-        expected: (None, 100.0, 100.0),
+        expected: (None, None, 100.0),
     },
     Case {
         declared: &["order_id"],
-        expected: (Some("order_id"), 100.0, 100.0),
+        expected: (Some("order_id"), Some(100.0), 100.0),
     },
     Case {
         // Declared, a foreign key is measured as asked: 80 of 200.
         declared: &["customer_id"],
-        expected: (Some("customer_id"), 40.0, 70.0),
+        expected: (Some("customer_id"), Some(40.0), 70.0),
     },
 ];
 
@@ -183,7 +183,7 @@ fn only_a_declared_key_is_measured_whatever_the_column_order() {
                 if observed
                     != (
                         key.map(str::to_string),
-                        &Value::from(share),
+                        &share.map_or(Value::Null, Value::from),
                         &Value::from(score),
                     )
                 {

@@ -417,7 +417,7 @@ impl MetricsCalculator {
             uniqueness: if is_req(QualityDimension::Uniqueness) {
                 Some(UniquenessMetrics {
                     duplicate_rows: 0,
-                    key_uniqueness: 100.0,
+                    key_uniqueness: None,
                     high_cardinality_warning: false,
                     rows_checked: 0,
                     key_column: None,
@@ -982,6 +982,7 @@ mod tests {
         let uniqueness = result.metrics.uniqueness.expect("uniqueness metrics");
         assert_eq!(uniqueness.key_column.as_deref(), Some("order_id"));
         assert_eq!(uniqueness.key_values_checked, Some(0));
+        assert_eq!(uniqueness.key_uniqueness, None);
         let label = "key_uniqueness".to_string();
         assert!(!result.exact_dimensions.contains(&label));
         assert!(!result.sampled_dimensions.contains(&label));

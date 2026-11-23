@@ -295,6 +295,15 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     values["dimension_scores"] = read_scores
     values["score_weights"] = _read_score_weights(document)
     _check_timeliness_clock(document)
+    # Reports from 0.14.x and earlier wrote key_uniqueness: 100.0 as a
+    # placeholder when no key column was measured (key_column is None or
+    # key_values_checked == 0). Normalize it to None as the Rust reader does.
+    uniqueness = document.get("uniqueness")
+    if isinstance(uniqueness, dict):
+        uniqueness = dict(uniqueness)
+        if uniqueness.get("key_column") is None or uniqueness.get("key_values_checked") == 0:
+            uniqueness["key_uniqueness"] = None
+        values["uniqueness"] = uniqueness
     # Whether the summary named its weights. Before 0.12 a summary dropped
     # custom weights, so the defaults filled in above may not be the ones
     # behind its stored score, and a re-export must not claim they are.

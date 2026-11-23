@@ -31,11 +31,11 @@ KEY = ["customer_id"]
 
 #: Name, the key and the `amount` per row, and the expected `key_uniqueness`,
 #: `key_values_checked` and uniqueness score. A distinct `amount` keeps every
-#: row unique, so the duplicate component stays at 100. With no key value only
-#: that component scores: half the rows repeat, so 50, where counting the key's
-#: placeholder 100 beside it would read 75.
+#: row unique, so the duplicate component stays at 100. With no key value,
+#: `key_uniqueness` is None and only the duplicate component scores: half the
+#: rows repeat, so 50.
 CASES: list[
-    tuple[str, Callable[[int], str | None], Callable[[int], int], tuple[float, int, float]]
+    tuple[str, Callable[[int], str | None], Callable[[int], int], tuple[float | None, int, float]]
 ] = [
     (
         "half null, distinct",
@@ -49,7 +49,7 @@ CASES: list[
         lambda row: row,
         (50.0, 100, 75.0),
     ),
-    ("all null", lambda row: None, lambda row: row % 100, (100.0, 0, 50.0)),
+    ("all null", lambda row: None, lambda row: row % 100, (None, 0, 50.0)),
 ]
 
 Table = dict[str, list[Any]]

@@ -731,8 +731,9 @@ if q.completeness is not None:
 does not infer positive-only domains from column names. `identifier_columns`
 marks numeric-looking IDs as semantic strings so numeric stats and outlier
 metrics do not treat them as measures. Its first entry the source has is also
-the key `key_uniqueness` measures; with none declared there is no key
-component, since a name cannot tell a table's key from a foreign key. List
+the key `key_uniqueness` measures; with none declared (or when the declared key
+holds only nulls) `key_uniqueness` is `None` (`null` in JSON) and there is no
+key component, since a name cannot tell a table's key from a foreign key. List
 the table key first: `identifier_columns=["order_id", "customer_id"]`.
 Timeliness scoring assesses confidently inferred date columns by default.
 `temporal_columns` adds columns that inference cannot identify confidently, such

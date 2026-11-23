@@ -253,9 +253,9 @@ Measures duplication in the data.
 - `key_uniqueness` -- distinct values of the declared key, the first
   `identifier_columns` entry present, over its non-null values
   (`key_values_checked`); nulls are completeness's finding, and a key
-  holding no value leaves this component out of the score. With no key
-  declared there is no key component: a column name cannot tell a table's
-  key from a foreign key
+  holding no value leaves `key_uniqueness` as `None`/`null` and out of the
+  score. With no key declared `key_uniqueness` is `None`/`null` and there is
+  no key component: a column name cannot tell a table's key from a foreign key
 - `high_cardinality_warning` -- flagged when a column has suspiciously many unique values
 
 Whole-row duplicates and key duplicates answer separate questions. The

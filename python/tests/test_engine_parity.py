@@ -488,6 +488,7 @@ def test_duplicate_rows_with_nulls_agree_across_engines(tmp_path):
         )
         assert uniqueness["rows_checked"] == 6, f"{engine} must scan every row"
         assert uniqueness["duplicate_rows"] == 2, f"{engine} must find both duplicates"
+        assert uniqueness["key_uniqueness"] is None, f"{engine} has no declared key"
 
     assert facts["incremental"] == facts["columnar"]
     assert reports["incremental"].quality_score == pytest.approx(

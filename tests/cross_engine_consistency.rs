@@ -898,14 +898,10 @@ fn test_streaming_vs_batch_quality_confidence() {
         "Streaming engine should detect missing values from empty CSV fields"
     );
 
-    // key_uniqueness should be close (HLL ≤ 3% error for 200 rows)
+    // No key column was declared, so key_uniqueness is absent on both engines.
     let batch_m = &batch_quality.metrics;
-    assert!(
-        (batch_m.key_uniqueness() - streaming_m.key_uniqueness()).abs() < 5.0,
-        "key_uniqueness: batch={:.2} vs streaming={:.2}",
-        batch_m.key_uniqueness(),
-        streaming_m.key_uniqueness()
-    );
+    assert_eq!(batch_m.key_uniqueness(), None);
+    assert_eq!(streaming_m.key_uniqueness(), None);
 }
 
 /// Test bifurcation with a larger dataset where sample < total rows.

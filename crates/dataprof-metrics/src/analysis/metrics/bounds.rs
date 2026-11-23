@@ -420,7 +420,8 @@ fn uniqueness_interval(
         .filter(|_| uniqueness.key_measured())
     {
         if !is_sampled("key_uniqueness") {
-            components.push((uniqueness.key_uniqueness, uniqueness.key_uniqueness));
+            let share = uniqueness.key_uniqueness?;
+            components.push((share, share));
         } else {
             // The estimate counts distinct non-null values, which are also
             // the units: at least the exact set's floor, at most every one.
@@ -1821,7 +1822,7 @@ mod tests {
         QualityMetrics {
             uniqueness: Some(crate::quality::UniquenessMetrics {
                 duplicate_rows: duplicates,
-                key_uniqueness: key.map_or(100.0, |(_, share)| share),
+                key_uniqueness: key.map(|(_, share)| share),
                 high_cardinality_warning: false,
                 rows_checked: rows,
                 key_column: key.map(|(name, _)| name.to_string()),
@@ -1907,8 +1908,9 @@ mod tests {
         // The key was identified but held no value, so the score rests on the
         // duplicate share alone; its placeholder 100 must not pull the
         // interval away from that score (#1005).
-        let mut metrics = uniqueness_metrics(100, 50, false, Some(("id", 100.0)));
+        let mut metrics = uniqueness_metrics(100, 50, false, None);
         if let Some(uniqueness) = metrics.uniqueness.as_mut() {
+            uniqueness.key_column = Some("id".to_string());
             uniqueness.key_values_checked = Some(0);
         }
         assert_eq!(metrics.uniqueness_score(), Some(50.0));
