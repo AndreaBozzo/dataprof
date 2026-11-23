@@ -613,7 +613,7 @@ def test_combine_verdicts_rejects_empty_and_invalid_inputs():
         dp.combine_verdicts([failed, "not-a-result"])  # ty: ignore[invalid-argument-type]
 
     bogus = dp.QualityGateResult(
-        verdict="unknown",
+        verdict="unknown",  # ty: ignore[invalid-argument-type]
         scope="full_source",
         evidence={"coverage": "complete"},
     )

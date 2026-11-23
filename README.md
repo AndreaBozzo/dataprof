@@ -12,10 +12,7 @@
 
 </div>
 
-dataprof profiles CSV, JSON, JSONL, Parquet, DataFrames and Arrow tables in one call: types, nulls, distributions, patterns and a quality score. Then it can gate your pipeline on what it found, including changes from a saved baseline. It runs locally and records when the evidence cannot settle a check.
-
-A Rust library with a Python package on top. Local file profiling needs no
-server, account or network access.
+dataprof profiles CSV, JSON, JSONL, Parquet, DataFrames and Arrow tables in one call: types, nulls, distributions, patterns and a quality score. Then it gates your pipeline on what it found, including changes from a saved baseline. A Rust library with a Python package on top; local profiling needs no server, account or network access.
 
 ## Install
 
@@ -23,7 +20,7 @@ server, account or network access.
 pip install dataprof          # or: uv pip install dataprof
 ```
 
-Wheels for CPython 3.11 to 3.15 on Linux, macOS and Windows, with no Python dependencies.
+Wheels for CPython 3.11 to 3.15 on Linux, macOS and Windows, with no Python dependencies. pandas and polars inputs need pyarrow; databases need a source build. See [input routes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md#working-with-different-formats).
 
 ## Profile a file
 
@@ -55,10 +52,12 @@ State what "good enough" means and get a verdict: `pass`, `fail`, or `inconclusi
 result = report.check(
     min_quality_score=90, max_null_count={"customer_id": 0}, max_null_percentage={"*": 20}
 )
-if not result.passed:
-    for check in result.violations:
-        print(check.code, check.column, check.message)
+print(result)  # the verdict, then each failed or unevaluated check
+if result.verdict != "pass":
+    raise SystemExit(f"quality gate: {result.verdict}")
 ```
+
+Other checks cover freshness (`max_date_age`, `max_date_gap`), volume (`min_rows`, `max_row_count_drop`), keys (`unique_columns`) and schema drift (`forbid_removed_columns`). See the [cookbook](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md#freshness-and-missing-days).
 
 Or from CI, with no code at all:
 
@@ -72,22 +71,7 @@ python -m dataprof.check orders.csv --min-quality 90 --baseline accepted.json \
   --allow-missing-baseline --max-quality-drop 5 --timeliness-clock rolling --promote accepted.json
 ```
 
-`--promote accepted.json` writes the baseline only on a pass.
-`--allow-missing-baseline` lets the same command run before that file exists.
-Keep the full profile for any verdict with `--report candidate.json`.
-A changed or unrecorded metric definition can leave a comparison
-`definition_not_comparable`; inspect the reason and regenerate the baseline
-deliberately. See the [checkpoint recipe](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint).
-In GitHub Actions, use [dataprof-action](https://github.com/AndreaBozzo/dataprof-action): `uses: AndreaBozzo/dataprof-action@v2`.
-
-0.14 adds these checks:
-
-- **Freshness and missing periods:** `check(max_date_age={"published_at": 3}, max_date_gap={"published_at": 1})` limits the age of the newest date and the largest gap between consecutive distinct days. `dp.profile("orders.csv", reference_date="2026-06-10")` fixes the timeliness clock.
-- **Volume:** `check(baseline=baseline, max_row_count_drop=10, max_row_count_growth=20)` limits percentage changes in row count; `min_rows=1` sets an absolute floor.
-- **Keys:** `check(unique_columns=["order_id"], max_null_count={"order_id": 0})` requires distinct non-null keys and no nulls. From CI, use `--unique-column order_id --max-null-count order_id=0`. `identifier_columns=["order_id"]` selects the key for the uniqueness score and `key_duplicates` finding.
-- **Schema drift:** `forbid_removed_columns=True` rejects removed columns. `compare()` and baseline diagnostics also report inferred type changes; these diagnostics alone do not fail a gate. A column's `native_type` records its source's declared type where available.
-
-See the [cookbook](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md#freshness-and-missing-days) for complete examples.
+`--promote` writes the baseline only on a pass, and `--allow-missing-baseline` lets the first run go without one. See the [checkpoint recipe](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md#4-baseline-checkpoint). In GitHub Actions, use [dataprof-action](https://github.com/AndreaBozzo/dataprof-action): `uses: AndreaBozzo/dataprof-action@v2`.
 
 ## Hand it to an agent
 
@@ -118,30 +102,24 @@ Minimum supported Rust: 1.96.
 
 ## What you can count on
 
-- **Same data, same serialized numbers.** Rust Serde output and Python `to_dict()` / `to_json()` agree across routes and engines for the same logical data, schema semantics, options and analyzed population, within the [numeric contract](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract). Source and execution provenance are compared separately. Raw floats may differ in their final digits; extreme values near the limits of `f64` belong to an approximate domain. A retained sample and a full scan need not agree. Reports flag sampled numeric statistics with `is_approximate`, estimated distinct counts with `unique_count_is_approximate`, and sampled quality components with `quality_sampled_dimensions`.
-- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators. The exact duplicate-row count holds up to 1,000,000 distinct rows by default, about 10 to 20 bytes each, inside the memory budget, and becomes an estimate under memory pressure. A `duplicate_rows_exact_limit` you set yourself is the exception: those rows stay exact and are kept outside the budget.
-- **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it, such as a row minimum it reached; otherwise the check is inconclusive. A sampled score carries an interval in `score_bounds` whenever it can be bounded.
+- **Same data, same numbers.** Serialized reports from Rust and Python agree across input routes and engines, within the [numeric contract](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md#numeric-equality-contract). Sampled values say so: `is_approximate`, `unique_count_is_approximate`, `quality_sampled_dimensions`.
+- **Bounded memory.** Files larger than RAM stream through fixed-size accumulators. Duplicate rows are counted exactly up to 1,000,000 distinct rows by default, and estimated beyond that or under memory pressure.
+- **Honest verdicts.** A sampled or partial scan passes a claim about the whole file only when what it read already proves it; otherwise the check is inconclusive. A sampled score carries an interval in `score_bounds` when it can be bounded.
 - **Absence is not zero.** A metric that wasn't computed is `None`, never a plausible default.
-- **Local by default.** Profiling runs on your machine. Reports carry statistics, including numeric minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
-
-The Python wheels include file and bytes profiling, Arrow C array and stream
-inputs, and `dataprof.asyncio` file, bytes and HTTP helpers. Install the table
-library you use, plus pyarrow for pandas and polars conversion; native Parquet file and bytes
-profiling needs none of them. PostgreSQL, MySQL and SQLite require a source
-build with connector features. See [input routes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md#working-with-different-formats).
+- **Local by default.** Reports carry statistics such as minima, maxima and modes; `to_llm_context()` leaves raw values out by default.
 
 ## Status
 
-Beta, and moving fast toward a stable 1.0 contract. Some things are still narrow, and we'd rather tell you than have you find out: numbers written with a decimal comma are detected and flagged but not yet parsed, and beyond empty, `null` and `nan`, only a fixed set of markers (`NA`, `N/A`, `n/a`, `#N/A`, `\N`, `None`, matched exactly, ignoring surrounding whitespace) counts as null, so a sentinel like `-` or `-999` is still a value. The [release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) list what changed and what's known.
+Beta, moving toward a stable 1.0 contract. Known narrow spots: numbers with a decimal comma are flagged but not parsed, and only empty, `null`, `nan` and a fixed set of markers such as `NA`, `N/A` and `\N` count as null, so `-` or `-999` is still a value. The [release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) list what changed.
 
 Found something wrong? [Open an issue](https://github.com/AndreaBozzo/dataprof/issues). A file that profiles badly is the most useful bug report there is.
 
 ## Learn more
 
-- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md): profiling and quality gates compared with summaries, visual reports and validation tools, including when to pick each
+- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md): how it compares with summaries, visual reports and validation tools
 - [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md): the metrics and how to read them
 - [Python API](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md): every function, the gate and the CI entrypoint
-- [Examples](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md): a messy CSV, an ETL gate, before and after cleaning, a checkpoint against the last accepted run, a collapsing key column, runnable from a clean checkout
+- [Examples](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md): runnable recipes, from a messy CSV to a checkpoint against the last accepted run
 - [Agent workflows](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/agent-workflows.md): AGENTS.md, Cursor rules and Claude Code skills
 - [Report schema](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/schema/README.md): the saved document and its guarantees
 - [Database connectors](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md) and [feature flags](https://docs.rs/dataprof): Rust-side options
