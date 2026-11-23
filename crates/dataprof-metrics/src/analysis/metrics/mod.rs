@@ -61,6 +61,8 @@ mod testing;
 mod timeliness;
 mod uniqueness;
 pub(crate) mod utils;
+
+pub use utils::is_likely_date_column;
 mod validity;
 
 // Re-export public types for backward compatibility

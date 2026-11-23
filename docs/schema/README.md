@@ -1482,7 +1482,9 @@ rules over it `definition_not_comparable` when a column of it may be typed
 otherwise: a populated column, not nested, whose `type_homogeneity` classified
 fewer values than its non-null count (typed from a sample), a `string` column
 whose classified values are more than 80% numeric (perhaps codes for one
-zero-padded value), or one that records no type, counts or classification. Regenerate the baseline with the current release to have
+zero-padded value), a `string` column named for dates that holds numbers
+(perhaps scored as digit codes by the consistency check), or one that
+records no type, counts or classification. Regenerate the baseline with the current release to have
 those rules decided again. With the record, `forbid_findings` decides
 `mixed_types` and `locale_numbers` on a scan that read every row, however
 large the source; `sensitive_pattern` reads the column's

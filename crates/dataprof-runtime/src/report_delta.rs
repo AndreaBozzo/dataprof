@@ -79,6 +79,8 @@ use dataprof_metrics::{
 };
 use serde::ser::{SerializeMap, Serializer};
 
+use dataprof_metrics::analysis::metrics::is_likely_date_column;
+
 use crate::profile_report::{
     AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
     ReportGenerator, SourceIdentity, TemporalPair,
@@ -771,7 +773,9 @@ impl ColumnSide {
     /// count typed the column from a sample. And one zero-padded value made a
     /// column of numbers digit codes, where `value_facts` needs 1% of them: a
     /// text column whose classified values are more than 80% numeric, the
-    /// share a numeric type needs, may have been typed text by that rule. A
+    /// share a numeric type needs, may have been typed text by that rule, and
+    /// a text column named for dates that holds numbers may have been scored
+    /// as digit codes by it (the consistency exemption of #814). A
     /// nested column is typed by its containers, and an unrecorded type, count
     /// or classification may.
     fn may_type_otherwise(&self) -> bool {
@@ -786,7 +790,13 @@ impl ColumnSide {
         let classified = forms.classified_count();
         let numeric_text = *data_type == DataType::String
             && forms.numeric.saturating_mul(5) > classified.saturating_mul(4);
-        classified < total - nulls || numeric_text
+        // A text column named for dates is scored by its largest lexical class
+        // when its numbers are digit codes, and against dates otherwise; the
+        // share rule can move that choice without retyping the column.
+        let date_named_numbers = *data_type == DataType::String
+            && forms.numeric > 0
+            && is_likely_date_column(&self.name);
+        classified < total - nulls || numeric_text || date_named_numbers
     }
 
     /// Values were read for the column and every one is null. `None` when

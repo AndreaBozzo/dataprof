@@ -116,7 +116,7 @@ pub(crate) fn is_valid_date_format(value: &str) -> bool {
 /// `date_of_birth` matches on `date`. Concatenated lowercase names such as
 /// `starttime` no longer match; their columns are scored by their dominant
 /// value form like any other string column.
-pub(crate) fn is_likely_date_column(column_name: &str) -> bool {
+pub fn is_likely_date_column(column_name: &str) -> bool {
     const DATE_WORDS: [&str; 9] = [
         "date",
         "time",

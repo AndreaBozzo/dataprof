@@ -1238,3 +1238,63 @@ fn a_baseline_that_typed_numbers_as_codes_for_one_zero_padded_value_holds_them_o
         assert_eq!(check.status, CheckStatus::Passed, "{check:#?}");
     }
 }
+
+#[test]
+fn a_baseline_that_scored_a_date_named_column_as_codes_holds_consistency_open() {
+    // The share rule also decides whether a text column named for dates is
+    // scored as digit codes, by its largest lexical class, or held to dates
+    // (#814), without retyping it (#788). `event_date` with 199 `12`s, one
+    // `007` and 100 words scored 66.67 as codes in 0.14 and 0.0 now, so a
+    // 0.14 baseline leaves consistency and the overall score unevaluated. A
+    // date-named text column with no numbers scores the same either way.
+    let values: Vec<&str> = std::iter::repeat_n("12", 199)
+        .chain(["007"])
+        .chain(std::iter::repeat_n("junk", 100))
+        .collect();
+    let csv = format!("event_date,note\n{}", {
+        let mut rows = String::new();
+        for (row, value) in values.iter().enumerate() {
+            rows.push_str(&format!("{value},n{row}\n"));
+        }
+        rows
+    });
+    let words = format!(
+        "event_date,note\n{}",
+        (0..300)
+            .map(|row| format!("soon,n{row}\n"))
+            .collect::<String>()
+    );
+    let against_legacy = |text: &str| {
+        let report = profile(text);
+        let mut legacy: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        legacy["metric_semantics"]
+            .as_object_mut()
+            .unwrap()
+            .remove("value_facts")
+            .expect("reports record value_facts");
+        let side = ReportSide::from_summary_json(&legacy.to_string()).unwrap();
+        QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .evaluate_against(&report, &side)
+            .unwrap()
+    };
+
+    let held = against_legacy(&csv);
+    for (code, subject) in [
+        (CheckCode::MaxQualityScoreDrop, None),
+        (CheckCode::MaxDimensionScoreDrop, Some("consistency")),
+    ] {
+        assert!(
+            matches!(
+                reason(check(&held, code, subject)),
+                Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "value_facts"
+            ),
+            "{code:?} {subject:?}: {:#?}",
+            check(&held, code, subject)
+        );
+    }
+    for check in &against_legacy(&words).checks {
+        assert_eq!(check.status, CheckStatus::Passed, "{check:#?}");
+    }
+}
