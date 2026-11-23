@@ -510,6 +510,7 @@ Per-column profiling statistics.
 | `type_homogeneity` | `dict[str, int] \| None` | Non-null values counted by lexical class: `{"numeric", "date", "boolean", "text"}`. Tells a `string` column of ordinary text from one that defeated type inference, which `data_type` cannot. All four keys are always present; all-zero = classified with nothing to classify (all-null or no rows); `None` = the classification did not run. Counted over every value read on every route when `metric_semantics` records `value_facts`; a report written before 0.15 counted the values the profiler retained, so there a sum short of `total_count - null_count` is bounded by the 10k reservoir sample |
 | `locale_number_count` | `int \| None` | Of the `text` values in `type_homogeneity`, how many are numbers written with a decimal comma or digit-group separators (`10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56`). dataprof does not parse them as numbers, so they are in no numeric statistic: a column of them is typed `string`, and a numeric column counts them in `invalid_count`. `None` = the count did not run (a `nested` column, or a report saved before 0.12); `0` = none found |
 | `zero_padded_count` | `int \| None` | Of the `numeric` values in `type_homogeneity`, how many keep a leading zero (`007`, `08001`). At least 1% of them types the column as digit codes, so `string` with no mean; fewer leave it numeric, read as the numbers they spell. `None` = the count did not run (a `nested` column, or a report saved before 0.15); `0` = none found |
+| `pattern_values_checked` | `int \| None` | How many non-null values `patterns` were detected over: every value on the in-memory routes, at most the 10k reservoir sample on the file, Arrow and streaming routes. Short of `total_count - null_count`, the patterns and their `match_count` describe a sample. `None` = detection did not run, or a report saved before 0.15 |
 | `native_type` | `dict[str, str] \| None` | The type the source declared, as `{"system": ..., "name": ...}`: `arrow` with the name pyarrow prints (`decimal128(12, 2)`, `timestamp[us, tz=UTC]`) for Arrow, polars and Parquet, `pandas` with the dtype for pandas, `postgresql` or `mysql` with the server's type name for databases. Provenance, not a measurement: `data_type` is what dataprof profiled the column as. `None` = the source declares no type (CSV, JSON, JSONL, dicts, lists of records, SQLite), or the report predates 0.14 |
 | `null_percentage` | `float \| None` | Null ratio (0.0--100.0); `None` when no rows were read |
 | `uniqueness_ratio` | `float \| None` | Unique values / total values; `None` when no rows were read or distinct values were not counted |
@@ -1543,9 +1544,10 @@ on what the finding is about:
 
 `mixed_types` and `locale_numbers` count every value read, so a scan of every
 row decides them on any source. `sensitive_pattern` reads the patterns, which
-come from a 10,000-value sample on the file, Arrow and streaming routes, so it
-stays `evidence_incomplete` on a column with more non-null values than that,
-even when every row was read.
+come from a 10,000-value sample on the file, Arrow and streaming routes and
+from every value on the in-memory ones: it is decided when each column's
+`pattern_values_checked` reaches its non-null count, and stays
+`evidence_incomplete` otherwise, even when every row was read.
 
 `scope="observed"` decides every one on the rows read. A rule `findings()`
 lists in `not_evaluated`, such as `duplicate_rows` without a quality

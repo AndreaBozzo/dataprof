@@ -1485,9 +1485,8 @@ whose classified values are more than 80% numeric (perhaps codes for one
 zero-padded value), or one that records no type, counts or classification. Regenerate the baseline with the current release to have
 those rules decided again. With the record, `forbid_findings` decides
 `mixed_types` and `locale_numbers` on a scan that read every row, however
-large the source; `sensitive_pattern` stays `evidence_incomplete` on a column
-with more than 10,000 non-null values, whose patterns may come from the
-sample. The field is additive and not `required`, so stored v1 reports remain
+large the source; `sensitive_pattern` reads the column's
+`pattern_values_checked` (below). The field is additive and not `required`, so stored v1 reports remain
 valid; an explicit `null` for `value_facts` is malformed, as for
 `text_length_unit`.
 
@@ -1503,3 +1502,24 @@ It is counted over the same values as `type_homogeneity` and is present
 whenever it is. Absent means the count did not run, including a report
 written before 0.15; `0` means none were found. The field is additive and
 not `required`, so stored v1 reports remain valid.
+
+## v1 additive change: column `pattern_values_checked`
+
+Both dialects carry an optional integer `pattern_values_checked` on each column
+(#1399): how many non-null values `patterns` were detected over, the
+denominator of every `match_percentage`. The in-memory and database routes
+detect patterns over every value read; the file, Arrow and streaming routes
+over their retained sample, 10,000 values or fewer once memory pressure
+shrinks it. A count short of `total_count - null_count` says the patterns
+describe a sample, and a `match_count` far below the row count is a sample
+count.
+
+`forbid_findings=["sensitive_pattern"]` under `full_source` reads it: the rule
+is decided when every column's count reaches its non-null count, and
+`evidence_incomplete` (`quality_sampled`) otherwise. A report without the
+count falls back to `type_homogeneity` before 0.15, and to the 10,000-value
+sample size on a report that records `value_facts`.
+
+Present whenever `patterns` is; absent when detection did not run, including
+a report written before 0.15. The field is additive and not `required`, so
+stored v1 reports remain valid.

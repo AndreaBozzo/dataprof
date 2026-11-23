@@ -312,6 +312,7 @@ mod tests {
             type_homogeneity: None,
             locale_number_count: None,
             zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),

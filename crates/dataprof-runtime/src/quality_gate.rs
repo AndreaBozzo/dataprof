@@ -152,9 +152,11 @@
 //! - a share of a column's values (`null_heavy`, `all_null`,
 //!   `constant_column`, `mixed_types`, `locale_numbers`, `sensitive_pattern`):
 //!   decided only on a scan that covered the source, as with the score rules.
-//!   `sensitive_pattern` reads each column's retained value sample, so on a
-//!   column larger than the sample it stays `quality_sampled` even when every
-//!   row was read. `mixed_types` and `locale_numbers` read lexical forms
+//!   `sensitive_pattern` reads patterns, detected over each column's retained
+//!   sample on the engines that keep one, so where a column's
+//!   `pattern_values_checked` falls short of its non-null values it stays
+//!   `quality_sampled` even when every row was read (#1399).
+//!   `mixed_types` and `locale_numbers` read lexical forms
 //!   counted over every value read (#788), except on a report written before
 //!   0.15, which classified the same retained sample.
 //!
@@ -5069,6 +5071,7 @@ mod tests {
             type_homogeneity: None,
             locale_number_count: None,
             zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: None,

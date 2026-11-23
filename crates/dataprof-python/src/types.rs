@@ -92,6 +92,13 @@ pub struct PyColumnProfile {
     /// `Some(0)` = none.
     #[pyo3(get)]
     pub zero_padded_count: Option<usize>,
+    /// How many non-null values `patterns` were detected over: every value
+    /// on the in-memory routes, at most the retained sample on the file,
+    /// Arrow and streaming routes. Short of `total_count - null_count`, the
+    /// patterns describe a sample. `None` = detection did not run (or the
+    /// report predates the count).
+    #[pyo3(get)]
+    pub pattern_values_checked: Option<usize>,
     /// The type the source declared for the column, as `{"system": ...,
     /// "name": ...}`: `{"system": "arrow", "name": "decimal128(12, 2)"}`.
     /// Provenance, not a measurement. `None` = the source declares no type
@@ -291,6 +298,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             type_homogeneity,
             locale_number_count: profile.locale_number_count,
             zero_padded_count: profile.zero_padded_count,
+            pattern_values_checked: profile.pattern_values_checked,
             native_type: profile.native_type.as_ref().map(|native_type| {
                 std::collections::BTreeMap::from([
                     ("system".to_string(), native_type.system.clone()),

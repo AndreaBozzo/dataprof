@@ -15,6 +15,7 @@ use dataprof_metrics::{
     DateTimeAccumulator, LexicalTally, ParsedNumber,
     analysis::column::stats_over_values,
     analysis::inference::parse_strict_boolean_token,
+    analysis::patterns::pattern_value_count,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{
         calculate_coefficient_of_variation, compute_decimal_stats_with_parsed_count,
@@ -287,10 +288,13 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         None => LexicalTally::from_values(input.sample_values),
     };
 
-    let patterns = if input.skip_patterns {
-        None
+    let (patterns, pattern_values_checked) = if input.skip_patterns {
+        (None, None)
     } else {
-        Some(detect_patterns(input.sample_values, input.locale))
+        (
+            Some(detect_patterns(input.sample_values, input.locale)),
+            Some(pattern_value_count(input.sample_values)),
+        )
     };
 
     ColumnProfile {
@@ -311,6 +315,9 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         locale_number_count: Some(lexical.locale_number_count()),
         // Over the same values, a subset of `numeric` above.
         zero_padded_count: Some(lexical.zero_padded_count()),
+        // The values the patterns above were detected over: the retained
+        // sample on an engine that keeps one (#1399).
+        pattern_values_checked,
         native_type: None,
         stats,
         patterns,
@@ -336,6 +343,7 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         type_homogeneity: None,
         locale_number_count: None,
         zero_padded_count: None,
+        pattern_values_checked: None,
         native_type: None,
         stats: ColumnStats::None,
         patterns: None,

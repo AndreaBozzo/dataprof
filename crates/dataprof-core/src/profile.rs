@@ -95,6 +95,17 @@ pub struct ColumnProfile {
     /// written before dataprof recorded it; `Some(0)` means none were found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zero_padded_count: Option<usize>,
+    /// How many non-null values `patterns` were detected over: every value
+    /// read on the in-memory and database routes, at most the retained
+    /// sample (10,000 values, fewer once memory pressure shrinks it) on the
+    /// file, Arrow and streaming routes (#1399).
+    ///
+    /// Short of `total_count - null_count`, the patterns describe a sample,
+    /// and a pattern finding says nothing about the values outside it.
+    /// Present whenever `patterns` is; `None` means detection did not run,
+    /// including a report written before dataprof recorded the count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern_values_checked: Option<usize>,
     /// The type the source declared for the column, recorded as provenance
     /// (#906). `None` when the source declares none, which is every text
     /// input (CSV, JSON, JSONL), Python objects and SQLite, and on a report
@@ -702,6 +713,7 @@ mod tests {
             type_homogeneity: None,
             locale_number_count: None,
             zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
@@ -761,6 +773,7 @@ mod tests {
             type_homogeneity: None,
             locale_number_count: None,
             zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,

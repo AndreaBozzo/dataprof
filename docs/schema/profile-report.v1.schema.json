@@ -169,6 +169,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "pattern_values_checked": {
+          "description": "How many non-null values `patterns` were detected over: every value\nread on the in-memory and database routes, at most the retained\nsample (10,000 values, fewer once memory pressure shrinks it) on the\nfile, Arrow and streaming routes (#1399).\n\nShort of `total_count - null_count`, the patterns describe a sample,\nand a pattern finding says nothing about the values outside it.\nPresent whenever `patterns` is; `None` means detection did not run,\nincluding a report written before dataprof recorded the count.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "patterns": {
           "description": "Detected patterns, or `None` when pattern detection did not run.\n\n`None` and `Some(vec![])` are not interchangeable: the former means the\ncolumn was never scanned, the latter that it was scanned and nothing\nmatched. Consumers that gate on sensitivity -- redaction, agent-facing\noutput -- must treat `None` as \"unknown\", never as \"no sensitive data\".",
           "items": {
@@ -1866,6 +1875,14 @@
           "format": "double",
           "type": [
             "number",
+            "null"
+          ]
+        },
+        "pattern_values_checked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },

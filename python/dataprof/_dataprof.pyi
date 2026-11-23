@@ -186,6 +186,12 @@ class ColumnProfile:
     #: spell. ``None`` means the count did not run, including a report written
     #: before dataprof recorded it; ``0`` means none were found.
     zero_padded_count: int | None
+    #: How many non-null values ``patterns`` were detected over: every value on
+    #: the in-memory routes, at most the retained sample on the file, Arrow and
+    #: streaming routes. Short of ``total_count - null_count``, the patterns
+    #: describe a sample. ``None`` means detection did not run, or the report
+    #: predates the count.
+    pattern_values_checked: int | None
     #: The type the source declared, as ``{"system": ..., "name": ...}``:
     #: ``{"system": "arrow", "name": "decimal128(12, 2)"}``. Provenance, not a
     #: measurement. ``None`` means the source declares no type (CSV, JSON,

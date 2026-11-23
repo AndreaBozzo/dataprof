@@ -486,6 +486,15 @@ pub fn list_patterns(locale: Option<Locale>) -> Vec<PatternMetadata> {
 /// Vector of detected patterns sorted by confidence descending, after overlap
 /// suppression among eligible patterns. Counts and percentages include only
 /// values accepted by the semantic validator, when one exists.
+/// How many of `data` [`detect_patterns`] reads: the values that are not
+/// null-like once trimmed, the denominator of every `match_percentage`. A
+/// profile reports it as `pattern_values_checked` (#1399).
+pub fn pattern_value_count(data: &[String]) -> usize {
+    data.iter()
+        .filter(|value| !is_null_like_token(value.trim()))
+        .count()
+}
+
 pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> {
     let non_empty: Vec<&str> = data
         .iter()

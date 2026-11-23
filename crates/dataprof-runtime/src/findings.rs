@@ -490,6 +490,9 @@ struct ColumnFacts {
     type_homogeneity: Option<TypeHomogeneity>,
     locale_number_count: Option<usize>,
     patterns: Option<Vec<PatternFacts>>,
+    /// The values `patterns` were detected over; absent before #1399.
+    #[serde(default)]
+    pattern_values_checked: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -518,10 +521,9 @@ impl FindingsInput {
     /// retained sample, and a classified count short of the column's
     /// non-null count says the sample did not hold every value, even on a
     /// scan that read the whole source. `sensitive_pattern` reads the
-    /// patterns, which still come from that sample: on an older report the
-    /// same classified count says whether it held every value; on a current
-    /// one, whose classified count is the non-null count, a column with more
-    /// non-null values than the sample holds may have been sampled.
+    /// patterns, whose own `pattern_values_checked` says how many values
+    /// they were detected over (#1399), a shrunken sample included. A report
+    /// without it falls back to [`retained_sample_left_values_out`].
     /// Columns a rule exempts (identifiers, for the first two) are not
     /// counted. Every other code reads exact counters, or records its
     /// sampling itself.
@@ -538,6 +540,13 @@ impl FindingsInput {
             .filter(|column| !(exempts_identifiers && column.identifier))
             .any(|column| {
                 let non_null = column.total_count.saturating_sub(column.null_count);
+                // The patterns' own count, where the report records it
+                // (#1399): exact on every route, a shrunken sample included.
+                if code == FindingCode::SensitivePattern
+                    && let Some(checked) = column.pattern_values_checked
+                {
+                    return checked < non_null;
+                }
                 let classified = column
                     .type_homogeneity
                     .map(|forms| forms.classified_count());
@@ -631,6 +640,7 @@ impl From<&ProfileReport> for FindingsInput {
                     unique_count_is_approximate: column.unique_count_is_approximate,
                     type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
+                    pattern_values_checked: column.pattern_values_checked,
                     patterns: column.patterns.as_ref().map(|patterns| {
                         patterns
                             .iter()
@@ -1500,6 +1510,7 @@ mod tests {
             type_homogeneity: None,
             locale_number_count: None,
             zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: None,

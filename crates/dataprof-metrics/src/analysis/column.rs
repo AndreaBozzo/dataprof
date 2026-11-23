@@ -3,7 +3,7 @@ use dataprof_core::{AnalysisOptions, NativeType};
 use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
 use crate::analysis::inference::{LexicalTally, is_null_like_token, parse_strict_boolean_token};
-use crate::analysis::patterns::detect_patterns;
+use crate::analysis::patterns::{detect_patterns, pattern_value_count};
 use crate::stats::numeric::{
     compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
     compute_numeric_stats_with_parsed_count,
@@ -227,10 +227,13 @@ fn analyze_column_with_options(
     };
     let stats = stats_over_values(stats, total_count, null_count);
 
-    let patterns = if analysis.skip_patterns {
-        None
+    let (patterns, pattern_values_checked) = if analysis.skip_patterns {
+        (None, None)
     } else {
-        Some(detect_patterns(data, analysis.locale))
+        (
+            Some(detect_patterns(data, analysis.locale)),
+            Some(pattern_value_count(data)),
+        )
     };
 
     let unique_count = if analysis.skip_unique_count {
@@ -263,6 +266,7 @@ fn analyze_column_with_options(
         type_homogeneity: Some(lexical.type_homogeneity()),
         locale_number_count: Some(lexical.locale_number_count()),
         zero_padded_count: Some(lexical.zero_padded_count()),
+        pattern_values_checked,
         native_type: None,
         stats,
         patterns,

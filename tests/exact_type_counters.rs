@@ -333,5 +333,61 @@ fn a_full_scan_decides_the_rules_that_read_lexical_forms() {
     if got != Verdict::Inconclusive {
         wrong.push(format!("SensitivePattern: {got:?}"));
     }
+    // Without `pattern_values_checked` (#1399) the rule falls back to the
+    // sample size, and the columns here are past it.
+    let mut document = serde_json::to_value(&report).unwrap();
+    for column in document["column_profiles"].as_array_mut().unwrap() {
+        column
+            .as_object_mut()
+            .unwrap()
+            .remove("pattern_values_checked");
+    }
+    let uncounted: ProfileReport = serde_json::from_value(document).unwrap();
+    let got = QualityPolicy::new()
+        .forbid_findings([FindingCode::SensitivePattern])
+        .evaluate(&uncounted)
+        .unwrap()
+        .verdict;
+    if got != Verdict::Inconclusive {
+        wrong.push(format!("SensitivePattern without the count: {got:?}"));
+    }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn the_patterns_own_count_decides_sensitive_pattern() {
+    // #1399: a report records how many values its patterns were detected
+    // over. Memory pressure can shrink a streaming sample below 10,000, so a
+    // 6,000-value column may carry patterns from 5,000 of them; the count
+    // says so, and the rule stays open. Patterns over every value decide.
+    use dataprof::{FindingCode, QualityPolicy, Verdict};
+
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(file, "contact").unwrap();
+    for row in 0..6_000 {
+        writeln!(file, "user{row}@example.org").unwrap();
+    }
+    file.flush().unwrap();
+    let report = Profiler::new().analyze_file(file.path()).expect("profiles");
+    assert_eq!(
+        report.column_profiles[0].pattern_values_checked,
+        Some(6_000)
+    );
+
+    let with_checked = |checked: usize| {
+        let mut document = serde_json::to_value(&report).unwrap();
+        document["column_profiles"][0]["pattern_values_checked"] = checked.into();
+        let report: ProfileReport = serde_json::from_value(document).unwrap();
+        QualityPolicy::new()
+            .forbid_findings([FindingCode::SensitivePattern])
+            .evaluate(&report)
+            .unwrap()
+            .verdict
+    };
+    assert_eq!(with_checked(6_000), Verdict::Fail, "every value checked");
+    assert_eq!(
+        with_checked(5_000),
+        Verdict::Inconclusive,
+        "a shrunken sample"
+    );
 }

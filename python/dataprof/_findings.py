@@ -276,6 +276,8 @@ def _column_facts(column: _Any) -> dict[str, _Any]:
         "unique_count_is_approximate": column.unique_count_is_approximate,
         "type_homogeneity": _homogeneity_counts(column.type_homogeneity),
         "locale_number_count": column.locale_number_count,
+        # Absent before #1399; the rule then falls back to the sample size.
+        "pattern_values_checked": column.pattern_values_checked,
         "patterns": None
         if patterns is None
         else [

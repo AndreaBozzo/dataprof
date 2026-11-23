@@ -138,3 +138,32 @@ def test_mixed_types_is_decided_on_a_file_read_in_full(tmp_path: Path) -> None:
         assert verdict in {"pass", "fail"}, (code, verdict)
     # Patterns still come from the sample, so that rule stays open.
     assert report.check(forbid_findings=["sensitive_pattern"]).verdict == "inconclusive"
+
+
+def test_the_patterns_own_count_decides_sensitive_pattern(tmp_path: Path) -> None:
+    # #1399: in-memory routes detect patterns over every value and record it,
+    # so the rule decides past 10,000 values; a file keeps a 10,000-value
+    # sample, and the rule stays open there.
+    emails = [f"user{i}@example.org" for i in range(20_000)]
+    codes = [f"A{i}" for i in range(20_000)]
+
+    def verdict(report: Any) -> str:
+        return report.check(forbid_findings=["sensitive_pattern"]).verdict
+
+    found = dp.profile({"contact": emails})
+    assert found["contact"].pattern_values_checked == 20_000
+    assert verdict(found) == "fail"
+    assert verdict(dp.profile({"contact": emails[:9_000]})) == "fail"
+    assert verdict(dp.profile({"code": codes})) == "pass"
+
+    path = tmp_path / "contacts.csv"
+    path.write_text("contact\n" + "\n".join(emails) + "\n", encoding="utf-8")
+    sampled = dp.profile(str(path))
+    assert sampled["contact"].pattern_values_checked == 10_000
+    assert verdict(sampled) == "inconclusive"
+    saved = dp.ProfileReport.from_json(sampled.to_json())
+    assert saved["contact"].pattern_values_checked == 10_000
+    assert verdict(saved) == "inconclusive"
+    # The flat summary carries the count too.
+    summary = dp.ProfileReport.from_dict(sampled.to_dict())
+    assert summary["contact"].pattern_values_checked == 10_000
