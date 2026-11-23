@@ -75,7 +75,6 @@ inconvenient" is not a reason.
 | Advisory | Crate | Disposition | Next review |
 | --- | --- | --- | --- |
 | [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) | `rsa` 0.9.x | Not applicable — see below | 2026-10-01 |
-| [RUSTSEC-2024-0436](https://rustsec.org/advisories/RUSTSEC-2024-0436) | `paste` 1.0.15 | Unmaintained, not a vulnerability; transitive via arrow-rs, no replacement available | 2026-10-01 |
 | [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) | `libsqlite3-sys` 0.30.1 | Applies only to the `sqlite` feature with an untrusted database file and its `-wal`; no fixed version reachable through SQLx. See below | 2027-01-09 |
 | [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) | `chrono` 0.4.45 | Unmaintained, not a vulnerability; used directly and by arrow-rs and SQLx. See below | 2027-02-01 |
 | [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555) | `chrono-tz` 0.10.4 | Unmaintained, not a vulnerability; transitive via arrow-array only. See below | 2027-02-01 |
