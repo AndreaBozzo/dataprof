@@ -135,4 +135,6 @@ def test_the_file_routes_hold_only_a_sample(tmp_path: Path):
     report = dp.profile(_write(tmp_path, "d.csv", _csv()))
     document = json.loads(report.to_json())
     published_at = next(c for c in document["column_profiles"] if c["name"] == "published_at")
-    assert sum(published_at["type_homogeneity"].values()) < ROWS
+    # `type_homogeneity` counts every value since #788, so the counts against
+    # the 10,000-value reservoir are the witness.
+    assert published_at["total_count"] - published_at["null_count"] > 10_000

@@ -203,6 +203,9 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
         # Absent for a summary written before 0.13, whose key may be a guess
         # from column names (#1065).
         "key_column_source": (report.metric_semantics or {}).get("key_column_source"),
+        # Absent before 0.15, whose lexical forms came from the retained
+        # sample (#788).
+        "value_facts": (report.metric_semantics or {}).get("value_facts"),
         "quality_status": report.quality_status,
         "quality": None
         if quality is None
@@ -273,6 +276,8 @@ def _column_facts(column: _Any) -> dict[str, _Any]:
         "unique_count_is_approximate": column.unique_count_is_approximate,
         "type_homogeneity": _homogeneity_counts(column.type_homogeneity),
         "locale_number_count": column.locale_number_count,
+        # Absent before #1399; the rule then falls back to the sample size.
+        "pattern_values_checked": column.pattern_values_checked,
         "patterns": None
         if patterns is None
         else [

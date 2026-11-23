@@ -152,9 +152,13 @@
 //! - a share of a column's values (`null_heavy`, `all_null`,
 //!   `constant_column`, `mixed_types`, `locale_numbers`, `sensitive_pattern`):
 //!   decided only on a scan that covered the source, as with the score rules.
-//!   `mixed_types`, `locale_numbers` and `sensitive_pattern` read each
-//!   column's retained value sample, so on a source larger than the sample
-//!   they stay `quality_sampled` even when every row was read.
+//!   `sensitive_pattern` reads patterns, detected over each column's retained
+//!   sample on the engines that keep one, so where a column's
+//!   `pattern_values_checked` falls short of its non-null values it stays
+//!   `quality_sampled` even when every row was read (#1399).
+//!   `mixed_types` and `locale_numbers` read lexical forms
+//!   counted over every value read (#788), except on a report written before
+//!   0.15, which classified the same retained sample.
 //!
 //! A findings rule that could not look at all of the report and found nothing
 //! leaves the check [`NotEvaluated::FindingNotEvaluated`], carrying the
@@ -197,7 +201,7 @@ use serde::Serialize;
 
 use crate::findings::{
     Finding, FindingCode, FindingPolicy, FindingsInput, FindingsResult, NotEvaluatedReason,
-    UnevaluatedRule,
+    UnevaluatedRule, retained_sample_left_values_out,
 };
 use crate::profile_report::{
     ColumnSelection, MetricSemantics, ProfileReport, QualityAnalysisStatus, ReportGenerator,
@@ -4114,6 +4118,9 @@ enum Definition {
     /// Which text forms read as dates, behind the consistency and timeliness
     /// scores.
     DateForms,
+    /// Which values a column is typed from, behind every score whose checks
+    /// follow the type: consistency, accuracy, precision and timeliness.
+    ValueFacts,
 }
 
 impl Definition {
@@ -4130,6 +4137,7 @@ impl Definition {
             Self::JsonNumberReading => "json_number_reading",
             Self::SampledScoreEstimator => "sampled_score_estimator",
             Self::DateForms => "date_forms",
+            Self::ValueFacts => "value_facts",
         }
     }
 
@@ -4143,6 +4151,7 @@ impl Definition {
             Self::JsonNumberReading => facts.json_numbers,
             Self::OutlierSpread => facts.coinciding_quartiles,
             Self::DateForms => facts.spaced_datetimes,
+            Self::ValueFacts => facts.retyped_columns,
             Self::NullTokens
             | Self::PatternMatchCount
             | Self::RangeRuleCount
@@ -4172,6 +4181,7 @@ impl Definition {
                 agree(&a.sampled_score_estimator, &b.sampled_score_estimator)
             }
             Self::DateForms => agree(&a.date_forms, &b.date_forms),
+            Self::ValueFacts => agree(&a.value_facts, &b.value_facts),
         }
     }
 }
@@ -4193,6 +4203,10 @@ struct RunFacts {
     /// offset, which `date_forms` reads as a date and earlier releases as
     /// text.
     spaced_datetimes: bool,
+    /// A column may have been typed otherwise than `value_facts` types it:
+    /// from a sample of its values, or as digit codes for one zero-padded
+    /// value.
+    retyped_columns: bool,
 }
 
 impl RunFacts {
@@ -4207,6 +4221,8 @@ impl RunFacts {
                 || sides.b.may_test_coinciding_quartiles(),
             spaced_datetimes: sides.a.may_hold_spaced_datetimes()
                 || sides.b.may_hold_spaced_datetimes(),
+            retyped_columns: sides.a.may_type_columns_otherwise()
+                || sides.b.may_type_columns_otherwise(),
         }
     }
 }
@@ -4227,6 +4243,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::SampledScoreEstimator,
             Definition::OutlierSpread,
             Definition::DateForms,
+            Definition::ValueFacts,
         ],
         Some(QualityDimension::Validity) => &[
             Definition::NullTokens,
@@ -4241,6 +4258,7 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
             Definition::OutlierSpread,
+            Definition::ValueFacts,
         ],
         Some(QualityDimension::Uniqueness) => &[
             Definition::NullTokens,
@@ -4253,16 +4271,19 @@ fn score_definitions(dimension: Option<QualityDimension>) -> &'static [Definitio
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
             Definition::DateForms,
+            Definition::ValueFacts,
         ],
         Some(QualityDimension::Precision) => &[
             Definition::NullTokens,
             Definition::JsonNumberReading,
             Definition::SampledScoreEstimator,
+            Definition::ValueFacts,
         ],
         Some(QualityDimension::Timeliness) => &[
             Definition::NullTokens,
             Definition::SampledScoreEstimator,
             Definition::DateForms,
+            Definition::ValueFacts,
         ],
         Some(_) => &[Definition::NullTokens],
     }
@@ -4686,10 +4707,10 @@ fn scan_left_rows_out(scan: Evidence) -> bool {
 ///
 /// A report that records `date_statistics: every_value` computed them over
 /// every value read (#1297). One that records nothing computed them from the
-/// values the profiler retained, the same values its `type_homogeneity`
-/// classifies, so a classified count short of the non-null count says the
-/// retained sample left some out. A report without the classification does
-/// not record which happened.
+/// values the profiler retained, and [`retained_sample_left_values_out`] says
+/// whether that sample may have left some out. A report without the
+/// classification, or the record that replaces it, does not record which
+/// happened.
 fn date_statistics_evidence(report: &ProfileReport, profile: &ColumnProfile) -> Evidence {
     let every_value = report
         .metric_semantics
@@ -4700,9 +4721,16 @@ fn date_statistics_evidence(report: &ProfileReport, profile: &ColumnProfile) -> 
         return Evidence::Complete;
     }
     let non_null = profile.total_count.saturating_sub(profile.null_count);
-    match &profile.type_homogeneity {
-        Some(forms) if forms.classified_count() >= non_null => Evidence::Complete,
-        Some(_) => Evidence::Incomplete {
+    let value_facts = report
+        .metric_semantics
+        .as_ref()
+        .and_then(|semantics| semantics.value_facts);
+    let classified = profile
+        .type_homogeneity
+        .map(|forms| forms.classified_count());
+    match retained_sample_left_values_out(value_facts, non_null, classified) {
+        Some(false) => Evidence::Complete,
+        Some(true) => Evidence::Incomplete {
             reason: EvidenceGap::QualitySampled,
         },
         None => Evidence::Incomplete {
@@ -5042,6 +5070,8 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: None,

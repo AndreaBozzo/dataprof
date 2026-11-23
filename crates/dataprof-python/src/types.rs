@@ -8,7 +8,7 @@ use dataprof::{
     OutlierUnits, Pattern, PatternMatchCount, ProfileReport, QualityAnalysisStatus,
     QualityAssessment, QualityDimension, QualityMetrics, QualityPolicy, QualityScores,
     RangeRuleCount, SampledScoreEstimator, ScoreInterval, SemanticHintKind, ShapeMomentEstimator,
-    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason,
+    SourceIdentity, StatisticRounding, TextLengthUnit, TruncationReason, ValueFacts,
 };
 
 /// Python wrapper for Pattern metrics
@@ -85,6 +85,20 @@ pub struct PyColumnProfile {
     /// the count did not run (or the report predates it); `Some(0)` = none.
     #[pyo3(get)]
     pub locale_number_count: Option<usize>,
+    /// Of the `numeric` values in `type_homogeneity`, how many keep a leading
+    /// zero (`007`, `08001`). At least 1% of them types the column as digit
+    /// codes, so text; fewer leave it numeric, read as the numbers they
+    /// spell. `None` = the count did not run (or the report predates it);
+    /// `Some(0)` = none.
+    #[pyo3(get)]
+    pub zero_padded_count: Option<usize>,
+    /// How many non-null values `patterns` were detected over: every value
+    /// on the in-memory routes, at most the retained sample on the file,
+    /// Arrow and streaming routes. Short of `total_count - null_count`, the
+    /// patterns describe a sample. `None` = detection did not run (or the
+    /// report predates the count).
+    #[pyo3(get)]
+    pub pattern_values_checked: Option<usize>,
     /// The type the source declared for the column, as `{"system": ...,
     /// "name": ...}`: `{"system": "arrow", "name": "decimal128(12, 2)"}`.
     /// Provenance, not a measurement. `None` = the source declares no type
@@ -283,6 +297,8 @@ impl From<&ColumnProfile> for PyColumnProfile {
             invalid_count: profile.invalid_count,
             type_homogeneity,
             locale_number_count: profile.locale_number_count,
+            zero_padded_count: profile.zero_padded_count,
+            pattern_values_checked: profile.pattern_values_checked,
             native_type: profile.native_type.as_ref().map(|native_type| {
                 std::collections::BTreeMap::from([
                     ("system".to_string(), native_type.system.clone()),
@@ -1411,6 +1427,14 @@ impl PyProfileReport {
                 "date_forms",
                 match forms {
                     DateForms::SpacedIsoDatetimes => "spaced_iso_datetimes",
+                },
+            )?;
+        }
+        if let Some(facts) = semantics.value_facts {
+            dict.set_item(
+                "value_facts",
+                match facts {
+                    ValueFacts::EveryValue => "every_value",
                 },
             )?;
         }

@@ -290,7 +290,13 @@ def test_a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unev
 
 @pytest.mark.parametrize(
     "definition",
-    ["json_number_reading", "sampled_score_estimator", "outlier_spread", "date_forms"],
+    [
+        "json_number_reading",
+        "sampled_score_estimator",
+        "outlier_spread",
+        "date_forms",
+        "value_facts",
+    ],
 )
 def test_a_definition_no_run_can_reach_does_not_hold_a_score_open(definition: str):
     # A frame read in full, whose numeric columns all have spread: neither side

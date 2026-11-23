@@ -1383,8 +1383,8 @@
       }
     },
     {
-      "name": "a_sampled_column_leaves_share_findings_undecided_on_a_full_scan",
-      "why": "Every row was read, but lexical forms and patterns come from each column's retained sample, so mixed_types and sensitive_pattern decide nothing about the values outside it.",
+      "name": "a_sampled_column_leaves_sensitive_pattern_undecided_on_a_full_scan",
+      "why": "Every row was read. Lexical forms count every value read (#788), so mixed_types is decided; patterns still come from each column's retained sample, so sensitive_pattern decides nothing about the values outside it.",
       "options": {
         "input": "generated"
       },
@@ -1412,13 +1412,10 @@
             "observed": 0,
             "scope": "full_source",
             "evidence": {
-              "coverage": "incomplete",
-              "reason": "quality_sampled"
+              "coverage": "complete"
             },
-            "status": "not_evaluated",
-            "reason": "evidence_incomplete",
-            "gap": "quality_sampled",
-            "message": "the finding's rule found nothing in the retained sample of values, and the values outside it may hold it"
+            "status": "passed",
+            "message": "the finding's rule looked and found nothing"
           },
           {
             "code": "forbid_finding",
@@ -1458,7 +1455,7 @@
     },
     {
       "name": "a_sampled_column_decides_share_findings_in_the_observed_scope",
-      "why": "Under observed scope the retained sample is what was measured, so it decides.",
+      "why": "Under observed scope the values measured decide: the retained sample for patterns, and every value read for lexical forms (#788).",
       "options": {
         "input": "generated"
       },
@@ -1486,8 +1483,7 @@
             "observed": 0,
             "scope": "observed",
             "evidence": {
-              "coverage": "incomplete",
-              "reason": "quality_sampled"
+              "coverage": "complete"
             },
             "status": "passed",
             "message": "the finding's rule looked and found nothing"

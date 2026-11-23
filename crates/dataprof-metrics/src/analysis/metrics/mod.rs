@@ -61,6 +61,8 @@ mod testing;
 mod timeliness;
 mod uniqueness;
 pub(crate) mod utils;
+
+pub use utils::is_likely_date_column;
 mod validity;
 
 // Re-export public types for backward compatibility
@@ -883,6 +885,8 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
@@ -927,6 +931,8 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
@@ -1015,6 +1021,8 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
@@ -1060,6 +1068,8 @@ mod tests {
             invalid_count: None,
             type_homogeneity: None,
             locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
             native_type: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),

@@ -244,13 +244,23 @@ class TestMixedTypeFlag:
         assert _flags(report) == ["v: mixed types (89.9% numeric, 10% text, 0.1% date)"]
 
     def test_a_sampled_count_discloses_its_scope(self, tmp_path):
-        # The counts come from the engine's 10k reservoir. A share taken over
-        # 10k values must not read as a fact about 50k.
+        # The counts cover every value read past the engine's 10k reservoir
+        # (#788), so the flag claims no sample. A report saved before that
+        # counted the reservoir, and a share taken over 10k values must not
+        # read as a fact about 50k.
         report = _profile_column(tmp_path, _numeric_with_junk(12_500, total=50_000))
         flags = _flags(report)
-
         assert len(flags) == 1
         assert flags[0].startswith("v: mixed types (")
+        assert "sampled" not in flags[0]
+        assert sum(report["v"].type_homogeneity.values()) == 50_000
+
+        saved = report.to_dict()
+        del saved["metric_semantics"]["value_facts"]
+        column = next(c for c in saved["columns"] if c["name"] == "v")
+        column["type_homogeneity"] = {"boolean": 0, "date": 0, "numeric": 7_500, "text": 2_500}
+        flags = _flags(dp.ProfileReport.from_dict(saved))
+        assert len(flags) == 1
         assert "; sampled 10,000 of 50,000 values)" in flags[0]
 
     def test_an_unsampled_count_claims_no_scope(self, tmp_path):

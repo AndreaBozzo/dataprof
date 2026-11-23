@@ -5,7 +5,7 @@ use dataprof_core::{
     DateStatistics, ExecutionMetadata, FileFormat, JsonNumberReading, KeyColumnSource,
     KeyUniquenessUnits, Locale, MetricPack, NullTokenSet, OutlierSpread, OutlierUnits,
     PatternMatchCount, QualityScoreWeights, RangeRuleCount, SampledScoreEstimator,
-    SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit,
+    SemanticHintBinding, ShapeMomentEstimator, StatisticRounding, TextLengthUnit, ValueFacts,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -255,6 +255,21 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "DateForms")]
     pub date_forms: Option<DateForms>,
+    /// Which values a column's `data_type`, `type_homogeneity`,
+    /// `locale_number_count` and `zero_padded_count` are counted over, and
+    /// how many zero-padded numbers make digit codes.
+    ///
+    /// Absent means not recorded: through 0.14 an engine that retained a
+    /// bounded sample typed and classified a text column from it, so on a
+    /// source larger than the sample a value outside it could not change the
+    /// type; and one zero-padded number made a column digit codes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "ValueFacts")]
+    pub value_facts: Option<ValueFacts>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -286,6 +301,7 @@ impl MetricSemantics {
             date_statistics: Some(DateStatistics::EveryValue),
             outlier_spread: Some(OutlierSpread::NonzeroIqr),
             date_forms: Some(DateForms::SpacedIsoDatetimes),
+            value_facts: Some(ValueFacts::EveryValue),
         }
     }
 
@@ -310,6 +326,7 @@ impl MetricSemantics {
             date_statistics,
             outlier_spread,
             date_forms,
+            value_facts,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -326,6 +343,7 @@ impl MetricSemantics {
             && date_statistics.is_some()
             && outlier_spread.is_some()
             && date_forms.is_some()
+            && value_facts.is_some()
     }
 }
 
@@ -882,6 +900,10 @@ struct PythonColumnDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     locale_number_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    zero_padded_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern_values_checked: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     native_type: Option<dataprof_core::NativeType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<PythonColumnStatsDocument>,
@@ -1127,6 +1149,8 @@ impl PythonProfileReportDocument {
                     invalid_count: column.invalid_count,
                     type_homogeneity: column.type_homogeneity,
                     locale_number_count: column.locale_number_count,
+                    zero_padded_count: column.zero_padded_count,
+                    pattern_values_checked: column.pattern_values_checked,
                     native_type: column.native_type.clone(),
                     stats,
                     patterns: column.patterns.as_ref().map(|patterns| {
@@ -1801,6 +1825,7 @@ mod tests {
             "date_statistics": "every_value",
             "outlier_spread": "nonzero_iqr",
             "date_forms": "spaced_iso_datetimes",
+            "value_facts": "every_value",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);

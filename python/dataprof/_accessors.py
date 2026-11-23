@@ -149,6 +149,8 @@ class ColumnProfile(_View):
     invalid_count = _Field[int | None]()
     type_homogeneity = _Field[dict[str, int] | None]()
     locale_number_count = _Field[int | None]()
+    zero_padded_count = _Field[int | None]()
+    pattern_values_checked = _Field[int | None]()
     native_type = _Field[dict[str, str] | None]()
     null_percentage = _Field[float | None]()
     uniqueness_ratio = _Field[float | None]()

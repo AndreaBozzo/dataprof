@@ -8,6 +8,8 @@ pub use column::{
     analyze_column, analyze_column_fast, analyze_column_with_analysis_options,
     analyze_declared_column,
 };
-pub use inference::{classify_lexical_forms, infer_type, is_null_like_token, lexical_class};
+pub use inference::{
+    LexicalTally, classify_lexical_forms, infer_type, is_null_like_token, lexical_class,
+};
 pub use metrics::{MetricsCalculator, compute_value_hint_bindings, value_matches_hint};
 pub use patterns::{PatternMetadata, detect_patterns, list_patterns};

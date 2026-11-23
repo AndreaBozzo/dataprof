@@ -1446,3 +1446,82 @@ When reading a saved report from 0.14.x or earlier that carries `key_uniqueness:
 both the Rust reader and Python's `from_dict()` normalize `key_uniqueness` to
 `None`. Reports that name a `key_column` and either have `key_values_checked > 0`
 or predate `key_values_checked` retain their recorded `key_uniqueness` value.
+
+## v1 additive change: `metric_semantics.value_facts`
+
+`metric_semantics` gains one definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `value_facts` | `"every_value"` | which values a column's `data_type`, `type_homogeneity`, `locale_number_count` and `zero_padded_count` are counted over, and how many zero-padded numbers make digit codes |
+
+The file, Arrow and streaming engines keep at most 10,000 values of each
+column. Through 0.14 they typed a column read as text and classified its
+values from those, while the same data profiled in memory was typed from every
+value (#788). On a larger source, one zero-padded code outside the sample, or
+a share of numbers, dates or booleans at a type threshold, typed the column
+otherwise by input route, and every check that follows the type followed it.
+Each engine now counts the lexical facts of every non-null value it reads, so
+the type, `type_homogeneity` and `locale_number_count` cover every value read
+on every route. Patterns, and the quality checks other than the type, still
+read the sample.
+
+Counted over every value, one stray zero-padded number would retype a column
+of quantities on every route, where before only a sample that held it did.
+The digit-code rule of #814 is now a share: a column of numbers is digit codes,
+typed `string`, when at least 1% of its numeric values keep a leading zero
+(`007`, a postal code `08001`), or when every one is a `YYYYMMDD` date as
+before. Below 1% the column stays numeric and reads each such value as the
+number it spells. So a column with one zero-padded value among more than 100
+numbers types as a number where 0.14 typed it as text, on a source of any
+size.
+
+A report that records no `value_facts` reads back with it unknown. A quality
+gate leaves the consistency, accuracy, precision, timeliness and overall score
+rules over it `definition_not_comparable` when a column of it may be typed
+otherwise: a populated column, not nested, whose `type_homogeneity` classified
+fewer values than its non-null count (typed from a sample), a `string` column
+whose classified values are more than 80% numeric (perhaps codes for one
+zero-padded value), a `string` column named for dates that holds numbers
+(perhaps scored as digit codes by the consistency check), or one that
+records no type, counts or classification. Regenerate the baseline with the current release to have
+those rules decided again. With the record, `forbid_findings` decides
+`mixed_types` and `locale_numbers` on a scan that read every row, however
+large the source; `sensitive_pattern` reads the column's
+`pattern_values_checked` (below). The field is additive and not `required`, so stored v1 reports remain
+valid; an explicit `null` for `value_facts` is malformed, as for
+`text_length_unit`.
+
+## v1 additive change: column `zero_padded_count`
+
+Both dialects carry an optional integer `zero_padded_count` on each column
+(#788). Of the values `type_homogeneity` counted as `numeric`, it is how many
+keep a leading zero: `007`, `08001`. At least 1% of them makes the column
+digit codes, typed `string` with no mean; fewer leave it numeric, and the
+count says how many of its numbers were written as codes.
+
+It is counted over the same values as `type_homogeneity` and is present
+whenever it is. Absent means the count did not run, including a report
+written before 0.15; `0` means none were found. The field is additive and
+not `required`, so stored v1 reports remain valid.
+
+## v1 additive change: column `pattern_values_checked`
+
+Both dialects carry an optional integer `pattern_values_checked` on each column
+(#1399): how many non-null values `patterns` were detected over, the
+denominator of every `match_percentage`. The in-memory and database routes
+detect patterns over every value read; the file, Arrow and streaming routes
+over their retained sample, 10,000 values or fewer once memory pressure
+shrinks it. A count short of `total_count - null_count` says the patterns
+describe a sample, and a `match_count` far below the row count is a sample
+count.
+
+`forbid_findings=["sensitive_pattern"]` under `full_source` reads it: the rule
+is decided when every column's count reaches its non-null count, and
+`evidence_incomplete` (`quality_sampled`) otherwise. A report without the
+count falls back to `type_homogeneity` before 0.15, and to the 10,000-value
+sample size on a report that records `value_facts`.
+
+Present whenever `patterns` is; absent when detection did not run, including
+a report written before 0.15. The field is additive and not `required`, so
+stored v1 reports remain valid.

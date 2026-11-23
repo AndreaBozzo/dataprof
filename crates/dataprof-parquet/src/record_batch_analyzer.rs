@@ -10,10 +10,10 @@ use dataprof_core::{
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, DateTimeAccumulator, NumericAccumulator, ParsedNumber,
+    CardinalityEstimator, DateTimeAccumulator, LexicalTally, NumericAccumulator, ParsedNumber,
     spill_largest_exact_sets,
 };
-use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
+use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
     RowUniquenessTracker, StreamReservoirSampler, TextLengths, build_column_profile,
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::Write as _;
 
-const NUMERIC_SAMPLE_CAP: usize = 10_000;
+const NUMERIC_SAMPLE_CAP: usize = dataprof_runtime::COLUMN_SAMPLE_CAPACITY;
 
 /// Strip the physical encoding a writer chose and return the logical type the
 /// column actually holds.
@@ -964,6 +964,10 @@ pub struct ColumnAnalyzer {
     /// Date statistics over every non-null value, independent of the
     /// sample (#1297).
     dates: DateTimeAccumulator,
+    /// Lexical facts over every non-null rendered value, independent of the
+    /// sample: the type of a column that reaches the profile as text, and
+    /// `type_homogeneity` (#788).
+    lexical: LexicalTally,
 }
 
 impl ColumnAnalyzer {
@@ -998,10 +1002,14 @@ impl ColumnAnalyzer {
             temporal_matched_values: 0,
             date_matched_values: 0,
             dates: DateTimeAccumulator::new(),
+            lexical: LexicalTally::new(),
         }
     }
 
     fn offer_sample(&mut self, value: &str) {
+        // Every rendering the sample is offered, so the tally classifies the
+        // values the sample would hold if it held them all.
+        self.lexical.record(value);
         if !is_null_like_token(value.trim()) {
             let matches_date = self.should_track_date_matches()
                 && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Temporal);
@@ -1814,6 +1822,7 @@ impl ColumnAnalyzer {
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
             exact_dates: Some(&self.dates),
+            exact_lexical: Some(&self.lexical),
             decimal_values: matches!(
                 self.data_type,
                 arrow::datatypes::DataType::Decimal32(_, _)
@@ -1843,7 +1852,7 @@ impl ColumnAnalyzer {
         if self.renders_values_as_encoded_bytes() {
             DataType::String
         } else {
-            infer_type(self.sample_values.samples())
+            self.lexical.data_type()
         }
     }
 }

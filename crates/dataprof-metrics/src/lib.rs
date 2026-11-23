@@ -7,7 +7,7 @@ pub mod stats;
 pub mod types;
 
 pub use analysis::{
-    MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast,
+    LexicalTally, MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast,
     analyze_column_with_analysis_options, analyze_declared_column, classify_lexical_forms,
     compute_value_hint_bindings, detect_patterns, infer_type, is_null_like_token, lexical_class,
     list_patterns, value_matches_hint,

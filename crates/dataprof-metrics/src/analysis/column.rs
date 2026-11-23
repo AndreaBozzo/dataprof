@@ -2,11 +2,8 @@ use dataprof_core::{AnalysisOptions, NativeType};
 
 use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
-use crate::analysis::inference::{
-    classify_lexical_forms, count_locale_numbers, infer_type, is_null_like_token,
-    parse_strict_boolean_token,
-};
-use crate::analysis::patterns::detect_patterns;
+use crate::analysis::inference::{LexicalTally, is_null_like_token, parse_strict_boolean_token};
+use crate::analysis::patterns::{detect_patterns, pattern_value_count};
 use crate::stats::numeric::{
     compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
     compute_numeric_stats_with_parsed_count,
@@ -140,8 +137,10 @@ fn analyze_column_with_options(
     // Aligned with inference.rs: whitespace-only strings are treated as null
     let null_count = data.iter().filter(|s| is_null_like_token(s.trim())).count();
 
-    // Infer type (uses same whitespace logic internally)
-    let data_type = infer_type(data);
+    // One tally types the column and gives its lexical forms, over `data`,
+    // which on this path is the whole column.
+    let lexical = LexicalTally::from_values(data);
+    let data_type = lexical.data_type();
 
     // Calculate stats. Numeric columns also yield how many values parsed as
     // finite numbers, so the invalid count comes from the same single pass —
@@ -228,10 +227,13 @@ fn analyze_column_with_options(
     };
     let stats = stats_over_values(stats, total_count, null_count);
 
-    let patterns = if analysis.skip_patterns {
-        None
+    let (patterns, pattern_values_checked) = if analysis.skip_patterns {
+        (None, None)
     } else {
-        Some(detect_patterns(data, analysis.locale))
+        (
+            Some(detect_patterns(data, analysis.locale)),
+            Some(pattern_value_count(data)),
+        )
     };
 
     let unique_count = if analysis.skip_unique_count {
@@ -261,8 +263,10 @@ fn analyze_column_with_options(
         // counts are exact rather than sampled. Not gated by the analysis
         // selection: which forms a column holds is schema-level evidence like
         // the inferred type itself, not a statistic derived from a pack.
-        type_homogeneity: Some(classify_lexical_forms(data)),
-        locale_number_count: Some(count_locale_numbers(data)),
+        type_homogeneity: Some(lexical.type_homogeneity()),
+        locale_number_count: Some(lexical.locale_number_count()),
+        zero_padded_count: Some(lexical.zero_padded_count()),
+        pattern_values_checked,
         native_type: None,
         stats,
         patterns,

@@ -12,12 +12,10 @@ use dataprof_core::{
     TextStats,
 };
 use dataprof_metrics::{
-    DateTimeAccumulator, ParsedNumber,
+    DateTimeAccumulator, LexicalTally, ParsedNumber,
     analysis::column::stats_over_values,
-    analysis::inference::{
-        classify_lexical_forms, count_locale_numbers, holds_digit_codes, is_inferred_date_token,
-        is_integer_token, is_null_like_token, parse_strict_boolean_token,
-    },
+    analysis::inference::parse_strict_boolean_token,
+    analysis::patterns::pattern_value_count,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{
         calculate_coefficient_of_variation, compute_decimal_stats_with_parsed_count,
@@ -72,6 +70,13 @@ pub struct ColumnProfileInput<'a> {
     /// cover the full stream. `None` means `sample_values` is the complete
     /// in-memory column.
     pub exact_dates: Option<&'a DateTimeAccumulator>,
+    /// Lexical facts over every value the engine streamed (#788).
+    ///
+    /// When present, `type_homogeneity` and `locale_number_count` come from
+    /// here rather than from `sample_values`, so they cover the full stream,
+    /// as the type the engine inferred from the same tally does. `None` means
+    /// `sample_values` is the complete in-memory column.
+    pub exact_lexical: Option<&'a LexicalTally>,
     /// The samples render a column typed as a decimal (an Arrow decimal of
     /// any width, 32 to 256 bits), which no float wrote, so they are read with
     /// `ParsedNumber::parse_decimal` and kept exact from fewer digits than
@@ -278,10 +283,18 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     // about a column that was analyzed, not a statistic over nothing.
     let stats = stats_over_values(stats, input.total_count, input.null_count);
 
-    let patterns = if input.skip_patterns {
-        None
+    let lexical = match input.exact_lexical {
+        Some(tally) => *tally,
+        None => LexicalTally::from_values(input.sample_values),
+    };
+
+    let (patterns, pattern_values_checked) = if input.skip_patterns {
+        (None, None)
     } else {
-        Some(detect_patterns(input.sample_values, input.locale))
+        (
+            Some(detect_patterns(input.sample_values, input.locale)),
+            Some(pattern_value_count(input.sample_values)),
+        )
     };
 
     ColumnProfile {
@@ -293,14 +306,18 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         unique_count_is_approximate: input.unique_count_is_approximate,
         unique_count_lower_bound: input.unique_count_lower_bound,
         invalid_count,
-        // Classified over the retained sample, so the counts are bounded by the
-        // engine's reservoir on a large source. `classified_count()` against
-        // `total_count - null_count` is what tells a reader which happened.
-        // Not gated by `skip_statistics`: which forms a column holds is
-        // schema-level evidence like the inferred type, not a statistic.
-        type_homogeneity: Some(classify_lexical_forms(input.sample_values)),
-        // Over the same retained sample, so it stays a subset of `text` above.
-        locale_number_count: Some(count_locale_numbers(input.sample_values)),
+        // Over every value read: the engine's tally, or the samples when they
+        // are the whole column. Not gated by `skip_statistics`: which forms a
+        // column holds is schema-level evidence like the inferred type, not a
+        // statistic.
+        type_homogeneity: Some(lexical.type_homogeneity()),
+        // Over the same values, so it stays a subset of `text` above.
+        locale_number_count: Some(lexical.locale_number_count()),
+        // Over the same values, a subset of `numeric` above.
+        zero_padded_count: Some(lexical.zero_padded_count()),
+        // The values the patterns above were detected over: the retained
+        // sample on an engine that keeps one (#1399).
+        pattern_values_checked,
         native_type: None,
         stats,
         patterns,
@@ -325,6 +342,8 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         invalid_count: None,
         type_homogeneity: None,
         locale_number_count: None,
+        zero_padded_count: None,
+        pattern_values_checked: None,
         native_type: None,
         stats: ColumnStats::None,
         patterns: None,
@@ -467,65 +486,16 @@ pub fn profile_from_stats_with_hints(
         exact_numeric: stats.exact_numeric_aggregates(),
         exact_date_matches: Some(stats.date_match_count()),
         exact_dates: Some(stats.date_statistics()),
+        exact_lexical: Some(stats.lexical_tally()),
         decimal_values: false,
     })
 }
 
-/// Infer [`DataType`] from [`StreamingStatistics`] sample values.
+/// Infer [`DataType`] from the lexical facts a [`StreamingStatistics`] counted
+/// over every value it streamed, the same rule `infer_type` applies to a whole
+/// column (#788).
 pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
-    let sample_values = stats.sample_values();
-    let non_empty: Vec<&String> = sample_values
-        .iter()
-        .filter(|s| !is_null_like_token(s.trim()))
-        .collect();
-
-    if !non_empty.is_empty() {
-        // The same question `infer_type` asks, so codes are text on every engine.
-        let digit_codes = holds_digit_codes(non_empty.iter().map(|s| s.trim()));
-
-        let all_integers = non_empty.iter().all(|s| is_integer_token(s.trim()));
-        if !digit_codes && all_integers {
-            return DataType::Integer;
-        }
-
-        // Numeric lexical forms remain numeric even if none are finite enough
-        // to enter the streaming aggregates. `build_column_profile` reports
-        // those unusable values through `invalid_count`.
-        let numeric_count = non_empty
-            .iter()
-            .filter(|s| s.trim().parse::<f64>().is_ok())
-            .count();
-        if !digit_codes && numeric_count as f64 / non_empty.len() as f64 > 0.8 {
-            return DataType::Float;
-        }
-
-        // `.trim()`, like every sibling predicate in this function and like
-        // `infer_type`. Without it a value that arrived padded — CSV parsing
-        // does not trim by default — was a date to the buffered engines and
-        // text to this one, which is the same cross-engine split the shared
-        // grammar exists to close. Over every value, as `infer_type` counts and
-        // as the shares above do: a column whose first 100 values were dates
-        // was a date here and text everywhere else (#915).
-        let date_like_count = non_empty
-            .iter()
-            .filter(|s| is_inferred_date_token(s.trim()))
-            .count();
-
-        if date_like_count as f64 / non_empty.len() as f64 > 0.7 {
-            return DataType::Date;
-        }
-
-        let bool_count = non_empty
-            .iter()
-            .filter(|s| parse_strict_boolean_token(s.trim()).is_some())
-            .count();
-
-        if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
-            return DataType::Boolean;
-        }
-    }
-
-    DataType::String
+    stats.lexical_tally().data_type()
 }
 
 /// Build a sample `HashMap` from a [`StreamingColumnCollection`] suitable for
@@ -587,43 +557,48 @@ mod tests {
     }
 
     #[test]
-    fn type_homogeneity_is_classified_from_the_retained_sample() {
-        // The streaming path only holds its reservoir, so the counts describe
-        // the sample. `classified_count()` short of the non-null total is the
-        // signal that the shares are sampled — nothing else discloses it.
+    fn type_homogeneity_comes_from_the_engine_tally_not_the_sample() {
+        // An engine that keeps a sample passes the tally it counted over every
+        // value (#788); the samples are then only what the sample-reading
+        // checks see. Without a tally the samples are the whole column.
         let samples = ["1", "2", "junk", ""].map(String::from).to_vec();
-        let profile = build_column_profile(ColumnProfileInput {
-            name: "v".to_string(),
-            data_type: DataType::String,
-            total_count: 4_000,
-            null_count: 1_000,
-            unique_count: Some(3),
-            unique_count_is_approximate: Some(false),
-            unique_count_lower_bound: None,
-            sample_values: &samples,
-            text_lengths: None,
-            boolean_counts: None,
-            // Not gated by the analysis selection: a column's lexical makeup is
-            // schema-level evidence, like its inferred type.
-            skip_statistics: true,
-            skip_patterns: true,
-            exact_numeric: None,
-            exact_date_matches: None,
-            exact_dates: None,
-            decimal_values: false,
-            locale: None,
-        });
+        let mut every_value = LexicalTally::new();
+        for value in ["1", "2", "007", "1.234,56", "junk", "", "3"] {
+            every_value.record(value);
+        }
+        let build = |exact_lexical| {
+            build_column_profile(ColumnProfileInput {
+                name: "v".to_string(),
+                data_type: DataType::String,
+                total_count: 7,
+                null_count: 1,
+                unique_count: Some(6),
+                unique_count_is_approximate: Some(false),
+                unique_count_lower_bound: None,
+                sample_values: &samples,
+                text_lengths: None,
+                boolean_counts: None,
+                // Not gated by the analysis selection: a column's lexical
+                // makeup is schema-level evidence, like its inferred type.
+                skip_statistics: true,
+                skip_patterns: true,
+                exact_numeric: None,
+                exact_date_matches: None,
+                exact_dates: None,
+                exact_lexical,
+                decimal_values: false,
+                locale: None,
+            })
+        };
 
-        let counts = profile
-            .type_homogeneity
-            .expect("classification runs on every column");
-        assert_eq!(counts.numeric, 2);
-        assert_eq!(counts.text, 1);
-        assert_eq!(counts.classified_count(), 3, "null-like values are skipped");
-        assert!(
-            counts.classified_count() < profile.total_count - profile.null_count,
-            "a sample-derived count must read as short of the column"
-        );
+        let streamed = build(Some(&every_value));
+        let counts = streamed.type_homogeneity.expect("classified");
+        assert_eq!((counts.numeric, counts.text), (4, 2));
+        assert_eq!(counts.classified_count(), 6, "null-like values are skipped");
+        assert_eq!(streamed.locale_number_count, Some(1));
+
+        let in_memory = build(None).type_homogeneity.expect("classified");
+        assert_eq!((in_memory.numeric, in_memory.text), (2, 1));
     }
 
     #[test]
@@ -662,6 +637,7 @@ mod tests {
                     exact_numeric: None,
                     exact_date_matches: None,
                     exact_dates: None,
+                    exact_lexical: None,
                     decimal_values: false,
                 });
 
@@ -709,6 +685,7 @@ mod tests {
                 }),
                 exact_date_matches: None,
                 exact_dates: None,
+                exact_lexical: None,
                 decimal_values: false,
             });
 
@@ -762,6 +739,7 @@ mod tests {
             }),
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
         });
 
@@ -797,6 +775,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });
@@ -834,6 +813,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });
@@ -867,6 +847,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });
@@ -894,6 +875,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });
@@ -926,6 +908,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });
@@ -952,6 +935,7 @@ mod tests {
             exact_numeric: None,
             exact_date_matches: None,
             exact_dates: None,
+            exact_lexical: None,
             decimal_values: false,
             locale: None,
         });

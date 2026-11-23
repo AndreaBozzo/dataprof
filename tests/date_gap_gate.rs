@@ -287,11 +287,11 @@ fn a_hole_past_the_sample_fails_on_a_complete_scan() {
     });
     let mut wrong = Vec::new();
     for (route, report) in routes(&dates) {
+        // Past the reservoir, so the routes that keep one hold only a sample.
+        // `type_homogeneity` counts every value since #788, so the counts are
+        // the witness.
         let sampled = report.column_profiles.iter().any(|column| {
-            column
-                .type_homogeneity
-                .as_ref()
-                .is_some_and(|forms| forms.classified_count() < dates.len())
+            column.total_count - column.null_count > dataprof::COLUMN_SAMPLE_CAPACITY
         });
         if !sampled {
             wrong.push(format!("[{route}] held every value in its sample"));

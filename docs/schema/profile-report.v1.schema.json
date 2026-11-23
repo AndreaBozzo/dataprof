@@ -169,6 +169,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "pattern_values_checked": {
+          "description": "How many non-null values `patterns` were detected over: every value\nread on the in-memory and database routes, at most the retained\nsample (10,000 values, fewer once memory pressure shrinks it) on the\nfile, Arrow and streaming routes (#1399).\n\nShort of `total_count - null_count`, the patterns describe a sample,\nand a pattern finding says nothing about the values outside it.\nPresent whenever `patterns` is; `None` means detection did not run,\nincluding a report written before dataprof recorded the count.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "patterns": {
           "description": "Detected patterns, or `None` when pattern detection did not run.\n\n`None` and `Some(vec![])` are not interchangeable: the former means the\ncolumn was never scanned, the latter that it was scanned and nothing\nmatched. Consumers that gate on sensitivity -- redaction, agent-facing\noutput -- must treat `None` as \"unknown\", never as \"no sensitive data\".",
           "items": {
@@ -196,7 +205,7 @@
               "type": "null"
             }
           ],
-          "description": "How the column's non-null values distribute across lexical classes.\n\n`data_type` cannot answer \"did this column have a dominant form?\": a\ncolumn of names and a column that is 60% numbers are both `String`, and\n`invalid_count` is absent on string columns by contract. This carries the\nevidence, so a consumer can tell a textual column from one that defeated\ntype inference.\n\nCounted over the values the profiler retained — the engine's bounded\nreservoir sample on a large source, the whole column on a small or\nin-memory one. `classified_count()` against `total_count - null_count`\nis what says which happened; treat the shares as sampled whenever it is\nshort.\n\n`None` means the classification did not run, never \"one uniform class\":\na column that was classified and had nothing to classify (all-null, or\nzero rows) is `Some` with every count zero."
+          "description": "How the column's non-null values distribute across lexical classes.\n\n`data_type` cannot answer \"did this column have a dominant form?\": a\ncolumn of names and a column that is 60% numbers are both `String`, and\n`invalid_count` is absent on string columns by contract. This carries the\nevidence, so a consumer can tell a textual column from one that defeated\ntype inference.\n\nCounted over every non-null value read, on every engine, when the\nreport records `metric_semantics.value_facts` (#788). A report written\nbefore that counted the values the profiler retained, the engine's\nbounded reservoir sample on a large source; there `classified_count()`\nshort of `total_count - null_count` says the shares were sampled.\n\n`None` means the classification did not run, never \"one uniform class\":\na column that was classified and had nothing to classify (all-null, or\nzero rows) is `Some` with every count zero."
         },
         "unique_count": {
           "format": "uint",
@@ -210,6 +219,15 @@
           "description": "Whether `unique_count` is an approximate (HyperLogLog) estimate rather\nthan an exact distinct count.\n\n`None` when `unique_count` is `None` (never computed); `Some(false)` for\nan exact count; `Some(true)` once the cardinality estimator has spilled\nto its HLL sketch (~1% relative error). Consumers running key or\nhigh-cardinality/uniqueness gates must treat `Some(true)` as \"do not rely\non this as an exact integer\" -- an exact-looking count with no provenance\nis unsafe for those checks.",
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "zero_padded_count": {
+          "description": "Of the values `type_homogeneity` counted as `numeric`, how many keep a\nleading zero: `007`, a postal code `08001` (#788).\n\nAt least 1% of them makes the column digit codes, typed `string` with\nno mean (#814). Fewer are strays among quantities: the column stays\nnumeric and reads each as the number it spells, so `007` counts as 7.\n\nCounted over the same values as `type_homogeneity`, and present\nwhenever it is. `None` means the count did not run, including a report\nwritten before dataprof recorded it; `Some(0)` means none were found.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         }
@@ -1360,6 +1378,10 @@
         "text_length_unit": {
           "$ref": "#/$defs/TextLengthUnit",
           "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
+        },
+        "value_facts": {
+          "$ref": "#/$defs/ValueFacts",
+          "description": "Which values a column's `data_type`, `type_homogeneity`,\n`locale_number_count` and `zero_padded_count` are counted over, and\nhow many zero-padded numbers make digit codes.\n\nAbsent means not recorded: through 0.14 an engine that retained a\nbounded sample typed and classified a text column from it, so on a\nsource larger than the sample a value outside it could not change the\ntype; and one zero-padded number made a column digit codes."
         }
       },
       "type": "object"
@@ -1856,6 +1878,14 @@
             "null"
           ]
         },
+        "pattern_values_checked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "patterns": {
           "items": {
             "$ref": "#/$defs/PythonPatternDocument"
@@ -1909,6 +1939,14 @@
           "format": "double",
           "type": [
             "number",
+            "null"
+          ]
+        },
+        "zero_padded_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         }
@@ -3609,6 +3647,16 @@
         {
           "const": "nested",
           "description": "A struct, list or map column. Its values reach the checks only as a\nserialisation, which differs by input path, so none reads them (#637).",
+          "type": "string"
+        }
+      ]
+    },
+    "ValueFacts": {
+      "description": "Which values a column's type, `type_homogeneity` and `locale_number_count`\nare counted over, as recorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.14 the engines that\nretain a bounded sample of each column (files, Arrow and the streaming\nreaders) typed a text column and classified its values from that sample,\nso on a source larger than the sample one zero-padded code or a share\nnear a type threshold could type the column otherwise than the same data\nread in memory; and one zero-padded number made a column digit codes,\nwhere 1% of them now does. Those releases recorded no definition.",
+      "oneOf": [
+        {
+          "const": "every_value",
+          "description": "Every non-null value the scan read, on every engine (#788).",
           "type": "string"
         }
       ]
