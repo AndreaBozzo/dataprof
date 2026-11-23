@@ -3,7 +3,10 @@
 # dependencies = ["dataprof>=0.14.1", "dlt[duckdb,parquet]==1.32.0"]
 # ///
 # dlt 1.32.0 supports Python 3.10–3.14; dataprof 0.14.1 starts at 3.11.
-"""Run a post-load quality checkpoint with uv run examples/dlt_quality_checkpoint.py."""
+"""Run a post-load quality checkpoint with uv run examples/dlt_quality_checkpoint.py.
+
+To check the Arrow batch before loading it, run uv run examples/dlt_preload_checkpoint.py.
+"""
 
 from __future__ import annotations
 
