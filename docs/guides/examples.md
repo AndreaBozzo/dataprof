@@ -398,7 +398,8 @@ The healthy load exits `0`. The short load exits `1` because the row-count drop
 violates the policy. The partial scan exits `2` because it cannot establish the
 full row count. Both nonzero exits stop downstream work. The checkpoint runs
 after the load, so use a staging dataset if downstream publication depends on
-the verdict.
+the verdict. To keep a rejected batch out of DuckDB, see the
+[pre-load checkpoint below](#gate-an-arrow-batch-before-loading-it-with-dlt).
 
 The script uses Python 3.11–3.14 and pins dlt 1.32.0, which supports Python
 3.10–3.14. The pipeline runs locally with telemetry disabled. The first `uv run`
@@ -409,6 +410,30 @@ pinned framework dependencies in a single script with PEP 723 metadata, read
 the loaded data through the framework's own API, and use its normal failure
 mechanism for a failed check. Document how inconclusive evidence affects the
 run and smoke-test the script in CI with isolated framework dependencies.
+
+### Gate an Arrow batch before loading it with dlt
+
+The [pre-load checkpoint](../../examples/dlt_preload_checkpoint.py) profiles
+the Arrow table it will hand to dlt. It loads the first passing batch and keeps
+its report as the baseline. Each candidate must have no null order IDs and
+lose at most 25% of the baseline's rows. Only a pass calls `pipeline.run()`
+for that candidate.
+
+```bash
+uv run examples/dlt_preload_checkpoint.py
+uv run examples/dlt_preload_checkpoint.py --scenario short-batch
+uv run examples/dlt_preload_checkpoint.py --scenario partial-scan
+```
+
+The healthy batch exits `0` and replaces the orders in `staging.orders`. The
+short batch exits `1` for violating the row-count limit. The partial scan
+exits `2` because it cannot establish the full row count. Both nonzero exits
+leave the previous orders in DuckDB. The script reads the table back and
+prints the order IDs so you can see which batch reached it.
+
+This example pins dlt 1.32.0 and uses Python 3.11–3.14. It runs locally with
+telemetry disabled. Once the interpreter and packages are cached, run it with
+`uv run --offline`.
 
 ### Freshness and missing days
 
