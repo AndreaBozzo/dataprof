@@ -504,6 +504,27 @@ jobs:
           uv run --no-sync python python/examples/baseline_checkpoint.py
           uv run --no-sync python python/examples/key_collapse_gate.py
 
+      - name: Run dlt checkpoint in its own script environment
+        # maturin develop puts the checkout's extension beside its Python sources.
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: |
+          script=examples/dlt_quality_checkpoint.py
+          uv sync --script "$script"
+
+          check_scenario() {
+            local scenario=$1 expected_status=$2 expected_verdict=$3
+            local status=0 output
+            output=$(uv run --offline --script "$script" --scenario "$scenario") || status=$?
+            printf '%s\n' "$output"
+            test "$status" -eq "$expected_status"
+            grep -Fq "verdict: $expected_verdict " <<< "$output"
+          }
+
+          check_scenario healthy 0 pass
+          check_scenario short-load 1 fail
+          check_scenario partial-scan 2 inconclusive
+
   python-async-url-tests:
     name: Python Async URL Tests (${{ matrix.variant }})
     runs-on: ubuntu-latest

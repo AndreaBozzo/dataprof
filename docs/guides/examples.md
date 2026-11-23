@@ -380,6 +380,36 @@ relative row-count checks catch loss or growth even when null shares stay the
 same. In CI, their flags are `--max-row-drop 10` and `--max-row-growth 20`,
 and `--allow-missing-baseline --promote baseline.json` replaces the rename.
 
+### Check a dlt load in local DuckDB
+
+The [dlt checkpoint](../../examples/dlt_quality_checkpoint.py) loads generated
+orders into a temporary DuckDB database. After each load, it reads the orders
+back through `pipeline.dataset()` as an Arrow table. The first load supplies a
+known-good baseline. The candidate must have no null order IDs and lose at most
+25% of the baseline's rows.
+
+```bash
+uv run examples/dlt_quality_checkpoint.py
+uv run examples/dlt_quality_checkpoint.py --scenario short-load
+uv run examples/dlt_quality_checkpoint.py --scenario partial-scan
+```
+
+The healthy load exits `0`. The short load exits `1` because the row-count drop
+violates the policy. The partial scan exits `2` because it cannot establish the
+full row count. Both nonzero exits stop downstream work. The checkpoint runs
+after the load, so use a staging dataset if downstream publication depends on
+the verdict.
+
+The script uses Python 3.11–3.14 and pins dlt 1.32.0, which supports Python
+3.10–3.14. The pipeline runs locally with telemetry disabled. The first `uv run`
+may fetch Python and packages. With those cached, use `uv run --offline`.
+
+For other pipeline frameworks, use the same pattern. Put generated input and
+pinned framework dependencies in a single script with PEP 723 metadata, read
+the loaded data through the framework's own API, and use its normal failure
+mechanism for a failed check. Document how inconclusive evidence affects the
+run and smoke-test the script in CI with isolated framework dependencies.
+
 ### Freshness and missing days
 
 These rules need **0.14**. This example fixes the clock so its result does not
