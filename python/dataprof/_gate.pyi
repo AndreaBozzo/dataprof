@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, Literal
 
+_Verdict = Literal["pass", "fail", "inconclusive"]
+
 class QualityCheck:
     """One requirement and what the report said about it."""
 
@@ -47,7 +49,7 @@ class QualityCheck:
 class QualityGateResult:
     """The structured result of evaluating a policy against a report."""
 
-    verdict: str
+    verdict: _Verdict
     scope: str
     evidence: dict[str, Any]
     checks: tuple[QualityCheck, ...]
@@ -58,7 +60,7 @@ class QualityGateResult:
 
     def __init__(
         self,
-        verdict: str,
+        verdict: _Verdict,
         scope: str,
         evidence: dict[str, Any],
         checks: tuple[QualityCheck, ...] = ...,
@@ -79,7 +81,7 @@ class QualityGateResult:
     def to_json(self, indent: int = ...) -> str: ...
     def __str__(self) -> str: ...
 
-def combine_verdicts(results: Iterable[QualityGateResult]) -> str: ...
+def combine_verdicts(results: Iterable[QualityGateResult]) -> _Verdict: ...
 def _summary_lines(
     result: QualityGateResult, *, version: str, baseline_path: object = ...
 ) -> list[str]: ...
