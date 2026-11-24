@@ -80,7 +80,7 @@ fn decimal_exponent(magnitude: f64) -> i32 {
 }
 
 /// The value [`round_statistic`] serializes: 4 decimal places, and at most
-/// [`STATISTIC_SIGNIFICANT_DIGITS`] significant digits (#1178).
+/// `STATISTIC_SIGNIFICANT_DIGITS` significant digits (#1178).
 pub fn rounded_statistic(value: f64) -> f64 {
     // Below 1e8, 4 decimals keep at most 12 significant digits.
     if value.abs() < 1e8 || !value.is_finite() {

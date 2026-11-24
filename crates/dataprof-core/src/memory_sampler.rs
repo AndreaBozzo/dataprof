@@ -45,7 +45,7 @@ impl PeakMemorySampler {
         sampler
     }
 
-    /// Sample unless the previous sample is less than [`MIN_SAMPLE_INTERVAL`]
+    /// Sample unless the previous sample is less than `MIN_SAMPLE_INTERVAL`
     /// old. For per-chunk calls inside a loop.
     pub fn sample(&mut self) {
         if self

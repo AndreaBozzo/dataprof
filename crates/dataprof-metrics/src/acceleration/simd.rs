@@ -18,7 +18,7 @@ const UNDERFLOW_SAFE_M2: f64 = f64::MIN_POSITIVE * 18_014_398_509_481_984.0;
 /// `sum_squares` here would vectorize just as well and lose the small spread of
 /// a large-offset column entirely, which is what this path used to do.
 ///
-/// A lane sum or M2 that overflows falls back to [`compute_stats_fallback`]
+/// A lane sum or M2 that overflows falls back to `compute_stats_fallback`
 /// over the whole slice: the scalar accumulator rescales both before they
 /// overflow, and an infinite lane value has already lost what it would need.
 pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {

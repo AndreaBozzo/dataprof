@@ -251,7 +251,7 @@ impl DatabaseConnector for PostgresConnector {
 /// one would fall back to null, the failure this decoder exists to remove.
 ///
 /// A JSON document serde_json cannot hold keeps the database's own text, see
-/// [`raw_json_structured_value`](super::common::raw_json_structured_value).
+/// `raw_json_structured_value`.
 #[cfg(feature = "postgres")]
 impl crate::DecodeStructured for sqlx::postgres::PgRow {
     fn decode_structured(&self, index: usize) -> Option<crate::StructuredValue> {

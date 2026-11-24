@@ -1408,7 +1408,7 @@ impl QualityPolicy {
     }
 
     /// Fail when the report holds a finding with one of these codes (#1066),
-    /// derived with the default [`FindingPolicy`](crate::FindingPolicy) thresholds, as
+    /// derived with the default [`FindingPolicy`] thresholds, as
     /// [`ProfileReport::findings`] derives them. One check per code, in code
     /// order. See the [module docs](self) for when a partial scan decides
     /// one.

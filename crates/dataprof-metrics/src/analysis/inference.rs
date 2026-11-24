@@ -248,7 +248,7 @@ impl LexicalTally {
 /// Whether a value carries one of the date forms `infer_type` counts towards
 /// typing a column as [`DataType::Date`].
 ///
-/// Deliberately narrower than [`is_date_token`]: this set decides the *type*, so
+/// Deliberately narrower than `is_date_token`: this set decides the *type*, so
 /// widening it changes which columns are dates.
 ///
 /// The streaming engines type their columns from sampled strings and call this
@@ -400,7 +400,7 @@ pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
 /// fractions share [`LexicalClass::Numeric`] deliberately: `["1.5", "2", "3"]`
 /// is one numeric column, not a two-class mixture.
 ///
-/// Dates use [`is_date_token`], the union of the forms inference and validation
+/// Dates use `is_date_token`, the union of the forms inference and validation
 /// each recognize. Using only the validation set would drop ISO datetimes and
 /// dotted dates into `Text` alongside genuine junk.
 pub fn lexical_class(value: &str) -> LexicalClass {

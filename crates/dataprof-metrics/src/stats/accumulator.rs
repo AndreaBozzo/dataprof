@@ -38,7 +38,7 @@
 /// The sum can overflow where the mean itself is representable
 /// (`[1e308, 1e308]`, or `[1e308, 1e308, -1e308, -1e308]` whose mean is 0.0).
 /// When an addition would overflow, the sum and its compensation are rescaled
-/// by [`OVERFLOW_SCALE`] and every later value is added at that scale. Welford's
+/// by `OVERFLOW_SCALE` and every later value is added at that scale. Welford's
 /// running mean is no fallback: its `value - running_mean` overflows once the
 /// two sit near opposite ends of the range, and turns the mean into NaN.
 ///
@@ -53,7 +53,7 @@
 /// At the other end, the squared deviations of values near 1e-200 underflow
 /// to zero, and a varying column reported a variance of zero, which the
 /// coefficient of variation and the kurtosis then read as a constant column
-/// (#1088). So M2 starts out held at [`UNDERFLOW_SCALE`] and is brought down
+/// (#1088). So M2 starts out held at `UNDERFLOW_SCALE` and is brought down
 /// to its true scale once it grows past what that leaves room for. M2 never
 /// decreases, so it only ever moves towards the reduced scale. The standard
 /// deviation is taken at the held scale, and survives where the variance
@@ -741,9 +741,9 @@ impl FromIterator<ParsedNumber> for NumericAccumulator {
 /// exact, so a text path accumulates it as an Arrow `Int64` column does
 /// (#877). A longer literal that is not one of those, or an `f64` integer, is
 /// kept as an [`ExactDecimal`] where it fits one (#1149), and is
-/// [`Unheld`](Self::Unheld) where it does not: from [`TEXT_EXACT_DIGITS`]
+/// [`Unheld`](Self::Unheld) where it does not: from `TEXT_EXACT_DIGITS`
 /// significant digits for [`parse`](Self::parse), from
-/// [`DECIMAL_EXACT_DIGITS`] for [`parse_decimal`](Self::parse_decimal), and
+/// `DECIMAL_EXACT_DIGITS` for [`parse_decimal`](Self::parse_decimal), and
 /// at any length when it underflows to 0 or to a subnormal no float writer
 /// writes as these digits (#1182). Everything else is its `f64`.
 #[derive(Debug, Clone, Copy, PartialEq)]

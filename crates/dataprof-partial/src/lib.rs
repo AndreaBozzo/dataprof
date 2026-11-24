@@ -165,7 +165,7 @@ fn reject_binary_text_input(
     dataprof_core::binary_input::reject_binary_input_with_format(path, explicit)
 }
 
-/// [`infer_schema`](infer_schema) for a caller who selected `format`.
+/// [`infer_schema`] for a caller who selected `format`.
 ///
 /// The selection is named in the Parquet hint even when it is the format the
 /// extension already has.
@@ -206,7 +206,7 @@ fn infer_schema_from_format(
     }
 }
 
-/// [`quick_row_count`](quick_row_count) for a caller who selected `format`.
+/// [`quick_row_count`] for a caller who selected `format`.
 ///
 /// The selection is named in the Parquet hint even when it is the format the
 /// extension already has.
@@ -247,7 +247,7 @@ fn quick_row_count_from_format(
     }
 }
 
-/// [`analyze_structure`](analyze_structure) for a caller who selected `format`.
+/// [`analyze_structure`] for a caller who selected `format`.
 ///
 /// The selection is named in the Parquet hint even when it is the format the
 /// extension already has.
