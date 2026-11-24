@@ -43,6 +43,24 @@ When reporting a security vulnerability, please include:
 - We will acknowledge your responsible disclosure publicly (with your permission)
 - We will coordinate public disclosure timing with you
 
+## Automated Checks
+
+These run in GitHub Actions on this repository; each workflow file is public
+and its runs are listed under the repository's Actions tab.
+
+| Check | What it covers | When | Workflow |
+| --- | --- | --- | --- |
+| CodeQL | Static analysis of the Rust, Python, JavaScript/TypeScript and GitHub Actions code | Every pull request, every push to `master`, weekly | [`codeql.yml`](../.github/workflows/codeql.yml) |
+| `cargo deny` | RustSec advisories, licences and sources of every crate, for the default and the all-features build | Every pull request except documentation-only ones, every push to `master`, weekly | [`security.yml`](../.github/workflows/security.yml) |
+| Trivy | Filesystem scan for known vulnerabilities, high and critical | Same as `cargo deny` | [`security.yml`](../.github/workflows/security.yml) |
+| Fuzzing | `cargo-fuzz` targets for the CSV and JSON readers, engine parity and saved-report loading, with an AddressSanitizer run | Pull requests and pushes that touch the Rust code, weekly | [`fuzz.yml`](../.github/workflows/fuzz.yml) |
+| Semgrep | Static analysis by the Semgrep AppSec Platform | Pull requests | Semgrep GitHub app; no workflow file |
+| Dependabot | Update pull requests for Cargo and uv dependencies (weekly) and GitHub Actions (monthly) | Scheduled | [`dependabot.yml`](../.github/dependabot.yml) |
+
+Every third-party GitHub Action is pinned to a full commit SHA. Python wheels
+are published to PyPI from the release workflow through trusted publishing, so
+no PyPI token is stored in the repository.
+
 ## Dependency Auditing
 
 A weekly scheduled run, and every pull request that can affect the dependency
