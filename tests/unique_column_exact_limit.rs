@@ -174,6 +174,17 @@ fn verify_reports(
         if limit >= DISTINCT && check.observed != Some(MetricValue::Count(repeated)) {
             wrong.push(format!("{route}: observed={:?}", check.observed));
         }
+        // The hint names the configured limit and a sufficient one: the
+        // column's non-null count.
+        let hint = format!(
+            "rule one out. The configured limit was {limit}. Profile again with \
+             unique_count_exact_limits={{ \"id\": {} }} to count up to the number of \
+             non-null values observed.",
+            DISTINCT + repeated
+        );
+        if limit < DISTINCT && !check.message.ends_with(&hint) {
+            wrong.push(format!("{route}: message={:?}", check.message));
+        }
         let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
         let recorded = &document["analysis_settings"]["unique_count_exact_limits"];
         let restored_limits = &restored
