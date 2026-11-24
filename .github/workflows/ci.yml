@@ -136,11 +136,12 @@ jobs:
             exit 1
           fi
 
+      # Public docs of every crate, as docs.rs renders them: a broken link,
+      # or a public item linking to a private one, fails the build.
       - name: Check documentation
-        run: |
-          echo "Checking documentation..."
-          cargo doc --no-deps --document-private-items
-          echo "Documentation check passed"
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --workspace --all-features
 
       # Guard for issue #364: swallowed errors on decode paths must carry a
       # decode-audit classification comment.
