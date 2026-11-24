@@ -69,7 +69,10 @@ async fn a_postgresql_numeric_with_trailing_zeros_is_read_from_its_digits() {
         "CREATE TABLE numeric_plain_digits_pg (x NUMERIC(23,0))".to_string(),
         format!("INSERT INTO numeric_plain_digits_pg VALUES {ROWS}"),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 
@@ -133,7 +136,10 @@ async fn a_postgresql_numeric_is_read_at_its_display_scale() {
         "CREATE TABLE numeric_display_scale_pg (x NUMERIC(9,2))".to_string(),
         format!("INSERT INTO numeric_display_scale_pg VALUES {SHORT_ROWS}"),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 
@@ -160,7 +166,10 @@ async fn a_mysql_decimal_is_read_at_its_declared_scale() {
         "CREATE TABLE numeric_display_scale_my (x DECIMAL(9,2))".to_string(),
         format!("INSERT INTO numeric_display_scale_my VALUES {SHORT_ROWS}"),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 
@@ -187,7 +196,10 @@ async fn a_mysql_decimal_with_trailing_zeros_is_read_from_its_digits() {
         "CREATE TABLE numeric_plain_digits_my (x DECIMAL(23,0))".to_string(),
         format!("INSERT INTO numeric_plain_digits_my VALUES {ROWS}"),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 

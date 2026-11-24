@@ -172,9 +172,12 @@ impl DatabaseConnector for SqliteConnector {
             let query = validate_base_query(query)?;
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Query execution failed: {}", e))
-            })?;
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Query execution failed: {}", e))
+                })?;
 
             process_rows_to_columns!(rows)
         }
@@ -213,9 +216,12 @@ impl DatabaseConnector for SqliteConnector {
 
             let query = format!("PRAGMA table_info({})", table_name);
 
-            let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Failed to get table schema: {}", e))
-            })?;
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to get table schema: {}", e))
+                })?;
 
             let mut columns = Vec::new();
             for row in rows {
@@ -240,7 +246,7 @@ impl DatabaseConnector for SqliteConnector {
 
             validate_sql_identifier(table_name)?;
             let query = format!("SELECT COUNT(*) FROM {}", table_name);
-            let count: i64 = sqlx::query_scalar(&query)
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
                 .fetch_one(pool)
                 .await
                 .map_err(|e| {

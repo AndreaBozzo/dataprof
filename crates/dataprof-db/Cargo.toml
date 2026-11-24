@@ -17,7 +17,7 @@ default = []
 # `dataprof-json` and `serde_json` decode and render JSON columns, which
 # SQLite does not have either: it stores JSON as TEXT.
 postgres = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "dep:serde_json", "sqlx/postgres", "sqlx/bigdecimal", "sqlx/json"]
-mysql = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "dep:serde_json", "sqlx/mysql", "sqlx/bigdecimal", "sqlx/json"]
+mysql = ["dep:sqlx", "dep:futures", "dep:dataprof-json", "dep:serde_json", "sqlx/mysql", "sqlx/mysql-rsa", "sqlx/bigdecimal", "sqlx/json"]
 sqlite = ["dep:sqlx", "dep:futures", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
