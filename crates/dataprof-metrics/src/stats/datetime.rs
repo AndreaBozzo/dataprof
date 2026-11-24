@@ -598,6 +598,12 @@ fn parse_flexible_full(s: &str, month_first: bool) -> Option<ParsedDateTime> {
     None
 }
 
+/// The date or wall-clock time of one text cell, with day first for an
+/// ambiguous slash date. An offset-bearing value is handled by the caller.
+pub(crate) fn parse_local_date_or_datetime(s: &str) -> Option<(NaiveDate, Option<NaiveDateTime>)> {
+    parse_flexible_full(s, false).map(|parsed| (parsed.date, parsed.datetime))
+}
+
 /// Parse a raw quality-metric value and return its calendar date.
 ///
 /// Unlike the descriptive datetime statistics path, quality predicates do not

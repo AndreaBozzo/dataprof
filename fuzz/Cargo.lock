@@ -505,6 +505,8 @@ dependencies = [
 name = "dataprof-metrics"
 version = "0.14.1"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "chrono",
  "dataprof-core",
  "log",
