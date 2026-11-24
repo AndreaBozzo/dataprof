@@ -42,7 +42,7 @@ jobs:
 
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -127,6 +127,21 @@ jobs:
         with:
           path: pages-content
 
+      # deploy-pages looks the artifact up once, and the listing can lag the
+      # upload: on 4ae77ab0 it found none 0.4 s after the upload finalized,
+      # twice. That lookup runs before any Pages deployment is created, so a
+      # second attempt after a pause is safe. Re-running a failed run does not
+      # work: the earlier attempt's artifact stays, and two are found.
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      - name: Wait before retrying the deploy
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 15
+
+      - name: Deploy to GitHub Pages (retry)
+        id: deployment-retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
