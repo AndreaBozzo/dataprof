@@ -104,34 +104,25 @@ pub fn infer_type(data: &[String]) -> DataType {
 /// for nearly every column.
 const INLINE_DECIMAL_SCALES: usize = 16;
 
-/// Cap on distinct overflow scales (`>= 16`) retained per column.
-///
-/// Adversarial scientific notation (`0e-17`, `0e-18`, ...) parses as finite
-/// `0.0` with arbitrarily large effective scale; capping distinct overflow
-/// entries bounds per-column memory while still counting every finite value
-/// toward `numeric_values_checked`.
-const MAX_OVERFLOW_DECIMAL_SCALES: usize = 1024;
-
 /// Histogram of effective decimal scales observed on finite numeric tokens.
+///
+/// Scales of 16 and above are kept in a map with no cap, so the dominant
+/// scale is exact and does not depend on merge order. Scientific notation
+/// such as `0e-17`, `0e-18`, ... parses as a finite `0.0` with any scale, so
+/// the map can hold one entry per distinct value at worst: no more than the
+/// column's exact distinct set, and counted in [`LexicalTally::heap_bytes`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct DecimalScaleHistogram {
     small: [usize; INLINE_DECIMAL_SCALES],
     overflow: BTreeMap<usize, usize>,
-    /// Values whose scale (`>= 16`) arrived after `overflow` reached
-    /// [`MAX_OVERFLOW_DECIMAL_SCALES`].
-    dropped: usize,
 }
 
 impl DecimalScaleHistogram {
     fn record(&mut self, scale: usize) {
         if scale < INLINE_DECIMAL_SCALES {
             self.small[scale] += 1;
-        } else if let Some(slot) = self.overflow.get_mut(&scale) {
-            *slot += 1;
-        } else if self.overflow.len() < MAX_OVERFLOW_DECIMAL_SCALES {
-            self.overflow.insert(scale, 1);
         } else {
-            self.dropped += 1;
+            *self.overflow.entry(scale).or_default() += 1;
         }
     }
 
@@ -140,20 +131,13 @@ impl DecimalScaleHistogram {
             *dst += *src;
         }
         for (&scale, &count) in &other.overflow {
-            if let Some(slot) = self.overflow.get_mut(&scale) {
-                *slot += count;
-            } else if self.overflow.len() < MAX_OVERFLOW_DECIMAL_SCALES {
-                self.overflow.insert(scale, count);
-            } else {
-                self.dropped += count;
-            }
+            *self.overflow.entry(scale).or_default() += count;
         }
-        self.dropped += other.dropped;
     }
 
     /// `(total_values, dominant_scale_count)` over finite numeric values.
     fn summary(&self) -> (usize, usize) {
-        let mut total = self.dropped;
+        let mut total = 0;
         let mut dominant = 0usize;
         for &count in self.small.iter().chain(self.overflow.values()) {
             total += count;
@@ -1527,19 +1511,31 @@ mod tests {
     }
 
     #[test]
-    fn decimal_scale_histogram_caps_overflow_entries_while_keeping_total_count() {
+    fn many_distinct_large_scales_keep_an_exact_mode_in_any_merge_order() {
+        // 1,024 distinct scales above the inline bins, then 2,000 values at
+        // one more scale: that last scale is the mode however the values
+        // are split and merged.
+        let spread: Vec<String> = (0..1024)
+            .map(|i| format!("0e-{}", INLINE_DECIMAL_SCALES + i))
+            .collect();
+        let repeated = vec![format!("0e-{}", INLINE_DECIMAL_SCALES + 1024); 2000];
+        let whole = LexicalTally::from_values(&[spread.clone(), repeated.clone()].concat());
+        assert_eq!(whole.decimal_scale_summary(), (3024, 2000));
+
+        let mut forward = LexicalTally::from_values(&spread);
+        forward.merge(&LexicalTally::from_values(&repeated));
+        let mut reverse = LexicalTally::from_values(&repeated);
+        reverse.merge(&LexicalTally::from_values(&spread));
+        assert_eq!(forward.decimal_scale_summary(), (3024, 2000));
+        assert_eq!(reverse.decimal_scale_summary(), (3024, 2000));
+        assert!(whole.heap_bytes() > 0);
+    }
+
+    #[test]
+    fn an_extreme_exponent_does_not_overflow_the_decimal_scale() {
         let mut tally = LexicalTally::new();
-        let total = MAX_OVERFLOW_DECIMAL_SCALES + 50;
-        for i in 0..total {
-            let scale = INLINE_DECIMAL_SCALES + i;
-            tally.record(&format!("0e-{scale}"));
-        }
-        assert_eq!(
-            tally.quality.decimal_scales.overflow.len(),
-            MAX_OVERFLOW_DECIMAL_SCALES
-        );
-        assert_eq!(tally.quality.decimal_scales.dropped, 50);
-        assert_eq!(tally.decimal_scale_summary(), (total, 1));
-        assert!(tally.heap_bytes() > 0);
+        tally.record("0e-2147483648");
+        tally.record("0e2147483647");
+        assert_eq!(tally.decimal_scale_summary(), (2, 1));
     }
 }

@@ -250,10 +250,21 @@ impl ReportAssembler {
             }
         }
 
-        ProfileReport::new(self.source, self.columns, self.execution, quality)
+        let tallied = self.lexical_tallies.is_some();
+        let mut report = ProfileReport::new(self.source, self.columns, self.execution, quality)
             .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
-            .with_analysis_settings(self.analysis_settings)
+            .with_analysis_settings(self.analysis_settings);
+        // Without tallies, consistency and precision read the retained sample,
+        // which is step 1's definition: record that, not the current one.
+        if !tallied
+            && let Some(semantics) = report.metric_semantics.as_mut()
+            && semantics.value_facts
+                == Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecision)
+        {
+            semantics.value_facts = Some(dataprof_core::ValueFacts::EveryValue);
+        }
+        report
     }
 
     /// Keep container columns out of every value-level quality check.
@@ -748,6 +759,52 @@ mod tests {
             }
             other => panic!("Expected Mixed confidence, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn value_facts_name_the_sample_when_no_tallies_were_supplied() {
+        let column = || dataprof_core::ColumnProfile {
+            name: "col".to_string(),
+            data_type: DataType::Float,
+            null_count: 0,
+            total_count: 1000,
+            unique_count: None,
+            unique_count_is_approximate: None,
+            unique_count_lower_bound: None,
+            invalid_count: None,
+            type_homogeneity: None,
+            locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
+            native_type: None,
+            stats: ColumnStats::None,
+            patterns: None,
+        };
+        let data = || HashMap::from([("col".to_string(), vec!["1.2".to_string()])]);
+        let value_facts = |tallied: bool| {
+            let mut assembler =
+                ReportAssembler::new(test_source(), ExecutionMetadata::new(1000, 1, 50))
+                    .columns(vec![column()])
+                    .with_quality_data(data());
+            if tallied {
+                assembler = assembler.with_lexical_tallies(HashMap::from([(
+                    "col".to_string(),
+                    LexicalTally::from_values(&["1.2"]),
+                )]));
+            }
+            assembler
+                .build()
+                .metric_semantics
+                .and_then(|s| s.value_facts)
+        };
+        assert_eq!(
+            value_facts(false),
+            Some(dataprof_core::ValueFacts::EveryValue)
+        );
+        assert_eq!(
+            value_facts(true),
+            Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecision)
+        );
     }
 
     #[test]

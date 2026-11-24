@@ -120,7 +120,8 @@ pub(crate) fn decimal_scale(value: &str) -> Option<usize> {
     let fractional_digits = mantissa
         .split_once('.')
         .map_or(0, |(_, fraction)| fraction.trim_end_matches('0').len());
-    Some((fractional_digits as i32 - exponent).max(0) as usize)
+    // In i64, so an exponent of i32::MIN cannot overflow the subtraction.
+    Some((fractional_digits as i64 - i64::from(exponent)).max(0) as usize)
 }
 
 #[cfg(test)]
