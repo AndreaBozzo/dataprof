@@ -246,7 +246,7 @@ fn every_route_types_and_classifies_every_value() {
                 .metric_semantics
                 .as_ref()
                 .and_then(|semantics| semantics.value_facts),
-            Some(dataprof::ValueFacts::EveryValue),
+            Some(dataprof::ValueFacts::EveryValueConsistencyPrecision),
             "[{label}] records value_facts"
         );
         for (_, expected) in &columns {

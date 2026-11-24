@@ -246,7 +246,7 @@ def test_exact_duplicate_bounds_use_container_aware_counts():
     ]
     report = dp.profile(
         pd.DataFrame({"payload": pd.Series(values, dtype=object)}),
-        quality_dimensions=["completeness", "consistency", "uniqueness"],
+        quality_dimensions=["completeness", "consistency", "uniqueness", "validity"],
     )
     quality = json.loads(report.to_json())["quality"]
 
@@ -258,7 +258,8 @@ def test_exact_duplicate_bounds_use_container_aware_counts():
     }
     confidence = quality["confidence"]["Mixed"]
     assert "duplicate_rows" in confidence["exact_dimensions"]
-    assert confidence["sampled_dimensions"] == ["consistency"]
+    assert "consistency" in confidence["exact_dimensions"]
+    assert confidence["sampled_dimensions"] == ["validity"]
 
 
 def test_arrow_compatible_containers_keep_native_types_without_fallback_markers():

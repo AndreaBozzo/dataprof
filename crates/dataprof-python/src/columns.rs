@@ -12,10 +12,10 @@ use pyo3::prelude::*;
 
 use dataprof::{
     CsvSourceMetadata, DataFrameLibrary, DataSource, DelimiterDetection, ExecutionMetadata,
-    FileFormat, MetricPack, TruncationReason, infer_type, is_null_like_token,
+    FileFormat, MetricPack, TruncationReason, is_null_like_token,
 };
 use dataprof_runtime::{
-    ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowSignature,
+    ColumnProfileInput, LexicalTally, ReportAssembler, RowCompletenessTracker, RowSignature,
     RowUniquenessTracker, build_column_profile, nested_column_profile,
 };
 
@@ -159,117 +159,122 @@ pub fn profile_columns(
     let num_cols = columns.len();
 
     // Analysis is pure Rust over owned data, so the GIL buys us nothing here.
-    let (column_profiles, sample_columns, row_duplicates, row_completeness) = py.detach(|| {
-        let mut profiles = Vec::with_capacity(num_cols);
-        let mut samples = std::collections::HashMap::new();
+    let (column_profiles, sample_columns, lexical_tallies, row_duplicates, row_completeness) = py
+        .detach(|| {
+            let mut profiles = Vec::with_capacity(num_cols);
+            let mut samples = std::collections::HashMap::new();
+            let mut tallies = std::collections::HashMap::new();
 
-        // Full-stream duplicate-row tracking over the row-aligned input,
-        // through the same `RowSignature` encoding the file engines use, so
-        // files and ad-hoc inputs holding the same data agree on duplicate
-        // counts. Null cells contribute an empty value.
-        let mut row_tracker =
-            RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
-        let mut completeness_tracker = RowCompletenessTracker::default();
-        if num_cols > 0 {
-            for row_index in 0..num_rows {
-                let mut row_signature = RowSignature::default();
-                let mut row_has_null = false;
-                for (_, cells, containers) in &columns {
-                    let value = cells[row_index].as_deref().unwrap_or("");
-                    // Validated above as ascending, so a binary search holds.
-                    if containers.binary_search(&row_index).is_ok() {
-                        row_signature.push_container_field(value);
-                    } else {
-                        row_signature.push_field(value);
+            // Full-stream duplicate-row tracking over the row-aligned input,
+            // through the same `RowSignature` encoding the file engines use, so
+            // files and ad-hoc inputs holding the same data agree on duplicate
+            // counts. Null cells contribute an empty value.
+            let mut row_tracker =
+                RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
+            let mut completeness_tracker = RowCompletenessTracker::default();
+            if num_cols > 0 {
+                for row_index in 0..num_rows {
+                    let mut row_signature = RowSignature::default();
+                    let mut row_has_null = false;
+                    for (_, cells, containers) in &columns {
+                        let value = cells[row_index].as_deref().unwrap_or("");
+                        // Validated above as ascending, so a binary search holds.
+                        if containers.binary_search(&row_index).is_ok() {
+                            row_signature.push_container_field(value);
+                        } else {
+                            row_signature.push_field(value);
+                        }
+                        // A missing cell renders empty, which `is_null_like_token`
+                        // already treats as null — the same rule that produces
+                        // `null_count` below.
+                        row_has_null |= is_null_like_token(value);
                     }
-                    // A missing cell renders empty, which `is_null_like_token`
-                    // already treats as null — the same rule that produces
-                    // `null_count` below.
-                    row_has_null |= is_null_like_token(value);
+                    row_tracker.observe(row_signature.finish());
+                    completeness_tracker.observe(row_has_null);
                 }
-                row_tracker.observe(row_signature.finish());
-                completeness_tracker.observe(row_has_null);
             }
-        }
 
-        for (col_name, cells, containers) in &columns {
-            let present: Vec<String> = cells[..num_rows]
-                .iter()
-                .flatten()
-                .filter(|v| !is_null_like_token(v))
-                .cloned()
-                .collect();
-            let null_count = num_rows - present.len();
+            for (col_name, cells, containers) in &columns {
+                let present: Vec<String> = cells[..num_rows]
+                    .iter()
+                    .flatten()
+                    .filter(|v| !is_null_like_token(v))
+                    .cloned()
+                    .collect();
+                let null_count = num_rows - present.len();
 
-            // Counted against the same null rule as `present`, so a container
-            // index on a null cell cannot make a column look fully nested.
-            let analyzed_containers = containers
-                .iter()
-                .take_while(|&&row| row < num_rows)
-                .filter(|&&row| {
-                    cells[row]
-                        .as_deref()
-                        .is_some_and(|cell| !is_null_like_token(cell))
-                })
-                .count();
-            if analyzed_containers > 0 && analyzed_containers == present.len() {
-                profiles.push(nested_column_profile(
-                    col_name.clone(),
-                    num_rows,
+                // Counted against the same null rule as `present`, so a container
+                // index on a null cell cannot make a column look fully nested.
+                let analyzed_containers = containers
+                    .iter()
+                    .take_while(|&&row| row < num_rows)
+                    .filter(|&&row| {
+                        cells[row]
+                            .as_deref()
+                            .is_some_and(|cell| !is_null_like_token(cell))
+                    })
+                    .count();
+                if analyzed_containers > 0 && analyzed_containers == present.len() {
+                    profiles.push(nested_column_profile(
+                        col_name.clone(),
+                        num_rows,
+                        null_count,
+                    ));
+                    if include_quality {
+                        samples.insert(col_name.clone(), Vec::new());
+                    }
+                    continue;
+                }
+                let (unique_count, approximate, lower_bound) =
+                    dataprof_metrics::CardinalityEstimator::count_materialized(
+                        present.iter().map(String::as_str),
+                        options.unique_count_exact_limit(col_name),
+                    );
+                let lexical = LexicalTally::from_values(&present);
+
+                let data_type = if semantic_hints.is_identifier_column(col_name) {
+                    dataprof::DataType::Identifier
+                } else {
+                    lexical.data_type()
+                };
+
+                profiles.push(build_column_profile(ColumnProfileInput {
+                    name: col_name.clone(),
+                    data_type,
+                    total_count: num_rows,
                     null_count,
-                ));
+                    unique_count: Some(unique_count),
+                    unique_count_is_approximate: Some(approximate),
+                    unique_count_lower_bound: lower_bound,
+                    sample_values: &present,
+                    text_lengths: None,
+                    boolean_counts: None,
+                    skip_statistics,
+                    skip_patterns,
+                    locale,
+                    // `present` is the full column, so the sample-derived stats
+                    // are already exact.
+                    exact_numeric: None,
+                    exact_date_matches: None,
+                    exact_dates: None,
+                    exact_lexical: Some(&lexical),
+                    decimal_values: false,
+                }));
+
                 if include_quality {
-                    samples.insert(col_name.clone(), Vec::new());
+                    samples.insert(col_name.clone(), present);
+                    tallies.insert(col_name.clone(), lexical);
                 }
-                continue;
             }
-            let (unique_count, approximate, lower_bound) =
-                dataprof_metrics::CardinalityEstimator::count_materialized(
-                    present.iter().map(String::as_str),
-                    options.unique_count_exact_limit(col_name),
-                );
 
-            let data_type = if semantic_hints.is_identifier_column(col_name) {
-                dataprof::DataType::Identifier
-            } else {
-                infer_type(&present)
-            };
-
-            profiles.push(build_column_profile(ColumnProfileInput {
-                name: col_name.clone(),
-                data_type,
-                total_count: num_rows,
-                null_count,
-                unique_count: Some(unique_count),
-                unique_count_is_approximate: Some(approximate),
-                unique_count_lower_bound: lower_bound,
-                sample_values: &present,
-                text_lengths: None,
-                boolean_counts: None,
-                skip_statistics,
-                skip_patterns,
-                locale,
-                // `present` is the full column, so the sample-derived stats
-                // are already exact.
-                exact_numeric: None,
-                exact_date_matches: None,
-                exact_dates: None,
-                exact_lexical: None,
-                decimal_values: false,
-            }));
-
-            if include_quality {
-                samples.insert(col_name.clone(), present);
-            }
-        }
-
-        (
-            profiles,
-            samples,
-            row_tracker.summary(),
-            completeness_tracker.summary(),
-        )
-    });
+            (
+                profiles,
+                samples,
+                tallies,
+                row_tracker.summary(),
+                completeness_tracker.summary(),
+            )
+        });
 
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis())
         .with_engine("columnar")
@@ -322,7 +327,9 @@ pub fn profile_columns(
         .with_analysis_options(&options);
 
     if include_quality {
-        assembler = assembler.with_quality_data(sample_columns);
+        assembler = assembler
+            .with_quality_data(sample_columns)
+            .with_lexical_tallies(lexical_tallies);
     }
 
     let report = assembler.build();

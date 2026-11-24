@@ -12,7 +12,7 @@ use dataprof_core::{
     ExecutionMetadata, QualityDimension, SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
-    MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
+    LexicalTally, MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
     RowDuplicateSummary, analysis::metrics::BifurcatedResult, columns_without_value_checks,
     compute_value_hint_bindings,
 };
@@ -34,6 +34,9 @@ pub struct ReportAssembler {
     exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
     row_completeness: Option<RowCompletenessSummary>,
+    /// Exact per-column lexical/quality tallies over every scanned value
+    /// (#788 step 2).
+    lexical_tallies: Option<HashMap<String, LexicalTally>>,
     /// What the caller profiled with, once `with_analysis_options` saw it.
     analysis_settings: Option<AnalysisSettings>,
     /// The fixed date timeliness measures against; `None` reads today's.
@@ -66,6 +69,7 @@ impl ReportAssembler {
             exact_value_hint_bindings: None,
             row_duplicates: None,
             row_completeness: None,
+            lexical_tallies: None,
             analysis_settings: None,
             reference_date: None,
             include_statistics: true,
@@ -214,6 +218,13 @@ impl ReportAssembler {
         self
     }
 
+    /// Supply exact per-column lexical/quality tallies over every scanned
+    /// value (#788 step 2), moving consistency and precision to exact counts.
+    pub fn with_lexical_tallies(mut self, tallies: HashMap<String, LexicalTally>) -> Self {
+        self.lexical_tallies = Some(tallies);
+        self
+    }
+
     /// Build the final [`ProfileReport`].
     ///
     /// This does not fail. A quality computation that returns an error leaves
@@ -254,14 +265,16 @@ impl ReportAssembler {
     /// completeness through the profile, and an input of only nested columns
     /// is still an input with columns rather than an empty one.
     fn withhold_container_values(&mut self) {
-        let Some(data) = self.quality_data.as_mut() else {
-            return;
-        };
         for column in &self.columns {
-            if column.data_type == DataType::Nested
-                && let Some(values) = data.get_mut(&column.name)
-            {
-                values.clear();
+            if column.data_type == DataType::Nested {
+                if let Some(data) = self.quality_data.as_mut()
+                    && let Some(values) = data.get_mut(&column.name)
+                {
+                    values.clear();
+                }
+                if let Some(tallies) = self.lexical_tallies.as_mut() {
+                    tallies.remove(&column.name);
+                }
             }
         }
     }
@@ -370,6 +383,7 @@ impl ReportAssembler {
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new()
             .with_row_completeness(self.row_completeness)
+            .with_lexical_tallies(self.lexical_tallies.clone())
             .with_reference_date(self.reference_date);
         match calculator.calculate_bifurcated_metrics_with_hints(
             data,
@@ -405,6 +419,7 @@ impl ReportAssembler {
     ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new()
             .with_row_completeness(self.row_completeness)
+            .with_lexical_tallies(self.lexical_tallies.clone())
             .with_reference_date(self.reference_date);
         match calculator.calculate_comprehensive_metrics_with_hints(
             data,
@@ -733,6 +748,78 @@ mod tests {
             }
             other => panic!("Expected Mixed confidence, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_streaming_with_lexical_tallies_marks_consistency_and_precision_exact() {
+        let data = HashMap::from([(
+            "col".to_string(),
+            vec!["1.2".to_string(), "3.4".to_string()],
+        )]);
+        let tallies = HashMap::from([(
+            "col".to_string(),
+            LexicalTally::from_values(&["1.2", "3.4", "5.67"]),
+        )]);
+        let col = dataprof_core::ColumnProfile {
+            name: "col".to_string(),
+            data_type: DataType::Float,
+            null_count: 0,
+            total_count: 1000,
+            unique_count: None,
+            unique_count_is_approximate: None,
+            unique_count_lower_bound: None,
+            invalid_count: None,
+            type_homogeneity: None,
+            locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
+            native_type: None,
+            stats: ColumnStats::None,
+            patterns: None,
+        };
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(1000, 1, 50))
+            .columns(vec![col])
+            .with_quality_data(data)
+            .with_lexical_tallies(tallies)
+            .build();
+
+        let quality = report.quality.expect("quality assessment");
+        match &quality.confidence {
+            MetricConfidence::Mixed {
+                exact_dimensions,
+                sampled_dimensions,
+                ..
+            } => {
+                assert!(exact_dimensions.contains(&"consistency".to_string()));
+                assert!(exact_dimensions.contains(&"precision".to_string()));
+                assert!(!sampled_dimensions.contains(&"consistency".to_string()));
+                assert!(!sampled_dimensions.contains(&"precision".to_string()));
+            }
+            other => panic!("Expected Mixed confidence, got {:?}", other),
+        }
+        assert_eq!(
+            quality.metrics.consistency.as_ref().unwrap().values_checked,
+            3
+        );
+        assert_eq!(
+            quality
+                .metrics
+                .precision
+                .as_ref()
+                .unwrap()
+                .numeric_values_checked,
+            3
+        );
+        assert_eq!(
+            quality
+                .metrics
+                .precision
+                .as_ref()
+                .unwrap()
+                .inconsistent_precision_values,
+            1
+        );
     }
 
     #[test]

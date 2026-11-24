@@ -528,7 +528,9 @@ impl FindingsInput {
     /// counted. Every other code reads exact counters, or records its
     /// sampling itself.
     pub(crate) fn reads_a_partial_sample(&self, code: FindingCode) -> bool {
-        let every_value = self.value_facts == Some(ValueFacts::EveryValue);
+        let every_value = self
+            .value_facts
+            .is_some_and(ValueFacts::has_exact_lexical_forms);
         let exempts_identifiers = match code {
             FindingCode::MixedTypes | FindingCode::LocaleNumbers if every_value => return false,
             FindingCode::MixedTypes | FindingCode::LocaleNumbers => true,
@@ -570,7 +572,7 @@ pub(crate) fn retained_sample_left_values_out(
     non_null: usize,
     classified: Option<usize>,
 ) -> Option<bool> {
-    if value_facts == Some(ValueFacts::EveryValue) {
+    if value_facts.is_some_and(ValueFacts::has_exact_lexical_forms) {
         return Some(non_null > COLUMN_SAMPLE_CAPACITY);
     }
     classified.map(|classified| classified < non_null)

@@ -385,6 +385,7 @@ pub(crate) fn profile_stream(
     if include_quality {
         assembler = assembler
             .with_quality_data(analyzer.create_sample_columns())
+            .with_lexical_tallies(analyzer.lexical_tallies())
             .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings());
     }
     let report = assembler.build();

@@ -82,7 +82,7 @@ def _status(result: dp.QualityGateResult, code: str) -> str:
 
 INCONCLUSIVE = "evidence_incomplete:quality_sampled"
 
-#: (case, bad_every of the report, allowance, overall, consistency)
+#: (case, bad_every of the report, allowance, overall, timeliness)
 CASES = [
     ("unchanged, no drop allowed", 50, 0, INCONCLUSIVE, INCONCLUSIVE),
     ("unchanged, 5 points", 50, 5, "passed", "passed"),
@@ -99,19 +99,19 @@ def test_a_sampled_score_drop_is_decided_on_both_sides_intervals(tmp_path: Path)
         reports = {bad: make(bad, tmp_path) for bad in {case[1] for case in CASES}}
         for form, read in BASELINE_FORMS.items():
             side = read(baseline)
-            for case, bad, points, overall, consistency in CASES:
+            for case, bad, points, overall, timeliness in CASES:
                 result = reports[bad].check(
                     baseline=side,
                     max_quality_score_drop=points,
-                    max_dimension_score_drops={"consistency": points},
+                    max_dimension_score_drops={"timeliness": points},
                 )
                 got = (
                     _status(result, "max_quality_score_drop"),
                     _status(result, "max_dimension_score_drop"),
                 )
-                if got != (overall, consistency):
+                if got != (overall, timeliness):
                     wrong.append(
-                        f"{route}/{form}/{case}: {got}, expected ({overall}, {consistency})"
+                        f"{route}/{form}/{case}: {got}, expected ({overall}, {timeliness})"
                     )
     assert not wrong, "\n".join(wrong)
 

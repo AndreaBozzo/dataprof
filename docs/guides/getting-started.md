@@ -204,9 +204,8 @@ Measures whether values conform to their expected types and formats.
   beside `2024-01-15`, whatever the column is called), in a minority decimal
   separator (`1,5` beside `3.5`), or
   holding both separators (`1.234,56`, counted even when every value does).
-  Counted over the values `values_checked` counts: the whole column, or a
-  sample of 10,000 values of a longer column on file, Arrow and DataFrame
-  input
+  Counted over every non-null value read (`values_checked`) on every input
+  route
 - `encoding_issues` -- invalid character encoding detected
 
 For a column with an inferred type, `data_type_consistency` is the percentage

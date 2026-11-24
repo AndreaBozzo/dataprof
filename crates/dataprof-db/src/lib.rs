@@ -9,7 +9,7 @@ use dataprof_core::{
     AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, NativeType, QualityDimension,
     QueryEngine,
 };
-use dataprof_metrics::analyze_declared_column;
+use dataprof_metrics::{LexicalTally, analyze_declared_column};
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, RowCompletenessTracker, RowSignature, RowUniquenessTracker,
     mark_container_columns,
@@ -342,6 +342,11 @@ pub async fn analyze_database_with_options(
     let execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms)
         .with_engine(query_engine.to_string());
 
+    let lexical_tallies = columns
+        .iter()
+        .map(|(name, data)| (name.to_string(), LexicalTally::from_values(data)))
+        .collect();
+
     Ok(ReportAssembler::new(
         DataSource::Query {
             engine: query_engine,
@@ -355,6 +360,7 @@ pub async fn analyze_database_with_options(
     // Quality metrics look every column up by name and never iterate for
     // presentation, so dropping the order here costs nothing.
     .with_quality_data(columns.into_map())
+    .with_lexical_tallies(lexical_tallies)
     .with_row_completeness(row_completeness)
     .with_row_duplicates(uniqueness.summary())
     .with_analysis_options(options)

@@ -957,8 +957,20 @@ fn test_streaming_bifurcation_with_large_dataset() {
                 "key_uniqueness should be exact"
             );
             assert!(
-                sampled_dimensions.contains(&"consistency".to_string()),
-                "consistency should be sampled"
+                exact_dimensions.contains(&"consistency".to_string()),
+                "consistency should be exact"
+            );
+            assert!(
+                !sampled_dimensions.contains(&"consistency".to_string()),
+                "consistency should not be sampled"
+            );
+            assert!(
+                exact_dimensions.contains(&"precision".to_string()),
+                "precision should be exact"
+            );
+            assert!(
+                !sampled_dimensions.contains(&"precision".to_string()),
+                "precision should not be sampled"
             );
             assert!(
                 sampled_dimensions.contains(&"accuracy".to_string()),

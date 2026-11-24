@@ -53,9 +53,9 @@
 mod accuracy;
 mod bounds;
 mod completeness;
-mod consistency;
+pub(crate) mod consistency;
 mod hint_binding;
-mod precision;
+pub(crate) mod precision;
 #[cfg(test)]
 mod testing;
 mod timeliness;
@@ -78,6 +78,7 @@ use timeliness::TimelinessCalculator;
 use uniqueness::UniquenessCalculator;
 use validity::ValidityCalculator;
 
+use crate::analysis::inference::LexicalTally;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{
@@ -94,6 +95,9 @@ pub struct MetricsCalculator {
     pub thresholds: IsoQualityConfig,
     /// Exact full-stream complete-record count, when the engine tracked one.
     row_completeness: Option<RowCompletenessSummary>,
+    /// Exact per-column lexical/quality tallies over every scanned value, when
+    /// the engine tracked them (#788 step 2).
+    lexical_tallies: Option<HashMap<String, LexicalTally>>,
     /// The fixed date timeliness measures against; `None` reads today's.
     reference_date: Option<chrono::NaiveDate>,
 }
@@ -115,6 +119,7 @@ impl MetricsCalculator {
         Self {
             thresholds,
             row_completeness: None,
+            lexical_tallies: None,
             reference_date: None,
         }
     }
@@ -149,6 +154,17 @@ impl MetricsCalculator {
     /// say whether two nulls shared a record.
     pub fn with_row_completeness(mut self, summary: Option<RowCompletenessSummary>) -> Self {
         self.row_completeness = summary;
+        self
+    }
+
+    /// Supply the engine's exact per-column lexical/quality tallies over every
+    /// scanned value (#788 step 2).
+    ///
+    /// When present, consistency and precision read these counters instead of
+    /// the retained sample and move from `sampled_dimensions` to
+    /// `exact_dimensions`.
+    pub fn with_lexical_tallies(mut self, tallies: Option<HashMap<String, LexicalTally>>) -> Self {
+        self.lexical_tallies = tallies;
         self
     }
 
@@ -263,7 +279,11 @@ impl MetricsCalculator {
 
         // Consistency dimension
         let consistency = if Self::is_requested(requested, QualityDimension::Consistency) {
-            let c = ConsistencyCalculator::calculate(data, column_profiles)?;
+            let c = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                ConsistencyCalculator::calculate_from_tallies(tallies, column_profiles)
+            } else {
+                ConsistencyCalculator::calculate(data, column_profiles)?
+            };
             Some(ConsistencyMetrics {
                 data_type_consistency: c.data_type_consistency,
                 format_violations: c.format_violations,
@@ -361,7 +381,11 @@ impl MetricsCalculator {
         };
 
         let precision = if Self::is_requested(requested, QualityDimension::Precision) {
-            let precision = PrecisionCalculator::calculate(data, column_profiles);
+            let precision = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                PrecisionCalculator::calculate_from_tallies(tallies, column_profiles)
+            } else {
+                PrecisionCalculator::calculate(data, column_profiles)
+            };
             Some(PrecisionMetrics {
                 decimal_places_consistency: precision.decimal_places_consistency,
                 inconsistent_precision_values: precision.inconsistent_precision_values,
@@ -559,20 +583,26 @@ impl MetricsCalculator {
             None
         };
 
-        // Phase B: Sampled dimensions from reservoir data
+        // Consistency: exact from full-stream lexical tallies when supplied
+        // (#788 step 2), otherwise sampled from reservoir data.
         let consistency = if Self::is_requested(requested, QualityDimension::Consistency) {
-            let c = if !data.is_empty() {
-                ConsistencyCalculator::calculate(data, column_profiles)?
+            let c = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                exact_dimensions.push("consistency".to_string());
+                ConsistencyCalculator::calculate_from_tallies(tallies, column_profiles)
             } else {
-                consistency::ConsistencyMetrics {
-                    data_type_consistency: 100.0,
-                    format_violations: 0,
-                    encoding_issues: 0,
-                    values_checked: 0,
-                    inconsistent_values: 0,
+                sampled_dimensions.push("consistency".to_string());
+                if !data.is_empty() {
+                    ConsistencyCalculator::calculate(data, column_profiles)?
+                } else {
+                    consistency::ConsistencyMetrics {
+                        data_type_consistency: 100.0,
+                        format_violations: 0,
+                        encoding_issues: 0,
+                        values_checked: 0,
+                        inconsistent_values: 0,
+                    }
                 }
             };
-            sampled_dimensions.push("consistency".to_string());
             Some(ConsistencyMetrics {
                 data_type_consistency: c.data_type_consistency,
                 format_violations: c.format_violations,
@@ -722,8 +752,13 @@ impl MetricsCalculator {
         };
 
         let precision = if Self::is_requested(requested, QualityDimension::Precision) {
-            let precision = PrecisionCalculator::calculate(data, column_profiles);
-            sampled_dimensions.push("precision".to_string());
+            let precision = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                exact_dimensions.push("precision".to_string());
+                PrecisionCalculator::calculate_from_tallies(tallies, column_profiles)
+            } else {
+                sampled_dimensions.push("precision".to_string());
+                PrecisionCalculator::calculate(data, column_profiles)
+            };
             Some(PrecisionMetrics {
                 decimal_places_consistency: precision.decimal_places_consistency,
                 inconsistent_precision_values: precision.inconsistent_precision_values,

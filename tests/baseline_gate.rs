@@ -470,12 +470,6 @@ fn a_baseline_without_a_score_definition_leaves_the_scores_reading_it_unevaluate
         ("json_number_reading", "consistency", "completeness", &json),
         (
             "sampled_score_estimator",
-            "consistency",
-            "completeness",
-            &sampled,
-        ),
-        (
-            "sampled_score_estimator",
             "accuracy",
             "completeness",
             &sampled,
@@ -1296,5 +1290,77 @@ fn a_baseline_that_scored_a_date_named_column_as_codes_holds_consistency_open() 
     }
     for check in &against_legacy(&words).checks {
         assert_eq!(check.status, CheckStatus::Passed, "{check:#?}");
+    }
+}
+
+#[test]
+fn a_step_1_or_0_14_baseline_with_sampled_consistency_precision_is_definition_not_comparable() {
+    // A saved 0.14 baseline (no `value_facts`) or step 1 baseline
+    // (`value_facts: "every_value"`) on >10,000 rows computed consistency and
+    // precision over the retained sample. Gating a step 2 report against
+    // either must report `definition_not_comparable` (`value_facts`) on
+    // overall, consistency and precision, never `failed`, even when the
+    // baseline's sampled score happened to be higher than the exact score.
+    let csv: String = std::iter::once("id,amount\n".to_string())
+        .chain((0..12_000).map(|row| {
+            let amount = if row >= 11_000 { "12.3456" } else { "12.34" };
+            format!("{row},{amount}\n")
+        }))
+        .collect();
+    let report = profile(&csv);
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+
+    for (label, value_facts) in [("0.14", None), ("step1", Some(json!("every_value")))] {
+        let mut baseline = summary.clone();
+        let semantics = baseline["metric_semantics"].as_object_mut().unwrap();
+        match value_facts {
+            Some(v) => {
+                semantics.insert("value_facts".to_string(), v);
+            }
+            None => {
+                semantics.remove("value_facts");
+            }
+        }
+        // Emulate a 0.14 / step 1 baseline where consistency and precision were
+        // sampled (and happened to score 100.0 on the sample).
+        baseline["quality"]["exact_dimensions"] = json!(["completeness", "duplicate_rows"]);
+        baseline["quality"]["sampled_dimensions"] =
+            json!(["consistency", "accuracy", "validity", "precision"]);
+        baseline["quality"]["dimension_scores"]["precision"] = json!(100.0);
+        baseline["quality"]["overall_score"] = json!(100.0);
+
+        let side = ReportSide::from_summary_json(&baseline.to_string()).unwrap();
+        let result = QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .max_dimension_score_drop(QualityDimension::Precision, 0.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+            .evaluate_against(&report, &side)
+            .unwrap();
+
+        for (code, subject) in [
+            (CheckCode::MaxQualityScoreDrop, None),
+            (CheckCode::MaxDimensionScoreDrop, Some("consistency")),
+            (CheckCode::MaxDimensionScoreDrop, Some("precision")),
+        ] {
+            let c = check(&result, code, subject);
+            assert!(
+                matches!(
+                    reason(c),
+                    Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "value_facts"
+                ),
+                "[{label}] {code:?} {subject:?}: {c:#?}"
+            );
+        }
+        assert_eq!(
+            check(
+                &result,
+                CheckCode::MaxDimensionScoreDrop,
+                Some("completeness")
+            )
+            .status,
+            CheckStatus::Passed,
+            "[{label}] completeness"
+        );
     }
 }

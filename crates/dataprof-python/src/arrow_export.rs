@@ -506,6 +506,7 @@ pub fn profile_dataframe(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
+            .with_lexical_tallies(analyzer.lexical_tallies())
             .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings());
     }
 
@@ -642,6 +643,7 @@ pub fn profile_arrow(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
+            .with_lexical_tallies(analyzer.lexical_tallies())
             .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings());
     }
 

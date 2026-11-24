@@ -405,7 +405,7 @@ _METRIC_SEMANTICS = {
     "date_statistics": ("every_value",),
     "outlier_spread": ("nonzero_iqr",),
     "date_forms": ("spaced_iso_datetimes",),
-    "value_facts": ("every_value",),
+    "value_facts": ("every_value", "every_value_consistency_precision"),
 }
 
 

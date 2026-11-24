@@ -1100,14 +1100,51 @@ impl ReportSide {
 
     /// Whether `value_facts` may type a column of the side otherwise, so that
     /// it may move the scores whose checks follow the type (#788). A side that
-    /// records `value_facts` typed every column under it.
+    /// records `value_facts` (step 1 or later) typed every column under it.
     pub(crate) fn may_type_columns_otherwise(&self) -> bool {
         let every_value = self
             .metric_semantics
             .as_ref()
             .and_then(|semantics| semantics.value_facts)
-            == Some(ValueFacts::EveryValue);
+            .is_some_and(ValueFacts::has_exact_lexical_forms);
         !every_value && self.columns.iter().any(ColumnSide::may_type_otherwise)
+    }
+
+    /// Whether `value_facts` step 2 (exact consistency and precision) may move
+    /// the score of `dimension` (or the overall score for `None`) on this side
+    /// (#788 step 2). A side recording `every_value_consistency_precision`
+    /// already counted both over every value; an older side (0.14 or step 1)
+    /// can move whenever consistency or precision was computed over a retained
+    /// sample rather than every value read.
+    pub(crate) fn may_sample_consistency_or_precision(
+        &self,
+        dimension: Option<QualityDimension>,
+    ) -> bool {
+        let exact = self
+            .metric_semantics
+            .as_ref()
+            .and_then(|semantics| semantics.value_facts)
+            .is_some_and(ValueFacts::has_exact_consistency_precision);
+        if exact {
+            return false;
+        }
+        match dimension {
+            Some(QualityDimension::Consistency) => !self
+                .sample_evidence(Some(QualityDimension::Consistency))
+                .is_complete(),
+            Some(QualityDimension::Precision) => !self
+                .sample_evidence(Some(QualityDimension::Precision))
+                .is_complete(),
+            None => {
+                !self
+                    .sample_evidence(Some(QualityDimension::Consistency))
+                    .is_complete()
+                    || !self
+                        .sample_evidence(Some(QualityDimension::Precision))
+                        .is_complete()
+            }
+            Some(_) => false,
+        }
     }
 
     /// Which columns the side profiled, or `None` when it did not record it.

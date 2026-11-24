@@ -1,8 +1,11 @@
 use regex::Regex;
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use dataprof_core::{LexicalClass, TypeHomogeneity};
 
+use crate::analysis::metrics::consistency::has_encoding_issue;
+use crate::analysis::metrics::precision::decimal_scale;
 use crate::types::DataType;
 
 // Date grammar shared by type inference and the date patterns in `patterns.rs`,
@@ -97,17 +100,167 @@ pub fn infer_type(data: &[String]) -> DataType {
     LexicalTally::from_values(data).data_type()
 }
 
+/// Inline bins for common decimal scales (`0..16`), avoiding heap allocation
+/// for nearly every column.
+const INLINE_DECIMAL_SCALES: usize = 16;
+
+/// Cap on distinct overflow scales (`>= 16`) retained per column.
+///
+/// Adversarial scientific notation (`0e-17`, `0e-18`, ...) parses as finite
+/// `0.0` with arbitrarily large effective scale; capping distinct overflow
+/// entries bounds per-column memory while still counting every finite value
+/// toward `numeric_values_checked`.
+const MAX_OVERFLOW_DECIMAL_SCALES: usize = 1024;
+
+/// Histogram of effective decimal scales observed on finite numeric tokens.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DecimalScaleHistogram {
+    small: [usize; INLINE_DECIMAL_SCALES],
+    overflow: BTreeMap<usize, usize>,
+    /// Values whose scale (`>= 16`) arrived after `overflow` reached
+    /// [`MAX_OVERFLOW_DECIMAL_SCALES`].
+    dropped: usize,
+}
+
+impl DecimalScaleHistogram {
+    fn record(&mut self, scale: usize) {
+        if scale < INLINE_DECIMAL_SCALES {
+            self.small[scale] += 1;
+        } else if let Some(slot) = self.overflow.get_mut(&scale) {
+            *slot += 1;
+        } else if self.overflow.len() < MAX_OVERFLOW_DECIMAL_SCALES {
+            self.overflow.insert(scale, 1);
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (dst, src) in self.small.iter_mut().zip(other.small.iter()) {
+            *dst += *src;
+        }
+        for (&scale, &count) in &other.overflow {
+            if let Some(slot) = self.overflow.get_mut(&scale) {
+                *slot += count;
+            } else if self.overflow.len() < MAX_OVERFLOW_DECIMAL_SCALES {
+                self.overflow.insert(scale, count);
+            } else {
+                self.dropped += count;
+            }
+        }
+        self.dropped += other.dropped;
+    }
+
+    /// `(total_values, dominant_scale_count)` over finite numeric values.
+    fn summary(&self) -> (usize, usize) {
+        let mut total = self.dropped;
+        let mut dominant = 0usize;
+        for &count in self.small.iter().chain(self.overflow.values()) {
+            total += count;
+            if count > dominant {
+                dominant = count;
+            }
+        }
+        (total, dominant)
+    }
+
+    fn heap_bytes(&self) -> usize {
+        if self.overflow.is_empty() {
+            0
+        } else {
+            self.overflow.len() * (std::mem::size_of::<usize>() * 2 + 16)
+        }
+    }
+}
+
+/// Per-column quality counters fed beside type inference over every scanned
+/// non-null value (#788 step 2).
+///
+/// Tracks the four `DATE_FORMAT_REGEXES` date formats, decimal separator usage,
+/// encoding issues, and the decimal scale histogram for precision.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ValueQualityCounters {
+    /// Counts per `DATE_FORMAT_REGEXES` entry (`DATE_REGEXES[0..4]`):
+    /// `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`, `YYYY/MM/DD`.
+    date_formats: [usize; 4],
+    /// Values containing both `.` and `,`.
+    both_separators: usize,
+    /// Values containing exactly one `.` and no `,`.
+    single_dot: usize,
+    /// Values containing exactly one `,` and no `.`.
+    single_comma: usize,
+    /// Values containing U+FFFD or a mojibake artifact.
+    encoding_issues: usize,
+    /// Effective decimal scales of finite numeric tokens.
+    decimal_scales: DecimalScaleHistogram,
+}
+
+impl ValueQualityCounters {
+    fn record_separators_and_encoding(&mut self, value: &str) {
+        let mut dots = 0usize;
+        let mut commas = 0usize;
+        let mut non_ascii = false;
+        for &byte in value.as_bytes() {
+            match byte {
+                b'.' => dots += 1,
+                b',' => commas += 1,
+                0x80.. => non_ascii = true,
+                _ => {}
+            }
+        }
+        if dots > 0 && commas > 0 {
+            self.both_separators += 1;
+        } else if dots == 1 {
+            self.single_dot += 1;
+        } else if commas == 1 {
+            self.single_comma += 1;
+        }
+        if non_ascii && has_encoding_issue(value) {
+            self.encoding_issues += 1;
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (dst, src) in self.date_formats.iter_mut().zip(other.date_formats.iter()) {
+            *dst += *src;
+        }
+        self.both_separators += other.both_separators;
+        self.single_dot += other.single_dot;
+        self.single_comma += other.single_comma;
+        self.encoding_issues += other.encoding_issues;
+        self.decimal_scales.merge(&other.decimal_scales);
+    }
+
+    fn format_violations(&self) -> usize {
+        let date_sum: usize = self.date_formats.iter().sum();
+        let date_max = self.date_formats.iter().copied().max().unwrap_or(0);
+        let mixed_dates = date_sum - date_max;
+
+        let mixed_separators = if self.single_dot > 0 && self.single_comma > 0 {
+            self.single_dot.min(self.single_comma)
+        } else {
+            0
+        };
+
+        mixed_dates + self.both_separators + mixed_separators
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.decimal_scales.heap_bytes()
+    }
+}
+
 /// The lexical facts about a column's non-null text values that type
-/// inference, `type_homogeneity` and `locale_number_count` read, counted one
-/// value at a time (#788).
+/// inference, `type_homogeneity`, `locale_number_count`, consistency and
+/// precision read, counted one value at a time (#788).
 ///
 /// Every engine that reads a column as text feeds each value it reads to
-/// [`Self::record`], so the type and the shares cover every value read rather
-/// than a retained sample: one zero-padded code past the sample, or a share at
-/// a type threshold, types the column the same way from a file and from
-/// memory. Memory is a few counters per column, and parts read separately
-/// combine with [`Self::merge`] in any order.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// [`Self::record`], so the type, shares, consistency and precision cover
+/// every value read rather than a retained sample: one zero-padded code,
+/// minority format, encoding issue or precision outlier past the sample gives
+/// the same result from a file and from memory. Parts read separately combine
+/// with [`Self::merge`] in any order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LexicalTally {
     /// Each value's [`LexicalClass`]: the `type_homogeneity` a profile reports.
     forms: TypeHomogeneity,
@@ -121,6 +274,8 @@ pub struct LexicalTally {
     inferred_dates: usize,
     /// Text values that are locale-formatted numbers.
     locale_numbers: usize,
+    /// Exact consistency and precision counters over the same values.
+    quality: ValueQualityCounters,
 }
 
 impl LexicalTally {
@@ -147,12 +302,28 @@ impl LexicalTally {
         let Classified {
             class,
             integer,
+            finite_float,
             inferred_date,
+            date_format,
         } = classify(trimmed);
         self.forms.record(class);
         match class {
             LexicalClass::Numeric => {
-                self.integers += usize::from(integer);
+                if integer {
+                    self.integers += 1;
+                    // Integer tokens are finite ASCII digits with optional sign
+                    // (never `.`, `,`, or non-ASCII) and effective scale 0.
+                    self.quality.decimal_scales.record(0);
+                } else {
+                    // Valid `f64` tokens are strictly ASCII with at most one `.`
+                    // and never `,`.
+                    if trimmed.as_bytes().contains(&b'.') {
+                        self.quality.single_dot += 1;
+                    }
+                    if finite_float && let Some(scale) = decimal_scale(trimmed) {
+                        self.quality.decimal_scales.record(scale);
+                    }
+                }
                 if is_zero_padded_digits(trimmed) {
                     self.zero_padded += 1;
                 }
@@ -162,12 +333,27 @@ impl LexicalTally {
             }
             // The inferred forms are a subset of the date class: a value in
             // them has a separator, so it never parses as a number first.
-            LexicalClass::Date => self.inferred_dates += usize::from(inferred_date),
+            LexicalClass::Date => {
+                self.inferred_dates += usize::from(inferred_date);
+                if let Some(index) = date_format {
+                    self.quality.date_formats[usize::from(index)] += 1;
+                    // ASCII `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`, `YYYY/MM/DD`
+                    // contain only digits, `-`, and `/`.
+                    if !trimmed.is_ascii() {
+                        self.quality.record_separators_and_encoding(trimmed);
+                    }
+                } else {
+                    self.quality.record_separators_and_encoding(trimmed);
+                }
+            }
+            // Strict booleans (`true`/`false`) are ASCII letters with no
+            // separators or encoding artifacts.
             LexicalClass::Boolean => {}
             LexicalClass::Text => {
                 if may_be_locale_number(trimmed) && LOCALE_NUMBER_REGEX.is_match(trimmed) {
                     self.locale_numbers += 1;
                 }
+                self.quality.record_separators_and_encoding(trimmed);
             }
         }
     }
@@ -189,6 +375,45 @@ impl LexicalTally {
         self.compact_dates += other.compact_dates;
         self.inferred_dates += other.inferred_dates;
         self.locale_numbers += other.locale_numbers;
+        self.quality.merge(&other.quality);
+    }
+
+    /// Heap memory held by the tally's overflow decimal-scale map.
+    pub fn heap_bytes(&self) -> usize {
+        self.quality.heap_bytes()
+    }
+
+    /// Non-null values recorded in this tally.
+    pub(crate) fn values_checked(&self) -> usize {
+        self.forms.classified_count()
+    }
+
+    /// Values matching `is_integer_token`.
+    pub(crate) fn integer_count(&self) -> usize {
+        self.integers
+    }
+
+    /// Whether the column's recorded values satisfy the digit-code share rule
+    /// (`holds_digit_codes` over every value).
+    pub(crate) fn holds_digit_codes(&self) -> bool {
+        digit_code_rule(self.forms.numeric, self.zero_padded, self.compact_dates)
+    }
+
+    /// Mixed date formats and decimal-separator violations counted over every
+    /// recorded value.
+    pub(crate) fn format_violations(&self) -> usize {
+        self.quality.format_violations()
+    }
+
+    /// Values with U+FFFD or mojibake artifacts counted over every recorded
+    /// value.
+    pub(crate) fn encoding_issues(&self) -> usize {
+        self.quality.encoding_issues
+    }
+
+    /// `(finite_numeric_values, dominant_scale_count)` for precision.
+    pub(crate) fn decimal_scale_summary(&self) -> (usize, usize) {
+        self.quality.decimal_scales.summary()
     }
 
     /// The counts by lexical class, which a profile reports as
@@ -413,21 +638,42 @@ struct Classified {
     class: LexicalClass,
     /// A numeric value that is an integer token.
     integer: bool,
+    /// A numeric value that parses as a finite `f64`.
+    finite_float: bool,
     /// A date value in a form [`is_inferred_date_token`] accepts.
     inferred_date: bool,
+    /// Index into `DATE_REGEXES[0..4]` (identical to `DATE_FORMAT_REGEXES`)
+    /// when matched.
+    date_format: Option<u8>,
 }
 
 fn classify(value: &str) -> Classified {
-    let integer = is_integer_token(value);
-    if integer || value.parse::<f64>().is_ok() {
+    if is_integer_token(value) {
         return Classified {
             class: LexicalClass::Numeric,
-            integer,
+            integer: true,
+            finite_float: true,
             inferred_date: false,
+            date_format: None,
+        };
+    }
+    if let Ok(number) = value.parse::<f64>() {
+        return Classified {
+            class: LexicalClass::Numeric,
+            integer: false,
+            finite_float: number.is_finite(),
+            inferred_date: false,
+            date_format: None,
         };
     }
     // `is_date_token`, with the inferred forms tried first and remembered.
-    let inferred_date = is_inferred_date_token(value);
+    let inferred_date_index = if may_be_date_token(value) {
+        DATE_REGEXES.iter().position(|regex| regex.is_match(value))
+    } else {
+        None
+    };
+    let inferred_date = inferred_date_index.is_some();
+    let date_format = inferred_date_index.and_then(|idx| (idx < 4).then_some(idx as u8));
     let class = if inferred_date
         || (may_be_date_token(value)
             && crate::analysis::metrics::utils::is_valid_date_format(value))
@@ -441,7 +687,9 @@ fn classify(value: &str) -> Classified {
     Classified {
         class,
         integer: false,
+        finite_float: false,
         inferred_date,
+        date_format,
     }
 }
 
@@ -1236,5 +1484,62 @@ mod tests {
         ] {
             assert!(!is_date_token(value), "{value:?} was accepted as a date");
         }
+    }
+
+    #[test]
+    fn tally_merge_matches_whole_for_consistency_and_precision_counters() {
+        let values = [
+            "42",
+            "007",
+            "20240115",
+            "12.30",
+            "12.345",
+            "1.5e-20",
+            "1.5e-20",
+            "inf",
+            "NaN",
+            "NA",
+            "2024-03-15",
+            "15/03/2024",
+            "15-03-2024",
+            "2024/03/15",
+            "2024-03-15T12:00:00.5Z",
+            "true",
+            "false",
+            "1,234.56",
+            "10,50",
+            "10.50",
+            "Caf\u{00c3}\u{00a9}",
+            "bad\u{FFFD}utf8",
+            "plain text",
+            "",
+        ];
+        let whole = LexicalTally::from_values(&values);
+        for split in [0, 1, 5, 11, 17, values.len()] {
+            let mut left = LexicalTally::from_values(&values[..split]);
+            let right = LexicalTally::from_values(&values[split..]);
+            left.merge(&right);
+            assert_eq!(left, whole, "split at {split}");
+            assert_eq!(left.format_violations(), whole.format_violations());
+            assert_eq!(left.encoding_issues(), whole.encoding_issues());
+            assert_eq!(left.decimal_scale_summary(), whole.decimal_scale_summary());
+        }
+    }
+
+    #[test]
+    fn decimal_scale_histogram_caps_overflow_entries_while_keeping_total_count() {
+        let mut tally = LexicalTally::new();
+        let total = MAX_OVERFLOW_DECIMAL_SCALES + 50;
+        for i in 0..total {
+            let scale = INLINE_DECIMAL_SCALES + i;
+            tally.record(&format!("0e-{scale}"));
+        }
+        assert_eq!(
+            tally.quality.decimal_scales.overflow.len(),
+            MAX_OVERFLOW_DECIMAL_SCALES
+        );
+        assert_eq!(tally.quality.decimal_scales.dropped, 50);
+        assert_eq!(tally.decimal_scale_summary(), (total, 1));
+        assert!(tally.heap_bytes() > 0);
     }
 }

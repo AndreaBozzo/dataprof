@@ -316,11 +316,10 @@ class ProfileReport:
         compared only between date columns whose samples hold the same rows,
         so a pair where either column has nulls is not compared.
 
-        The sample fixes each check: a column's type, dominant form, detected
-        pattern, decimal scale and outlier fences. The intervals cover the
-        scores those same checks give over every scanned value, and all
-        of them hold at once with probability ``confidence_level``. An exact
-        score's interval is the score itself.
+        The sample fixes each sampled check: a column's detected pattern and
+        outlier fences. The intervals cover the scores those same checks give
+        over every scanned value, and all of them hold at once with probability
+        ``confidence_level``. An exact score's interval is the score itself.
 
         ``None`` when every score is exact, when there is no assessment, or
         when the report was loaded from a document that does not record
