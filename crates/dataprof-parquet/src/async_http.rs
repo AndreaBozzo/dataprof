@@ -478,9 +478,7 @@ pub async fn analyze_parquet_async_http_with_options(
     })?;
     let arrow_schema = stream.schema().clone();
 
-    let mut analyzer = RecordBatchAnalyzer::new()
-        .with_semantic_hints(semantic_hints)
-        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
+    let mut analyzer = RecordBatchAnalyzer::new().with_analysis_options(options);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
 
     while let Some(batch_result) = stream.next().await {

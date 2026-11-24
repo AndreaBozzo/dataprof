@@ -1,6 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +38,7 @@ pub struct PyProfilerConfig {
     pub(crate) locale: Option<Locale>,
     pub(crate) reference_date: Option<chrono::NaiveDate>,
     pub(crate) duplicate_rows_exact_limit: Option<usize>,
+    pub(crate) unique_count_exact_limits: BTreeMap<String, usize>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
@@ -69,6 +71,7 @@ impl PyProfilerConfig {
         temporal_pairs = None,
         reference_date = None,
         duplicate_rows_exact_limit = None,
+        unique_count_exact_limits = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -94,7 +97,17 @@ impl PyProfilerConfig {
         temporal_pairs: Option<Vec<Vec<String>>>,
         reference_date: Option<&Bound<'_, PyAny>>,
         duplicate_rows_exact_limit: Option<usize>,
+        unique_count_exact_limits: Option<BTreeMap<String, usize>>,
     ) -> PyResult<Self> {
+        let unique_count_exact_limits = unique_count_exact_limits.unwrap_or_default();
+        if let Some((name, _)) = unique_count_exact_limits
+            .iter()
+            .find(|(_, limit)| **limit == 0)
+        {
+            return Err(PyValueError::new_err(format!(
+                "unique_count_exact_limits[{name:?}] must be at least 1"
+            )));
+        }
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
         let json_error_policy = jsonl_on_error
@@ -197,6 +210,7 @@ impl PyProfilerConfig {
             locale,
             reference_date,
             duplicate_rows_exact_limit,
+            unique_count_exact_limits,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
             temporal_columns: temporal_columns.unwrap_or_default(),
@@ -282,6 +296,11 @@ impl PyProfilerConfig {
     #[getter]
     fn duplicate_rows_exact_limit(&self) -> Option<usize> {
         self.duplicate_rows_exact_limit
+    }
+
+    #[getter]
+    fn unique_count_exact_limits(&self) -> BTreeMap<String, usize> {
+        self.unique_count_exact_limits.clone()
     }
 
     /// Columns selected for profiling, or `None` for every column.
@@ -401,7 +420,7 @@ impl PyProfilerConfig {
             profiler = profiler.temporal_pairs(self.temporal_pairs.clone());
         }
 
-        profiler
+        profiler.unique_count_exact_limits(self.unique_count_exact_limits.clone())
     }
 
     pub(crate) fn semantic_hints(&self) -> SemanticHints {
@@ -427,6 +446,7 @@ impl PyProfilerConfig {
             .with_locale(self.locale)
             .with_reference_date(self.reference_date)
             .with_duplicate_rows_exact_limit(self.duplicate_rows_exact_limit)
+            .with_unique_count_exact_limits(self.unique_count_exact_limits.clone())
             .with_semantic_hints(self.semantic_hints())
     }
 }

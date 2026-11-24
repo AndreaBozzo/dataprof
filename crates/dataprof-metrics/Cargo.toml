@@ -10,6 +10,7 @@ description = "Metrics and statistical analysis engine for dataprof"
 readme = "README.md"
 
 [dependencies]
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_128"] }
 chrono = { workspace = true }
 dataprof-core = { workspace = true }
 log = { workspace = true }

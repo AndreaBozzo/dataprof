@@ -1523,6 +1523,10 @@ class ProfileReport:
           before 0.10, the locale and the selection before 0.13, the clock,
           the packs and the pairs before 0.14, the clock also with no timeliness
           assessment). Two rolling clocks read on different days differ.
+          When either side configured exact distinct limits, this block also
+          includes ``unique_count_exact_limits`` with the explicit limits by
+          column. Exact distinct counts remain comparable across limit
+          changes.
           A score that moved under a different setting may not reflect a change
           in the data.
         - ``reports``: ``a`` and ``b``, each with its ``id`` and

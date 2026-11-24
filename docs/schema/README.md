@@ -1399,6 +1399,15 @@ Absence means no row tracker counted the rows (the duplicate count came from
 the retained sample), or the report predates 0.14. The field is additive and
 not `required`, so stored v1 reports remain valid.
 
+## v1 additive change: `analysis_settings.unique_count_exact_limits`
+
+Both report dialects record explicit exact distinct limits as a map from column
+names to counts in `analysis_settings.unique_count_exact_limits` (#1330).
+The map is omitted when the caller configures no limits, including on older
+reports. It records the requested limit even when the count became approximate.
+Read `unique_count_is_approximate` on the column to tell whether its exact set
+was retained. A nested column may have no distinct count.
+
 ## v1 additive change: `metric_semantics.date_forms`
 
 `metric_semantics` gains one definition:

@@ -246,6 +246,7 @@ pub async fn analyze_database_with_options(
     let query_engine = detect_query_engine(&config.connection_string);
 
     if columns.is_empty() {
+        options.validate_unique_count_exact_limits(&[])?;
         let exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis())
             .with_engine(query_engine.to_string());
         return Ok(ReportAssembler::new(

@@ -127,6 +127,7 @@ def profile_file(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
@@ -215,6 +216,10 @@ def profile_file(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        unique_count_exact_limits: Positive distinct-count limits per named
+            column, for example ``{"order_id": 2_000_000}``. A named column keeps
+            XXH3-128 fingerprints in memory outside ``memory_limit_mb``.
+            Its count becomes approximate above the limit.
         duplicate_rows_exact_limit: Distinct rows counted exactly for
             duplicate rows before the count becomes an estimate. None keeps
             one million. An estimated count witnesses no duplicate, so
@@ -248,6 +253,7 @@ def profile_file(
             "temporal_columns": temporal_columns,
             "temporal_pairs": temporal_pairs,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
+            "unique_count_exact_limits": unique_count_exact_limits,
         }
     )
     _check_source_version(source_version)
@@ -275,6 +281,7 @@ def profile_file(
         temporal_pairs=temporal_pairs,
         reference_date=reference_date,
         duplicate_rows_exact_limit=duplicate_rows_exact_limit,
+        unique_count_exact_limits=unique_count_exact_limits,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)._record_source_version(source_version)
@@ -306,6 +313,7 @@ def profile(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
@@ -404,6 +412,10 @@ def profile(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        unique_count_exact_limits: Positive distinct-count limits per named
+            column, for example ``{"order_id": 2_000_000}``. A named column keeps
+            XXH3-128 fingerprints in memory outside ``memory_limit_mb``.
+            Its count becomes approximate above the limit.
         duplicate_rows_exact_limit: Distinct rows counted exactly for
             duplicate rows before the count becomes an estimate. None keeps
             one million. An estimated count witnesses no duplicate, so
@@ -437,6 +449,7 @@ def profile(
             "temporal_columns": temporal_columns,
             "temporal_pairs": temporal_pairs,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
+            "unique_count_exact_limits": unique_count_exact_limits,
         }
     )
     _check_source_version(source_version)
@@ -467,6 +480,7 @@ def profile(
             temporal_pairs=temporal_pairs,
             reference_date=reference_date,
             duplicate_rows_exact_limit=duplicate_rows_exact_limit,
+            unique_count_exact_limits=unique_count_exact_limits,
             source_version=source_version,
         )
 
@@ -487,6 +501,7 @@ def profile(
                 temporal_pairs,
                 reference_date,
                 duplicate_rows_exact_limit,
+                unique_count_exact_limits,
             )
         ):
             return ProfilerConfig(
@@ -501,6 +516,7 @@ def profile(
                 temporal_pairs=temporal_pairs,
                 reference_date=reference_date,
                 duplicate_rows_exact_limit=duplicate_rows_exact_limit,
+                unique_count_exact_limits=unique_count_exact_limits,
             )
         return None
 

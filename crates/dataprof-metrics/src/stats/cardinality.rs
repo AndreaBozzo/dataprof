@@ -15,9 +15,16 @@
 //! so the count is exact in every practical sense; a collision can only make
 //! it one lower.
 //!
+//! A column the caller names in `unique_count_exact_limits` (#1330) keeps
+//! XXH3-128 fingerprints instead, up to its own limit, and memory pressure does
+//! not release that set: the caller opted into its memory, about 19 to 39 bytes
+//! per distinct value with the table's overhead. A collision there has probability
+//! about `n^2 / 2^129`, under 1e-24 at 25 million values.
+//!
 //! Because the HLL uses the same precision and hash for all engines, two engines
-//! fed the same values produce the same estimate; they agree exactly in the
-//! high-cardinality regime and within HLL's ~1% relative error elsewhere.
+//! fed the same values in the same counting mode produce the same estimate; they
+//! agree exactly in the high-cardinality regime and within HLL's ~1% relative
+//! error elsewhere.
 
 use std::collections::HashSet;
 use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
@@ -32,13 +39,13 @@ use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
 /// pressure and report the count as approximate.
 pub const EXACT_CARDINALITY_THRESHOLD: usize = 1_000_000;
 
-/// Hasher for keys that already are well-mixed 64-bit hashes.
+/// Hasher for keys that already are well-mixed fingerprints.
 #[derive(Default)]
 struct FingerprintHasher(u64);
 
 impl Hasher for FingerprintHasher {
     fn write(&mut self, bytes: &[u8]) {
-        // Only `u64` fingerprints are hashed with this, through `write_u64`.
+        // Fingerprints use the specialized integer methods below.
         for byte in bytes {
             self.0 = self.0.rotate_left(8) ^ u64::from(*byte);
         }
@@ -48,12 +55,25 @@ impl Hasher for FingerprintHasher {
         self.0 = value;
     }
 
+    fn write_u128(&mut self, value: u128) {
+        self.0 = value as u64 ^ (value >> 64) as u64;
+    }
+
     fn finish(&self) -> u64 {
         self.0
     }
 }
 
-type Fingerprints = HashSet<u64, BuildHasherDefault<FingerprintHasher>>;
+type Fingerprints<T> = HashSet<T, BuildHasherDefault<FingerprintHasher>>;
+
+#[derive(Debug, Clone)]
+enum DistinctCount {
+    DefaultWidth(Fingerprints<u64>, usize),
+    Wide(Fingerprints<u128>, usize),
+    // The count held when the exact set was dropped. Collisions can only
+    // reduce this count, so it is a lower bound on the true count (#819).
+    Spilled(usize),
+}
 
 /// Fixed-seed hasher so a given string maps to the same HLL register on every
 /// run and in every engine -- distinct-count estimates must be reproducible.
@@ -166,24 +186,17 @@ impl Default for HyperLogLog {
 
 /// Exact-then-approximate distinct-count estimator with bounded memory.
 ///
-/// Reports an exact count while fewer than [`EXACT_CARDINALITY_THRESHOLD`]
-/// distinct values have been seen, then an HLL estimate. [`Self::is_approximate`]
-/// tells callers which regime a given count came from.
+/// The default exact set holds up to [`EXACT_CARDINALITY_THRESHOLD`]
+/// distinct values. The count becomes an HLL estimate if it exceeds its limit
+/// or releases the set under memory pressure. [`Self::is_approximate`] reports
+/// which kind of count is available.
 #[derive(Debug, Clone)]
 pub struct CardinalityEstimator {
-    /// Fingerprints of the distinct values, dropped once the threshold is
-    /// crossed or the caller spills them under memory pressure.
-    exact: Option<Fingerprints>,
-    /// Fed on every insert so the estimate is accurate the moment `exact` is gone.
+    count: DistinctCount,
+    /// Fed on every insert so estimates are available when the exact set is dropped.
     hll: HyperLogLog,
-    threshold: usize,
     /// Values inserted, duplicates included: the ceiling on any distinct count.
     inserted: u64,
-    /// Distinct values the exact set held when it was dropped: the floor on
-    /// any distinct count once only the sketch is left (#819). Fingerprints
-    /// can only collide into fewer entries than there are values, so this
-    /// never exceeds the true count.
-    floor: usize,
 }
 
 impl CardinalityEstimator {
@@ -193,11 +206,22 @@ impl CardinalityEstimator {
 
     pub fn with_threshold(threshold: usize) -> Self {
         Self {
-            exact: Some(Fingerprints::default()),
+            count: DistinctCount::DefaultWidth(Fingerprints::default(), threshold),
             hll: HyperLogLog::new(),
-            threshold,
             inserted: 0,
-            floor: 0,
+        }
+    }
+
+    /// Use a caller-chosen limit with 128-bit fingerprints. This exact set
+    /// spills only when its distinct count exceeds the limit.
+    pub fn with_exact_limit(limit: Option<usize>) -> Self {
+        match limit {
+            Some(limit) => Self {
+                count: DistinctCount::Wide(Fingerprints::default(), limit),
+                hll: HyperLogLog::new(),
+                inserted: 0,
+            },
+            None => Self::new(),
         }
     }
 
@@ -206,10 +230,16 @@ impl CardinalityEstimator {
         self.inserted += 1;
         let hash = HyperLogLog::hash(value);
         self.hll.insert_hash(hash);
-        if let Some(exact) = self.exact.as_mut() {
-            exact.insert(hash);
-            self.spill_if_over_budget();
+        match &mut self.count {
+            DistinctCount::DefaultWidth(set, _) => {
+                set.insert(hash);
+            }
+            DistinctCount::Wide(set, _) => {
+                set.insert(twox_hash::XxHash3_128::oneshot(value.as_bytes()));
+            }
+            DistinctCount::Spilled(_) => return,
         }
+        self.spill_if_over_budget();
     }
 
     /// Same as [`Self::insert`]. Kept for callers that hold an owned `String`;
@@ -221,23 +251,25 @@ impl CardinalityEstimator {
 
     /// Drop the exact set now and answer from the sketch from here on.
     ///
-    /// For callers under memory pressure: the sketch has seen every value, so
-    /// the estimate stays honest, and [`Self::is_approximate`] reports it.
+    /// Under memory pressure, release a default-width set. Named sets stay
+    /// exact up to their configured limit. After a spill, [`Self::is_approximate`] reports it.
     pub fn spill(&mut self) {
-        self.floor = self.distinct_lower_bound();
-        self.exact = None;
+        if let DistinctCount::DefaultWidth(set, _) = &self.count {
+            self.count = DistinctCount::Spilled(set.len());
+        }
     }
 
     /// Drop the exact set once it exceeds the budget: the HLL has already seen
     /// every value, so the estimate stays accurate without holding the memory.
     #[inline]
     fn spill_if_over_budget(&mut self) {
-        if self
-            .exact
-            .as_ref()
-            .is_some_and(|exact| exact.len() > self.threshold)
-        {
-            self.spill();
+        let (count, limit) = match &self.count {
+            DistinctCount::DefaultWidth(set, limit) => (set.len(), *limit),
+            DistinctCount::Wide(set, limit) => (set.len(), *limit),
+            DistinctCount::Spilled(_) => return,
+        };
+        if count > limit {
+            self.count = DistinctCount::Spilled(count);
         }
     }
 
@@ -249,17 +281,17 @@ impl CardinalityEstimator {
     /// set held is impossible for the same reason, so the estimate never
     /// falls under [`Self::distinct_lower_bound`] (#819).
     pub fn estimate(&self) -> usize {
-        match &self.exact {
-            Some(exact) => exact.len(),
-            None => (self.hll.count() as usize)
+        match &self.count {
+            DistinctCount::Spilled(floor) => (self.hll.count() as usize)
                 .min(usize::try_from(self.inserted).unwrap_or(usize::MAX))
-                .max(self.floor),
+                .max(*floor),
+            _ => self.distinct_lower_bound(),
         }
     }
 
     /// Whether [`Self::estimate`] is an HLL approximation rather than an exact count.
     pub fn is_approximate(&self) -> bool {
-        self.exact.is_none()
+        matches!(self.count, DistinctCount::Spilled(_))
     }
 
     /// A count the true distinct count is certain to reach: the exact count
@@ -269,9 +301,10 @@ impl CardinalityEstimator {
     /// Unlike [`Self::estimate`], this holds with certainty, so it can bound a
     /// score without spending any of a confidence budget (#819).
     pub fn distinct_lower_bound(&self) -> usize {
-        match &self.exact {
-            Some(exact) => exact.len(),
-            None => self.floor,
+        match &self.count {
+            DistinctCount::DefaultWidth(set, _) => set.len(),
+            DistinctCount::Wide(set, _) => set.len(),
+            DistinctCount::Spilled(floor) => *floor,
         }
     }
 
@@ -282,21 +315,18 @@ impl CardinalityEstimator {
         let floor = self
             .distinct_lower_bound()
             .max(other.distinct_lower_bound());
-        match (self.exact.as_mut(), other.exact.as_ref()) {
-            (Some(mine), Some(theirs)) => {
-                mine.extend(theirs.iter().cloned());
-                if mine.len() > self.threshold {
-                    // The union's own size, which is at least `floor`.
-                    self.spill();
-                }
+        match (&mut self.count, &other.count) {
+            (DistinctCount::DefaultWidth(mine, _), DistinctCount::DefaultWidth(theirs, _)) => {
+                mine.extend(theirs.iter().copied());
             }
-            // If either side already spilled, the union can only be larger, so the
-            // merged result is approximate too; the merged HLL carries the estimate.
-            _ => {
-                self.exact = None;
-                self.floor = floor;
+            (DistinctCount::Wide(mine, _), DistinctCount::Wide(theirs, _)) => {
+                mine.extend(theirs.iter().copied());
             }
+            // A spilled side or a different hash width cannot contribute to
+            // an exact union. The merged HLL still has both inputs.
+            _ => self.count = DistinctCount::Spilled(floor),
         }
+        self.spill_if_over_budget();
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
@@ -306,11 +336,43 @@ impl CardinalityEstimator {
     /// Heap held by the exact set alone: what [`Self::spill`] gives back.
     /// Zero once spilled, and zero for a set that has never held a value.
     pub fn exact_bytes(&self) -> usize {
-        // decode-audit: no-data — once the estimator spills, the exact set is
-        // dropped (None), so it genuinely holds zero bytes.
-        self.exact
-            .as_ref()
-            .map_or(0, |set| hash_table_bytes::<u64>(set.capacity()))
+        // decode-audit: no-data — after a spill, the estimator holds only its sketch
+        // and the distinct count at the time of the spill.
+        match &self.count {
+            DistinctCount::DefaultWidth(set, _) => hash_table_bytes::<u64>(set.capacity()),
+            DistinctCount::Wide(set, _) => hash_table_bytes::<u128>(set.capacity()),
+            DistinctCount::Spilled(_) => 0,
+        }
+    }
+
+    /// Heap held by the exact set that can be reclaimed under memory pressure.
+    pub fn budgeted_exact_bytes(&self) -> usize {
+        match &self.count {
+            DistinctCount::Wide(..) => 0,
+            _ => self.exact_bytes(),
+        }
+    }
+
+    /// Count distinct values from a materialized column. Keep the full-value
+    /// set when no limit was requested, as this route already has the values.
+    /// Returns the count, approximation flag and lower bound after spilling.
+    pub fn count_materialized<'a>(
+        values: impl Iterator<Item = &'a str>,
+        exact_limit: Option<usize>,
+    ) -> (usize, bool, Option<usize>) {
+        let Some(limit) = exact_limit else {
+            return (values.collect::<HashSet<_>>().len(), false, None);
+        };
+        let mut estimator = Self::with_exact_limit(Some(limit));
+        for value in values {
+            estimator.insert(value);
+        }
+        let approximate = estimator.is_approximate();
+        (
+            estimator.estimate(),
+            approximate,
+            approximate.then(|| estimator.distinct_lower_bound()),
+        )
     }
 }
 
@@ -334,8 +396,8 @@ fn hash_table_bytes<T>(capacity: usize) -> usize {
     buckets * (std::mem::size_of::<T>() + 1) + GROUP_WIDTH
 }
 
-/// Spill exact sets, the largest first, until those left hold at most
-/// `budget` bytes. Returns the bytes they still hold.
+/// Spill reclaimable exact sets, the largest first, until those left charge
+/// at most `budget` bytes to the budget. Returns the bytes still charged.
 ///
 /// Ties go by position, so pass the estimators in column order and the choice
 /// does not depend on hash order. A spilled count is reported approximate.
@@ -347,14 +409,14 @@ pub fn spill_largest_exact_sets(
 ) -> usize {
     let mut held: usize = estimators
         .iter()
-        .map(|estimator| estimator.exact_bytes())
+        .map(|estimator| estimator.budgeted_exact_bytes())
         .sum();
     if held <= budget {
         return held;
     }
     let mut by_size: Vec<(usize, usize)> = estimators
         .iter()
-        .map(|estimator| estimator.exact_bytes())
+        .map(|estimator| estimator.budgeted_exact_bytes())
         .enumerate()
         .filter(|&(_, bytes)| bytes > 0)
         .collect();
@@ -389,6 +451,48 @@ mod tests {
 
     fn spilled_over(distinct: usize) -> CardinalityEstimator {
         fill(CardinalityEstimator::with_threshold(SPILL_AT), distinct)
+    }
+
+    #[test]
+    fn a_named_limit_stores_and_merges_full_xxh3_128_fingerprints() {
+        let mut left = CardinalityEstimator::with_exact_limit(Some(2));
+        left.insert("001");
+        let mut right = CardinalityEstimator::with_exact_limit(Some(2));
+        right.insert("001");
+        right.insert("1");
+        left.merge(&right);
+
+        let DistinctCount::Wide(fingerprints, _) = &left.count else {
+            panic!("named limits must retain a 128-bit set");
+        };
+        let expected = ["001", "1"].map(|value| twox_hash::XxHash3_128::oneshot(value.as_bytes()));
+        assert_eq!(fingerprints.len(), expected.len());
+        assert!(expected.iter().all(|hash| fingerprints.contains(hash)));
+        left.insert("2");
+        assert!(left.is_approximate());
+        assert_eq!(left.distinct_lower_bound(), 3);
+    }
+
+    #[test]
+    fn pinned_distinct_sets_are_outside_the_spill_budget() {
+        let mut pinned = fill(CardinalityEstimator::with_exact_limit(Some(20)), 20);
+        let mut default = fill(CardinalityEstimator::new(), 100);
+        pinned.spill();
+        assert!(pinned.exact_bytes() > 0);
+        assert_eq!(pinned.budgeted_exact_bytes(), 0);
+        let budget = default.exact_bytes();
+        assert_eq!(
+            spill_largest_exact_sets(&mut [&mut pinned, &mut default], budget),
+            budget
+        );
+        assert!(!default.is_approximate());
+        assert_eq!(
+            spill_largest_exact_sets(&mut [&mut pinned, &mut default], 0),
+            0
+        );
+        assert_eq!(pinned.estimate(), 20);
+        assert!(!pinned.is_approximate());
+        assert!(default.is_approximate());
     }
 
     #[test]

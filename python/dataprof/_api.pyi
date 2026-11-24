@@ -43,6 +43,7 @@ def profile(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
@@ -73,6 +74,7 @@ def profile_file(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path with file-oriented options."""

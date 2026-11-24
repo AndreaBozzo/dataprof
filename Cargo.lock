@@ -1071,6 +1071,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "twox-hash",
  "wide",
 ]
 
@@ -1128,6 +1129,7 @@ dependencies = [
  "dataprof-core",
  "dataprof-csv",
  "dataprof-json",
+ "dataprof-metrics",
  "dataprof-parquet",
  "dataprof-runtime",
  "pyo3",

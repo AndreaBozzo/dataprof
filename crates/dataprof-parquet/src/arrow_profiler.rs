@@ -422,7 +422,10 @@ impl ArrowProfiler {
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
             std::collections::HashMap::new();
         for name in projected_header_names {
-            column_analyzers.insert(name.clone(), ColumnAnalyzer::new());
+            column_analyzers.insert(
+                name.clone(),
+                ColumnAnalyzer::with_exact_limit(self.options.unique_count_exact_limit(name)),
+            );
         }
 
         // `with_bounds` already stops at the cap, so nothing here re-applies it.
@@ -475,7 +478,7 @@ impl ArrowProfiler {
             // within the memory limit, as the incremental engine does.
             let held: usize = column_analyzers
                 .values()
-                .map(|analyzer| analyzer.cardinality.exact_bytes())
+                .map(|analyzer| analyzer.cardinality.budgeted_exact_bytes())
                 .sum::<usize>()
                 + row_tracker.exact_bytes();
             if held > exact_sets_budget {
@@ -757,11 +760,11 @@ struct ColumnAnalyzer {
 }
 
 impl ColumnAnalyzer {
-    fn new() -> Self {
+    fn with_exact_limit(limit: Option<usize>) -> Self {
         Self {
             total_count: 0,
             null_count: 0,
-            cardinality: CardinalityEstimator::new(),
+            cardinality: CardinalityEstimator::with_exact_limit(limit),
             numeric: NumericAccumulator::new(),
             min_length: usize::MAX,
             max_length: 0,
@@ -1519,7 +1522,7 @@ mod tests {
     #[test]
     fn test_typed_array_is_rejected_without_changing_column_state() -> Result<(), DataProfilerError>
     {
-        let mut analyzer = ColumnAnalyzer::new();
+        let mut analyzer = ColumnAnalyzer::with_exact_limit(None);
         let typed = arrow::array::Float64Array::from(vec![Some(42.0), None, Some(f64::NAN)]);
         let error = analyzer
             .process_array(&typed)

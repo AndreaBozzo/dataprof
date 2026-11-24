@@ -30,10 +30,14 @@ pub use dataprof_core::{
     TextLengthUnit, TextStats, TruncationReason, TypeHomogeneity, ValueFacts,
     validate_unique_column_names,
 };
-pub use dataprof_csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
+pub use dataprof_csv::{
+    CsvParserConfig, analyze_csv_file, analyze_csv_file_with_options, analyze_csv_from_reader,
+    analyze_csv_from_reader_with_options,
+};
 pub use dataprof_json::{
     JsonErrorPolicy, JsonFormat, JsonParserConfig, analyze_json_file,
     analyze_json_file_with_options, analyze_json_from_reader,
+    analyze_json_from_reader_with_options,
 };
 pub use dataprof_metrics::{
     AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,

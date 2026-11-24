@@ -132,6 +132,7 @@ dp.profile(
     temporal_pairs=None,             # list[tuple[str, str]] -- start/end pairs compared as given
     reference_date=None,             # datetime.date | "YYYY-MM-DD" -- the date timeliness measures against
     duplicate_rows_exact_limit=None, # int -- distinct rows counted exactly for duplicate rows (default 1,000,000)
+    unique_count_exact_limits=None,  # dict[str, int] -- exact distinct limits for named columns
     source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
@@ -1236,6 +1237,22 @@ check left unevaluated by an estimate names the limit that would decide it.
 The exact count compares 64-bit fingerprints of the rows, so two different
 rows read as one duplicate with probability about `n^2 / 2^65` over `n`
 distinct rows: 3e-8 at one million, 2e-5 at 27 million.
+
+Set `unique_count_exact_limits={"order_id": 2_000_000}` when profiling to
+let `unique_columns=["order_id"]` decide after the usual streaming distinct
+count becomes approximate. Use `--unique-count-exact-limit order_id=2000000`
+on `python -m dataprof.check`. Each named column keeps an in-memory set of
+XXH3-128 fingerprints outside `memory_limit_mb`, using about 19 to 39 bytes
+per distinct non-null value before temporary growth costs. Once a column
+exceeds its limit, the report estimates its distinct count and the gate
+returns `approximate_count`. Each limit must be positive and name a profiled
+column. On a complete scan, a passing uniqueness check proves there are no
+repeats. A failing check can count a collision as a repeat.
+
+The report records the requested map in
+`analysis_settings["unique_count_exact_limits"]`. `compare()` shows differences
+in the map under `configuration`. `max_distinct_drop` compares exact counts
+across limits and returns `approximate_count` when either count is estimated.
 
 `min_rows` reads the report's `execution.rows_processed`. Rows already read do
 not go away when more are read, so a scan that read at least `min_rows` rows

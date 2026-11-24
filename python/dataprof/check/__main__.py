@@ -141,6 +141,13 @@ def _positive_int(value: str) -> int:
     return result
 
 
+def _column_exact_limit(value: str) -> tuple[str, int]:
+    name, separator, limit = value.rpartition("=")
+    if not separator:
+        raise argparse.ArgumentTypeError("expected COLUMN=LIMIT")
+    return name, _positive_int(limit)
+
+
 def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
     """Detect --json (or an unambiguous abbreviation) using argparse's own rules.
 
@@ -400,6 +407,13 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
             "count duplicate rows exactly up to ROWS distinct rows (default: 1000000), so "
             "--max-duplicate-rows can decide on a larger source; costs 10-20 bytes per row"
         ),
+    )
+    parser.add_argument(
+        "--unique-count-exact-limit",
+        action="append",
+        metavar="COLUMN=LIMIT",
+        type=_column_exact_limit,
+        help="count distinct values exactly up to LIMIT for COLUMN; repeatable",
     )
     parser.add_argument(
         "--metric",
@@ -915,6 +929,7 @@ def _run_single(
             max_rows=args.max_rows,
             metrics=args.metrics,
             duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
+            unique_count_exact_limits=dict(args.unique_count_exact_limit or ()),
             source_version=args.source_version,
         )
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
@@ -993,6 +1008,7 @@ def _run_multi(
                 max_rows=args.max_rows,
                 metrics=args.metrics,
                 duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
+                unique_count_exact_limits=dict(args.unique_count_exact_limit or ()),
                 source_version=args.source_version,
             )
             result = report.check(**policy)

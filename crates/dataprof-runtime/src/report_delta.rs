@@ -412,6 +412,10 @@ pub struct ConfigurationComparison {
     /// `None` on a side written before 0.14, which recorded only the
     /// columns the pairs named (see [`RecordedHints::temporal_pair_columns`]).
     pub temporal_pairs: SettingComparison<Vec<TemporalPair>>,
+    /// The explicitly configured distinct limits. Absent when neither report
+    /// used the option. Exact counts remain comparable across limit changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_count_exact_limits: Option<SettingComparison<BTreeMap<String, usize>>>,
 }
 
 /// Which columns each side has.
@@ -574,6 +578,18 @@ impl ReportDelta {
                     b.temporal_pairs.clone(),
                     |left, right| same_pairs(left, right),
                 ),
+                unique_count_exact_limits: [
+                    &a.unique_count_exact_limits,
+                    &b.unique_count_exact_limits,
+                ]
+                .into_iter()
+                .any(|limits| limits.as_ref().is_some_and(|limits| !limits.is_empty()))
+                .then(|| {
+                    SettingComparison::new(
+                        a.unique_count_exact_limits.clone(),
+                        b.unique_count_exact_limits.clone(),
+                    )
+                }),
             },
             schema: SchemaChange {
                 added,
@@ -645,6 +661,7 @@ pub struct ReportSide {
     /// The temporal pairs the side declared, `None` when it did not record
     /// them.
     temporal_pairs: Option<Vec<TemporalPair>>,
+    unique_count_exact_limits: Option<BTreeMap<String, usize>>,
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
@@ -977,6 +994,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .and_then(|settings| settings.temporal_pairs.clone()),
+            unique_count_exact_limits: report
+                .analysis_settings
+                .as_ref()
+                .map(|settings| settings.unique_count_exact_limits.clone()),
             schema_declared: declares_schema(&report.data_source),
             json_numbers: may_read_json_numbers(&report.data_source),
             unlisted_components: unlisted,
@@ -1271,6 +1292,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .and_then(|settings| settings.temporal_pairs.clone()),
+            unique_count_exact_limits: summary
+                .analysis_settings
+                .as_ref()
+                .map(|settings| settings.unique_count_exact_limits.clone()),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has

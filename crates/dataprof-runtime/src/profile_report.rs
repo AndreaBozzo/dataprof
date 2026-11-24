@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use dataprof_core::{
@@ -497,6 +498,9 @@ pub struct AnalysisSettings {
     )]
     #[schemars(with = "Vec<TemporalPair>")]
     pub temporal_pairs: Option<Vec<TemporalPair>>,
+    /// Caller-chosen exact distinct limits, by profiled column name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unique_count_exact_limits: BTreeMap<String, usize>,
 }
 
 /// A start/end column pair declared through `temporal_pairs`.
@@ -589,6 +593,7 @@ impl AnalysisSettings {
             temporal_pairs: Some(TemporalPair::canonical(
                 &options.semantic_hints().temporal_pairs,
             )),
+            unique_count_exact_limits: options.unique_count_exact_limits().clone(),
         }
     }
 }

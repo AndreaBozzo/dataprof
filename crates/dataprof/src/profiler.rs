@@ -71,6 +71,8 @@ pub struct ProfilerConfig {
     /// becomes an estimate. `None` (the default) keeps one million. See
     /// [`Profiler::duplicate_rows_exact_limit`].
     pub duplicate_rows_exact_limit: Option<usize>,
+    /// Explicit distinct-count limits by column name.
+    pub unique_count_exact_limits: std::collections::BTreeMap<String, usize>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
@@ -103,6 +105,7 @@ impl Default for ProfilerConfig {
             locale: None,
             reference_date: None,
             duplicate_rows_exact_limit: None,
+            unique_count_exact_limits: std::collections::BTreeMap::new(),
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
             temporal_columns: Vec::new(),
@@ -347,6 +350,16 @@ impl Profiler {
     /// ```
     pub fn duplicate_rows_exact_limit(mut self, limit: usize) -> Self {
         self.config.duplicate_rows_exact_limit = Some(limit);
+        self
+    }
+
+    /// Keep exact distinct counts for the named columns up to their limits.
+    /// See [`AnalysisOptions::with_unique_count_exact_limits`].
+    pub fn unique_count_exact_limits(
+        mut self,
+        limits: std::collections::BTreeMap<String, usize>,
+    ) -> Self {
+        self.config.unique_count_exact_limits = limits;
         self
     }
 
@@ -677,6 +690,7 @@ impl Profiler {
             .with_locale(self.config.locale)
             .with_reference_date(self.config.reference_date)
             .with_duplicate_rows_exact_limit(self.config.duplicate_rows_exact_limit)
+            .with_unique_count_exact_limits(self.config.unique_count_exact_limits.clone())
             .with_semantic_hints(hints)
     }
 
