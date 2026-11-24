@@ -148,6 +148,7 @@ provides-extras = ["all", "jupyter", "pandas"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "arro3-core", specifier = ">=0.9" },
     { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "maturin", specifier = ">=1.5,<2.0" },
     { name = "pandas", specifier = ">=2.0.0" },
