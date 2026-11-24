@@ -66,6 +66,41 @@ fn decode_component(component: &str) -> Result<String, DataProfilerError> {
 }
 
 impl ConnectionInfo {
+    /// A `sqlite://` URL whose path is a Windows drive path (`C:\data\x.db`,
+    /// `C:/data/x.db`) or a UNC path (`\\server\share\x.db`). SQLx opens these
+    /// as written: it strips the scheme, splits at the first `?` and
+    /// percent-decodes the path. Read as a URL, the drive letter became a host
+    /// and the backslash an invalid port, so the connector refused the URL.
+    fn parse_sqlite_windows_path(
+        connection_string: &str,
+    ) -> Result<Option<ConnectionInfo>, DataProfilerError> {
+        let Some(rest) = connection_string.strip_prefix("sqlite://") else {
+            return Ok(None);
+        };
+        let bytes = rest.as_bytes();
+        let drive = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/');
+        if !drive && !rest.starts_with(r"\\") {
+            return Ok(None);
+        }
+
+        let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+        Ok(Some(ConnectionInfo {
+            scheme: "sqlite".to_string(),
+            host: None,
+            port: None,
+            username: None,
+            password: None,
+            database: None,
+            path: Some(decode_component(path)?),
+            query_params: url::form_urlencoded::parse(query.as_bytes())
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect(),
+        }))
+    }
+
     /// Parse a connection string into its components
     pub fn parse(connection_string: &str) -> Result<Self, DataProfilerError> {
         if !connection_string.contains("://") {
@@ -79,6 +114,10 @@ impl ConnectionInfo {
                 path: Some(connection_string.to_string()),
                 query_params: Vec::new(),
             });
+        }
+
+        if let Some(info) = Self::parse_sqlite_windows_path(connection_string)? {
+            return Ok(info);
         }
 
         let url =
@@ -319,6 +358,42 @@ mod tests {
 
         assert_eq!(info.scheme, "sqlite");
         assert_eq!(info.database_type(), "sqlite");
+    }
+
+    /// A Windows drive or UNC path after `sqlite://` is read the way SQLx
+    /// reads it: the whole text before `?` is the file, decoded, and the
+    /// query keeps its options. As a URL, `C:\` was refused as a bad port.
+    #[test]
+    fn a_sqlite_url_with_a_windows_path_reads_as_that_file() {
+        for (url, path, query) in [
+            (r"sqlite://C:\data\x.db", r"C:\data\x.db", vec![]),
+            (
+                r"sqlite://C:\data\my%20x.db?mode=ro",
+                r"C:\data\my x.db",
+                vec![("mode".to_string(), "ro".to_string())],
+            ),
+            (
+                "sqlite://d:/data/x.db?mode=rwc",
+                "d:/data/x.db",
+                vec![("mode".to_string(), "rwc".to_string())],
+            ),
+            (
+                r"sqlite://\\server\share\x.db",
+                r"\\server\share\x.db",
+                vec![],
+            ),
+        ] {
+            let info = ConnectionInfo::parse(url).unwrap_or_else(|e| panic!("{url}: {e}"));
+            assert_eq!(info.scheme, "sqlite", "{url}");
+            assert_eq!(info.database_type(), "sqlite", "{url}");
+            assert_eq!(info.path.as_deref(), Some(path), "{url}");
+            assert_eq!((&info.host, info.port), (&None, None), "{url}");
+            assert_eq!(info.query_params, query, "{url}");
+        }
+
+        // A one-letter host with a port is still a URL, not a drive.
+        let host = ConnectionInfo::parse("sqlite://c:5/x.db").unwrap();
+        assert_eq!((host.host.as_deref(), host.port), (Some("c"), Some(5)));
     }
 
     #[test]

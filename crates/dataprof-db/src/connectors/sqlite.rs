@@ -391,6 +391,11 @@ mod tests {
             ":memory:",
             "/path/to/database.db",
             "relative/path.db",
+            r"sqlite://C:\data\path.db",
+            r"sqlite://C:\data\path.db?mode=ro",
+            "sqlite://C:/data/path.db",
+            r"sqlite://\\server\share\path.db",
+            r"C:\data\path.db",
         ];
 
         for form in forms {
