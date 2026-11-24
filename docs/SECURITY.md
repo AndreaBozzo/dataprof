@@ -54,6 +54,7 @@ and its runs are listed under the repository's Actions tab.
 | `cargo deny` | RustSec advisories, licences and sources of every crate, for the default and the all-features build | Every pull request except documentation-only ones, every push to `master`, weekly | [`security.yml`](../.github/workflows/security.yml) |
 | Trivy | Filesystem scan for known vulnerabilities, high and critical | Same as `cargo deny` | [`security.yml`](../.github/workflows/security.yml) |
 | Fuzzing | `cargo-fuzz` targets for the CSV and JSON readers, engine parity and saved-report loading, with an AddressSanitizer run | Pull requests and pushes that touch the Rust code, weekly | [`fuzz.yml`](../.github/workflows/fuzz.yml) |
+| Semgrep | Static analysis by the Semgrep AppSec Platform | Pull requests | Semgrep GitHub app; no workflow file |
 | Dependabot | Update pull requests for Cargo and uv dependencies (weekly) and GitHub Actions (monthly) | Scheduled | [`dependabot.yml`](../.github/dependabot.yml) |
 
 Every third-party GitHub Action is pinned to a full commit SHA. Python wheels
