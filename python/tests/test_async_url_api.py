@@ -288,6 +288,31 @@ class TestAsyncUrlProfiling:
         assert report.columns > 0
         assert report.source_type == "file"
 
+    def test_remote_parquet_honours_the_named_distinct_limit(self, url_server):
+        import dataprof
+
+        if not dataprof.capabilities().remote_parquet:
+            pytest.skip("Remote Parquet profiling requires the parquet-async feature")
+        wrong = []
+        for limit in (1, 10):
+            limits = {"id": limit}
+            remote = _run(profile_url, url_server["parquet"], unique_count_exact_limits=limits)
+            local = dataprof.profile_file(PARQUET_FILE, unique_count_exact_limits=limits)
+            for report in (remote, local):
+                summary = report.to_dict()
+                if summary["analysis_settings"].get("unique_count_exact_limits") != {"id": limit}:
+                    wrong.append((report.source, "analysis_settings", summary["analysis_settings"]))
+                expected = "inconclusive" if limit == 1 else "pass"
+                verdict = report.check(unique_columns=["id"]).verdict
+                if verdict != expected:
+                    wrong.append((report.source, "verdict", verdict, expected))
+            remote_id = next(c for c in remote.to_dict()["columns"] if c["name"] == "id")
+            local_id = next(c for c in local.to_dict()["columns"] if c["name"] == "id")
+            for field in ("unique_count", "unique_count_is_approximate"):
+                if remote_id[field] != local_id[field]:
+                    wrong.append((limit, field, remote_id[field], local_id[field]))
+        assert not wrong, wrong
+
     @pytest.mark.parametrize("cap", [0, 1, 2])
     def test_capped_parquet_url_matches_local_sample(self, url_server, cap):
         import dataprof

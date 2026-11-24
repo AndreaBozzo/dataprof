@@ -157,7 +157,8 @@ impl IncrementalProfiler {
         // Initialize streaming statistics collection
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb)
             .with_semantic_hints(self.options.semantic_hints())
-            .with_duplicate_rows_exact_limit(self.options.duplicate_rows_exact_limit());
+            .with_duplicate_rows_exact_limit(self.options.duplicate_rows_exact_limit())
+            .with_unique_count_exact_limits(self.options.unique_count_exact_limits());
 
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);

@@ -12,6 +12,7 @@ from datetime import date as _date
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
+from ._arguments import _USIZE_MAX
 from ._columns import _LEXICAL_CLASS_ORDER, _homogeneity_counts
 from ._report_schema import _QUALITY_DIMENSIONS
 
@@ -483,6 +484,18 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
         read["metric_packs"] = list(packs)
     if "temporal_pairs" in settings:
         read["temporal_pairs"] = _read_temporal_pairs(settings["temporal_pairs"])
+    if "unique_count_exact_limits" in settings:
+        limits = settings["unique_count_exact_limits"]
+        if not isinstance(limits, dict) or any(
+            not isinstance(name, str) or type(limit) is not int or not 0 <= limit <= _USIZE_MAX
+            for name, limit in limits.items()
+        ):
+            raise ValueError(
+                "from_dict(): 'analysis_settings.unique_count_exact_limits' "
+                "must map column names to unsigned integer limits."
+            )
+        if limits:
+            read["unique_count_exact_limits"] = dict(sorted(limits.items()))
     return read
 
 

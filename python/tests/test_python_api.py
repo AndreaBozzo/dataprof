@@ -864,6 +864,7 @@ class TestNamespace:
             "temporal_pairs",
             "reference_date",
             "duplicate_rows_exact_limit",
+            "unique_count_exact_limits",
             "source_version",
         }
         actual_params = set(sig.parameters.keys())

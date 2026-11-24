@@ -8,7 +8,7 @@
 //! [`AnalysisOptions`] bundles them so a path either carries the whole selection
 //! or does not compile.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::NaiveDate;
 
@@ -30,6 +30,7 @@ pub struct AnalysisOptions {
     semantic_hints: SemanticHints,
     reference_date: Option<NaiveDate>,
     duplicate_rows_exact_limit: Option<usize>,
+    unique_count_exact_limits: BTreeMap<String, usize>,
 }
 
 impl AnalysisOptions {
@@ -90,6 +91,25 @@ impl AnalysisOptions {
     pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
         self.duplicate_rows_exact_limit = limit;
         self
+    }
+
+    /// Keep exact distinct counts for the named columns up to their limits.
+    ///
+    /// Each count uses XXH3-128 fingerprints. Its set stays outside the
+    /// memory budget and the count becomes approximate if it exceeds its limit.
+    pub fn with_unique_count_exact_limits(mut self, limits: BTreeMap<String, usize>) -> Self {
+        self.unique_count_exact_limits = limits;
+        self
+    }
+
+    /// The explicitly requested exact distinct limits by column name.
+    pub fn unique_count_exact_limits(&self) -> &BTreeMap<String, usize> {
+        &self.unique_count_exact_limits
+    }
+
+    /// The explicitly requested exact distinct limit for this column.
+    pub fn unique_count_exact_limit(&self, column: &str) -> Option<usize> {
+        self.unique_count_exact_limits.get(column).copied()
     }
 
     /// The packs to compute, with an empty quality-dimension selection folded in.
@@ -177,6 +197,42 @@ impl AnalysisOptions {
         self.columns.is_some()
     }
 
+    /// Validate exact distinct limits against the discovered source schema.
+    pub fn validate_unique_count_exact_limits(
+        &self,
+        available: &[String],
+    ) -> Result<(), DataProfilerError> {
+        for (name, &limit) in &self.unique_count_exact_limits {
+            if limit == 0 {
+                return Err(DataProfilerError::invalid_config(
+                    &format!("unique_count_exact_limits[{name:?}] must be at least 1"),
+                    "Give each named column a positive distinct count.",
+                ));
+            }
+            if !available.contains(name) {
+                return Err(DataProfilerError::invalid_config(
+                    &format!(
+                        "unique_count_exact_limits names column {name:?} absent from the source"
+                    ),
+                    "Choose column names from the source schema.",
+                ));
+            }
+            if self
+                .columns
+                .as_ref()
+                .is_some_and(|columns| !columns.contains(name))
+            {
+                return Err(DataProfilerError::invalid_config(
+                    &format!(
+                        "unique_count_exact_limits names column {name:?} excluded from profiling"
+                    ),
+                    "Include that column in the column projection.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve the selected columns against a source schema.
     ///
     /// Returned indices follow source order, not request order, so every input
@@ -186,6 +242,7 @@ impl AnalysisOptions {
         &self,
         available: &[String],
     ) -> Result<Option<Vec<usize>>, DataProfilerError> {
+        self.validate_unique_count_exact_limits(available)?;
         let Some(requested) = &self.columns else {
             return Ok(None);
         };

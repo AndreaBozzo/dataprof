@@ -322,9 +322,7 @@ pub(crate) fn profile_stream(
                 .collect::<Vec<_>>(),
         )
         .map_err(|error| analysis_error_to_py(&error))?;
-    let mut analyzer = RecordBatchAnalyzer::new()
-        .with_semantic_hints(hints)
-        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
+    let mut analyzer = RecordBatchAnalyzer::new().with_analysis_options(&options);
     analyzer
         .initialize_schema(&schema)
         .map_err(analyzer_error_to_py)?;

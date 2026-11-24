@@ -5,8 +5,8 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataType, Locale, NativeType, SemanticHintBinding, SemanticHintKind,
-    SemanticHints, char_len,
+    AnalysisOptions, ColumnProfile, DataType, Locale, NativeType, SemanticHintBinding,
+    SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
@@ -702,7 +702,7 @@ pub struct RecordBatchAnalyzer {
     column_order: Vec<String>,
     total_rows: usize,
     row_tracker: BatchRowTracker,
-    semantic_hints: SemanticHints,
+    options: AnalysisOptions,
     /// Bytes the exact distinct sets may hold before they spill.
     exact_sets_budget: usize,
 }
@@ -721,13 +721,13 @@ impl RecordBatchAnalyzer {
             column_order: Vec::new(),
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
-            semantic_hints: SemanticHints::default(),
+            options: AnalysisOptions::default(),
             exact_sets_budget: DEFAULT_EXACT_SETS_BUDGET,
         }
     }
 
     pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
-        self.semantic_hints = hints.clone();
+        self.options = self.options.with_semantic_hints(hints.clone());
         self
     }
 
@@ -735,6 +735,18 @@ impl RecordBatchAnalyzer {
     /// batch is processed. See [`RowUniquenessTracker::with_exact_limit`].
     pub fn with_duplicate_rows_exact_limit(mut self, limit: Option<usize>) -> Self {
         self.row_tracker = BatchRowTracker::with_exact_limit(limit);
+        self
+    }
+
+    /// Configure the analyzer before the Arrow schema is initialized.
+    ///
+    /// Replaces every analysis setting, including semantic hints and the
+    /// duplicate-rows limit set by earlier builder calls, so call it first and
+    /// apply [`Self::with_semantic_hints`] or
+    /// [`Self::with_duplicate_rows_exact_limit`] after it.
+    pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
+        self.options = options.clone();
+        self.row_tracker = BatchRowTracker::with_exact_limit(options.duplicate_rows_exact_limit());
         self
     }
 
@@ -751,18 +763,22 @@ impl RecordBatchAnalyzer {
             .collect();
         dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
 
-        let pair_columns = self.semantic_hints.temporal_pair_columns();
+        self.options.validate_unique_count_exact_limits(&names)?;
+        let hints = self.options.semantic_hints();
+        let pair_columns = hints.temporal_pair_columns();
         for field in schema.fields() {
             let column_name = field.name().to_string();
-            let positive_hint = self.semantic_hints.is_positive_column(&column_name);
-            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name)
+            let positive_hint = hints.is_positive_column(&column_name);
+            let temporal_hint = hints.is_temporal_column(&column_name)
                 || pair_columns.contains(&column_name.as_str());
+            let exact_limit = self.options.unique_count_exact_limit(&column_name);
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
                 let mut analyzer = ColumnAnalyzer::with_value_hints(
                     field.data_type(),
                     positive_hint,
                     temporal_hint,
+                    exact_limit,
                 );
                 // Every caller of this analyzer holds a declared Arrow schema:
                 // a Parquet file's, or the one an Arrow producer exported. The
@@ -832,7 +848,7 @@ impl RecordBatchAnalyzer {
         let held: usize = self
             .column_analyzers
             .values()
-            .map(|analyzer| analyzer.cardinality.exact_bytes())
+            .map(|analyzer| analyzer.cardinality.budgeted_exact_bytes())
             .sum::<usize>()
             + self.row_tracker.exact_bytes();
         if held > self.exact_sets_budget {
@@ -922,7 +938,8 @@ impl RecordBatchAnalyzer {
 
     /// Exact value-driven semantic-hint evidence over every processed batch.
     pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
-        self.semantic_hints
+        self.options
+            .semantic_hints()
             .iter()
             .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
             .filter_map(|(kind, column)| {
@@ -972,13 +989,14 @@ pub struct ColumnAnalyzer {
 
 impl ColumnAnalyzer {
     pub fn new(data_type: &arrow::datatypes::DataType) -> Self {
-        Self::with_value_hints(data_type, false, false)
+        Self::with_value_hints(data_type, false, false, None)
     }
 
     fn with_value_hints(
         data_type: &arrow::datatypes::DataType,
         positive_hint: bool,
         temporal_hint: bool,
+        exact_limit: Option<usize>,
     ) -> Self {
         Self {
             // The physical encoding is stripped once, here, so nothing
@@ -987,7 +1005,7 @@ impl ColumnAnalyzer {
             native_type: None,
             total_count: 0,
             null_count: 0,
-            cardinality: CardinalityEstimator::new(),
+            cardinality: CardinalityEstimator::with_exact_limit(exact_limit),
             numeric: NumericAccumulator::new(),
             min_length: usize::MAX,
             max_length: 0,

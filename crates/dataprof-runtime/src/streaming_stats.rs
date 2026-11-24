@@ -1,6 +1,6 @@
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_streaming};
@@ -280,13 +280,17 @@ pub struct StreamingStatistics {
 
 impl StreamingStatistics {
     pub fn new() -> Self {
+        Self::with_exact_limit(None)
+    }
+
+    fn with_exact_limit(limit: Option<usize>) -> Self {
         Self {
             count: 0,
             null_count: 0,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
             welford: NumericAccumulator::new(),
-            distinct: CardinalityEstimator::new(),
+            distinct: CardinalityEstimator::with_exact_limit(limit),
             sampler: StreamReservoirSampler::new(COLUMN_SAMPLE_CAPACITY),
             text_length_tracker: TextLengthStats::new(),
             date_match_count: 0,
@@ -379,7 +383,8 @@ impl StreamingStatistics {
     }
 
     /// Answer distinct counts from the sketch from here on, freeing the exact
-    /// set. For memory pressure; the count is then reported approximate.
+    /// set, for memory pressure; the count is then reported approximate. A
+    /// column named in `unique_count_exact_limits` keeps its set and stays exact.
     pub fn spill_distinct(&mut self) {
         self.distinct.spill();
     }
@@ -619,7 +624,8 @@ impl RowUniquenessTracker {
         self.distinct.memory_usage_bytes()
     }
 
-    /// Heap held by the exact set of row signatures: what [`Self::spill`] frees.
+    /// Heap held by the exact set of row signatures. [`Self::spill`] frees it
+    /// unless the caller set the limit.
     pub fn exact_bytes(&self) -> usize {
         self.distinct.exact_bytes()
     }
@@ -743,6 +749,7 @@ pub struct StreamingColumnCollection {
     row_tracker: RowUniquenessTracker,
     completeness_tracker: RowCompletenessTracker,
     hint_bindings: ValueHintBindingAccumulator,
+    unique_count_exact_limits: BTreeMap<String, usize>,
 }
 
 impl StreamingColumnCollection {
@@ -754,6 +761,7 @@ impl StreamingColumnCollection {
             row_tracker: RowUniquenessTracker::default(),
             completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
+            unique_count_exact_limits: BTreeMap::new(),
         }
     }
 
@@ -765,6 +773,7 @@ impl StreamingColumnCollection {
             row_tracker: RowUniquenessTracker::default(),
             completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
+            unique_count_exact_limits: BTreeMap::new(),
         }
     }
 
@@ -781,11 +790,20 @@ impl StreamingColumnCollection {
         self
     }
 
+    /// Configure exact distinct sets before any columns are initialized.
+    pub fn with_unique_count_exact_limits(mut self, limits: &BTreeMap<String, usize>) -> Self {
+        self.unique_count_exact_limits = limits.clone();
+        self
+    }
+
+    fn new_column(&self, name: &str) -> StreamingStatistics {
+        StreamingStatistics::with_exact_limit(self.unique_count_exact_limits.get(name).copied())
+    }
+
     pub fn init_columns(&mut self, headers: &[String]) {
         for header in headers {
             if !self.columns.contains_key(header) {
-                self.columns
-                    .insert(header.clone(), StreamingStatistics::default());
+                self.columns.insert(header.clone(), self.new_column(header));
                 self.ordered_names.push(header.clone());
             }
         }
@@ -805,7 +823,7 @@ impl StreamingColumnCollection {
         let stats = StreamingStatistics {
             count: prior_rows,
             null_count: prior_rows,
-            ..Default::default()
+            ..self.new_column(header)
         };
         self.columns.insert(header.to_string(), stats);
         self.ordered_names.push(header.to_string());
@@ -853,10 +871,9 @@ impl StreamingColumnCollection {
                 stats.update(&value);
             } else {
                 self.ordered_names.push(header.clone());
-                self.columns
-                    .entry(header.clone())
-                    .or_default()
-                    .update(&value);
+                let mut stats = self.new_column(header);
+                stats.update(&value);
+                self.columns.insert(header.clone(), stats);
             }
             // Same null definition the column counters use, so the record
             // count and the cell counts always describe the same nulls.
@@ -921,11 +938,17 @@ impl StreamingColumnCollection {
         self.budgeted_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
     }
 
-    /// [`Self::memory_usage_bytes`] less a row-tracker exact set the caller's
-    /// limit keeps outside the budget. See
-    /// [`RowUniquenessTracker::budgeted_exact_bytes`].
+    /// Caller-pinned row and column sets do not spend the memory budget.
     fn budgeted_usage_bytes(&self) -> usize {
-        self.memory_usage_bytes() - self.row_tracker.exact_bytes()
+        self.columns
+            .values()
+            .map(|stats| {
+                stats.memory_usage_bytes() - stats.distinct.exact_bytes()
+                    + stats.distinct.budgeted_exact_bytes()
+            })
+            .sum::<usize>()
+            + self.row_tracker.memory_usage_bytes()
+            - self.row_tracker.exact_bytes()
             + self.row_tracker.budgeted_exact_bytes()
     }
 
@@ -968,7 +991,7 @@ impl StreamingColumnCollection {
             .iter()
             .enumerate()
             .filter_map(|(position, name)| {
-                let bytes = self.columns.get(name)?.exact_distinct_bytes();
+                let bytes = self.columns.get(name)?.distinct.budgeted_exact_bytes();
                 (bytes > 0).then_some((position, bytes))
             })
             .collect();
@@ -1042,7 +1065,12 @@ impl StreamingColumnCollection {
             row_tracker,
             mut completeness_tracker,
             hint_bindings,
+            unique_count_exact_limits,
         } = other;
+
+        if self_rows == 0 && self.columns.is_empty() && self.unique_count_exact_limits.is_empty() {
+            self.unique_count_exact_limits = unique_count_exact_limits;
+        }
 
         // Signatures are positional over the record's own headers, so they
         // only mean the same thing on both sides when both read the same

@@ -223,7 +223,11 @@ pub fn profile_columns(
                 }
                 continue;
             }
-            let unique_count = present.iter().collect::<HashSet<_>>().len();
+            let (unique_count, approximate, lower_bound) =
+                dataprof_metrics::CardinalityEstimator::count_materialized(
+                    present.iter().map(String::as_str),
+                    options.unique_count_exact_limit(col_name),
+                );
 
             let data_type = if semantic_hints.is_identifier_column(col_name) {
                 dataprof::DataType::Identifier
@@ -237,9 +241,8 @@ pub fn profile_columns(
                 total_count: num_rows,
                 null_count,
                 unique_count: Some(unique_count),
-                // Distinct values are counted with an exact HashSet above.
-                unique_count_is_approximate: Some(false),
-                unique_count_lower_bound: None,
+                unique_count_is_approximate: Some(approximate),
+                unique_count_lower_bound: lower_bound,
                 sample_values: &present,
                 text_lengths: None,
                 boolean_counts: None,

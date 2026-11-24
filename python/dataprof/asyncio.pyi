@@ -52,6 +52,7 @@ async def profile_bytes(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def profile_file(
@@ -79,6 +80,7 @@ async def profile_file(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def profile_url(
@@ -106,6 +108,7 @@ async def profile_url(
     temporal_pairs: list[tuple[str, str]] | None = None,
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
+    unique_count_exact_limits: dict[str, int] | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def infer_schema_stream(

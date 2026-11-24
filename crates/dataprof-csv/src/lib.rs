@@ -496,8 +496,32 @@ pub fn analyze_csv_from_reader<R: Read>(
     ),
     DataProfilerError,
 > {
-    let scan = scan_csv(reader, config)?;
-    let profiles = profile_builder::profiles_from_streaming(&scan.column_stats, false, false, None);
+    analyze_csv_from_reader_with_options(reader, config, &AnalysisOptions::default())
+}
+
+/// Profile a CSV reader with the caller's analysis options.
+/// The returned header names describe the full source schema.
+pub fn analyze_csv_from_reader_with_options<R: Read>(
+    reader: R,
+    config: &CsvParserConfig,
+    options: &AnalysisOptions,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        Vec<String>,
+    ),
+    DataProfilerError,
+> {
+    let scan = scan_csv(reader, config, options)?;
+    let profiles = profile_builder::profiles_from_streaming_with_hints(
+        &scan.column_stats,
+        !options.include_statistics(),
+        !options.include_patterns(),
+        options.locale(),
+        options.semantic_hints(),
+    );
 
     Ok((
         profiles,
@@ -521,7 +545,11 @@ struct CsvScan {
     csv_metadata: CsvSourceMetadata,
 }
 
-fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, DataProfilerError> {
+fn scan_csv<R: Read>(
+    reader: R,
+    config: &CsvParserConfig,
+    options: &AnalysisOptions,
+) -> Result<CsvScan, DataProfilerError> {
     let mut csv_builder = ReaderBuilder::new();
     csv_builder.has_headers(config.has_header);
     csv_builder.flexible(config.flexible);
@@ -568,7 +596,11 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
             .collect()
     };
 
-    let mut column_stats = StreamingColumnCollection::new();
+    let selected = options.column_indices(&header_names)?;
+    let mut column_stats = StreamingColumnCollection::new()
+        .with_semantic_hints(options.semantic_hints())
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit())
+        .with_unique_count_exact_limits(options.unique_count_exact_limits());
     // A header declares the columns even when no data records follow it.
     column_stats.init_columns(&header_names);
     let mut rows_read = 0;
@@ -602,6 +634,14 @@ fn scan_csv<R: Read>(reader: R, config: &CsvParserConfig) -> Result<CsvScan, Dat
         rows_read += 1;
     }
 
+    if let Some(selected) = selected {
+        let names = selected
+            .into_iter()
+            .map(|index| header_names[index].clone())
+            .collect::<Vec<_>>();
+        column_stats.retain_columns(&names);
+    }
+
     Ok(CsvScan {
         column_stats,
         header_names,
@@ -622,6 +662,15 @@ pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_csv_file_with_options(file_path, config, &AnalysisOptions::default())
+}
+
+/// Analyze a CSV file with the caller's profiling options.
+pub fn analyze_csv_file_with_options(
+    file_path: &Path,
+    config: &CsvParserConfig,
+    options: &AnalysisOptions,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     dataprof_core::binary_input::reject_binary_input(file_path)?;
     let start = std::time::Instant::now();
@@ -629,10 +678,15 @@ pub fn analyze_csv_file(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let scan = scan_csv(buf_reader, config)?;
+    let scan = scan_csv(buf_reader, config, options)?;
     let column_stats = &scan.column_stats;
-    let column_profiles =
-        profile_builder::profiles_from_streaming(column_stats, false, false, None);
+    let column_profiles = profile_builder::profiles_from_streaming_with_hints(
+        column_stats,
+        !options.include_statistics(),
+        !options.include_patterns(),
+        options.locale(),
+        options.semantic_hints(),
+    );
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -654,14 +708,13 @@ pub fn analyze_csv_file(
         execution = execution.with_truncation(reason);
     }
 
-    // This path takes no analysis options: it profiles with the defaults,
-    // so it records them rather than leaving its settings unknown.
     Ok(ReportAssembler::new(file_source, execution)
-        .with_analysis_options(&AnalysisOptions::default())
+        .with_analysis_options(options)
         .columns(column_profiles)
         .with_quality_data(sample_columns)
         .with_row_duplicates(column_stats.row_duplicate_summary())
         .with_row_completeness(column_stats.row_completeness_summary())
+        .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
         .build())
 }
 

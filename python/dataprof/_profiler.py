@@ -191,6 +191,11 @@ class Profiler:
         self._kwargs["duplicate_rows_exact_limit"] = limit
         return self
 
+    def unique_count_exact_limits(self, limits: dict[str, int]) -> Profiler:
+        """Keep exact distinct counts for the named columns up to their limits."""
+        self._kwargs["unique_count_exact_limits"] = dict(limits)
+        return self
+
     def metrics(self, packs: list[str]) -> Profiler:
         """Select metric packs to compute.
 

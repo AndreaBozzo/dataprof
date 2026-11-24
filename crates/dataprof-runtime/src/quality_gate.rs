@@ -1843,7 +1843,7 @@ impl QualityPolicy {
                 .column_profiles
                 .iter()
                 .find(|candidate| &candidate.name == column);
-            checks.push(self.unique_column_check(column, profile, scan));
+            checks.push(self.unique_column_check(report, column, profile, scan));
         }
         for (column, days) in &self.max_date_age {
             let profile = report
@@ -2472,6 +2472,7 @@ impl QualityPolicy {
     /// [`unique_columns`](Self::unique_columns).
     fn unique_column_check(
         &self,
+        report: &ProfileReport,
         column: &str,
         profile: Option<&ColumnProfile>,
         scan: Evidence,
@@ -2508,6 +2509,22 @@ impl QualityPolicy {
             check.message = "this column's distinct count is an estimate, or not recorded as \
                              exact, which can neither witness a repeated value nor rule one out"
                 .to_string();
+            if profile.unique_count_is_approximate == Some(true) {
+                let values = profile.total_count.saturating_sub(profile.null_count);
+                let requested = report
+                    .analysis_settings
+                    .as_ref()
+                    .and_then(|settings| settings.unique_count_exact_limits.get(column));
+                if let Some(limit) = requested {
+                    check
+                        .message
+                        .push_str(&format!(". The configured limit was {limit}"));
+                }
+                check.message.push_str(&format!(
+                    ". Profile again with unique_count_exact_limits={{ {column:?}: {values} }} \
+                     to count up to the number of non-null values observed."
+                ));
+            }
             return check;
         }
         let values = profile.total_count.saturating_sub(profile.null_count);

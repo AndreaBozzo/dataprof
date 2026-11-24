@@ -8,7 +8,9 @@ use crate::stats::numeric::{
     compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
     compute_numeric_stats_with_parsed_count,
 };
-use crate::stats::{calculate_datetime_stats, calculate_text_stats_from_refs};
+use crate::stats::{
+    CardinalityEstimator, calculate_datetime_stats, calculate_text_stats_from_refs,
+};
 
 /// Which parts of a column analysis to perform.
 ///
@@ -24,6 +26,7 @@ struct ColumnAnalysis {
     locale: Option<Locale>,
     /// Leave `unique_count` absent instead of counting distinct values.
     skip_unique_count: bool,
+    unique_count_exact_limit: Option<usize>,
     /// The source declared a decimal, so a `Float` column's values are read
     /// as a decimal's renderings, as `build_column_profile` reads an Arrow
     /// decimal's (#1268).
@@ -56,6 +59,7 @@ pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
             skip_patterns: false,
             locale: None,
             skip_unique_count: false,
+            unique_count_exact_limit: None,
             decimal_values: false,
         },
     )
@@ -71,6 +75,7 @@ pub fn analyze_column_fast(name: &str, data: &[String]) -> ColumnProfile {
             skip_patterns: true,
             locale: None,
             skip_unique_count: true,
+            unique_count_exact_limit: None,
             decimal_values: false,
         },
     )
@@ -110,6 +115,7 @@ pub fn analyze_declared_column(
             skip_patterns: !options.include_patterns(),
             locale: options.locale(),
             skip_unique_count: false,
+            unique_count_exact_limit: options.unique_count_exact_limit(name),
             decimal_values: native_type
                 .as_ref()
                 .is_some_and(NativeType::declares_decimal),
@@ -236,17 +242,18 @@ fn analyze_column_with_options(
         )
     };
 
-    let unique_count = if analysis.skip_unique_count {
-        None
-    } else {
-        // Count unique non-null values (aligned with whitespace logic)
-        Some(
-            data.iter()
-                .filter(|s| !is_null_like_token(s.trim()))
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-        )
-    };
+    let (unique_count, unique_count_is_approximate, unique_count_lower_bound) =
+        if analysis.skip_unique_count {
+            (None, None, None)
+        } else {
+            let (count, approximate, lower_bound) = CardinalityEstimator::count_materialized(
+                data.iter()
+                    .map(String::as_str)
+                    .filter(|s| !is_null_like_token(s.trim())),
+                analysis.unique_count_exact_limit,
+            );
+            (Some(count), Some(approximate), lower_bound)
+        };
 
     ColumnProfile {
         name: name.to_string(),
@@ -254,10 +261,8 @@ fn analyze_column_with_options(
         null_count,
         total_count,
         unique_count,
-        // Distinct values are counted with an exact HashSet, so the count is
-        // exact whenever it was computed at all.
-        unique_count_is_approximate: unique_count.map(|_| false),
-        unique_count_lower_bound: None,
+        unique_count_is_approximate,
+        unique_count_lower_bound,
         invalid_count,
         // Classified over `data`, which on this path is the whole column, so the
         // counts are exact rather than sampled. Not gated by the analysis

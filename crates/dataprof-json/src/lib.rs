@@ -815,9 +815,26 @@ pub fn analyze_json_from_reader<R: BufRead>(
     ),
     DataProfilerError,
 > {
-    let options = AnalysisOptions::default();
+    analyze_json_from_reader_with_options(reader, config, &AnalysisOptions::default())
+}
+
+/// Profile a JSON or JSONL reader with the caller's analysis options.
+pub fn analyze_json_from_reader_with_options<R: BufRead>(
+    reader: R,
+    config: &JsonParserConfig,
+    options: &AnalysisOptions,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        usize,
+        FileFormat,
+    ),
+    DataProfilerError,
+> {
     let (profiles, stats, rows_read, malformed_lines, format, _truncated, _unread) =
-        analyze_json_from_reader_full(reader, config, &options)?;
+        analyze_json_from_reader_full(reader, config, options)?;
     Ok((profiles, stats, rows_read, malformed_lines, format))
 }
 
@@ -845,7 +862,8 @@ fn analyze_json_from_reader_full<R: BufRead>(
     let semantic_hints = options.semantic_hints();
     let mut column_stats = StreamingColumnCollection::new()
         .with_semantic_hints(semantic_hints)
-        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit());
+        .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit())
+        .with_unique_count_exact_limits(options.unique_count_exact_limits());
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
     let mut container_counts = HashMap::new();

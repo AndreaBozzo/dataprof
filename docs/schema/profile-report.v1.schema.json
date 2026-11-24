@@ -93,6 +93,15 @@
             "$ref": "#/$defs/TemporalPair"
           },
           "type": "array"
+        },
+        "unique_count_exact_limits": {
+          "additionalProperties": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Caller-chosen exact distinct limits, by profiled column name.",
+          "type": "object"
         }
       },
       "required": [

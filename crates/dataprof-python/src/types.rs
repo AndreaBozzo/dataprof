@@ -1495,6 +1495,12 @@ impl PyProfileReport {
             }
             dict.set_item("temporal_pairs", list)?;
         }
+        if !settings.unique_count_exact_limits.is_empty() {
+            dict.set_item(
+                "unique_count_exact_limits",
+                &settings.unique_count_exact_limits,
+            )?;
+        }
         Ok(Some(dict))
     }
 

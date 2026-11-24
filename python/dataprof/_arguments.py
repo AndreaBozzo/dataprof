@@ -120,10 +120,25 @@ def _check_temporal_pairs(value: _Any) -> None:
         )
 
 
+def _check_unique_count_exact_limits(value: _Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise TypeError("unique_count_exact_limits must be a dict from column names to limits.")
+    for name, limit in value.items():
+        if not isinstance(name, str) or not isinstance(limit, int):
+            raise TypeError("unique_count_exact_limits must map string names to integer limits.")
+        if not 1 <= limit <= _USIZE_MAX:
+            raise ValueError(
+                f"unique_count_exact_limits[{name!r}] must be between 1 and {_USIZE_MAX}."
+            )
+
+
 def _check_profile_options(options: _Mapping[str, _Any]) -> None:
     """Reject a bad list option or integer option before native conversion."""
     for name in _NAME_LISTS:
         _check_name_list(name, options.get(name))
     _check_temporal_pairs(options.get("temporal_pairs"))
+    _check_unique_count_exact_limits(options.get("unique_count_exact_limits"))
     for name in _UNSIGNED_LIMITS:
         _check_unsigned(name, options.get(name))
