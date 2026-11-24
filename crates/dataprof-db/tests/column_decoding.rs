@@ -25,9 +25,15 @@ async fn columns_result_of(
         .await
         .expect("in-memory sqlite");
     for stmt in ddl {
-        sqlx::query(stmt).execute(&pool).await.expect("ddl");
+        sqlx::query(sqlx::AssertSqlSafe(*stmt))
+            .execute(&pool)
+            .await
+            .expect("ddl");
     }
-    let rows = sqlx::query(query).fetch_all(&pool).await.expect("query");
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+        .fetch_all(&pool)
+        .await
+        .expect("query");
     dataprof_db::process_rows_to_columns!(rows)
 }
 

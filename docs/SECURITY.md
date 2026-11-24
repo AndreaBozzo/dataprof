@@ -92,60 +92,23 @@ inconvenient" is not a reason.
 
 | Advisory | Crate | Disposition | Next review |
 | --- | --- | --- | --- |
-| [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) | `rsa` 0.9.x | Not applicable — see below | 2026-10-01 |
-| [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) | `libsqlite3-sys` 0.30.1 | Applies only to the `sqlite` feature with an untrusted database file and its `-wal`; no fixed version reachable through SQLx. See below | 2027-01-09 |
 | [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543) | `chrono` 0.4.45 | Unmaintained, not a vulnerability; used directly and by arrow-rs and SQLx. See below | 2027-02-01 |
 | [RUSTSEC-2026-0555](https://rustsec.org/advisories/RUSTSEC-2026-0555) | `chrono-tz` 0.10.4 | Unmaintained, not a vulnerability; transitive via arrow-array only. See below | 2027-02-01 |
 
-#### RUSTSEC-2023-0071 (Marvin attack in `rsa`)
+#### Resolved: RUSTSEC-2023-0071 and RUSTSEC-2026-0459
 
-The advisory describes a timing sidechannel through which an attacker who can
-measure RSA **private-key** operations may recover the private key. It has no
-fixed release ([RustCrypto/RSA#626](https://github.com/RustCrypto/RSA/issues/626)).
+Releases up to 0.14.x build SQLx 0.8 and carry two advisories that were
+accepted with a recorded reason: RUSTSEC-2023-0071 (Marvin attack in `rsa`
+0.9), which did not apply because the MySQL client only encrypts with the
+server's public key, and RUSTSEC-2026-0459 (SQLite page cache in
+`libsqlite3-sys` 0.30.1), which applied to the `sqlite` feature when profiling
+an untrusted database file together with its `-wal` file. The `sqlite` feature
+is not in the default build or the Python wheels.
 
-dataprof reaches `rsa` only through `sqlx-mysql`, and only when the `mysql`
-feature is enabled. That crate's entire use of it is in `connection/auth.rs`,
-which imports `RsaPublicKey` and encrypts the password with OAEP during
-`sha256_password` / `caching_sha2_password` authentication. It never constructs
-an `RsaPrivateKey`, and never decrypts or signs.
-
-So the advisory does not apply, for two independent reasons:
-
-1. **No private-key operation exists to attack.** dataprof is a MySQL client. It
-   encrypts with the server's public key and holds no RSA private key of its
-   own. The Marvin attack targets the party performing private-key operations —
-   here, the MySQL server, whose RSA implementation is not this crate.
-2. **The path is normally not taken at all.** dataprof builds SQLx with
-   `runtime-tokio-rustls`, and `encrypt_rsa` returns before touching RSA when
-   the connection is TLS.
-
-This will be revisited if a fixed `rsa` ships, if SQLx drops the dependency, or
-by 2026-10-01, whichever comes first.
-
-#### RUSTSEC-2026-0459 (SQLite page cache in `libsqlite3-sys`)
-
-SQLite before 3.54.0 can return uninitialized page-cache memory when it opens a
-database file together with a `-wal` file whose page size differs from the
-database's. A crafted pair of files can make ordinary queries return stale
-bytes from the process's memory. `libsqlite3-sys` 0.30.1 bundles an affected
-SQLite.
-
-dataprof reaches it only through `sqlx-sqlite`: the `sqlite` feature, which is
-not in the default build or the Python wheels, and the SQLx dev-dependency the
-test suite builds. Unlike the advisory above, this one does apply in one case:
-the SQLite connector opens the path it is given, so profiling a database file
-that someone else wrote, with its `-wal` file beside it, is exposed. Until a
-fix is reachable, do not profile an untrusted SQLite database that comes with
-a `-wal` file.
-
-The fix is `libsqlite3-sys` 0.39 (SQLite 3.54), and no SQLx release allows it:
-`sqlx-sqlite` 0.9.0 requires `libsqlite3-sys` below 0.38. Linking the system
-SQLite instead (SQLx's `sqlite-unbundled`) would not clear the audit, which
-matches the crate version and not the features, and would make every build
-with the `sqlite` feature need SQLite development files.
-
-This will be revisited when a SQLx release allows `libsqlite3-sys` 0.39, or by
-2027-01-09, whichever comes first.
+SQLx 0.9.1 resolves both: it takes the fixed `rsa` 0.10 and allows the fixed
+`libsqlite3-sys` 0.39 and later. Releases after 0.14.x build SQLx 0.9.1, and
+neither advisory is in their dependency graph. On 0.14.x, do not profile an
+untrusted SQLite database that comes with a `-wal` file.
 
 #### RUSTSEC-2026-0543 and RUSTSEC-2026-0555 (`chrono`, `chrono-tz` unmaintained)
 

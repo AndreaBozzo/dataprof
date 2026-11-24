@@ -104,7 +104,10 @@ async fn a_postgresql_numeric_reads_as_a_decimal() {
         "CREATE TABLE declared_decimals_pg (cents NUMERIC(16,2))".to_string(),
         format!("INSERT INTO declared_decimals_pg VALUES {}", rows()),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 
@@ -131,7 +134,10 @@ async fn a_mysql_decimal_reads_as_a_decimal() {
         "CREATE TABLE declared_decimals_my (cents DECIMAL(16,2))".to_string(),
         format!("INSERT INTO declared_decimals_my VALUES {}", rows()),
     ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     pool.close().await;
 

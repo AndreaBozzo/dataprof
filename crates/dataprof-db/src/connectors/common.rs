@@ -429,7 +429,7 @@ macro_rules! streaming_profile_loop {
         // Describe the query before fetching rows. Row metadata is unavailable
         // when the result is empty, but projection still needs the source
         // schema to validate duplicate and unknown requested names.
-        let description = ($pool).describe(&select_query).await.map_err(|e| {
+        let description = ($pool).describe(::sqlx::SqlSafeStr::into_sql_str(::sqlx::AssertSqlSafe(select_query.as_str()))).await.map_err(|e| {
             $crate::DataProfilerError::DatabaseQueryError {
                 message: format!("Query description failed: {}", e),
             }
@@ -454,7 +454,7 @@ macro_rules! streaming_profile_loop {
                 .map(|column| ::sqlx::TypeInfo::name(column.type_info()).to_string())
                 .collect(),
         );
-        let mut rows = sqlx::query(&select_query).fetch($pool);
+        let mut rows = sqlx::query(::sqlx::AssertSqlSafe(select_query.as_str())).fetch($pool);
         let mut rows_read = 0usize;
         let mut log_progress = |read: usize| {
             rows_read += read;
@@ -610,7 +610,7 @@ mod tests {
             ("0::numeric", "0"),
             ("12.3400::numeric", "12.3400"),
         ] {
-            let row = sqlx::query(&format!("SELECT {literal}"))
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {literal}")))
                 .fetch_one(&mut connection)
                 .await
                 .unwrap();

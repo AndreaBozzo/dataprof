@@ -568,11 +568,11 @@ mod postgres_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE dataprof_rows_profiled_once AS \
              SELECT g::bigint AS id, md5(g::text) || md5((g * 7)::text) || 'x' AS payload \
              FROM generate_series(1, {ROWS}) g"
-        ))
+        )))
         .execute(&pool)
         .await
         .unwrap();

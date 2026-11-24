@@ -111,7 +111,7 @@ impl DatabaseConnector for MySqlConnector {
             let mut transaction =
                 read_only_transaction(pool, "START TRANSACTION READ ONLY").await?;
 
-            let rows = sqlx::query(&query)
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
                 .fetch_all(&mut *transaction)
                 .await
                 .map_err(|e| {
@@ -219,7 +219,7 @@ impl DatabaseConnector for MySqlConnector {
 
             validate_sql_identifier(table_name)?;
             let query = format!("SELECT COUNT(*) FROM {}", table_name);
-            let count: i64 = sqlx::query_scalar(&query)
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
                 .fetch_one(pool)
                 .await
                 .map_err(|e| {
