@@ -383,7 +383,8 @@ impl StreamingStatistics {
     }
 
     /// Answer distinct counts from the sketch from here on, freeing the exact
-    /// set. For memory pressure; the count is then reported approximate.
+    /// set, for memory pressure; the count is then reported approximate. A
+    /// column named in `unique_count_exact_limits` keeps its set and stays exact.
     pub fn spill_distinct(&mut self) {
         self.distinct.spill();
     }
@@ -623,7 +624,8 @@ impl RowUniquenessTracker {
         self.distinct.memory_usage_bytes()
     }
 
-    /// Heap held by the exact set of row signatures: what [`Self::spill`] frees.
+    /// Heap held by the exact set of row signatures. [`Self::spill`] frees it
+    /// unless the caller set the limit.
     pub fn exact_bytes(&self) -> usize {
         self.distinct.exact_bytes()
     }

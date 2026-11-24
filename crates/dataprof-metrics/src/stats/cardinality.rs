@@ -333,8 +333,10 @@ impl CardinalityEstimator {
         std::mem::size_of::<Self>() + self.hll.memory_usage_bytes() + self.exact_bytes()
     }
 
-    /// Heap held by the exact set alone: what [`Self::spill`] gives back.
-    /// Zero once spilled, and zero for a set that has never held a value.
+    /// Heap held by the exact set alone. [`Self::spill`] gives it back only
+    /// for a default-width set; a named set stays exact, so the bytes a spill
+    /// can reclaim are [`Self::budgeted_exact_bytes`]. Zero once spilled, and
+    /// zero for a set that has never held a value.
     pub fn exact_bytes(&self) -> usize {
         // decode-audit: no-data — after a spill, the estimator holds only its sketch
         // and the distinct count at the time of the spill.

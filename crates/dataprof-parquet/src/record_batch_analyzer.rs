@@ -739,6 +739,11 @@ impl RecordBatchAnalyzer {
     }
 
     /// Configure the analyzer before the Arrow schema is initialized.
+    ///
+    /// Replaces every analysis setting, including semantic hints and the
+    /// duplicate-rows limit set by earlier builder calls, so call it first and
+    /// apply [`Self::with_semantic_hints`] or
+    /// [`Self::with_duplicate_rows_exact_limit`] after it.
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
         self.options = options.clone();
         self.row_tracker = BatchRowTracker::with_exact_limit(options.duplicate_rows_exact_limit());
