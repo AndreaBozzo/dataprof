@@ -95,7 +95,8 @@ fn assert_file(case: &Case<'_>) {
         .unwrap_or_else(|error| panic!("{}: {error}", case.name));
     assert_eq!(report.execution.rows_processed, 2, "{}", case.name);
     assert_eq!(
-        report.execution.ragged_row_count, case.ragged_rows,
+        report.execution.ragged_row_count,
+        Some(case.ragged_rows),
         "{}",
         case.name
     );
@@ -223,7 +224,7 @@ fn leading_record_terminators_take_precedence_over_a_matching_quote_byte() {
             let report = analyze_csv_file(file.path(), &config).unwrap();
             assert_eq!(report.data_source.csv_metadata().unwrap().delimiter, ";");
             assert_eq!(report.execution.rows_processed, 2);
-            assert_eq!(report.execution.ragged_row_count, 1);
+            assert_eq!(report.execution.ragged_row_count, Some(1));
             assert_eq!(
                 report
                     .column_profiles
@@ -249,7 +250,7 @@ fn an_explicit_delimiter_keeps_bypassing_detection() {
     assert_eq!(metadata.delimiter, ",");
     assert_eq!(metadata.delimiter_detection, None);
     assert_eq!(report.execution.rows_processed, 2);
-    assert_eq!(report.execution.ragged_row_count, 0);
+    assert_eq!(report.execution.ragged_row_count, Some(0));
     assert_eq!(report.column_profiles.len(), 1);
     assert_eq!(report.column_profiles[0].name, "key|part");
     let (_, statistics, rows, headers) =
@@ -308,7 +309,7 @@ fn a_configured_non_utf8_quote_byte_preserves_utf8_fields() {
         };
         let report = analyze_csv_file(file.path(), &config).unwrap();
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(report.execution.error_count, 0);
         assert_eq!(report.column_profiles.len(), 1);
         let column = &report.column_profiles[0];

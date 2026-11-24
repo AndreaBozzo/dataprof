@@ -328,7 +328,7 @@ fn legacy_v1_defaults_validate_and_deserialize() {
 
     let report: ProfileReport =
         serde_json::from_value(legacy).expect("legacy v1 report must remain readable");
-    assert_eq!(report.execution.ragged_row_count, 0);
+    assert_eq!(report.execution.ragged_row_count, None);
     assert!(report.semantic_hint_bindings.is_empty());
     // The writer did not record why quality was absent, and nothing in the
     // document can establish it. Saying so beats inventing a reason (#715).

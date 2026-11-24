@@ -430,7 +430,7 @@ fn incremental_chunk_smaller_than_header_preserves_the_file() {
         .expect("incremental analysis should succeed");
 
     assert_eq!(report.execution.rows_processed, 2);
-    assert_eq!(report.execution.ragged_row_count, 0);
+    assert_eq!(report.execution.ragged_row_count, Some(0));
     assert!(report.execution.source_exhausted);
     assert_eq!(
         report
@@ -470,7 +470,7 @@ fn multiline_csv_crossing_default_chunk_boundary_matches_columnar() {
             "{engine:?}"
         );
         assert_eq!(report.execution.rows_processed, 3, "{engine:?}");
-        assert_eq!(report.execution.ragged_row_count, 0, "{engine:?}");
+        assert_eq!(report.execution.ragged_row_count, Some(0), "{engine:?}");
         assert_eq!(
             report
                 .column_profiles
@@ -1320,7 +1320,7 @@ fn ragged_rows_report_identically_across_engines() {
         columnar.execution.rows_processed, incremental.execution.rows_processed,
         "both engines must see every row"
     );
-    assert_eq!(incremental.execution.ragged_row_count, 2);
+    assert_eq!(incremental.execution.ragged_row_count, Some(2));
     assert_eq!(
         columnar.execution.ragged_row_count, incremental.execution.ragged_row_count,
         "the columnar engine must not report a repaired scan as a clean one"
@@ -1483,7 +1483,7 @@ fn a_ragged_row_past_the_row_cap_is_ignored_by_every_engine() {
                 });
 
             assert_eq!(report.execution.rows_processed, 1, "{engine:?}");
-            assert_eq!(report.execution.ragged_row_count, 0, "{engine:?}");
+            assert_eq!(report.execution.ragged_row_count, Some(0), "{engine:?}");
             assert!(
                 matches!(
                     report.execution.truncation_reason,

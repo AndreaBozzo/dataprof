@@ -116,13 +116,13 @@ class TestReportErgonomics:
         df = reloaded.to_dataframe()
         assert len(df) == report.columns
 
-    def test_from_dict_legacy_report_defaults_ragged_row_count(self):
+    def test_from_dict_legacy_report_omits_ragged_row_count_as_none(self):
         # A report written before ragged_row_count existed omits the key; it
-        # must read back as 0 (not None), matching the Rust serde default and
-        # the additive-field compatibility promise.
+        # must read back as None (not 0), matching the Rust serde reader so an
+        # unrecorded count is never mistaken for a clean zero (#1310).
         legacy = {"source": "old.csv", "columns": [], "execution": {"rows_processed": 5}}
         reloaded = dataprof.ProfileReport.from_dict(legacy)
-        assert reloaded.ragged_row_count == 0
+        assert reloaded.ragged_row_count is None
 
     def test_from_dict_rejects_malformed(self):
         with pytest.raises(ValueError, match="to_dict"):

@@ -911,7 +911,7 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
 
         assert_eq!(report.execution.rows_processed, 4);
-        assert_eq!(report.execution.ragged_row_count, 2);
+        assert_eq!(report.execution.ragged_row_count, Some(2));
     }
 
     #[test]
@@ -920,7 +920,7 @@ mod tests {
         let config = CsvParserConfig::default().max_rows(Some(1));
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(
             report.execution.truncation_reason,
             Some(TruncationReason::MaxRows(1))

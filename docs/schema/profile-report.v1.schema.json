@@ -1032,8 +1032,7 @@
           ]
         },
         "ragged_row_count": {
-          "default": 0,
-          "description": "Number of data rows whose field count differed from the header's.\n\nThese rows were recovered — extra trailing fields dropped, missing\ntrailing fields padded to null — so profiling continued, but each one\nis a structural violation in the source. A nonzero value means the file\ndid not parse cleanly even though a report was produced. Additive field:\nlegacy documents without it deserialize as `0`.",
+          "description": "Number of data rows whose field count differed from the header's.\n\nThese rows were recovered (extra trailing fields dropped, missing\ntrailing fields padded to null) so profiling continued, but each one\nis a structural violation in the source. A nonzero value means the file\ndid not parse cleanly even though a report was produced. `None` means\nthe document did not record the count (for example, a pre-0.10 document\nor one that omitted the field); an explicit `null` is malformed.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -2250,7 +2249,6 @@
         "throughput_rows_sec",
         "memory_peak_mb",
         "error_count",
-        "ragged_row_count",
         "sampling_applied",
         "sampling_ratio"
       ],

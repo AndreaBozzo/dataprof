@@ -268,7 +268,7 @@ class _ReportView(_View):
     throughput_rows_sec = _Field[float | None]()
     memory_peak_mb = _Field[float | None]()
     error_count = _Field[int]()
-    ragged_row_count = _Field[int]()
+    ragged_row_count = _Field[int | None]()
     unterminated_quote = _Field[bool | None]()
     schema_version = _Field[int]()
     sampling_applied = _Field[bool]()

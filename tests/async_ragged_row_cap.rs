@@ -77,8 +77,10 @@ async fn async_csv_counts_no_ragged_row_past_the_cap() {
         }
 
         for (route, count) in counts {
-            if count != expected {
-                wrong.push(format!("{route}, {case}: {count}, expected {expected}"));
+            if count != Some(expected) {
+                wrong.push(format!(
+                    "{route}, {case}: {count:?}, expected Some({expected})"
+                ));
             }
         }
     }

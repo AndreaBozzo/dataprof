@@ -866,7 +866,13 @@ struct PythonExecutionDocument {
     #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     memory_peak_mb: Option<f64>,
     error_count: usize,
-    ragged_row_count: usize,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "usize")]
+    ragged_row_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unterminated_quote: Option<bool>,
     sampling_applied: bool,
@@ -1324,7 +1330,6 @@ fn canonicalize_key_order(value: &mut serde_json::Value) {
 /// is the opposite of what an additive widening means.
 fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
     for (pointer, field) in [
-        ("/$defs/ExecutionMetadata/required", "ragged_row_count"),
         ("/$defs/ProfileReport/required", "quality_status"),
         (
             "/$defs/PythonProfileReportDocument/required",

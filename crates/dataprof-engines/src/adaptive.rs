@@ -483,7 +483,7 @@ mod tests {
         );
         assert_eq!(report.execution.engine.as_deref(), Some("incremental"));
         assert_eq!(report.execution.rows_processed, 1);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(
             report.execution.recovery_events,
             Some(vec![RecoveryEvent {
