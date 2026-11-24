@@ -92,7 +92,7 @@ fn strict_parsing_refuses_a_ragged_record_on_every_chunk_size() {
         for (route, profiler) in strict_routes() {
             match profiler.analyze_file(csv.path()) {
                 Ok(report) => wrong.push(format!(
-                    "{route}, {case}: profiled {} rows, {} ragged",
+                    "{route}, {case}: profiled {} rows, {:?} ragged",
                     report.execution.rows_processed, report.execution.ragged_row_count
                 )),
                 Err(error) if !error.to_string().contains("fields") => {
@@ -120,9 +120,9 @@ fn flexible_parsing_counts_every_ragged_record_on_every_chunk_size() {
             match outcome {
                 Ok(report)
                     if report.execution.rows_processed == rows
-                        && report.execution.ragged_row_count == ragged => {}
+                        && report.execution.ragged_row_count == Some(ragged) => {}
                 Ok(report) => wrong.push(format!(
-                    "{label}, {case}: rows {}, ragged {}",
+                    "{label}, {case}: rows {}, ragged {:?}",
                     report.execution.rows_processed, report.execution.ragged_row_count
                 )),
                 Err(error) => wrong.push(format!("{label}, {case}: {error}")),

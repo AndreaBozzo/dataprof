@@ -2184,7 +2184,8 @@ mod tests {
 
         assert_eq!(report.execution.rows_processed, 4);
         assert_eq!(
-            report.execution.ragged_row_count, 2,
+            report.execution.ragged_row_count,
+            Some(2),
             "one short and one over-long row must both count as ragged"
         );
     }
@@ -2198,7 +2199,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
     }
 
     #[tokio::test]
@@ -2242,7 +2243,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.execution.rows_processed, 500);
-        assert_eq!(report.execution.ragged_row_count, 5);
+        assert_eq!(report.execution.ragged_row_count, Some(5));
     }
 
     #[tokio::test]
@@ -2257,7 +2258,7 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 3);
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
     }
 
     #[tokio::test]

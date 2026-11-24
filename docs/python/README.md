@@ -358,7 +358,7 @@ Returned by `profile()` and all analysis functions.
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
 | `truncation_reason` | `str \| None` | Why processing stopped early |
 | `source_exhausted` | `bool` | Whether the entire source was read |
-| `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = no ragged rows). Reported for file, async and columnar CSV inputs |
+| `ragged_row_count` | `int \| None` | Rows whose field count differed from the header (`0` = no ragged rows). Fresh reports always return an `int`; `None` when a loaded document omits the field. Reported for file, async and columnar CSV inputs |
 | `unterminated_quote` | `bool \| None` | `True` when a CSV source ended inside a quoted field: a quote was never closed, so the last record holds every row after it. `None` for non-CSV input and for a scan stopped before the end of the source. `csv_flexible=False` refuses such a source, and CSV bytes passed to `profile()` always do |
 | `csv_metadata` | `dict \| None` | How a CSV source was split: `delimiter`, and `delimiter_detection` when detection chose it (`header_fields`, plus `runner_up` or `unlisted_delimiter` when the choice was not clear). `None` for other sources and for reports written before 0.14 |
 | `recovery_events` | `list[dict[str, str]] \| None` | Ordered failed attempts and retries; `[]` means no recovery, `None` means history was not recorded |
@@ -993,7 +993,7 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
 | `estimated` | The duplicate count, or the key column's distinct count, is an estimate, which witnesses nothing |
 | `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
-| `unrecorded` | The report does not record what the rule needs. Either the document was written before dataprof recorded it (ragged rows before 0.10, quality sample coverage, locale-formatted numbers and the CSV quote state before 0.12, how the key column was chosen before 0.13), a flat summary omits it (`source_exhausted`, `sampling_applied`, `unterminated_quote`), or a CSV scan stopped before the end of its source, where the quote state is checked. A quote check on a source that is not CSV passes instead: it does not apply |
+| `unrecorded` | The report does not record what the rule needs. Either the document was written before dataprof recorded it (ragged rows before 0.10, quality sample coverage, locale-formatted numbers and the CSV quote state before 0.12, how the key column was chosen before 0.13), a saved report or flat summary omits it (`ragged_row_count`, `source_exhausted`, `sampling_applied`, `unterminated_quote`), or a CSV scan stopped before the end of its source, where the quote state is checked. A quote check on a source that is not CSV passes instead: it does not apply |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 

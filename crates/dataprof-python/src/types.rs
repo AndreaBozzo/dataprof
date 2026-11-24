@@ -1075,13 +1075,15 @@ impl PyProfileReport {
         self.inner.execution.error_count
     }
 
-    /// Number of data rows whose field count differed from the header.
+    /// Number of data rows whose field count differed from the header, or
+    /// `None` when a loaded document omitted the count.
     ///
+    /// Fresh reports always record an integer (`0` when no row was ragged).
     /// Nonzero means the source did not parse cleanly: extra fields were
     /// dropped or missing trailing fields padded to null. The rows are still
     /// profiled, but this is the structural-violation signal for ragged CSV.
     #[getter]
-    fn ragged_row_count(&self) -> usize {
+    fn ragged_row_count(&self) -> Option<usize> {
         self.inner.execution.ragged_row_count
     }
 

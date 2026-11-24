@@ -802,7 +802,7 @@ mod tests {
             .analyze_file(temp_file.path())?;
 
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(
             *estimated_rows.lock().expect("progress estimate lock"),
             Some(2)

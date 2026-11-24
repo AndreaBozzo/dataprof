@@ -82,14 +82,19 @@ pub struct ExecutionMetadata {
     pub error_count: usize,
     /// Number of data rows whose field count differed from the header's.
     ///
-    /// These rows were recovered — extra trailing fields dropped, missing
-    /// trailing fields padded to null — so profiling continued, but each one
+    /// These rows were recovered (extra trailing fields dropped, missing
+    /// trailing fields padded to null) so profiling continued, but each one
     /// is a structural violation in the source. A nonzero value means the file
-    /// did not parse cleanly even though a report was produced. Additive field:
-    /// legacy documents without it deserialize as `0`.
-    #[serde(default)]
-    #[schemars(default)]
-    pub ragged_row_count: usize,
+    /// did not parse cleanly even though a report was produced. `None` means
+    /// the document did not record the count (for example, a pre-0.10 document
+    /// or one that omitted the field); an explicit `null` is malformed.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_usize"
+    )]
+    #[schemars(with = "usize")]
+    pub ragged_row_count: Option<usize>,
     /// Whether a CSV source ended inside a quoted field.
     ///
     /// A quote that is never closed swallows every following row into the
@@ -116,6 +121,15 @@ pub struct ExecutionMetadata {
     pub sampled_row_ranges: Option<Vec<[u64; 2]>>,
 }
 
+/// Decode a field that may be absent (`serde(default)` covers that) but, when
+/// present, must carry a count: `Option<usize>` alone reads `null` as `None`.
+fn present_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <usize as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
 impl ExecutionMetadata {
     /// Create new execution metadata with throughput calculated automatically.
     pub fn new(rows_processed: usize, columns_detected: usize, scan_time_ms: u128) -> Self {
@@ -135,7 +149,7 @@ impl ExecutionMetadata {
             throughput_rows_sec,
             memory_peak_mb: None,
             error_count: 0,
-            ragged_row_count: 0,
+            ragged_row_count: Some(0),
             unterminated_quote: None,
             source_exhausted: true,
             truncation_reason: None,
@@ -185,7 +199,7 @@ impl ExecutionMetadata {
 
     /// Set the count of ragged rows (field count != header field count).
     pub fn with_ragged_row_count(mut self, count: usize) -> Self {
-        self.ragged_row_count = count;
+        self.ragged_row_count = Some(count);
         self
     }
 
@@ -238,15 +252,17 @@ mod tests {
     #[test]
     fn test_execution_metadata_ragged_row_count() {
         let meta = ExecutionMetadata::new(100, 3, 25);
-        assert_eq!(meta.ragged_row_count, 0);
+        assert_eq!(meta.ragged_row_count, Some(0));
+        assert_eq!(serde_json::to_value(&meta).unwrap()["ragged_row_count"], 0);
         let meta = meta.with_ragged_row_count(2);
-        assert_eq!(meta.ragged_row_count, 2);
+        assert_eq!(meta.ragged_row_count, Some(2));
+        assert_eq!(serde_json::to_value(&meta).unwrap()["ragged_row_count"], 2);
     }
 
     #[test]
-    fn test_execution_metadata_ragged_defaults_when_absent() {
-        // A document written before the field existed must deserialize as 0,
-        // not fail or fabricate a value.
+    fn test_execution_metadata_ragged_is_none_when_absent() {
+        // A document that omits `ragged_row_count` must deserialize as None
+        // and keep it absent on reserialization rather than fabricating 0.
         let json = r#"{
             "rows_processed": 10,
             "columns_detected": 2,
@@ -256,21 +272,25 @@ mod tests {
             "sampling_applied": false
         }"#;
         let meta: ExecutionMetadata = serde_json::from_str(json).unwrap();
-        assert_eq!(meta.ragged_row_count, 0);
+        assert_eq!(meta.ragged_row_count, None);
         assert_eq!(meta.sampled_row_ranges, None);
         assert_eq!(meta.recovery_events, None);
-        assert!(
-            serde_json::to_value(&meta)
-                .unwrap()
-                .get("recovery_events")
-                .is_none()
-        );
-        assert!(
-            serde_json::to_value(&meta)
-                .unwrap()
-                .get("sampled_row_ranges")
-                .is_none()
-        );
+        let serialized = serde_json::to_value(&meta).unwrap();
+        assert!(serialized.get("ragged_row_count").is_none());
+        assert!(serialized.get("recovery_events").is_none());
+        assert!(serialized.get("sampled_row_ranges").is_none());
+
+        // An explicit null is malformed, not an absent field.
+        let with_null = r#"{
+            "rows_processed": 10,
+            "columns_detected": 2,
+            "scan_time_ms": 5,
+            "error_count": 0,
+            "ragged_row_count": null,
+            "source_exhausted": true,
+            "sampling_applied": false
+        }"#;
+        assert!(serde_json::from_str::<ExecutionMetadata>(with_null).is_err());
     }
 
     #[test]

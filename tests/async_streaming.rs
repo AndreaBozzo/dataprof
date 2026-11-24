@@ -429,7 +429,8 @@ async fn test_profiler_profile_url_counts_ragged_rows() {
 
     assert_eq!(report.execution.rows_processed, 3);
     assert_eq!(
-        report.execution.ragged_row_count, 2,
+        report.execution.ragged_row_count,
+        Some(2),
         "a ragged remote CSV must not profile as clean"
     );
 

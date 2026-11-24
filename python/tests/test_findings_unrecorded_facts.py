@@ -163,3 +163,44 @@ def test_a_pre_versioning_summary_lists_ragged_rows(tmp_path):
     result = dp.ProfileReport.from_dict(legacy).findings()
     assert _skipped(result, "ragged_rows") == ["unrecorded"]
     assert _skipped(dp.ProfileReport.from_dict(summary).findings(), "ragged_rows") == []
+
+
+def test_a_versioned_report_without_its_ragged_count_is_inconclusive(tmp_path):
+    # #1310 reproduction: a saved report with schema_version 1 that omits
+    # execution.ragged_row_count must read back as None and unrecorded, leaving
+    # forbid_findings=["ragged_rows"] inconclusive instead of passing.
+    path = tmp_path / "ragged.csv"
+    path.write_text("a,b\n1,2\n3\n4,5\n")
+    report = dp.profile(str(path))
+    assert type(report.ragged_row_count) is int
+    assert report.ragged_row_count == 1
+    assert report.check(forbid_findings=["ragged_rows"]).verdict == "fail"
+
+    document = json.loads(report.to_json())
+    assert document["execution"]["ragged_row_count"] == 1
+    del document["execution"]["ragged_row_count"]
+
+    loaded = dp.ProfileReport.from_json(json.dumps(document))
+    assert loaded.ragged_row_count is None
+    assert loaded.check(forbid_findings=["ragged_rows"]).verdict == "inconclusive"
+    findings = loaded.findings()
+    assert [f.code for f in findings.findings if f.code == "ragged_rows"] == []
+    assert _skipped(findings, "ragged_rows") == ["unrecorded"]
+    assert "ragged_row_count" not in json.loads(loaded.to_json())["execution"]
+    assert "ragged_row_count" not in loaded.to_dict()["execution"]
+
+    # Recorded 0 passes cleanly.
+    document["execution"]["ragged_row_count"] = 0
+    loaded_zero = dp.ProfileReport.from_json(json.dumps(document))
+    assert loaded_zero.ragged_row_count == 0
+    assert loaded_zero.check(forbid_findings=["ragged_rows"]).verdict == "pass"
+    assert _skipped(loaded_zero.findings(), "ragged_rows") == []
+
+    # Fresh clean report still returns int 0 and serializes it.
+    clean_path = tmp_path / "clean.csv"
+    clean_path.write_text("a,b\n1,2\n3,4\n")
+    clean = dp.profile(str(clean_path))
+    assert type(clean.ragged_row_count) is int
+    assert clean.ragged_row_count == 0
+    assert json.loads(clean.to_json())["execution"]["ragged_row_count"] == 0
+    assert clean.to_dict()["execution"]["ragged_row_count"] == 0

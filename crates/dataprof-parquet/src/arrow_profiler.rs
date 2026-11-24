@@ -1174,7 +1174,7 @@ mod tests {
         assert_eq!(city_col.total_count, 2);
         assert_eq!(city_col.null_count, 1);
         // Padding the row is the recovery; reporting it is the contract (#470).
-        assert_eq!(report.execution.ragged_row_count, 1);
+        assert_eq!(report.execution.ragged_row_count, Some(1));
 
         Ok(())
     }
@@ -1191,7 +1191,7 @@ mod tests {
             .analyze_csv_file(temp_file.path())?;
 
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(
             report
                 .column_profiles
@@ -1219,7 +1219,7 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 3);
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 1);
+        assert_eq!(report.execution.ragged_row_count, Some(1));
 
         let city_col = report
             .column_profiles
@@ -1254,7 +1254,7 @@ mod tests {
             .analyze_csv_file(temp_file.path())?;
 
         assert_eq!(report.execution.rows_processed, 1);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
 
         Ok(())
     }
@@ -1279,7 +1279,7 @@ mod tests {
             .analyze_csv_file(temp_file.path())?;
 
         assert_eq!(report.execution.rows_processed, 1);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert!(matches!(
             report.execution.truncation_reason,
             Some(TruncationReason::MaxRows(1))
@@ -1398,7 +1398,7 @@ mod tests {
             .analyze_csv_file(temp_file.path())?;
 
         assert_eq!(report.execution.rows_processed, 2);
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
 
         Ok(())
     }
@@ -1423,7 +1423,7 @@ mod tests {
             .expect("flexible parsing should pad the ragged row");
 
         assert_eq!(report.execution.rows_processed, 7);
-        assert_eq!(report.execution.ragged_row_count, 1);
+        assert_eq!(report.execution.ragged_row_count, Some(1));
     }
 
     #[test]
@@ -1444,7 +1444,7 @@ mod tests {
             .expect("flexible parsing should pad every ragged row");
 
         assert_eq!(report.execution.rows_processed, 7);
-        assert_eq!(report.execution.ragged_row_count, 7);
+        assert_eq!(report.execution.ragged_row_count, Some(7));
     }
 
     #[test]

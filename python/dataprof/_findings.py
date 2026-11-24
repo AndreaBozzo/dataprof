@@ -190,7 +190,7 @@ def _summary_facts(report: ProfileReport) -> dict[str, _Any]:
         "truncated": report.truncation_reason is not None,
         "sampling_applied": summary["execution"].get("sampling_applied"),
         # A summary written before 0.10 did not count ragged rows, and one that
-        # omits the field records none; the loader fills in a zero for both.
+        # omits the field records none (its accessor returns None).
         "ragged_row_count": _count(report.ragged_row_count)
         if report._ragged_row_count_recorded
         else None,

@@ -29,7 +29,8 @@ fn ragged_rows_are_counted_not_swallowed() {
 
     assert_eq!(report.execution.rows_processed, 4);
     assert_eq!(
-        report.execution.ragged_row_count, 2,
+        report.execution.ragged_row_count,
+        Some(2),
         "one short and one over-long row must both count as ragged"
     );
 }
@@ -44,7 +45,7 @@ fn analyze_csv_file_counts_ragged_rows_like_the_engines() {
     let csv_file =
         dataprof::analyze_csv_file(csv.path(), &dataprof::CsvParserConfig::default()).unwrap();
 
-    assert_eq!(engines.execution.ragged_row_count, 2);
+    assert_eq!(engines.execution.ragged_row_count, Some(2));
     assert_eq!(
         csv_file.execution.ragged_row_count, engines.execution.ragged_row_count,
         "analyze_csv_file must not report ragged rows as clean"
@@ -60,7 +61,8 @@ fn well_formed_csv_reports_zero_ragged_rows() {
         .expect("a clean file profiles cleanly");
 
     assert_eq!(
-        report.execution.ragged_row_count, 0,
+        report.execution.ragged_row_count,
+        Some(0),
         "a file with no field-count violations is not ragged"
     );
 }
@@ -74,8 +76,8 @@ fn truly_broken_example_is_not_reported_clean() {
         .expect("flexible parsing recovers the fixture");
 
     assert!(
-        report.execution.ragged_row_count > 0,
-        "truly_broken.csv must surface a structural-violation signal, got {}",
+        report.execution.ragged_row_count.is_some_and(|n| n > 0),
+        "truly_broken.csv must surface a structural-violation signal, got {:?}",
         report.execution.ragged_row_count
     );
 }
@@ -129,7 +131,7 @@ mod async_parity {
             .await
             .unwrap();
 
-        assert_eq!(from_file.execution.ragged_row_count, 2);
+        assert_eq!(from_file.execution.ragged_row_count, Some(2));
         assert_eq!(
             from_stream.execution.ragged_row_count, from_file.execution.ragged_row_count,
             "async bytes and the file path must agree on the same input"
@@ -143,7 +145,7 @@ mod async_parity {
     #[tokio::test]
     async fn async_bytes_report_clean_input_as_clean() {
         let report = Profiler::new().profile_stream(source(CLEAN)).await.unwrap();
-        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(report.execution.ragged_row_count, Some(0));
         assert_eq!(report.execution.error_count, 0);
     }
 

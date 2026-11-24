@@ -402,7 +402,7 @@ pub struct FindingsInput {
     /// `None` only for a flat summary that omits it.
     sampling_applied: Option<bool>,
     /// `None` for a document written before 0.10, which did not count ragged
-    /// rows and reads back with a zero that was never measured.
+    /// rows, or any document that omits `execution.ragged_row_count`.
     ragged_row_count: Option<usize>,
     /// `None` where the quote state was not checked: a source that is not
     /// CSV, a scan that stopped before the end of its source, or a report
@@ -585,8 +585,13 @@ impl From<&ProfileReport> for FindingsInput {
             truncated: execution.truncation_reason.is_some(),
             sampling_applied: Some(execution.sampling_applied),
             // Ragged rows were first counted by the release that introduced
-            // schema versioning (0.10, #452).
-            ragged_row_count: (report.schema_version != 0).then_some(execution.ragged_row_count),
+            // schema versioning (0.10, #452). A versioned document that omits
+            // the field decodes as `None` (#1310).
+            ragged_row_count: if report.schema_version == 0 {
+                None
+            } else {
+                execution.ragged_row_count
+            },
             unterminated_quote: execution.unterminated_quote,
             csv_source: csv_source(&report.data_source),
             error_count: execution.error_count,

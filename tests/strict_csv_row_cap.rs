@@ -102,14 +102,14 @@ fn file_routes(
 fn capped_at(report: &ProfileReport, cap: u64) -> Result<(), String> {
     let execution = &report.execution;
     if execution.rows_processed as u64 != cap
-        || execution.ragged_row_count != 0
+        || execution.ragged_row_count != Some(0)
         || !matches!(
             execution.truncation_reason,
             Some(TruncationReason::MaxRows(limit)) if limit == cap
         )
     {
         return Err(format!(
-            "rows {}, ragged {}, truncation {:?}",
+            "rows {}, ragged {:?}, truncation {:?}",
             execution.rows_processed, execution.ragged_row_count, execution.truncation_reason
         ));
     }

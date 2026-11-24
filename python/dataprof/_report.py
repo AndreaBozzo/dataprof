@@ -551,13 +551,14 @@ class ProfileReport:
         return self._report.error_count
 
     @property
-    def ragged_row_count(self) -> int:
+    def ragged_row_count(self) -> int | None:
         """Number of data rows whose field count differed from the header.
 
+        Fresh reports always return an ``int`` (``0`` when no row was ragged).
         Nonzero means the source did not parse cleanly: flexible parsing
         recovered each row (dropping extra fields or padding missing ones to
-        null), but the row is a structural violation. This is the direct answer
-        to "did parsing silently go wrong?" for ragged CSV.
+        null), but the row is a structural violation. ``None`` means a loaded
+        document omitted the field, so the count was not recorded.
         """
         return self._report.ragged_row_count
 
@@ -586,14 +587,10 @@ class ProfileReport:
         """Whether ``ragged_row_count`` is a count the writer recorded.
 
         Private, like ``_schema_version``: a document from before 0.10 did not
-        count ragged rows, and a summary that omits the field records none
-        either. Both read back as 0 through the public accessor.
+        count ragged rows, and a document that omits the field records none
+        either.
         """
-        if self._schema_version == 0:
-            return False
-        if self._native_report is not None:
-            return True
-        return bool(self._report._accessor.get("ragged_row_count_recorded"))
+        return self._schema_version != 0 and self._report.ragged_row_count is not None
 
     @property
     def sampling_applied(self) -> bool:

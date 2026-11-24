@@ -122,7 +122,7 @@ def test_a_malformed_field_is_refused_with_its_path(summary, path, place, value)
 
 #: (where the key lives, key, how the reloaded report reads it, the default)
 ABSENT = [
-    (("execution",), "ragged_row_count", lambda r: r.ragged_row_count, 0),
+    (("execution",), "ragged_row_count", lambda r: r.ragged_row_count, None),
     (("execution",), "sampling_applied", lambda r: r.sampling_applied, False),
     ((), "semantic_hint_bindings", lambda r: r.semantic_hint_bindings, []),
     (("quality",), "low_sample_warning", lambda r: r.quality.low_sample_warning, False),

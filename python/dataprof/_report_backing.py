@@ -642,11 +642,8 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
         "execution.ragged_row_count",
         "a non-negative integer",
         _is_count,
-        0,
+        None,
     )
-    # The accessor keeps its 0 default, but findings must not read it as a
-    # count: every versioned summary writes the field (#1306 review).
-    values["ragged_row_count_recorded"] = "ragged_row_count" in execution
     # Absent means a pre-0.10 document, written before versioning. Callers
     # that must not read a defaulted field as a measurement branch on it.
     values["schema_version"] = document.get("schema_version", 0)

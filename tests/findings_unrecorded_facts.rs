@@ -264,10 +264,21 @@ fn statuses(report: &ProfileReport) -> BTreeMap<String, CheckStatus> {
 
 #[test]
 fn deleting_an_optional_field_never_turns_a_forbidden_finding_into_a_pass() {
-    // A CSV that holds an unterminated quote, duplicate rows and nulls, and
-    // the canonical report, which records no quote state at all.
-    let csv = file(".csv", b"id,text\n1,a\n1,a\n2,\n3,\"open\n4,x\n");
+    // A CSV that holds a ragged row, an unterminated quote, duplicate rows and
+    // nulls, and the canonical report, which records no quote state at all.
+    let csv = file(".csv", b"id,text\n1,a\n1,a\n2,\n9\n3,\"open\n4,x\n");
     let profiled = document(&Profiler::new().analyze_file(csv.path()).unwrap());
+    let before_profiled = statuses(&load(&profiled));
+    assert_eq!(
+        before_profiled.get("ForbidFinding None Some(RaggedRows)"),
+        Some(&CheckStatus::Failed),
+        "the profiled CSV must start out failing ragged_rows"
+    );
+    assert_eq!(
+        before_profiled.get("ForbidFinding None Some(UnterminatedQuote)"),
+        Some(&CheckStatus::Failed),
+        "the profiled CSV must start out failing unterminated_quote"
+    );
     let canonical: Value =
         serde_json::from_str(include_str!("fixtures/canonical_report.json")).unwrap();
     let mut moved = Vec::new();
@@ -313,25 +324,110 @@ fn the_profiled_csv_fails_on_its_quote_and_the_deleted_field_is_inconclusive() {
     );
 }
 
+fn forbid_ragged(report: &ProfileReport) -> Verdict {
+    QualityPolicy::new()
+        .forbid_findings([FindingCode::RaggedRows])
+        .evaluate(report)
+        .unwrap()
+        .verdict
+}
+
+fn ragged_unrecorded(report: &ProfileReport) -> bool {
+    report.findings().not_evaluated.iter().any(|rule| {
+        rule.code == FindingCode::RaggedRows && rule.reason == NotEvaluatedReason::Unrecorded
+    })
+}
+
 #[test]
-fn a_versioned_report_without_its_ragged_count_still_reads_as_zero() {
-    // Pins current behaviour, which #1310 changes: `ExecutionMetadata`
-    // defaults an omitted count to 0, so the document has lost the absence
-    // before findings read it. The deletion test above uses a report with no
-    // ragged row for this reason.
+fn a_versioned_report_without_its_ragged_count_is_inconclusive_and_unrecorded() {
+    // #1310: omitting `execution.ragged_row_count` on a versioned document must
+    // decode as `None`, list `ragged_rows` as `unrecorded`, and leave a gate
+    // forbidding it inconclusive rather than passing.
     let csv = file(".csv", b"a,b\n1,2\n3\n4,5\n");
-    let mut document = document(&Profiler::new().analyze_file(csv.path()).unwrap());
-    let ragged = |report: &ProfileReport| {
-        QualityPolicy::new()
-            .forbid_findings([FindingCode::RaggedRows])
-            .evaluate(report)
-            .unwrap()
-            .verdict
-    };
-    assert_eq!(ragged(&load(&document)), Verdict::Fail);
-    document["execution"]
+    let base = document(&Profiler::new().analyze_file(csv.path()).unwrap());
+
+    // Present with 1: fails and reports the finding.
+    let present_one = load(&base);
+    assert_eq!(present_one.execution.ragged_row_count, Some(1));
+    assert_eq!(forbid_ragged(&present_one), Verdict::Fail);
+    assert!(!ragged_unrecorded(&present_one));
+
+    // Present with 0: passes cleanly.
+    let mut with_zero = base.clone();
+    with_zero["execution"]["ragged_row_count"] = serde_json::json!(0);
+    let present_zero = load(&with_zero);
+    assert_eq!(present_zero.execution.ragged_row_count, Some(0));
+    assert_eq!(forbid_ragged(&present_zero), Verdict::Pass);
+    assert!(!ragged_unrecorded(&present_zero));
+
+    // Omitted on a versioned document: None, unrecorded, inconclusive, and
+    // stays omitted on reserialization (both canonical and flat summary).
+    let mut omitted = base.clone();
+    omitted["execution"]
         .as_object_mut()
         .unwrap()
         .remove("ragged_row_count");
-    assert_eq!(ragged(&load(&document)), Verdict::Pass);
+    let loaded_omitted = load(&omitted);
+    assert_eq!(loaded_omitted.execution.ragged_row_count, None);
+    assert!(ragged_unrecorded(&loaded_omitted));
+    assert!(
+        loaded_omitted
+            .findings()
+            .findings
+            .iter()
+            .all(|f| f.code != FindingCode::RaggedRows)
+    );
+    assert_eq!(forbid_ragged(&loaded_omitted), Verdict::Inconclusive);
+    assert!(
+        document(&loaded_omitted)["execution"]
+            .get("ragged_row_count")
+            .is_none()
+    );
+    let summary: Value = serde_json::from_str(&loaded_omitted.summary_json().unwrap()).unwrap();
+    assert!(summary["execution"].get("ragged_row_count").is_none());
+
+    // Without schema_version (pre-0.10): keeps existing unrecorded handling
+    // even if a zero is present.
+    let mut pre_versioning = with_zero.clone();
+    pre_versioning
+        .as_object_mut()
+        .unwrap()
+        .remove("schema_version");
+    let legacy = load(&pre_versioning);
+    assert_eq!(legacy.schema_version, 0);
+    assert!(ragged_unrecorded(&legacy));
+    assert_eq!(forbid_ragged(&legacy), Verdict::Inconclusive);
+
+    // Explicit null is malformed, not an omitted field.
+    let mut with_null = base;
+    with_null["execution"]["ragged_row_count"] = Value::Null;
+    assert!(serde_json::from_value::<ProfileReport>(with_null).is_err());
+}
+
+#[test]
+fn fresh_reports_still_serialize_ragged_row_count_including_zero() {
+    let clean_csv = file(".csv", b"a,b\n1,2\n3,4\n");
+    let ragged_csv = file(".csv", b"a,b\n1,2\n3\n4,5\n");
+    let parquet_file = parquet();
+
+    for (label, path, expected) in [
+        ("clean csv", clean_csv.path(), 0),
+        ("ragged csv", ragged_csv.path(), 1),
+        ("parquet", parquet_file.path(), 0),
+    ] {
+        let report = Profiler::new().analyze_file(path).unwrap();
+        assert_eq!(report.execution.ragged_row_count, Some(expected), "{label}");
+        let canonical = document(&report);
+        assert_eq!(
+            canonical["execution"].get("ragged_row_count"),
+            Some(&serde_json::json!(expected)),
+            "{label} canonical"
+        );
+        let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        assert_eq!(
+            summary["execution"].get("ragged_row_count"),
+            Some(&serde_json::json!(expected)),
+            "{label} summary"
+        );
+    }
 }
