@@ -73,6 +73,10 @@ pub struct ProfilerConfig {
     pub duplicate_rows_exact_limit: Option<usize>,
     /// Explicit distinct-count limits by column name.
     pub unique_count_exact_limits: std::collections::BTreeMap<String, usize>,
+    /// Requested groups of key columns.
+    pub unique_keys: Vec<Vec<String>>,
+    /// Maximum distinct keys retained per group.
+    pub unique_keys_exact_limit: Option<usize>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
@@ -106,6 +110,8 @@ impl Default for ProfilerConfig {
             reference_date: None,
             duplicate_rows_exact_limit: None,
             unique_count_exact_limits: std::collections::BTreeMap::new(),
+            unique_keys: Vec::new(),
+            unique_keys_exact_limit: None,
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
             temporal_columns: Vec::new(),
@@ -360,6 +366,18 @@ impl Profiler {
         limits: std::collections::BTreeMap<String, usize>,
     ) -> Self {
         self.config.unique_count_exact_limits = limits;
+        self
+    }
+
+    /// Count repeats in the given ordered groups of key columns.
+    pub fn unique_keys(mut self, keys: Vec<Vec<String>>) -> Self {
+        self.config.unique_keys = keys;
+        self
+    }
+
+    /// Retain this many distinct keys per group. The default is one million.
+    pub fn unique_keys_exact_limit(mut self, limit: usize) -> Self {
+        self.config.unique_keys_exact_limit = Some(limit);
         self
     }
 
@@ -691,6 +709,8 @@ impl Profiler {
             .with_reference_date(self.config.reference_date)
             .with_duplicate_rows_exact_limit(self.config.duplicate_rows_exact_limit)
             .with_unique_count_exact_limits(self.config.unique_count_exact_limits.clone())
+            .with_unique_keys(self.config.unique_keys.clone())
+            .with_unique_keys_exact_limit(self.config.unique_keys_exact_limit)
             .with_semantic_hints(hints)
     }
 

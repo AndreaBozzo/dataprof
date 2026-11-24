@@ -11,7 +11,7 @@ readme = "README.md"
 
 [features]
 default = []
-arrow = ["dep:arrow", "dep:csv", "dep:dataprof-csv", "dataprof-core/arrow"]
+arrow = ["dep:arrow", "dep:csv", "dep:dataprof-csv", "dataprof-core/arrow", "dataprof-metrics/arrow"]
 parquet = ["dep:parquet", "dep:bytes", "arrow"]
 parquet-async = ["parquet", "parquet/async", "dep:bytes", "dep:futures", "dep:reqwest"]
 

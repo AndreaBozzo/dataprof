@@ -102,6 +102,10 @@
           },
           "description": "Caller-chosen exact distinct limits, by profiled column name.",
           "type": "object"
+        },
+        "unique_keys": {
+          "$ref": "#/$defs/UniqueKeySettings",
+          "description": "Requested key groups and their effective distinct limit."
         }
       },
       "required": [
@@ -393,6 +397,76 @@
         "complete_records_ratio",
         "null_columns",
         "total_cells"
+      ],
+      "type": "object"
+    },
+    "CompositeKeySummary": {
+      "description": "Duplicate evidence for one ordered group of key columns.",
+      "properties": {
+        "columns": {
+          "description": "Column names in tuple order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "distinct_keys": {
+          "description": "Distinct keys observed, or a lower bound once the limit is exceeded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "distinct_repeated_keys": {
+          "description": "Keys seen at least twice. A lower bound once the limit is exceeded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "is_exact": {
+          "description": "Whether all the counted rows fit the distinct limit.\nCounts depend on 128-bit hash equality.",
+          "type": "boolean"
+        },
+        "repeated_rows": {
+          "description": "Extra occurrences after the first occurrence of a key.\nA lower bound once the limit is exceeded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows_counted": {
+          "description": "Rows with at least one non-null key cell.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows_skipped_all_null": {
+          "description": "Rows skipped because every key cell is null.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sample_repeated_keys": {
+          "description": "Up to five repeated keys in canonical form, with null cells preserved.",
+          "items": {
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "rows_counted",
+        "rows_skipped_all_null",
+        "distinct_keys",
+        "repeated_rows",
+        "distinct_repeated_keys",
+        "is_exact",
+        "sample_repeated_keys"
       ],
       "type": "object"
     },
@@ -1773,6 +1847,13 @@
           },
           "type": "array"
         },
+        "composite_keys": {
+          "description": "Repeat counts for explicitly requested key groups.",
+          "items": {
+            "$ref": "#/$defs/CompositeKeySummary"
+          },
+          "type": "array"
+        },
         "data_source": {
           "$ref": "#/$defs/DataSource",
           "description": "Data source metadata (file, query, etc.)"
@@ -2306,6 +2387,12 @@
         "columns": {
           "items": {
             "$ref": "#/$defs/PythonColumnDocument"
+          },
+          "type": "array"
+        },
+        "composite_keys": {
+          "items": {
+            "$ref": "#/$defs/CompositeKeySummary"
           },
           "type": "array"
         },
@@ -3554,6 +3641,32 @@
         "date",
         "boolean",
         "text"
+      ],
+      "type": "object"
+    },
+    "UniqueKeySettings": {
+      "description": "Settings recorded for key comparisons. Empty requests omit this setting.",
+      "properties": {
+        "exact_limit": {
+          "description": "Retained distinct keys per group.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "groups": {
+          "description": "Requested ordered groups.",
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "groups",
+        "exact_limit"
       ],
       "type": "object"
     },

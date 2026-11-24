@@ -278,6 +278,7 @@ class _ReportView(_View):
     semantic_hint_bindings = _Field[list[dict[str, Any]]]()
     metric_semantics = _Field[dict[str, str] | None]()
     analysis_settings = _Field[dict[str, Any] | None]()
+    composite_keys = _Field[list[dict[str, Any]] | None]()
     generator = _Field[dict[str, Any] | None]()
     source_identity = _Field[dict[str, Any] | None]()
     csv_metadata = _Field[dict[str, Any] | None]()

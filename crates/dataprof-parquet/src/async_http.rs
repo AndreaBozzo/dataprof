@@ -528,6 +528,7 @@ pub async fn analyze_parquet_async_http_with_options(
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_composite_keys(analyzer.composite_key_summaries()?)
     .with_row_completeness(analyzer.row_completeness_summary())
     .with_quality_data(sample_columns)
     .with_lexical_tallies(analyzer.lexical_tallies())

@@ -504,6 +504,14 @@ pub struct AnalysisSettings {
     /// Caller-chosen exact distinct limits, by profiled column name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unique_count_exact_limits: BTreeMap<String, usize>,
+    /// Requested key groups and their effective distinct limit.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "crate::UniqueKeySettings")]
+    pub unique_keys: Option<crate::UniqueKeySettings>,
 }
 
 /// A start/end column pair declared through `temporal_pairs`.
@@ -597,6 +605,7 @@ impl AnalysisSettings {
                 &options.semantic_hints().temporal_pairs,
             )),
             unique_count_exact_limits: options.unique_count_exact_limits().clone(),
+            unique_keys: crate::UniqueKeySettings::from_options(options),
         }
     }
 }
@@ -770,6 +779,10 @@ pub struct ProfileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "AnalysisSettings")]
     pub analysis_settings: Option<AnalysisSettings>,
+    /// Repeat counts for explicitly requested key groups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<crate::CompositeKeySummary>")]
+    pub composite_keys: Option<Vec<crate::CompositeKeySummary>>,
     /// The dataprof build that produced the report; see [`ReportGenerator`].
     ///
     /// Every report this build produces records [`ReportGenerator::current`].
@@ -837,6 +850,9 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "AnalysisSettings")]
     analysis_settings: Option<AnalysisSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<crate::CompositeKeySummary>")]
+    composite_keys: Option<Vec<crate::CompositeKeySummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ReportGenerator")]
     generator: Option<ReportGenerator>,
@@ -1267,6 +1283,7 @@ impl PythonProfileReportDocument {
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
             metric_semantics: report.metric_semantics.clone(),
             analysis_settings: report.analysis_settings.clone(),
+            composite_keys: report.composite_keys.clone(),
             generator: report.generator.clone(),
             source_identity: report.source_identity.clone(),
             csv_metadata: report.data_source.csv_metadata().cloned(),
@@ -1450,6 +1467,7 @@ impl ProfileReport {
             // Only the assembler knows the options a report was profiled
             // with; it records them through `with_analysis_settings`.
             analysis_settings: None,
+            composite_keys: None,
             generator: Some(ReportGenerator::current()),
             source_identity: None,
         }
@@ -1563,6 +1581,8 @@ struct ProfileReportFields {
     #[serde(default)]
     analysis_settings: Option<AnalysisSettings>,
     #[serde(default)]
+    composite_keys: Option<Vec<crate::CompositeKeySummary>>,
+    #[serde(default)]
     generator: Option<ReportGenerator>,
     #[serde(default)]
     source_identity: Option<SourceIdentity>,
@@ -1590,6 +1610,7 @@ impl From<ProfileReportFields> for ProfileReport {
             semantic_hint_bindings: fields.semantic_hint_bindings,
             metric_semantics: fields.metric_semantics,
             analysis_settings: fields.analysis_settings,
+            composite_keys: fields.composite_keys,
             generator: fields.generator,
             source_identity: fields.source_identity,
         }
@@ -1643,6 +1664,7 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
         for key in [
             "metric_semantics",
             "analysis_settings",
+            "composite_keys",
             "generator",
             "source_identity",
         ] {

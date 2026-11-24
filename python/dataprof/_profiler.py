@@ -196,6 +196,16 @@ class Profiler:
         self._kwargs["unique_count_exact_limits"] = dict(limits)
         return self
 
+    def unique_keys(self, groups: list[list[str]]) -> Profiler:
+        """Count repeats for the given groups of columns."""
+        self._kwargs["unique_keys"] = groups
+        return self
+
+    def unique_keys_exact_limit(self, limit: int) -> Profiler:
+        """Set the distinct limit for each requested key group."""
+        self._kwargs["unique_keys_exact_limit"] = limit
+        return self
+
     def metrics(self, packs: list[str]) -> Profiler:
         """Select metric packs to compute.
 

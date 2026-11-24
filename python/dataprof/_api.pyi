@@ -44,6 +44,8 @@ def profile(
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
@@ -75,6 +77,8 @@ def profile_file(
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path with file-oriented options."""

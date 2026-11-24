@@ -1408,6 +1408,26 @@ reports. It records the requested limit even when the count became approximate.
 Read `unique_count_is_approximate` on the column to tell whether its exact set
 was retained. A nested column may have no distinct count.
 
+## v1 additive change: `composite_keys` and `analysis_settings.unique_keys`
+
+A report profiled with `unique_keys` holds a report-level `composite_keys`
+array in both dialects (#1330), one entry per requested group of columns:
+`columns`, `rows_counted`, `rows_skipped_all_null`, `distinct_keys`,
+`repeated_rows`, `distinct_repeated_keys`, `is_exact` and
+`sample_repeated_keys` (at most five keys, each a list of canonical cell
+strings with `null` for a null cell). `analysis_settings.unique_keys` records
+the groups and the exact limit. Both are omitted when no group was requested,
+including on older reports: absent means not analyzed.
+
+Cells are compared through the canonical value encoding of #1347, so values
+equal under it (`1.5` and `1.50`, an integer and the same float, a text cell
+and the same typed Arrow value) are one key value on every input path. A
+column's `unique_count` compares cells as written, so a one-column group can
+report fewer `distinct_keys` than that column's `unique_count`. Past the exact
+limit, `distinct_keys`, `repeated_rows` and `distinct_repeated_keys` are lower
+bounds and `is_exact` is `false`. A repeat can be a 128-bit hash collision,
+with probability about `n^2 / 2^129` over `n` distinct keys.
+
 ## v1 additive change: `metric_semantics.date_forms`
 
 `metric_semantics` gains one definition:

@@ -500,6 +500,11 @@ pub fn profile_dataframe(
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_composite_keys(
+        analyzer
+            .composite_key_summaries()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?,
+    )
     .with_row_completeness(analyzer.row_completeness_summary())
     .with_analysis_options(&options);
 
@@ -637,6 +642,11 @@ pub fn profile_arrow(
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_composite_keys(
+        analyzer
+            .composite_key_summaries()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?,
+    )
     .with_row_completeness(analyzer.row_completeness_summary())
     .with_analysis_options(&options);
 

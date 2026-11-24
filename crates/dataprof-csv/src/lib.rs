@@ -600,7 +600,8 @@ fn scan_csv<R: Read>(
     let mut column_stats = StreamingColumnCollection::new()
         .with_semantic_hints(options.semantic_hints())
         .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit())
-        .with_unique_count_exact_limits(options.unique_count_exact_limits());
+        .with_unique_count_exact_limits(options.unique_count_exact_limits())
+        .with_unique_keys(options);
     // A header declares the columns even when no data records follow it.
     column_stats.init_columns(&header_names);
     let mut rows_read = 0;
@@ -714,6 +715,7 @@ pub fn analyze_csv_file_with_options(
         .with_quality_data(sample_columns)
         .with_lexical_tallies(column_stats.lexical_tallies())
         .with_row_duplicates(column_stats.row_duplicate_summary())
+        .with_composite_keys(column_stats.composite_key_summaries()?)
         .with_row_completeness(column_stats.row_completeness_summary())
         .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
         .build())

@@ -380,6 +380,11 @@ pub(crate) fn profile_stream(
     )
     .columns(columns)
     .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_composite_keys(
+        analyzer
+            .composite_key_summaries()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?,
+    )
     .with_row_completeness(analyzer.row_completeness_summary())
     .with_analysis_options(&options);
     if include_quality {

@@ -53,6 +53,8 @@ async def profile_bytes(
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def profile_file(
@@ -81,6 +83,8 @@ async def profile_file(
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def profile_url(
@@ -109,6 +113,8 @@ async def profile_url(
     reference_date: date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport: ...
 async def infer_schema_stream(
