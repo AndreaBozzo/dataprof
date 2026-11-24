@@ -313,6 +313,9 @@ impl<'a> WideDecimal<'a> {
     fn read(value: &'a str) -> Option<Self> {
         let negative = value.starts_with('-');
         let value = value.strip_prefix(['+', '-']).unwrap_or(value);
+        // decode-audit: no-data — an exponent past i64 has no wide-decimal form;
+        // the caller then encodes the token's f64 value, which is what every
+        // float route reads for it, so text and typed routes still agree.
         let (mantissa, exponent) = if let Some((mantissa, exponent)) = value.split_once(['e', 'E'])
         {
             (mantissa, exponent.parse::<i64>().ok()?)

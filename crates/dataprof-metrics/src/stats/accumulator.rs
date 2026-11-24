@@ -992,6 +992,9 @@ impl ExactDecimal {
     }
 
     pub(crate) fn from_coefficient(unscaled: i128, scale: i64) -> Option<Self> {
+        // decode-audit: no-data — a scale past u32 is outside ExactDecimal's
+        // range; None sends the caller to the exact wide-decimal encoding, not
+        // to a default value.
         if scale < 0 {
             return Some(Self::integer(scale_up(
                 unscaled,
