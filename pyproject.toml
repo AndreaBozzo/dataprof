@@ -61,6 +61,7 @@ dev = [
     "pandas>=2.0.0",
     "polars>=1.0.0",
     "pyarrow>=14.0",
+    "arro3-core>=0.9",
 ]
 
 [tool.maturin]
