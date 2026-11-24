@@ -283,9 +283,13 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     // about a column that was analyzed, not a statistic over nothing.
     let stats = stats_over_values(stats, input.total_count, input.null_count);
 
+    let owned_lexical;
     let lexical = match input.exact_lexical {
-        Some(tally) => *tally,
-        None => LexicalTally::from_values(input.sample_values),
+        Some(tally) => tally,
+        None => {
+            owned_lexical = LexicalTally::from_values(input.sample_values);
+            &owned_lexical
+        }
     };
 
     let (patterns, pattern_values_checked) = if input.skip_patterns {

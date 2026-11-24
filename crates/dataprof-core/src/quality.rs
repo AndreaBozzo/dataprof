@@ -235,23 +235,49 @@ pub enum DateForms {
     SpacedIsoDatetimes,
 }
 
-/// Which values a column's type, `type_homogeneity` and `locale_number_count`
-/// are counted over, as recorded in a report's metric semantics.
+/// Which values column types, `type_homogeneity`, `locale_number_count`,
+/// `zero_padded_count`, consistency and precision are counted over, as recorded
+/// in a report's metric semantics (#788).
 ///
-/// Only the current definition has a value. Through 0.14 the engines that
-/// retain a bounded sample of each column (files, Arrow and the streaming
-/// readers) typed a text column and classified its values from that sample,
-/// so on a source larger than the sample one zero-padded code or a share
-/// near a type threshold could type the column otherwise than the same data
-/// read in memory; and one zero-padded number made a column digit codes,
-/// where 1% of them now does. Those releases recorded no definition.
+/// Through 0.14 the engines that retain a bounded sample of each column (files,
+/// Arrow and the streaming readers) typed a text column, classified its values,
+/// and computed consistency and precision from that sample; those releases
+/// recorded no definition. Step 1 (`every_value`) moved type inference,
+/// `type_homogeneity`, `locale_number_count` and `zero_padded_count` to every
+/// non-null value read and changed the digit-code rule to 1%. Step 2
+/// (`every_value_consistency_precision`) also counts consistency and precision
+/// over every non-null value read on every engine.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ValueFacts {
-    /// Every non-null value the scan read, on every engine (#788).
+    /// Step 1 (#788): every non-null value read for type inference,
+    /// `type_homogeneity`, `locale_number_count` and `zero_padded_count`;
+    /// consistency and precision still read the retained sample.
     EveryValue,
+    /// Step 2 (#788): every non-null value read for type inference,
+    /// `type_homogeneity`, `locale_number_count`, `zero_padded_count`,
+    /// consistency and precision, on every engine.
+    EveryValueConsistencyPrecision,
+}
+
+impl ValueFacts {
+    /// Whether this definition counts column types, `type_homogeneity`,
+    /// `locale_number_count` and `zero_padded_count` over every value read
+    /// (step 1 and later).
+    pub fn has_exact_lexical_forms(self) -> bool {
+        matches!(
+            self,
+            Self::EveryValue | Self::EveryValueConsistencyPrecision
+        )
+    }
+
+    /// Whether this definition also counts consistency and precision over every
+    /// value read (step 2 and later).
+    pub fn has_exact_consistency_precision(self) -> bool {
+        matches!(self, Self::EveryValueConsistencyPrecision)
+    }
 }
 
 /// High-level categories of analysis that can be selectively enabled.

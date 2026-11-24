@@ -1462,18 +1462,24 @@ or predate `key_values_checked` retain their recorded `key_uniqueness` value.
 
 | field | values | meaning |
 | --- | --- | --- |
-| `value_facts` | `"every_value"` | which values a column's `data_type`, `type_homogeneity`, `locale_number_count` and `zero_padded_count` are counted over, and how many zero-padded numbers make digit codes |
+| `value_facts` | `"every_value"`, `"every_value_consistency_precision"` | which values a column's `data_type`, `type_homogeneity`, `locale_number_count`, `zero_padded_count`, consistency and precision are counted over, and how many zero-padded numbers make digit codes |
 
 The file, Arrow and streaming engines keep at most 10,000 values of each
-column. Through 0.14 they typed a column read as text and classified its
-values from those, while the same data profiled in memory was typed from every
-value (#788). On a larger source, one zero-padded code outside the sample, or
-a share of numbers, dates or booleans at a type threshold, typed the column
-otherwise by input route, and every check that follows the type followed it.
-Each engine now counts the lexical facts of every non-null value it reads, so
-the type, `type_homogeneity` and `locale_number_count` cover every value read
-on every route. Patterns, and the quality checks other than the type, still
-read the sample.
+column. Through 0.14 they typed a column read as text, classified its values,
+and computed consistency and precision from those, while the same data profiled
+in memory was measured from every value (#788). On a larger source, one
+zero-padded code outside the sample, or a share of numbers, dates or booleans
+at a type threshold, typed the column otherwise by input route, and minority
+type, format, encoding or decimal-scale values outside the sample went unseen.
+Each engine now counts the lexical, consistency and precision facts of every
+non-null value it reads (`"every_value_consistency_precision"`), so the type,
+`type_homogeneity`, `locale_number_count`, `zero_padded_count`, `consistency`
+and `precision` cover every value read on every route, and both `consistency`
+and `precision` appear in `exact_dimensions` rather than `sampled_dimensions`.
+Reports written by step 1 recorded `"every_value"`: they counted types and
+lexical forms over every value read, while consistency and precision still read
+the retained sample. Patterns, accuracy, timeliness and validity still read the
+sample.
 
 Counted over every value, one stray zero-padded number would retype a column
 of quantities on every route, where before only a sample that held it did.
@@ -1493,7 +1499,11 @@ fewer values than its non-null count (typed from a sample), a `string` column
 whose classified values are more than 80% numeric (perhaps codes for one
 zero-padded value), a `string` column named for dates that holds numbers
 (perhaps scored as digit codes by the consistency check), or one that
-records no type, counts or classification. Regenerate the baseline with the current release to have
+records no type, counts or classification. Against a report recording no
+`value_facts` or recording step 1's `"every_value"`, the gate also leaves the
+consistency, precision and overall score rules `definition_not_comparable`
+whenever consistency or precision was computed over a retained sample rather
+than every value read. Regenerate the baseline with the current release to have
 those rules decided again. With the record, `forbid_findings` decides
 `mixed_types` and `locale_numbers` on a scan that read every row, however
 large the source; `sensitive_pattern` reads the column's

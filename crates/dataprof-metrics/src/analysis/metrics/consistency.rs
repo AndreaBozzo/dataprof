@@ -5,12 +5,23 @@
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column};
 use crate::analysis::inference::{
-    classify_lexical_forms, holds_digit_codes, is_date_token, is_integer_token, is_null_like_token,
-    lexical_class, parse_strict_boolean_token,
+    LexicalTally, classify_lexical_forms, holds_digit_codes, is_date_token, is_integer_token,
+    is_null_like_token, lexical_class, parse_strict_boolean_token,
 };
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
 use std::collections::HashMap;
+
+/// Whether a single value contains a UTF-8 replacement character or a common
+/// mojibake artifact.
+pub(crate) fn has_encoding_issue(text: &str) -> bool {
+    text.contains('\u{FFFD}') || has_encoding_artifacts(text)
+}
+
+fn has_encoding_artifacts(text: &str) -> bool {
+    let artifacts = ["Ã¡", "Ã©", "Ã\u{AD}", "Ã³", "Ãº", "Ã±", "Ã§"];
+    artifacts.iter().any(|artifact| text.contains(artifact))
+}
 
 /// Consistency metrics container
 #[derive(Debug)]
@@ -45,6 +56,74 @@ fn has_date_shape(value: &str) -> bool {
 pub(crate) struct ConsistencyCalculator;
 
 impl ConsistencyCalculator {
+    /// Calculate consistency metrics from per-column [`LexicalTally`] counters
+    /// accumulated over every scanned value (#788 step 2).
+    pub fn calculate_from_tallies(
+        tallies: &HashMap<String, LexicalTally>,
+        column_profiles: &[ColumnProfile],
+    ) -> ConsistencyMetrics {
+        let mut total_values = 0usize;
+        let mut consistent_values = 0usize;
+        let mut format_violations = 0usize;
+        let mut encoding_issues = 0usize;
+
+        for profile in column_profiles {
+            // A container has no lexical form of its own to be consistent
+            // with; what reaches here is a serialisation of it (#637).
+            if profile.data_type == DataType::Nested {
+                continue;
+            }
+            let Some(tally) = tallies.get(&profile.name) else {
+                continue;
+            };
+            let count = tally.values_checked();
+            total_values += count;
+            consistent_values += match profile.data_type {
+                DataType::Integer => tally.integer_count(),
+                DataType::Float => tally.type_homogeneity().numeric,
+                DataType::Date => tally.type_homogeneity().date,
+                DataType::Boolean => tally.type_homogeneity().boolean,
+                DataType::String => {
+                    if !is_likely_date_column(&profile.name) || tally.holds_digit_codes() {
+                        tally
+                            .type_homogeneity()
+                            .dominant()
+                            .map_or(0, |(_, dominant)| dominant)
+                    } else {
+                        tally.type_homogeneity().date
+                    }
+                }
+                DataType::Identifier => {
+                    if is_likely_date_column(&profile.name) {
+                        tally.type_homogeneity().date
+                    } else {
+                        count
+                    }
+                }
+                DataType::Nested => unreachable!("nested columns are skipped above"),
+            };
+            format_violations += tally.format_violations();
+            encoding_issues += tally.encoding_issues();
+        }
+
+        let (data_type_consistency, inconsistent_values) = if total_values == 0 {
+            (100.0, 0)
+        } else {
+            (
+                (consistent_values as f64 / total_values as f64) * 100.0,
+                total_values - consistent_values,
+            )
+        };
+
+        ConsistencyMetrics {
+            data_type_consistency,
+            format_violations,
+            encoding_issues,
+            values_checked: total_values,
+            inconsistent_values,
+        }
+    }
+
     /// Calculate consistency dimension metrics
     pub fn calculate(
         data: &HashMap<String, Vec<String>>,
@@ -277,20 +356,13 @@ impl ConsistencyCalculator {
             for value in values {
                 // Replacement characters (�) or mojibake artifacts both
                 // indicate the same defect: the value was mis-decoded.
-                if value.contains('\u{FFFD}') || Self::has_encoding_artifacts(value) {
+                if has_encoding_issue(value) {
                     issues += 1;
                 }
             }
         }
 
         Ok(issues)
-    }
-
-    /// Check for encoding artifacts in text
-    fn has_encoding_artifacts(text: &str) -> bool {
-        // Common encoding artifacts
-        let artifacts = ["Ã¡", "Ã©", "Ã\u{AD}", "Ã³", "Ãº", "Ã±", "Ã§"];
-        artifacts.iter().any(|artifact| text.contains(artifact))
     }
 }
 
@@ -676,5 +748,127 @@ mod tests {
         assert!(has_date_shape("٢٠٢٤-٠٣-١٥"));
         assert!(!has_date_shape("2024-03-150"));
         assert!(!has_date_shape("20240315"));
+    }
+
+    #[test]
+    fn tally_consistency_matches_sample_calculator_under_ten_thousand_values() {
+        let profile = |name: &str, data_type: DataType| ColumnProfile {
+            name: name.to_string(),
+            data_type,
+            ..string_profile(name)
+        };
+        let columns: Vec<(ColumnProfile, Vec<String>)> = vec![
+            (
+                profile("int_col", DataType::Integer),
+                vec!["1", "2", "bad", "", "NA", "42"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("float_col", DataType::Float),
+                vec!["1.5", "2", "1.234,56", "inf", "oops", "null"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("date_col", DataType::Date),
+                vec![
+                    "2024-03-15",
+                    "2024-03-16",
+                    "15/03/2024",
+                    "2024-03-15T12:00:00.5Z",
+                    "not-a-date",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                profile("bool_col", DataType::Boolean),
+                vec!["true", "FALSE", "yes", "True"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("mixed_text", DataType::String),
+                vec![
+                    "hello",
+                    "world",
+                    "123",
+                    "10,5",
+                    "10.5",
+                    "Caf\u{00c3}\u{00a9}",
+                    "x\u{FFFD}y",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            ),
+            (
+                profile("created_date", DataType::String),
+                vec!["2024-01-01", "not-a-date", "also-text"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("departure_time", DataType::String),
+                vec!["0930", "1045", "1200", "oops"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("user_id", DataType::Identifier),
+                vec!["A1", "123", "B2"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("date_id", DataType::Identifier),
+                vec!["2024-01-01", "not-a-date"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+            (
+                profile("nested_col", DataType::Nested),
+                vec!["{\"a\":1}", "1,2.3", "bad\u{FFFD}"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            ),
+        ];
+
+        let profiles: Vec<ColumnProfile> = columns.iter().map(|(p, _)| p.clone()).collect();
+        let data: HashMap<String, Vec<String>> = columns
+            .iter()
+            .map(|(p, v)| (p.name.clone(), v.clone()))
+            .collect();
+        let tallies: HashMap<String, LexicalTally> = columns
+            .iter()
+            .map(|(p, v)| (p.name.clone(), LexicalTally::from_values(v)))
+            .collect();
+
+        let from_sample = ConsistencyCalculator::calculate(&data, &profiles).unwrap();
+        let from_tallies = ConsistencyCalculator::calculate_from_tallies(&tallies, &profiles);
+
+        assert_eq!(from_tallies.values_checked, from_sample.values_checked);
+        assert_eq!(
+            from_tallies.inconsistent_values,
+            from_sample.inconsistent_values
+        );
+        assert_eq!(
+            from_tallies.format_violations,
+            from_sample.format_violations
+        );
+        assert_eq!(from_tallies.encoding_issues, from_sample.encoding_issues);
+        assert!(
+            (from_tallies.data_type_consistency - from_sample.data_type_consistency).abs() < 1e-12
+        );
     }
 }

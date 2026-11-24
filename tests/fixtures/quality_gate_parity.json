@@ -558,7 +558,7 @@
     },
     {
       "name": "a_sampled_score_is_decided_on_its_whole_source_interval",
-      "why": "The source was read in full and no row sampler ran, so the scan's own evidence is complete. Quality still came from the bounded reservoir; the report bounds each sampled score over the whole source, and a minimum below the whole interval passes. Completeness comes from exact column counters and is decided on its value.",
+      "why": "The source was read in full and no row sampler ran, so the scan's own evidence is complete. Accuracy still came from the bounded reservoir; the report bounds each sampled score over the whole source, and a minimum below the whole interval passes. Completeness and consistency come from exact counters and are decided on their values.",
       "options": {
         "input": "generated"
       },
@@ -589,7 +589,7 @@
               "reason": "quality_sampled"
             },
             "bounds": {
-              "lower": 99.89,
+              "lower": 99.98,
               "upper": 100.0,
               "confidence_level": 0.999
             },
@@ -621,16 +621,10 @@
             "observed": 100.0,
             "scope": "full_source",
             "evidence": {
-              "coverage": "incomplete",
-              "reason": "quality_sampled"
-            },
-            "bounds": {
-              "lower": 99.68,
-              "upper": 100.0,
-              "confidence_level": 0.999
+              "coverage": "complete"
             },
             "status": "passed",
-            "message": "this dimension's score was computed over a sample, and its whole-source interval meets the required minimum"
+            "message": "this dimension's score meets the required minimum"
           }
         ]
       }
@@ -664,7 +658,7 @@
               "reason": "quality_sampled"
             },
             "bounds": {
-              "lower": 99.89,
+              "lower": 99.98,
               "upper": 100.0,
               "confidence_level": 0.999
             },

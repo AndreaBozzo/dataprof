@@ -936,6 +936,15 @@ impl RecordBatchAnalyzer {
         samples
     }
 
+    /// Per-column lexical and quality counters accumulated over every processed
+    /// value (#788 step 2).
+    pub fn lexical_tallies(&self) -> HashMap<String, LexicalTally> {
+        self.column_analyzers
+            .iter()
+            .map(|(name, analyzer)| (name.clone(), analyzer.lexical.clone()))
+            .collect()
+    }
+
     /// Exact value-driven semantic-hint evidence over every processed batch.
     pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
         self.options

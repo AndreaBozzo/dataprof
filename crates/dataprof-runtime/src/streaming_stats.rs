@@ -457,8 +457,9 @@ impl StreamingStatistics {
         // The year maps behind the date statistics (#1297): one entry per
         // distinct year, so small on real dates but counted all the same.
         let dates_size = self.dates.heap_bytes();
+        let lexical_size = self.lexical.heap_bytes();
 
-        struct_size + distinct_size + reservoir_size + dates_size
+        struct_size + distinct_size + reservoir_size + dates_size + lexical_size
     }
 }
 
@@ -896,6 +897,15 @@ impl StreamingColumnCollection {
     /// Full-stream complete-record counts, or `None` when no rows were seen.
     pub fn row_completeness_summary(&self) -> Option<RowCompletenessSummary> {
         self.completeness_tracker.summary()
+    }
+
+    /// Per-column lexical and quality counters accumulated over every scanned
+    /// value (#788 step 2).
+    pub fn lexical_tallies(&self) -> HashMap<String, LexicalTally> {
+        self.columns
+            .iter()
+            .map(|(name, stats)| (name.clone(), stats.lexical_tally().clone()))
+            .collect()
     }
 
     /// Exact value-driven semantic-hint evidence over every processed record.

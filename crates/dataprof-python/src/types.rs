@@ -1437,6 +1437,9 @@ impl PyProfileReport {
                 "value_facts",
                 match facts {
                     ValueFacts::EveryValue => "every_value",
+                    ValueFacts::EveryValueConsistencyPrecision => {
+                        "every_value_consistency_precision"
+                    }
                 },
             )?;
         }

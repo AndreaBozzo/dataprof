@@ -257,13 +257,16 @@ pub struct MetricSemantics {
     #[schemars(with = "DateForms")]
     pub date_forms: Option<DateForms>,
     /// Which values a column's `data_type`, `type_homogeneity`,
-    /// `locale_number_count` and `zero_padded_count` are counted over, and
-    /// how many zero-padded numbers make digit codes.
+    /// `locale_number_count`, `zero_padded_count`, consistency and precision
+    /// are counted over, and how many zero-padded numbers make digit codes.
     ///
     /// Absent means not recorded: through 0.14 an engine that retained a
-    /// bounded sample typed and classified a text column from it, so on a
-    /// source larger than the sample a value outside it could not change the
-    /// type; and one zero-padded number made a column digit codes.
+    /// bounded sample typed and classified a text column, and computed
+    /// consistency and precision, from that sample; and one zero-padded number
+    /// made a column digit codes. `every_value` (step 1) counted type inference
+    /// and lexical forms over every value read while consistency and precision
+    /// still read the sample. `every_value_consistency_precision` (step 2) also
+    /// counts consistency and precision over every value read.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -302,7 +305,7 @@ impl MetricSemantics {
             date_statistics: Some(DateStatistics::EveryValue),
             outlier_spread: Some(OutlierSpread::NonzeroIqr),
             date_forms: Some(DateForms::SpacedIsoDatetimes),
-            value_facts: Some(ValueFacts::EveryValue),
+            value_facts: Some(ValueFacts::EveryValueConsistencyPrecision),
         }
     }
 
@@ -1835,7 +1838,7 @@ mod tests {
             "date_statistics": "every_value",
             "outlier_spread": "nonzero_iqr",
             "date_forms": "spaced_iso_datetimes",
-            "value_facts": "every_value",
+            "value_facts": "every_value_consistency_precision",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);

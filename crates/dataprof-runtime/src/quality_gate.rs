@@ -4168,7 +4168,7 @@ impl Definition {
             Self::JsonNumberReading => facts.json_numbers,
             Self::OutlierSpread => facts.coinciding_quartiles,
             Self::DateForms => facts.spaced_datetimes,
-            Self::ValueFacts => facts.retyped_columns,
+            Self::ValueFacts => facts.retyped_columns || facts.sampled_consistency_precision,
             Self::NullTokens
             | Self::PatternMatchCount
             | Self::RangeRuleCount
@@ -4224,6 +4224,10 @@ struct RunFacts {
     /// from a sample of its values, or as digit codes for one zero-padded
     /// value.
     retyped_columns: bool,
+    /// Consistency or precision may have been scored over a retained sample
+    /// on a side written before `value_facts: every_value_consistency_precision`
+    /// (#788 step 2).
+    sampled_consistency_precision: bool,
 }
 
 impl RunFacts {
@@ -4240,6 +4244,8 @@ impl RunFacts {
                 || sides.b.may_hold_spaced_datetimes(),
             retyped_columns: sides.a.may_type_columns_otherwise()
                 || sides.b.may_type_columns_otherwise(),
+            sampled_consistency_precision: sides.a.may_sample_consistency_or_precision(dimension)
+                || sides.b.may_sample_consistency_or_precision(dimension),
         }
     }
 }

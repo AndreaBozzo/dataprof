@@ -24,7 +24,7 @@ CURRENT = {
     "date_statistics": "every_value",
     "outlier_spread": "nonzero_iqr",
     "date_forms": "spaced_iso_datetimes",
-    "value_facts": "every_value",
+    "value_facts": "every_value_consistency_precision",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
 CITIES = {"city": ["東京", "Zürich", "Oslo", None]}
@@ -229,8 +229,12 @@ def test_malformed_semantics_are_rejected_by_both_readers(value):
 
 @pytest.mark.parametrize(
     "value",
-    [{}, {**CURRENT, "grapheme_policy": "extended"}],
-    ids=["empty", "unknown-definition"],
+    [
+        {},
+        {**CURRENT, "value_facts": "every_value"},
+        {**CURRENT, "grapheme_policy": "extended"},
+    ],
+    ids=["empty", "step1-value-facts", "unknown-definition"],
 )
 def test_both_readers_agree_on_accepted_semantics(value):
     summary, canonical = _through_both_readers(value)

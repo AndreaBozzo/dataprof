@@ -632,6 +632,7 @@ impl ArrowProfiler {
 
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
+        let mut lexical_tallies = std::collections::HashMap::new();
 
         for name in &projected_header_names {
             if let Some(analyzer) = column_analyzers.get(name) {
@@ -644,6 +645,7 @@ impl ArrowProfiler {
                 );
                 column_profiles.push(profile);
                 sample_columns.insert(name.clone(), analyzer.get_sample_values());
+                lexical_tallies.insert(name.clone(), analyzer.lexical.clone());
             }
         }
 
@@ -683,6 +685,7 @@ impl ArrowProfiler {
         } else {
             assembler = assembler
                 .with_quality_data(sample_columns)
+                .with_lexical_tallies(lexical_tallies)
                 .with_exact_value_hint_bindings(
                     hint_bindings.bindings(projected_header_names.iter().map(String::as_str)),
                 )

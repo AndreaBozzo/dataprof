@@ -264,7 +264,6 @@ def _reached_by(run: str, tmp_path: Path) -> dp.ProfileReport:
         ("json_number_reading", "uniqueness", "completeness", "json"),
         ("json_number_reading", "accuracy", "completeness", "json"),
         ("json_number_reading", "consistency", "completeness", "json"),
-        ("sampled_score_estimator", "consistency", "completeness", "sampled"),
         ("sampled_score_estimator", "accuracy", "completeness", "sampled"),
     ],
 )
@@ -626,3 +625,41 @@ def test_a_change_rule_without_a_baseline_says_how_to_pass_one():
     with pytest.raises(ValueError, match="states no requirement") as other:
         report.check()
     assert "baseline=" not in str(other.value)
+
+
+@pytest.mark.parametrize("value_facts", [None, "every_value"], ids=["0.14", "step1"])
+def test_step_1_or_0_14_baseline_with_sampled_consistency_precision_is_definition_not_comparable(
+    value_facts: str | None, tmp_path: Path
+):
+    path = tmp_path / "precision_drift.csv"
+    path.write_text(
+        "id,amount\n"
+        + "".join(f"{row},{'12.3456' if row >= 11_000 else '12.34'}\n" for row in range(12_000)),
+        encoding="utf-8",
+    )
+    report = dp.profile(str(path))
+    baseline = report.to_dict()
+    if value_facts is None:
+        del baseline["metric_semantics"]["value_facts"]
+    else:
+        baseline["metric_semantics"]["value_facts"] = value_facts
+    baseline["quality"]["exact_dimensions"] = ["completeness", "duplicate_rows"]
+    baseline["quality"]["sampled_dimensions"] = [
+        "consistency",
+        "accuracy",
+        "validity",
+        "precision",
+    ]
+    baseline["quality"]["dimension_scores"]["precision"] = 100.0
+    baseline["quality"]["overall_score"] = 100.0
+
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(baseline),
+        max_quality_score_drop=0,
+        max_dimension_score_drops={"consistency": 0, "precision": 0, "completeness": 0},
+    )
+    unevaluated = {"reason": "definition_not_comparable", "definition": "value_facts"}
+    assert _find(result, "max_quality_score_drop").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "consistency").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "precision").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"

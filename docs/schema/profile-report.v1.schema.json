@@ -1389,7 +1389,7 @@
         },
         "value_facts": {
           "$ref": "#/$defs/ValueFacts",
-          "description": "Which values a column's `data_type`, `type_homogeneity`,\n`locale_number_count` and `zero_padded_count` are counted over, and\nhow many zero-padded numbers make digit codes.\n\nAbsent means not recorded: through 0.14 an engine that retained a\nbounded sample typed and classified a text column from it, so on a\nsource larger than the sample a value outside it could not change the\ntype; and one zero-padded number made a column digit codes."
+          "description": "Which values a column's `data_type`, `type_homogeneity`,\n`locale_number_count`, `zero_padded_count`, consistency and precision\nare counted over, and how many zero-padded numbers make digit codes.\n\nAbsent means not recorded: through 0.14 an engine that retained a\nbounded sample typed and classified a text column, and computed\nconsistency and precision, from that sample; and one zero-padded number\nmade a column digit codes. `every_value` (step 1) counted type inference\nand lexical forms over every value read while consistency and precision\nstill read the sample. `every_value_consistency_precision` (step 2) also\ncounts consistency and precision over every value read."
         }
       },
       "type": "object"
@@ -3659,11 +3659,16 @@
       ]
     },
     "ValueFacts": {
-      "description": "Which values a column's type, `type_homogeneity` and `locale_number_count`\nare counted over, as recorded in a report's metric semantics.\n\nOnly the current definition has a value. Through 0.14 the engines that\nretain a bounded sample of each column (files, Arrow and the streaming\nreaders) typed a text column and classified its values from that sample,\nso on a source larger than the sample one zero-padded code or a share\nnear a type threshold could type the column otherwise than the same data\nread in memory; and one zero-padded number made a column digit codes,\nwhere 1% of them now does. Those releases recorded no definition.",
+      "description": "Which values column types, `type_homogeneity`, `locale_number_count`,\n`zero_padded_count`, consistency and precision are counted over, as recorded\nin a report's metric semantics (#788).\n\nThrough 0.14 the engines that retain a bounded sample of each column (files,\nArrow and the streaming readers) typed a text column, classified its values,\nand computed consistency and precision from that sample; those releases\nrecorded no definition. Step 1 (`every_value`) moved type inference,\n`type_homogeneity`, `locale_number_count` and `zero_padded_count` to every\nnon-null value read and changed the digit-code rule to 1%. Step 2\n(`every_value_consistency_precision`) also counts consistency and precision\nover every non-null value read on every engine.",
       "oneOf": [
         {
           "const": "every_value",
-          "description": "Every non-null value the scan read, on every engine (#788).",
+          "description": "Step 1 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count` and `zero_padded_count`;\nconsistency and precision still read the retained sample.",
+          "type": "string"
+        },
+        {
+          "const": "every_value_consistency_precision",
+          "description": "Step 2 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count`, `zero_padded_count`,\nconsistency and precision, on every engine.",
           "type": "string"
         }
       ]

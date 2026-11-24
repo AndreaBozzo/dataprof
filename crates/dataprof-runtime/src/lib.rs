@@ -15,6 +15,7 @@ pub mod streaming_stats;
 pub use async_source::ReqwestSource;
 #[cfg(feature = "async-streaming")]
 pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
+pub use dataprof_metrics::LexicalTally;
 pub use findings::{
     DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE, EvidenceValue, Finding,
     FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult,
