@@ -36,8 +36,8 @@ const NUMERIC_SAMPLE_CAP: usize = dataprof_runtime::COLUMN_SAMPLE_CAPACITY;
 ///
 /// Every column is normalized through here once, so the dispatch in
 /// [`ColumnAnalyzer::process_array`], the type in
-/// [`ColumnAnalyzer::infer_data_type`] and the date tracking in
-/// [`ColumnAnalyzer::should_track_date_matches`] all see one type. They used to
+/// `ColumnAnalyzer::infer_data_type` and the date tracking in
+/// `ColumnAnalyzer::should_track_date_matches` all see one type. They used to
 /// hold three lists that had drifted apart.
 ///
 /// Only encodings are stripped. A type that needs a decision of its own —
