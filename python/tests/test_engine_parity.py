@@ -505,7 +505,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "date_statistics": "every_value",
         "outlier_spread": "nonzero_iqr",
         "date_forms": "spaced_iso_datetimes",
-        "value_facts": "every_value_consistency_precision_accuracy_rules",
+        "value_facts": "every_value_consistency_precision_accuracy_rules_timeliness",
         "column_fingerprint": "xxh3_128_sum_v1",
     }
     assert report.metric_semantics == expected

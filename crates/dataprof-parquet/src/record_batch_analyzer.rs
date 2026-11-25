@@ -5,12 +5,13 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataType, LexicalClass, Locale, NativeType,
+    AnalysisOptions, ColumnProfile, DataType, IsoQualityConfig, LexicalClass, Locale, NativeType,
     SemanticHintBinding, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
     CardinalityEstimator, DateTimeAccumulator, LexicalTally, NumericAccumulator, ParsedNumber,
+    TemporalPairTracker, TimelinessClockMode, TimelinessTallies, TimelinessWindow,
     spill_largest_exact_sets,
 };
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary};
@@ -37,7 +38,7 @@ const NUMERIC_SAMPLE_CAP: usize = dataprof_runtime::COLUMN_SAMPLE_CAPACITY;
 /// Every column is normalized through here once, so the dispatch in
 /// [`ColumnAnalyzer::process_array`], the type in
 /// `ColumnAnalyzer::infer_data_type` and the date tracking in
-/// `ColumnAnalyzer::should_track_date_matches` all see one type. They used to
+/// `ColumnAnalyzer::renders_values_as_encoded_bytes` all see one type. They used to
 /// hold three lists that had drifted apart.
 ///
 /// Only encodings are stripped. A type that needs a decision of its own —
@@ -703,6 +704,9 @@ pub struct RecordBatchAnalyzer {
     total_rows: usize,
     row_tracker: BatchRowTracker,
     key_tracker: dataprof_runtime::CompositeKeyTracker,
+    temporal_pairs: TemporalPairTracker,
+    timeliness_window: TimelinessWindow,
+    timeliness_clock_mode: TimelinessClockMode,
     options: AnalysisOptions,
     /// Bytes the exact distinct sets may hold before they spill.
     exact_sets_budget: usize,
@@ -717,12 +721,17 @@ pub(crate) const DEFAULT_EXACT_SETS_BUDGET: usize = 512 * 1024 * 1024 * 80 / 100
 
 impl RecordBatchAnalyzer {
     pub fn new() -> Self {
+        let (timeliness_window, timeliness_clock_mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None);
         Self {
             column_analyzers: HashMap::new(),
             column_order: Vec::new(),
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
             key_tracker: dataprof_runtime::CompositeKeyTracker::default(),
+            temporal_pairs: TemporalPairTracker::default(),
+            timeliness_window,
+            timeliness_clock_mode,
             options: AnalysisOptions::default(),
             exact_sets_budget: DEFAULT_EXACT_SETS_BUDGET,
         }
@@ -730,6 +739,10 @@ impl RecordBatchAnalyzer {
 
     pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
         self.options = self.options.with_semantic_hints(hints.clone());
+        self.temporal_pairs = TemporalPairTracker::new(&hints.temporal_pairs);
+        if !self.column_order.is_empty() {
+            self.temporal_pairs.register_columns(&self.column_order);
+        }
         self
     }
 
@@ -747,9 +760,17 @@ impl RecordBatchAnalyzer {
     /// apply [`Self::with_semantic_hints`] or
     /// [`Self::with_duplicate_rows_exact_limit`] after it.
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
+        let (window, mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), options.reference_date());
         self.options = options.clone();
         self.row_tracker = BatchRowTracker::with_exact_limit(options.duplicate_rows_exact_limit());
         self.key_tracker = dataprof_runtime::CompositeKeyTracker::new(options);
+        self.timeliness_window = window;
+        self.timeliness_clock_mode = mode;
+        self.temporal_pairs = TemporalPairTracker::new(&options.semantic_hints().temporal_pairs);
+        if !self.column_order.is_empty() {
+            self.temporal_pairs.register_columns(&self.column_order);
+        }
         self
     }
 
@@ -780,7 +801,11 @@ impl RecordBatchAnalyzer {
             let exact_limit = self.options.unique_count_exact_limit(&column_name);
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
-                let mut analyzer = ColumnAnalyzer::with_exact_limit(field.data_type(), exact_limit);
+                let mut analyzer = ColumnAnalyzer::with_exact_limit_and_timeliness(
+                    field.data_type(),
+                    exact_limit,
+                    self.timeliness_window,
+                );
                 // Every caller of this analyzer holds a declared Arrow schema:
                 // a Parquet file's, or the one an Arrow producer exported. The
                 // declaration is the field as given, before
@@ -790,6 +815,7 @@ impl RecordBatchAnalyzer {
                 entry.insert(analyzer);
             }
         }
+        self.temporal_pairs.register_columns(&self.column_order);
         self.key_tracker.summaries()?;
         Ok(())
     }
@@ -833,6 +859,9 @@ impl RecordBatchAnalyzer {
         }
         if self.key_tracker.is_enabled() {
             self.observe_key_batch(batch, container_markers)?;
+        }
+        if self.temporal_pairs.is_enabled() {
+            self.observe_temporal_pairs_batch(batch, container_markers)?;
         }
         self.total_rows += batch.num_rows();
         self.row_tracker
@@ -910,6 +939,109 @@ impl RecordBatchAnalyzer {
                 self.key_tracker.arrow_field(name, values.as_ref(), row)?;
             }
             self.key_tracker.finish_row();
+        }
+        Ok(())
+    }
+
+    fn observe_temporal_pairs_batch(
+        &mut self,
+        batch: &RecordBatch,
+        container_markers: &[Option<&[bool]>],
+    ) -> Result<()> {
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        enum TemporalField<'a> {
+            Utf8(&'a StringArray),
+            LargeUtf8(&'a LargeStringArray),
+            Formatted(ArrayFormatter<'a>, &'a dyn Array),
+        }
+
+        let schema = batch.schema();
+        let mut decoded_storage: Vec<(usize, String, ArrayRef)> = Vec::new();
+        for (index, field) in schema.fields().iter().enumerate() {
+            if !self.temporal_pairs.tracks_column(field.name()) {
+                continue;
+            }
+            let logical = logical_arrow_type(field.data_type());
+            if matches!(
+                logical,
+                ArrowDataType::Null
+                    | ArrowDataType::Binary
+                    | ArrowDataType::LargeBinary
+                    | ArrowDataType::FixedSizeBinary(_)
+            ) || data_type_from_arrow_type(&logical) == Some(DataType::Nested)
+            {
+                continue;
+            }
+            let array = batch.column(index);
+            let decoded = if array.data_type() != &logical {
+                arrow::compute::cast(array, &logical)?
+            } else {
+                array.clone()
+            };
+            decoded_storage.push((index, field.name().clone(), decoded));
+        }
+        if decoded_storage.is_empty() {
+            return Ok(());
+        }
+        let mut fields: Vec<(usize, &str, TemporalField<'_>)> =
+            Vec::with_capacity(decoded_storage.len());
+        for (index, name, array) in &decoded_storage {
+            let tf = match array.data_type() {
+                ArrowDataType::Utf8 => {
+                    let s = array
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| anyhow::anyhow!("Failed to downcast to StringArray"))?;
+                    TemporalField::Utf8(s)
+                }
+                ArrowDataType::LargeUtf8 => {
+                    let s = array
+                        .as_any()
+                        .downcast_ref::<LargeStringArray>()
+                        .ok_or_else(|| anyhow::anyhow!("Failed to downcast to LargeStringArray"))?;
+                    TemporalField::LargeUtf8(s)
+                }
+                _ => {
+                    let fmt = ArrayFormatter::try_new(array.as_ref(), &Default::default())?;
+                    TemporalField::Formatted(fmt, array.as_ref())
+                }
+            };
+            fields.push((*index, name.as_str(), tf));
+        }
+
+        let mut buffer = String::new();
+        for row in 0..batch.num_rows() {
+            for (index, name, field) in &fields {
+                let is_container = container_markers
+                    .get(*index)
+                    .and_then(|markers| *markers)
+                    .is_some_and(|markers| markers[row]);
+                if is_container {
+                    self.temporal_pairs.record_text(name, None);
+                    continue;
+                }
+                match field {
+                    TemporalField::Utf8(array) => {
+                        let value = (!array.is_null(row)).then(|| array.value(row));
+                        self.temporal_pairs.record_text(name, value);
+                    }
+                    TemporalField::LargeUtf8(array) => {
+                        let value = (!array.is_null(row)).then(|| array.value(row));
+                        self.temporal_pairs.record_text(name, value);
+                    }
+                    TemporalField::Formatted(formatter, array) => {
+                        if array.is_null(row) {
+                            self.temporal_pairs.record_text(name, None);
+                        } else {
+                            buffer.clear();
+                            write!(buffer, "{}", formatter.value(row))?;
+                            self.temporal_pairs.record_text(name, Some(&buffer));
+                        }
+                    }
+                }
+            }
+            self.temporal_pairs.finish_row();
         }
         Ok(())
     }
@@ -1003,6 +1135,21 @@ impl RecordBatchAnalyzer {
             .collect()
     }
 
+    /// Full-stream timeliness accumulators over every processed value and row
+    /// (#788 step 4).
+    pub fn timeliness_tallies(&self) -> TimelinessTallies {
+        TimelinessTallies {
+            columns: self
+                .column_analyzers
+                .iter()
+                .map(|(name, analyzer)| (name.clone(), analyzer.dates.clone()))
+                .collect(),
+            pairs: self.temporal_pairs.finish(),
+            clock_mode: self.timeliness_clock_mode,
+            window: self.timeliness_window,
+        }
+    }
+
     /// Exact value-driven semantic-hint evidence over every processed batch,
     /// derived from per-column [`LexicalTally`] counters (#788 step 3).
     pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
@@ -1048,12 +1195,17 @@ pub struct ColumnAnalyzer {
 
 impl ColumnAnalyzer {
     pub fn new(data_type: &arrow::datatypes::DataType) -> Self {
-        Self::with_exact_limit(data_type, None)
+        Self::with_exact_limit_and_timeliness(
+            data_type,
+            None,
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None).0,
+        )
     }
 
-    fn with_exact_limit(
+    fn with_exact_limit_and_timeliness(
         data_type: &arrow::datatypes::DataType,
         exact_limit: Option<usize>,
+        timeliness_window: TimelinessWindow,
     ) -> Self {
         use dataprof_metrics::stats::canonical_value::supports_arrow_type;
 
@@ -1079,7 +1231,7 @@ impl ColumnAnalyzer {
             true_count: 0,
             false_count: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
-            dates: DateTimeAccumulator::new(),
+            dates: DateTimeAccumulator::with_timeliness_window(timeliness_window),
             lexical: LexicalTally::new(),
         }
     }
@@ -1090,9 +1242,7 @@ impl ColumnAnalyzer {
         // Every rendering the sample is offered, so the tally classifies the
         // values the sample would hold if it held them all.
         let class = self.lexical.record(value);
-        if !is_null_like_token(value.trim()) && self.should_track_date_matches() {
-            self.dates.update(value);
-        }
+        self.dates.update(value);
         self.sample_values.offer(value);
         class
     }
@@ -1116,16 +1266,6 @@ impl ColumnAnalyzer {
             &self.data_type,
             ArrowDataType::Binary | ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_)
         )
-    }
-
-    /// Whether this column's values can be date tokens at all.
-    ///
-    /// Deliberately not a list of Arrow types. A numeric, boolean or duration
-    /// rendering is never a date token, so counting it costs a cheap byte check
-    /// and yields the same zero a skip would have — while a type this build has
-    /// never seen gets an honest count instead of one that was never taken.
-    fn should_track_date_matches(&self) -> bool {
-        !self.renders_values_as_encoded_bytes()
     }
 
     pub fn process_array(&mut self, array: &dyn Array) -> Result<()> {

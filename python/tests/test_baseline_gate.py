@@ -710,3 +710,57 @@ def test_pre_step_3_baseline_with_sampled_accuracy_is_definition_not_comparable(
     assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
     if value_facts == "every_value_consistency_precision":
         assert _find(result, "max_dimension_score_drop", "consistency").status == "passed"
+
+
+@pytest.mark.parametrize(
+    "value_facts",
+    [
+        None,
+        "every_value",
+        "every_value_consistency_precision",
+        "every_value_consistency_precision_accuracy_rules",
+    ],
+    ids=["0.14", "step1", "step2", "step3"],
+)
+def test_pre_step_4_baseline_with_timeliness_is_definition_not_comparable(
+    value_facts: str | None, tmp_path: Path
+):
+    path = tmp_path / "timeliness_drift.csv"
+    rows = ["id,start_date,end_date\n", "0,,2024-02-01\n"]
+    rows += [
+        f"{row},{'2029-01-01' if row >= 11_000 else '2024-01-01'},"
+        f"{'2024-01-01' if row >= 11_000 else '2024-02-01'}\n"
+        for row in range(1, 12_000)
+    ]
+    path.write_text("".join(rows), encoding="utf-8")
+    report = dp.profile(str(path), reference_date="2024-06-01")
+    baseline = report.to_dict()
+    if value_facts is None:
+        del baseline["metric_semantics"]["value_facts"]
+    else:
+        baseline["metric_semantics"]["value_facts"] = value_facts
+    baseline["quality"]["exact_dimensions"] = [
+        "completeness",
+        "consistency",
+        "duplicate_rows",
+        "precision",
+    ]
+    baseline["quality"]["sampled_dimensions"] = ["accuracy", "timeliness", "validity"]
+    baseline["quality"]["dimension_scores"]["timeliness"] = 100.0
+    baseline["quality"]["overall_score"] = 100.0
+
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(baseline),
+        max_quality_score_drop=0,
+        max_dimension_score_drops={
+            "timeliness": 0,
+            "consistency": 0,
+            "completeness": 0,
+        },
+    )
+    unevaluated = {"reason": "definition_not_comparable", "definition": "value_facts"}
+    assert _find(result, "max_quality_score_drop").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "timeliness").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+    if value_facts == "every_value_consistency_precision_accuracy_rules":
+        assert _find(result, "max_dimension_score_drop", "consistency").status == "passed"

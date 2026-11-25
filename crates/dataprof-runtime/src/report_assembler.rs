@@ -12,9 +12,10 @@ use dataprof_core::{
     ExecutionMetadata, QualityDimension, SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
-    LexicalTally, MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
-    RowDuplicateSummary, analysis::metrics::BifurcatedResult, columns_without_value_checks,
-    compute_value_hint_bindings, compute_value_hint_bindings_from_tallies,
+    DateTimeAccumulator, LexicalTally, MetricConfidence, MetricsCalculator, QualityAssessment,
+    RowCompletenessSummary, RowDuplicateSummary, TimelinessTallies,
+    analysis::metrics::BifurcatedResult, columns_without_value_checks, compute_value_hint_bindings,
+    compute_value_hint_bindings_from_tallies,
 };
 
 use crate::{AnalysisSettings, ProfileReport, QualityAnalysisStatus};
@@ -38,6 +39,10 @@ pub struct ReportAssembler {
     /// Exact per-column lexical/quality tallies over every scanned value
     /// (#788 step 2).
     lexical_tallies: Option<HashMap<String, LexicalTally>>,
+    /// Exact full-stream timeliness tallies (per-column date accumulators and
+    /// row-level start/end pair counts) over every scanned value and row
+    /// (#788 step 4).
+    timeliness_tallies: Option<TimelinessTallies>,
     /// What the caller profiled with, once `with_analysis_options` saw it.
     analysis_settings: Option<AnalysisSettings>,
     /// The fixed date timeliness measures against; `None` reads today's.
@@ -72,6 +77,7 @@ impl ReportAssembler {
             composite_keys: None,
             row_completeness: None,
             lexical_tallies: None,
+            timeliness_tallies: None,
             analysis_settings: None,
             reference_date: None,
             include_statistics: true,
@@ -233,6 +239,13 @@ impl ReportAssembler {
         self
     }
 
+    /// Supply exact full-stream timeliness tallies over every scanned value
+    /// and row (#788 step 4), moving timeliness to exact counts.
+    pub fn with_timeliness_tallies(mut self, tallies: TimelinessTallies) -> Self {
+        self.timeliness_tallies = Some(tallies);
+        self
+    }
+
     /// Build the final [`ProfileReport`].
     ///
     /// This does not fail. A quality computation that returns an error leaves
@@ -267,20 +280,27 @@ impl ReportAssembler {
             }
         }
 
-        let tallied = self.lexical_tallies.is_some();
+        let lexical_tallied = self.lexical_tallies.is_some();
+        let timeliness_tallied = self.timeliness_tallies.is_some();
         let mut report = ProfileReport::new(self.source, self.columns, self.execution, quality)
             .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
             .with_analysis_settings(self.analysis_settings);
-        // Without tallies, consistency, precision and accuracy rules read the
-        // retained sample, which is step 1's definition: record that, not the
-        // current one.
-        if !tallied
-            && let Some(semantics) = report.metric_semantics.as_mut()
+        // Without tallies, consistency, precision, accuracy rules and
+        // timeliness read the retained sample: record the definition that
+        // actually ran.
+        if let Some(semantics) = report.metric_semantics.as_mut()
             && semantics.value_facts
-                == Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecisionAccuracyRules)
+                == Some(
+                    dataprof_core::ValueFacts::EveryValueConsistencyPrecisionAccuracyRulesTimeliness,
+                )
         {
-            semantics.value_facts = Some(dataprof_core::ValueFacts::EveryValue);
+            if !lexical_tallied {
+                semantics.value_facts = Some(dataprof_core::ValueFacts::EveryValue);
+            } else if !timeliness_tallied {
+                semantics.value_facts =
+                    Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecisionAccuracyRules);
+            }
         }
         report.composite_keys = self.composite_keys;
         report
@@ -304,6 +324,16 @@ impl ReportAssembler {
                 }
                 if let Some(tallies) = self.lexical_tallies.as_mut() {
                     tallies.insert(column.name.clone(), LexicalTally::new());
+                }
+                if let Some(timeliness) = self.timeliness_tallies.as_mut() {
+                    let window = timeliness.window;
+                    timeliness.columns.insert(
+                        column.name.clone(),
+                        DateTimeAccumulator::with_timeliness_window(window),
+                    );
+                    timeliness
+                        .pairs
+                        .retain(|(start, end), _| start != &column.name && end != &column.name);
                 }
             }
         }
@@ -421,6 +451,7 @@ impl ReportAssembler {
         let calculator = MetricsCalculator::new()
             .with_row_completeness(self.row_completeness)
             .with_lexical_tallies(self.lexical_tallies.clone())
+            .with_timeliness_tallies(self.timeliness_tallies.clone())
             .with_reference_date(self.reference_date);
         match calculator.calculate_bifurcated_metrics_with_hints(
             data,
@@ -457,6 +488,7 @@ impl ReportAssembler {
         let calculator = MetricsCalculator::new()
             .with_row_completeness(self.row_completeness)
             .with_lexical_tallies(self.lexical_tallies.clone())
+            .with_timeliness_tallies(self.timeliness_tallies.clone())
             .with_reference_date(self.reference_date);
         match calculator.calculate_comprehensive_metrics_with_hints(
             data,

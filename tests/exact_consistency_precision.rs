@@ -278,7 +278,7 @@ fn every_route_counts_consistency_and_precision_over_every_value() {
     for (label, report) in &reports {
         let doc: Value = serde_json::to_value(report).unwrap();
         let semantics = report.metric_semantics.as_ref().and_then(|s| s.value_facts);
-        if semantics != Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRules) {
+        if semantics != Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRulesTimeliness) {
             wrong.push(format!("[{label}] value_facts={semantics:?}"));
         }
 

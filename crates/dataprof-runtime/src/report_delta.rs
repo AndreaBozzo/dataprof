@@ -1195,6 +1195,45 @@ impl ReportSide {
                 .any(|column| dataprof_metrics::is_accuracy_ruled_column(&column.name))
     }
 
+    /// Whether `value_facts` step 4 (exact timeliness over every value read,
+    /// using the date statistics reader and row-aligned start/end pairs) may
+    /// move the score of `dimension` (or the overall score for `None`) on this
+    /// side (#788 step 4).
+    ///
+    /// A side recording
+    /// `every_value_consistency_precision_accuracy_rules_timeliness` already
+    /// computed timeliness under this definition. An older side (0.14 or steps
+    /// 1–3) can move on `Timeliness` or the overall score whenever timeliness
+    /// was assessed or any date column / temporal hint may be present: even on
+    /// small sources, step 4 changes whitespace/single-digit date parsing and
+    /// compares start/end pairs containing nulls (#787).
+    pub(crate) fn may_move_timeliness(&self, dimension: Option<QualityDimension>) -> bool {
+        let exact = self
+            .metric_semantics
+            .as_ref()
+            .and_then(|semantics| semantics.value_facts)
+            .is_some_and(ValueFacts::has_exact_timeliness);
+        if exact {
+            return false;
+        }
+        if !matches!(dimension, Some(QualityDimension::Timeliness) | None) {
+            return false;
+        }
+        let has_timeliness = self
+            .dimensions
+            .iter()
+            .any(|side| side.dimension == QualityDimension::Timeliness && side.score.is_some());
+        let has_temporal_hint = self.semantic_hints.as_ref().is_none_or(|hints| {
+            !hints.temporal_columns.is_empty() || !hints.temporal_pair_columns.is_empty()
+        });
+        has_timeliness
+            || has_temporal_hint
+            || self
+                .columns
+                .iter()
+                .any(|column| column.data_type == Some(DataType::Date))
+    }
+
     /// Which columns the side profiled, or `None` when it did not record it.
     pub(crate) fn column_selection(&self) -> Option<&ColumnSelection> {
         self.column_selection.as_ref()

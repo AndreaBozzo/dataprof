@@ -6,10 +6,13 @@
 
 pub(crate) use dataprof_core::DataProfilerError;
 use dataprof_core::{
-    AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, NativeType, QualityDimension,
-    QueryEngine,
+    AnalysisOptions, DataSource, ExecutionMetadata, IsoQualityConfig, MetricPack, NativeType,
+    QualityDimension, QueryEngine,
 };
-use dataprof_metrics::{LexicalTally, analyze_declared_column};
+use dataprof_metrics::{
+    DateTimeAccumulator, LexicalTally, TemporalPairTracker, TimelinessTallies, TimelinessWindow,
+    analyze_declared_column,
+};
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, RowCompletenessTracker, RowSignature, RowUniquenessTracker,
     mark_container_columns,
@@ -332,6 +335,11 @@ pub async fn analyze_database_with_options(
     let mut uniqueness =
         RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
     let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(options);
+    let (timeliness_window, timeliness_clock_mode) =
+        TimelinessWindow::from_config(&IsoQualityConfig::default(), options.reference_date());
+    let mut temporal_pairs = TemporalPairTracker::new(&options.semantic_hints().temporal_pairs);
+    let projected_names: Vec<String> = columns.names().map(str::to_string).collect();
+    temporal_pairs.register_columns(&projected_names);
     // Binary values still read as null (#645), so a key over them would skip
     // or merge rows that differ.
     for (name, type_name) in columns.names().zip(columns.type_names()) {
@@ -351,15 +359,22 @@ pub async fn analyze_database_with_options(
                 if containers.binary_search(&row_index).is_ok() {
                     signature.push_container_field(value);
                     key_tracker.unsupported_field(name);
+                    if temporal_pairs.is_enabled() {
+                        temporal_pairs.record_text(name, None);
+                    }
                 } else {
                     signature.push_field(value);
                     if key_tracker.is_enabled() {
                         key_tracker.text_field(name, Some(value));
                     }
+                    if temporal_pairs.is_enabled() {
+                        temporal_pairs.record_text(name, Some(value));
+                    }
                 }
             }
             uniqueness.observe(signature.finish());
             key_tracker.finish_row();
+            temporal_pairs.finish_row();
         }
     }
 
@@ -373,6 +388,22 @@ pub async fn analyze_database_with_options(
         .iter()
         .map(|(name, data)| (name.to_string(), LexicalTally::from_values(data)))
         .collect();
+    let date_accumulators = columns
+        .iter()
+        .map(|(name, data)| {
+            let mut acc = DateTimeAccumulator::with_timeliness_window(timeliness_window);
+            for value in data {
+                acc.update(value);
+            }
+            (name.to_string(), acc)
+        })
+        .collect();
+    let timeliness_tallies = TimelinessTallies {
+        columns: date_accumulators,
+        pairs: temporal_pairs.finish(),
+        clock_mode: timeliness_clock_mode,
+        window: timeliness_window,
+    };
 
     Ok(ReportAssembler::new(
         DataSource::Query {
@@ -388,6 +419,7 @@ pub async fn analyze_database_with_options(
     // presentation, so dropping the order here costs nothing.
     .with_quality_data(columns.into_map())
     .with_lexical_tallies(lexical_tallies)
+    .with_timeliness_tallies(timeliness_tallies)
     .with_row_completeness(row_completeness)
     .with_row_duplicates(uniqueness.summary())
     .with_composite_keys(key_tracker.summaries()?)

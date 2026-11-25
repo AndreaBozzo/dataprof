@@ -1644,9 +1644,10 @@ mod tests {
             "",
         ];
         let whole = LexicalTally::from_values(&values);
-        // Leading whitespace is accepted for numeric rules, rejected for temporal hints.
+        // Leading whitespace is accepted for both numeric rules and temporal
+        // dates, matching `DateTimeAccumulator` (#788 step 4).
         assert_eq!(whole.rule_numeric_count(), 12);
-        assert_eq!(whole.temporal_match_count(), 1);
+        assert_eq!(whole.temporal_match_count(), 2);
         assert_eq!(whole.rule_regions(), [2, 3, 2, 1, 2, 2]);
         for split in [0, 1, 4, 9, 14, values.len()] {
             let mut left = LexicalTally::from_values(&values[..split]);

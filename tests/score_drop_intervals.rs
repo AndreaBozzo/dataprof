@@ -13,8 +13,8 @@ use dataprof::{
 };
 use serde_json::Value;
 
-/// A CSV past the 10,000-value quality reservoir, so its accuracy, timeliness
-/// and validity scores are sampled. Every `bad_every`-th row breaks three
+/// A CSV past the 10,000-value quality reservoir, so its accuracy and
+/// validity scores are sampled. Every `bad_every`-th row breaks three
 /// columns at once.
 fn csv(rows: usize, bad_every: usize) -> String {
     let mut text = String::from("id,amount,code,when\n");
@@ -98,7 +98,7 @@ fn a_sampled_score_drop_is_decided_on_both_sides_intervals() {
     let baseline = profile(25_000, 50, None);
     let same = profile(25_000, 50, None);
     let worse = profile(25_000, 5, None);
-    // (case, report, allowance, overall, timeliness)
+    // (case, report, allowance, overall, validity)
     let cases = [
         // The intervals overlap, so no allowance of zero is settled.
         (
@@ -126,19 +126,19 @@ fn a_sampled_score_drop_is_decided_on_both_sides_intervals() {
     ];
     let mut wrong = Vec::new();
     for (form, side) in baselines(&baseline) {
-        for (case, report, points, overall, timeliness) in &cases {
+        for (case, report, points, overall, validity) in &cases {
             let result = QualityPolicy::new()
                 .max_quality_score_drop(*points)
-                .max_dimension_score_drop(QualityDimension::Timeliness, *points)
+                .max_dimension_score_drop(QualityDimension::Validity, *points)
                 .evaluate_against(report, &side)
                 .unwrap();
             let got = (
                 status_of(&result, CheckCode::MaxQualityScoreDrop),
                 status_of(&result, CheckCode::MaxDimensionScoreDrop),
             );
-            if got != (overall.to_string(), timeliness.to_string()) {
+            if got != (overall.to_string(), validity.to_string()) {
                 wrong.push(format!(
-                    "{form}/{case}: {got:?}, expected ({overall}, {timeliness})"
+                    "{form}/{case}: {got:?}, expected ({overall}, {validity})"
                 ));
             }
         }

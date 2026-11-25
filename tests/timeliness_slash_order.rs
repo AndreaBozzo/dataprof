@@ -264,16 +264,16 @@ fn every_route_scores_timeliness_in_the_recorded_order() {
 }
 
 /// The gate decides each case as the dates read month-first decide it, and a
-/// saved report decides as the run did. A sample without a future date
-/// cannot show that the rows outside it hold none, so `future_dates` is
-/// inconclusive there, where the in-memory route passes; it no longer fails.
+/// saved report decides as the run did. With exact timeliness over every value
+/// read (#788 step 4), every route now decides `future_dates` cleanly instead
+/// of returning inconclusive on a large file.
 #[test]
 fn every_route_and_its_saved_report_give_the_month_first_verdict() {
     let mut wrong = Vec::new();
     for case in &CASES {
         let expected = match case.label {
             "future month-first" => ("fail", "fail"),
-            _ => ("pass", "inconclusive"),
+            _ => ("pass", "pass"),
         };
         let expected = (expected.0.to_string(), expected.1.to_string());
         for (route, report) in routes(case) {
