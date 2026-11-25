@@ -2,7 +2,6 @@
 mod async_source;
 
 pub mod findings;
-pub mod hint_binding;
 pub mod memory_config;
 pub mod profile_builder;
 pub mod profile_report;
@@ -24,7 +23,6 @@ pub use findings::{
     FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult,
     NotEvaluatedReason, Severity, UnevaluatedRule,
 };
-pub use hint_binding::ValueHintBindingAccumulator;
 pub use memory_config::MemoryConfig;
 pub use profile_builder::{
     ColumnProfileInput, ExactNumericAggregates, TextLengths, build_column_profile,

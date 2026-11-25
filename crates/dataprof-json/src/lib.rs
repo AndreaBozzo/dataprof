@@ -861,7 +861,6 @@ fn analyze_json_from_reader_full<R: BufRead>(
 > {
     let semantic_hints = options.semantic_hints();
     let mut column_stats = StreamingColumnCollection::new()
-        .with_semantic_hints(semantic_hints)
         .with_duplicate_rows_exact_limit(options.duplicate_rows_exact_limit())
         .with_unique_count_exact_limits(options.unique_count_exact_limits())
         .with_unique_keys(options);
@@ -1049,7 +1048,6 @@ pub fn analyze_json_file_with_options(
         .with_row_duplicates(column_stats.row_duplicate_summary())
         .with_composite_keys(column_stats.composite_key_summaries()?)
         .with_row_completeness(column_stats.row_completeness_summary())
-        .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
         .with_analysis_options(options)
         .build())
 }

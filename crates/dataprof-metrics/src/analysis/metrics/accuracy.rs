@@ -4,7 +4,7 @@
 //! Key metrics: outlier ratio, range violations, negative values in positive fields.
 
 use super::utils::{calculate_percentile, has_identifier_word};
-use crate::analysis::inference::is_null_like_token;
+use crate::analysis::inference::{LexicalTally, is_null_like_token};
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::stats::numeric::ExactTukey;
@@ -12,6 +12,17 @@ use crate::stats::{ExactDecimal, ParsedNumber};
 use crate::types::{ColumnProfile, ColumnStats, DataType};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+
+/// Number of disjoint real-line regions partitioned by the exact accuracy rule
+/// bounds `{0, 100, 150, 1900, 2100}`.
+pub(crate) const RULE_REGION_COUNT: usize = 6;
+
+const REGION_BELOW_ZERO: usize = 0; // x < 0
+const REGION_0_TO_100: usize = 1; // 0 <= x <= 100
+const REGION_100_TO_150: usize = 2; // 100 < x <= 150
+const REGION_150_TO_1900: usize = 3; // 150 < x < 1900
+const REGION_1900_TO_2100: usize = 4; // 1900 <= x <= 2100
+const REGION_ABOVE_2100: usize = 5; // x > 2100
 
 /// Accuracy metrics container
 #[derive(Debug)]
@@ -145,6 +156,48 @@ impl<'a> AccuracyCalculator<'a> {
             .map(|(column_name, values)| {
                 let positive = is_positive(column_name, positive_columns);
                 Self::check_value_rules(column_name, values, positive)
+            })
+            .fold(RuleCounts::default(), RuleCounts::add);
+
+        Ok(AccuracyMetrics {
+            outlier_ratio,
+            range_violations: rules.range_violations,
+            negative_values_in_positive: rules.negative_values,
+            numeric_values_checked: rules.numeric_values,
+            rule_values_checked: rules.rule_values,
+            rule_violating_values: rules.violating_values,
+            outliers,
+            outlier_values_checked,
+        })
+    }
+
+    /// Calculate accuracy dimension metrics with range and sign rules read from
+    /// exact per-column [`LexicalTally`] counters over every scanned value
+    /// (#788 step 3), while outlier fences continue to read `data`.
+    pub fn calculate_with_tallies(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        tallies: &HashMap<String, LexicalTally>,
+        column_profiles: &[ColumnProfile],
+        positive_columns: &[String],
+    ) -> Result<AccuracyMetrics, DataProfilerError> {
+        let (outliers, outlier_values_checked) = self.count_outliers(data, column_profiles)?;
+        let outlier_ratio = if outlier_values_checked == 0 {
+            0.0
+        } else {
+            (outliers as f64 / outlier_values_checked as f64) * 100.0
+        };
+        let rules = column_profiles
+            .iter()
+            .filter(|profile| profile.data_type != DataType::Nested)
+            .filter_map(|profile| {
+                let tally = tallies.get(&profile.name)?;
+                let positive = is_positive(&profile.name, positive_columns);
+                Some(rule_counts_from_regions(
+                    &profile.name,
+                    tally.rule_regions(),
+                    positive,
+                ))
             })
             .fold(RuleCounts::default(), RuleCounts::add);
 
@@ -339,9 +392,7 @@ impl<'a> AccuracyCalculator<'a> {
     /// the percentage and the sign rule count it as a failure. Values of
     /// columns under no rule are numeric values, but no rule's units.
     fn check_value_rules(column_name: &str, values: &[String], positive: bool) -> RuleCounts {
-        let rules = RangeRules::for_column(column_name);
-        let ruled = rules.applies(positive);
-        let mut counts = RuleCounts::default();
+        let mut regions = [0usize; RULE_REGION_COUNT];
 
         for value in values {
             let text = value.trim();
@@ -351,37 +402,10 @@ impl<'a> AccuracyCalculator<'a> {
             let Some(nearest) = rule_value(text) else {
                 continue;
             };
-            counts.numeric_values += 1;
-            if !ruled {
-                continue;
-            }
-            counts.rule_values += 1;
-
-            let outside = |low: i32, high: i32| {
-                cmp_bound(text, nearest, low).is_lt() || cmp_bound(text, nearest, high).is_gt()
-            };
-            let below_zero = || cmp_bound(text, nearest, 0).is_lt();
-            let range_failures = [
-                // Age should be reasonable (0-150)
-                rules.age && outside(0, 150),
-                // Percentage should be 0-100
-                rules.percent && outside(0, 100),
-                // Counts should be non-negative
-                rules.count && below_zero(),
-                // Years should be reasonable (1900-2100)
-                rules.year && outside(1900, 2100),
-            ]
-            .into_iter()
-            .filter(|failed| *failed)
-            .count();
-            let negative = positive && below_zero();
-
-            counts.range_violations += range_failures;
-            counts.negative_values += usize::from(negative);
-            counts.violating_values += usize::from(range_failures > 0 || negative);
+            regions[classify_rule_region(text, nearest)] += 1;
         }
 
-        counts
+        rule_counts_from_regions(column_name, regions, positive)
     }
 }
 
@@ -460,9 +484,120 @@ fn cmp_bound(text: &str, nearest: f64, bound: i32) -> Ordering {
     }
 }
 
+/// Classify an exact `i64` into its accuracy rule region.
+pub(crate) fn classify_rule_region_i64(value: i64) -> usize {
+    if value < 0 {
+        REGION_BELOW_ZERO
+    } else if value <= 100 {
+        REGION_0_TO_100
+    } else if value <= 150 {
+        REGION_100_TO_150
+    } else if value < 1900 {
+        REGION_150_TO_1900
+    } else if value <= 2100 {
+        REGION_1900_TO_2100
+    } else {
+        REGION_ABOVE_2100
+    }
+}
+
+/// A `u64` above `i64::MAX` always lies strictly above 2100.
+pub(crate) const fn classify_rule_region_u64() -> usize {
+    REGION_ABOVE_2100
+}
+
+/// Classify a trimmed `f64` token into its accuracy rule region when
+/// [`rule_value`] accepts it (finite, or a literal with an ASCII digit that
+/// overflows `f64`), or `None` for spelled-out `inf`/`NaN`.
+pub(crate) fn classify_rule_region_f64(text: &str, nearest: f64) -> Option<usize> {
+    let accepted =
+        nearest.is_finite() || (nearest.is_infinite() && text.bytes().any(|b| b.is_ascii_digit()));
+    accepted.then(|| classify_rule_region(text, nearest))
+}
+
+/// Place a rule-checkable value `(text, nearest)` in one of the six disjoint
+/// regions partitioned by `{0, 100, 150, 1900, 2100}`, comparing exact digits
+/// whenever `nearest` lands on a bound.
+fn classify_rule_region(text: &str, nearest: f64) -> usize {
+    if nearest < 0.0 || (nearest == 0.0 && cmp_bound(text, nearest, 0).is_lt()) {
+        REGION_BELOW_ZERO
+    } else if nearest < 100.0 || (nearest == 100.0 && !cmp_bound(text, nearest, 100).is_gt()) {
+        REGION_0_TO_100
+    } else if nearest < 150.0 || (nearest == 150.0 && !cmp_bound(text, nearest, 150).is_gt()) {
+        REGION_100_TO_150
+    } else if nearest < 1900.0 || (nearest == 1900.0 && cmp_bound(text, nearest, 1900).is_lt()) {
+        REGION_150_TO_1900
+    } else if nearest < 2100.0 || (nearest == 2100.0 && !cmp_bound(text, nearest, 2100).is_gt()) {
+        REGION_1900_TO_2100
+    } else {
+        REGION_ABOVE_2100
+    }
+}
+
+/// Whether a column name triggers any name-based accuracy range rule (`age`,
+/// percentage, `count`, `year`), independent of semantic hints.
+pub fn is_accuracy_ruled_column(column_name: &str) -> bool {
+    RangeRules::for_column(column_name).applies(false)
+}
+
+/// Evaluate the name-based range rules and, when `positive`, the sign rule
+/// over a column's six region counts.
+pub(crate) fn rule_counts_from_regions(
+    column_name: &str,
+    regions: [usize; RULE_REGION_COUNT],
+    positive: bool,
+) -> RuleCounts {
+    let numeric_values: usize = regions.iter().sum();
+    let rules = RangeRules::for_column(column_name);
+    if !rules.applies(positive) || numeric_values == 0 {
+        return RuleCounts {
+            numeric_values,
+            ..RuleCounts::default()
+        };
+    }
+
+    let mut range_violations = 0usize;
+    let mut violating_values = 0usize;
+    for (region, count) in regions.into_iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        let below_zero = region == REGION_BELOW_ZERO;
+        // Age should be reasonable (0-150)
+        let outside_age = below_zero || region >= REGION_150_TO_1900;
+        // Percentage should be 0-100
+        let outside_percent = below_zero || region >= REGION_100_TO_150;
+        // Years should be reasonable (1900-2100)
+        let outside_year = region != REGION_1900_TO_2100;
+
+        let range_failures = usize::from(rules.age && outside_age)
+            + usize::from(rules.percent && outside_percent)
+            + usize::from(rules.count && below_zero)
+            + usize::from(rules.year && outside_year);
+        let negative = positive && below_zero;
+
+        range_violations += count * range_failures;
+        if range_failures > 0 || negative {
+            violating_values += count;
+        }
+    }
+
+    RuleCounts {
+        numeric_values,
+        range_violations,
+        negative_values: if positive {
+            regions[REGION_BELOW_ZERO]
+        } else {
+            0
+        },
+        rule_values: numeric_values,
+        violating_values,
+    }
+}
+
 /// What the range and sign rules found in one column, or summed over several.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct RuleCounts {
+pub(crate) struct RuleCounts {
     /// Finite numeric values, in every column.
     numeric_values: usize,
     /// Range rule failures: a value breaking two range rules adds two.
@@ -759,5 +894,72 @@ mod tests {
             .expect("accuracy metrics should compute");
         assert_eq!(with_hint.negative_values_in_positive, 1);
         assert_eq!(with_hint.numeric_values_checked, 3);
+    }
+
+    #[test]
+    fn rule_regions_and_tallies_match_check_value_rules_on_every_boundary() {
+        let values: Vec<String> = [
+            "-1e400",
+            "-1e-700",
+            "-1e-400",
+            "-1",
+            "-0.0",
+            "0",
+            "1e-700",
+            "50",
+            "100",
+            "100.000000000000000001",
+            "150",
+            "150.000000000000000001",
+            "1899.999999999999999999",
+            "1900",
+            "2024",
+            "2100",
+            "2100.000000000000000001",
+            "1e400",
+            &i64::MIN.to_string(),
+            &i64::MAX.to_string(),
+            &u64::MAX.to_string(),
+            "inf",
+            "-Infinity",
+            "NaN",
+            "null",
+            "abc",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let tally = LexicalTally::from_values(&values);
+        // Hardcoded exact region counts, independent of `check_value_rules`:
+        // r0 (x < 0): -1e400, -1e-700, -1e-400, -1, i64::MIN = 5
+        // r1 (0 <= x <= 100): -0.0, 0, 1e-700, 50, 100 = 5
+        // r2 (100 < x <= 150): 100.000000000000000001, 150 = 2
+        // r3 (150 < x < 1900): 150.000000000000000001, 1899.999999999999999999 = 2
+        // r4 (1900 <= x <= 2100): 1900, 2024, 2100 = 3
+        // r5 (x > 2100): 2100.000000000000000001, 1e400, i64::MAX, u64::MAX = 4
+        assert_eq!(tally.rule_regions(), [5, 5, 2, 2, 3, 4]);
+
+        for (name, positive, expected_violating, expected_range, expected_negative) in [
+            ("customer_age", false, 14, 14, 0),
+            ("discount_percent", false, 16, 16, 0),
+            ("discount_percent", true, 16, 16, 5),
+            ("item_count", false, 5, 5, 0),
+            ("birth_year", false, 18, 18, 0),
+            ("balance", true, 5, 0, 5),
+            ("price", false, 0, 0, 0),
+        ] {
+            let direct = AccuracyCalculator::check_value_rules(name, &values, positive);
+            let from_tally = rule_counts_from_regions(name, tally.rule_regions(), positive);
+            assert_eq!(from_tally, direct, "column={name} positive={positive}");
+            assert_eq!(
+                (
+                    from_tally.violating_values,
+                    from_tally.range_violations,
+                    from_tally.negative_values,
+                ),
+                (expected_violating, expected_range, expected_negative),
+                "hardcoded counts: column={name} positive={positive}"
+            );
+        }
     }
 }

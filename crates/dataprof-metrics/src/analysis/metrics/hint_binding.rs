@@ -11,22 +11,24 @@
 use std::collections::HashMap;
 
 use super::accuracy::rule_value;
-
+use super::utils::extract_year;
+use crate::analysis::inference::LexicalTally;
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 
-use super::utils::extract_year;
-use crate::analysis::inference::is_null_like_token;
-
 /// Compute binding evidence for the value-driven hints (`positive_columns`,
-/// `temporal_columns` and the columns of `temporal_pairs`) over `data`.
+/// `temporal_columns` and the columns of `temporal_pairs`) from per-column
+/// [`LexicalTally`] counters accumulated over every scanned value (#788 step 3).
 ///
-/// `exact` states whether `data` covers every row (`true`) or is a sample
-/// (`false`); it is copied onto each binding so a proven-inert hint can be told
-/// apart from one that merely matched nothing in a sample. Columns named by a
-/// hint but absent from `data` are skipped — unknown names are the name
+/// This is the single implementation behind every profiling route: CSV, JSON,
+/// JSONL, async streams, Parquet, Arrow, DataFrames, Python containers and
+/// databases all feed [`LexicalTally`] and derive their binding evidence here.
+///
+/// `exact` states whether the tallies cover every row of the source (`true`)
+/// or only a row-sampled / truncated subset (`false`). Columns named by a hint
+/// but absent from `tallies` are skipped — unknown names are the name
 /// validator's job.
-pub fn compute_value_hint_bindings(
-    data: &HashMap<String, Vec<String>>,
+pub fn compute_value_hint_bindings_from_tallies(
+    tallies: &HashMap<String, LexicalTally>,
     hints: &SemanticHints,
     exact: bool,
 ) -> Vec<SemanticHintBinding> {
@@ -36,13 +38,45 @@ pub fn compute_value_hint_bindings(
         .iter()
         .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
     {
-        if let Some(values) = data.get(column) {
-            let (checked, matched) = count_matches(values, kind);
+        if let Some(tally) = tallies.get(column) {
+            let checked = tally.values_checked();
+            let matched = match kind {
+                SemanticHintKind::Positive => tally.rule_numeric_count(),
+                SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
+                    tally.temporal_match_count()
+                }
+                SemanticHintKind::Identifier => checked,
+            };
             bindings.push(binding(column, kind, checked, matched, exact));
         }
     }
 
     bindings
+}
+
+/// Compute binding evidence for the value-driven hints (`positive_columns`,
+/// `temporal_columns` and the columns of `temporal_pairs`) over `data`.
+///
+/// Delegates to [`compute_value_hint_bindings_from_tallies`] over per-column
+/// [`LexicalTally`] counts so callers without precomputed tallies apply the
+/// exact same predicates as every streaming route.
+pub fn compute_value_hint_bindings(
+    data: &HashMap<String, Vec<String>>,
+    hints: &SemanticHints,
+    exact: bool,
+) -> Vec<SemanticHintBinding> {
+    let mut tallies = HashMap::new();
+    for (_, column) in hints
+        .iter()
+        .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
+    {
+        if !tallies.contains_key(column)
+            && let Some(values) = data.get(column)
+        {
+            tallies.insert(column.to_string(), LexicalTally::from_values(values));
+        }
+    }
+    compute_value_hint_bindings_from_tallies(&tallies, hints, exact)
 }
 
 fn binding(
@@ -61,33 +95,11 @@ fn binding(
     }
 }
 
-/// Count `(non-null values, values satisfying `pred`)`.
-///
-/// Mirrors the quality calculators exactly: the null-like check runs on the
-/// trimmed token, while `pred` receives the original value and applies the
-/// normalization appropriate to its metric. Numeric quality calculations
-/// accept surrounding whitespace; temporal quality predicates deliberately do
-/// not.
-fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
-    let mut checked = 0;
-    let mut matched = 0;
-    for value in values {
-        if is_null_like_token(value.trim()) {
-            continue;
-        }
-        checked += 1;
-        if value_matches_hint(value, kind) {
-            matched += 1;
-        }
-    }
-    (checked, matched)
-}
-
 /// Apply the exact value predicate used by the quality calculator for `kind`.
 ///
-/// Streaming engines use this helper while values pass through their
-/// full-stream accumulators. Keeping the predicates here prevents exact
-/// binding evidence from drifting away from the sampled quality calculation.
+/// Mirrors the quality calculators exactly: numeric rules accept surrounding
+/// whitespace, while temporal quality predicates deliberately require the raw
+/// value to be directly parseable.
 pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
     match kind {
         // The sign rule's own reading of a cell, surrounding whitespace
@@ -217,5 +229,35 @@ mod tests {
         let bindings = compute_value_hint_bindings(&d, &hints, true);
         assert_eq!(bindings[0].checked_values, 0);
         assert!(!bindings[0].is_proven_inert());
+    }
+
+    #[test]
+    fn tally_bindings_match_direct_value_scan() {
+        let d = data(&[
+            ("pressure", &[" 101325", "-500", "-1e400", " -inf ", "NULL"]),
+            (
+                "event",
+                &["2020-01-01", " 2021-01-01", "not-a-date", "2024-02-29"],
+            ),
+            ("ended", &["2022-05-01", "bad", ""]),
+        ]);
+        let tallies: HashMap<String, LexicalTally> = d
+            .iter()
+            .map(|(name, vals)| (name.clone(), LexicalTally::from_values(vals)))
+            .collect();
+        let hints = SemanticHints::new(
+            vec!["pressure".to_string(), "missing".to_string()],
+            vec!["pressure".to_string()],
+        )
+        .with_temporal_columns(vec!["event".to_string()])
+        .with_temporal_pairs(vec![("event".to_string(), "ended".to_string())]);
+
+        for exact in [true, false] {
+            assert_eq!(
+                compute_value_hint_bindings_from_tallies(&tallies, &hints, exact),
+                compute_value_hint_bindings(&d, &hints, exact),
+                "exact={exact}"
+            );
+        }
     }
 }

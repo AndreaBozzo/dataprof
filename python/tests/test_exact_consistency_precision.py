@@ -149,7 +149,7 @@ def test_every_route_matches_consistency_and_precision_at_40k_rows(tmp_path: Pat
         restored = dp.ProfileReport.from_dict(summary)
 
         semantics = report.metric_semantics or {}
-        if semantics.get("value_facts") != "every_value_consistency_precision":
+        if semantics.get("value_facts") != "every_value_consistency_precision_accuracy_rules":
             wrong.append(f"[{label}] value_facts={semantics.get('value_facts')!r}")
 
         q = doc["quality"]

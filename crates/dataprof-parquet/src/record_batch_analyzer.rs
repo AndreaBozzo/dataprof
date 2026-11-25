@@ -6,7 +6,7 @@ use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataType, Locale, NativeType, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, char_len,
+    SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
@@ -768,8 +768,6 @@ impl RecordBatchAnalyzer {
 
         self.options.validate_unique_count_exact_limits(&names)?;
         self.options.validate_unique_keys(&names)?;
-        let hints = self.options.semantic_hints();
-        let pair_columns = hints.temporal_pair_columns();
         for field in schema.fields() {
             if self.key_tracker.contains(field.name())
                 && !dataprof_metrics::stats::canonical_value::supports_arrow_type(
@@ -779,18 +777,10 @@ impl RecordBatchAnalyzer {
                 self.key_tracker.unsupported_field(field.name());
             }
             let column_name = field.name().to_string();
-            let positive_hint = hints.is_positive_column(&column_name);
-            let temporal_hint = hints.is_temporal_column(&column_name)
-                || pair_columns.contains(&column_name.as_str());
             let exact_limit = self.options.unique_count_exact_limit(&column_name);
             if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
                 self.column_order.push(column_name);
-                let mut analyzer = ColumnAnalyzer::with_value_hints(
-                    field.data_type(),
-                    positive_hint,
-                    temporal_hint,
-                    exact_limit,
-                );
+                let mut analyzer = ColumnAnalyzer::with_exact_limit(field.data_type(), exact_limit);
                 // Every caller of this analyzer holds a declared Arrow schema:
                 // a Parquet file's, or the one an Arrow producer exported. The
                 // declaration is the field as given, before
@@ -1008,18 +998,14 @@ impl RecordBatchAnalyzer {
             .collect()
     }
 
-    /// Exact value-driven semantic-hint evidence over every processed batch.
+    /// Exact value-driven semantic-hint evidence over every processed batch,
+    /// derived from per-column [`LexicalTally`] counters (#788 step 3).
     pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
-        self.options
-            .semantic_hints()
-            .iter()
-            .filter(|(kind, _)| *kind != SemanticHintKind::Identifier)
-            .filter_map(|(kind, column)| {
-                self.column_analyzers
-                    .get(column)
-                    .map(|analyzer| analyzer.hint_binding(column, kind))
-            })
-            .collect()
+        dataprof_metrics::compute_value_hint_bindings_from_tallies(
+            &self.lexical_tallies(),
+            self.options.semantic_hints(),
+            true,
+        )
     }
 }
 
@@ -1044,30 +1030,23 @@ pub struct ColumnAnalyzer {
     true_count: usize,
     false_count: usize,
     sample_values: StreamReservoirSampler,
-    positive_hint: bool,
-    temporal_hint: bool,
-    hint_checked_values: usize,
-    positive_matched_values: usize,
-    temporal_matched_values: usize,
-    date_matched_values: usize,
     /// Date statistics over every non-null value, independent of the
     /// sample (#1297).
     dates: DateTimeAccumulator,
     /// Lexical facts over every non-null rendered value, independent of the
-    /// sample: the type of a column that reaches the profile as text, and
-    /// `type_homogeneity` (#788).
+    /// sample: the type of a column that reaches the profile as text,
+    /// `type_homogeneity`, consistency, precision, accuracy rules and hint
+    /// binding counts (#788).
     lexical: LexicalTally,
 }
 
 impl ColumnAnalyzer {
     pub fn new(data_type: &arrow::datatypes::DataType) -> Self {
-        Self::with_value_hints(data_type, false, false, None)
+        Self::with_exact_limit(data_type, None)
     }
 
-    fn with_value_hints(
+    fn with_exact_limit(
         data_type: &arrow::datatypes::DataType,
-        positive_hint: bool,
-        temporal_hint: bool,
         exact_limit: Option<usize>,
     ) -> Self {
         Self {
@@ -1085,12 +1064,6 @@ impl ColumnAnalyzer {
             true_count: 0,
             false_count: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
-            positive_hint,
-            temporal_hint,
-            hint_checked_values: 0,
-            positive_matched_values: 0,
-            temporal_matched_values: 0,
-            date_matched_values: 0,
             dates: DateTimeAccumulator::new(),
             lexical: LexicalTally::new(),
         }
@@ -1100,26 +1073,8 @@ impl ColumnAnalyzer {
         // Every rendering the sample is offered, so the tally classifies the
         // values the sample would hold if it held them all.
         self.lexical.record(value);
-        if !is_null_like_token(value.trim()) {
-            let matches_date = self.should_track_date_matches()
-                && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Temporal);
-            if matches_date {
-                self.date_matched_values += 1;
-            }
-            if self.should_track_date_matches() {
-                self.dates.update(value);
-            }
-            if self.positive_hint || self.temporal_hint {
-                self.hint_checked_values += 1;
-                if self.positive_hint
-                    && dataprof_metrics::value_matches_hint(value, SemanticHintKind::Positive)
-                {
-                    self.positive_matched_values += 1;
-                }
-                if self.temporal_hint && matches_date {
-                    self.temporal_matched_values += 1;
-                }
-            }
+        if !is_null_like_token(value.trim()) && self.should_track_date_matches() {
+            self.dates.update(value);
         }
         self.sample_values.offer(value);
     }
@@ -1153,23 +1108,6 @@ impl ColumnAnalyzer {
     /// never seen gets an honest count instead of one that was never taken.
     fn should_track_date_matches(&self) -> bool {
         !self.renders_values_as_encoded_bytes()
-    }
-
-    fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {
-        let matched_values = match kind {
-            SemanticHintKind::Positive => self.positive_matched_values,
-            SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
-                self.temporal_matched_values
-            }
-            SemanticHintKind::Identifier => self.hint_checked_values,
-        };
-        SemanticHintBinding {
-            column: column.to_string(),
-            kind,
-            checked_values: self.hint_checked_values,
-            matched_values,
-            exact: true,
-        }
     }
 
     pub fn process_array(&mut self, array: &dyn Array) -> Result<()> {
@@ -1910,7 +1848,11 @@ impl ColumnAnalyzer {
             skip_patterns: skip_patterns || encoded_bytes,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
-            exact_date_matches: Some(self.date_matched_values),
+            exact_date_matches: Some(if encoded_bytes {
+                0
+            } else {
+                self.lexical.temporal_match_count()
+            }),
             exact_dates: Some(&self.dates),
             exact_lexical: Some(&self.lexical),
             decimal_values: matches!(

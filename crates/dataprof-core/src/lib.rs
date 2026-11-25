@@ -24,6 +24,12 @@ pub mod stop_condition;
 pub mod text_units;
 pub mod validation;
 
+/// How many values of each column the engines that read a source in parts
+/// retain for the checks that still read a sample: patterns, the quality
+/// pass and order statistics. Defined here so the metrics crate can tell,
+/// the same way on every route, whether a column reaches past the sample.
+pub const COLUMN_SAMPLE_CAPACITY: usize = 10_000;
+
 pub use analysis_options::AnalysisOptions;
 pub use classification::{DataType, LexicalClass, PatternCategory, TypeHomogeneity};
 pub use config::{IsoQualityConfig, QualityScoreWeights};

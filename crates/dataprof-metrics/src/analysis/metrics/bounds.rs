@@ -181,6 +181,7 @@ pub(crate) fn score_bounds(
     metrics: &QualityMetrics,
     sampled: &[String],
     row_duplicates: Option<RowDuplicateSummary>,
+    exact_accuracy_rules: bool,
 ) -> Result<Option<SampledScores>, DataProfilerError> {
     if sampled.is_empty() {
         return Ok(None);
@@ -221,6 +222,8 @@ pub(crate) fn score_bounds(
         column_profiles,
         semantic_hints,
         temporal_columns,
+        metrics,
+        exact_accuracy_rules,
     )?;
 
     let bounded_means: usize = shares
@@ -613,6 +616,7 @@ fn bernoulli_kl(p: f64, q: f64) -> f64 {
 /// run fixed from the sample. Columns are copied one at a time and visited in
 /// profile order: memory stays flat on wide tables, and the sums below are
 /// formed in the same order on every engine.
+#[allow(clippy::too_many_arguments)]
 fn collect_shares(
     wanted: &[QualityDimension],
     thresholds: &IsoQualityConfig,
@@ -621,6 +625,8 @@ fn collect_shares(
     column_profiles: &[ColumnProfile],
     semantic_hints: &SemanticHints,
     temporal_columns: &[String],
+    quality_metrics: &QualityMetrics,
+    exact_accuracy_rules: bool,
 ) -> Result<HashMap<QualityDimension, Option<DimensionShares>>, DataProfilerError> {
     let wants = |dimension: QualityDimension| wanted.contains(&dimension);
     let positive_columns = &semantic_hints.positive_columns;
@@ -696,8 +702,12 @@ fn collect_shares(
             // A column under no range or sign rule has no units in the rule
             // share; one under a rule fails a value at most once (#1005). A
             // ruled column takes part even when its sample held no number,
-            // since the values outside the sample may hold some.
-            if AccuracyCalculator::is_ruled(&profile.name, positive_columns) {
+            // since the values outside the sample may hold some — unless exact
+            // full-stream rule counters were supplied (#788 step 3), in which
+            // case the exact totals are added once below.
+            if !exact_accuracy_rules
+                && AccuracyCalculator::is_ruled(&profile.name, positive_columns)
+            {
                 violations.push(counts(
                     metrics.rule_violating_values,
                     metrics.rule_values_checked,
@@ -727,6 +737,22 @@ fn collect_shares(
                 1,
             ));
         }
+    }
+
+    if wants(QualityDimension::Accuracy)
+        && exact_accuracy_rules
+        && let Some(acc) = quality_metrics.accuracy.as_ref()
+        && acc.rule_values_checked > 0
+    {
+        violations.push(ColumnCounts {
+            failures: acc.rule_violating_values,
+            checked: acc.rule_values_checked,
+            max_failures_per_value: 1,
+            max_checked_per_value: 1,
+            sampled: acc.rule_values_checked,
+            population: acc.rule_values_checked,
+            failure_span: None,
+        });
     }
 
     let bounded = |shares| Some(DimensionShares::new(shares));
@@ -1807,6 +1833,7 @@ mod tests {
             &result.metrics,
             &[],
             None,
+            false,
         )
         .unwrap();
         assert!(bounds.is_none());

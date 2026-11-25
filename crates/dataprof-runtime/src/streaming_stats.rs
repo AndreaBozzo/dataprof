@@ -3,19 +3,15 @@ use rand::{Rng, SeedableRng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_streaming};
-use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
+use crate::profile_builder::infer_data_type_streaming;
+use dataprof_core::char_len;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
     CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, LexicalTally,
     NumericAccumulator, ParsedNumber, RowCompletenessSummary, RowDuplicateSummary,
-    value_matches_hint,
 };
 
-/// How many values of each column the engines that read a source in parts
-/// retain for the checks that still read a sample: patterns, the quality
-/// pass and order statistics.
-pub const COLUMN_SAMPLE_CAPACITY: usize = 10_000;
+pub use dataprof_core::COLUMN_SAMPLE_CAPACITY;
 
 /// Incremental statistics computation for streaming data processing.
 ///
@@ -269,12 +265,12 @@ pub struct StreamingStatistics {
     distinct: CardinalityEstimator,
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
-    date_match_count: usize,
     /// Date statistics over every non-null value, independent of the
     /// reservoir (#1297).
     dates: DateTimeAccumulator,
     /// Lexical facts over every non-null value, independent of the
-    /// reservoir: the column's type and `type_homogeneity` (#788).
+    /// reservoir: the column's type, `type_homogeneity`, consistency,
+    /// precision, accuracy rules and hint binding counts (#788).
     lexical: LexicalTally,
 }
 
@@ -293,7 +289,6 @@ impl StreamingStatistics {
             distinct: CardinalityEstimator::with_exact_limit(limit),
             sampler: StreamReservoirSampler::new(COLUMN_SAMPLE_CAPACITY),
             text_length_tracker: TextLengthStats::new(),
-            date_match_count: 0,
             dates: DateTimeAccumulator::new(),
             lexical: LexicalTally::new(),
         }
@@ -318,9 +313,6 @@ impl StreamingStatistics {
         self.sampler.offer(value);
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
         self.text_length_tracker.update(char_len(value));
-        if value_matches_hint(value, SemanticHintKind::Temporal) {
-            self.date_match_count += 1;
-        }
         self.dates.update(value);
         self.lexical.record(value);
 
@@ -346,7 +338,6 @@ impl StreamingStatistics {
         self.distinct.merge(&other.distinct);
         self.sampler.merge(&other.sampler);
         self.text_length_tracker.merge(&other.text_length_tracker);
-        self.date_match_count += other.date_match_count;
         self.dates.merge(&other.dates);
         self.lexical.merge(&other.lexical);
     }
@@ -401,7 +392,7 @@ impl StreamingStatistics {
 
     /// Values over the full stream accepted by the temporal calculator.
     pub fn date_match_count(&self) -> usize {
-        self.date_match_count
+        self.lexical.temporal_match_count()
     }
 
     /// Date statistics over every non-null value this column has streamed.
@@ -749,7 +740,6 @@ pub struct StreamingColumnCollection {
     memory_limit_bytes: usize,
     row_tracker: RowUniquenessTracker,
     completeness_tracker: RowCompletenessTracker,
-    hint_bindings: ValueHintBindingAccumulator,
     unique_count_exact_limits: BTreeMap<String, usize>,
     composite_keys: crate::CompositeKeyTracker,
 }
@@ -762,7 +752,6 @@ impl StreamingColumnCollection {
             memory_limit_bytes: 100 * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
             completeness_tracker: RowCompletenessTracker::default(),
-            hint_bindings: ValueHintBindingAccumulator::default(),
             unique_count_exact_limits: BTreeMap::new(),
             composite_keys: crate::CompositeKeyTracker::default(),
         }
@@ -775,16 +764,9 @@ impl StreamingColumnCollection {
             memory_limit_bytes: limit_mb * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
             completeness_tracker: RowCompletenessTracker::default(),
-            hint_bindings: ValueHintBindingAccumulator::default(),
             unique_count_exact_limits: BTreeMap::new(),
             composite_keys: crate::CompositeKeyTracker::default(),
         }
-    }
-
-    /// Configure value-driven semantic hints before records are processed.
-    pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
-        self.hint_bindings = ValueHintBindingAccumulator::new(hints);
-        self
     }
 
     /// Count duplicate rows exactly up to `limit` distinct rows, before any
@@ -899,7 +881,6 @@ impl StreamingColumnCollection {
             // Same null definition the column counters use, so the record
             // count and the cell counts always describe the same nulls.
             row_has_null |= is_null_like_token(&value);
-            self.hint_bindings.observe(header, &value);
         }
 
         // A fieldless JSON object is still a record. If a column appears
@@ -921,18 +902,12 @@ impl StreamingColumnCollection {
     }
 
     /// Per-column lexical and quality counters accumulated over every scanned
-    /// value (#788 step 2).
+    /// value (#788 steps 2–3).
     pub fn lexical_tallies(&self) -> HashMap<String, LexicalTally> {
         self.columns
             .iter()
             .map(|(name, stats)| (name.clone(), stats.lexical_tally().clone()))
             .collect()
-    }
-
-    /// Exact value-driven semantic-hint evidence over every processed record.
-    pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
-        self.hint_bindings
-            .bindings(self.ordered_names.iter().map(String::as_str))
     }
 
     pub fn get_column_stats(&self, column_name: &str) -> Option<&StreamingStatistics> {
@@ -1095,7 +1070,6 @@ impl StreamingColumnCollection {
             memory_limit_bytes: _,
             row_tracker,
             mut completeness_tracker,
-            hint_bindings,
             unique_count_exact_limits,
             composite_keys,
         } = other;
@@ -1164,7 +1138,6 @@ impl StreamingColumnCollection {
         if self_rows > 0 && other_rows > 0 && !schemas_match {
             self.row_tracker.mark_incomparable();
         }
-        self.hint_bindings.merge(&hint_bindings);
     }
 }
 
