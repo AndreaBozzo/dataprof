@@ -643,20 +643,34 @@ def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
     p.write_text("name,age,salary\nAlice,30,50000\nBob,25,60000\nCarol,35,70000\n")
 
     # Report identity and the measured-duration fields may differ between runs of the same
-    # input. Everything else, values included, is expected to be reproducible.
+    # input. Everything else, values included, is expected to be reproducible. The fields are
+    # removed whole, not masked: a run under one millisecond records no throughput, so the
+    # throughput_rows_sec key itself appears in some runs and not in others.
     volatile = re.compile(
-        r'"(id|timestamp|scan_time_ms|throughput_rows_sec|memory_peak_mb)": [^,\n}]+'
-    )
-
-    assert volatile.search(dataprof.profile(str(p)).to_json()), (
-        "the mask matched nothing; the execution field names changed and this "
-        "test would compare unmasked timings"
+        r'\n\s*"(id|timestamp|scan_time_ms|throughput_rows_sec|memory_peak_mb)": [^,\n}]+,?'
     )
 
     # Five runs, not two: HashMap ordering is randomized per instance, so a
     # single pair can coincide by luck.
-    rendered = {
-        volatile.sub(r'"\1": <masked>', dataprof.profile(str(p)).to_json()) for _ in range(5)
-    }
+    documents = [dataprof.profile(str(p)).to_json() for _ in range(5)]
+    assert volatile.search(documents[0]), (
+        "the mask matched nothing; the execution field names changed and this "
+        "test would compare unmasked timings"
+    )
+
+    # The same run with and without a measured throughput, whichever this machine
+    # produced: a fast runner omits the field on every run, a slow one never does.
+    throughput = re.compile(r'\n\s*"throughput_rows_sec": [^,\n}]+,?')
+    anchor = '"source_exhausted": true,'
+    assert anchor in documents[0], "the execution block changed shape"
+    measured = (
+        documents[0]
+        if throughput.search(documents[0])
+        else documents[0].replace(anchor, f'{anchor}\n    "throughput_rows_sec": 1234.5,', 1)
+    )
+    unmeasured = throughput.sub("", measured)
+    assert unmeasured != measured
+
+    rendered = {volatile.sub("", document) for document in [*documents, measured, unmeasured]}
 
     assert len(rendered) == 1, f"to_json() rendered {len(rendered)} different documents"
