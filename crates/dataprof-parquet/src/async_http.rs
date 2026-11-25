@@ -532,6 +532,7 @@ pub async fn analyze_parquet_async_http_with_options(
     .with_row_completeness(analyzer.row_completeness_summary())
     .with_quality_data(sample_columns)
     .with_lexical_tallies(analyzer.lexical_tallies())
+    .with_timeliness_tallies(analyzer.timeliness_tallies())
     .with_analysis_options(options)
     .build())
 }

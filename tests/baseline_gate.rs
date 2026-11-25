@@ -1449,3 +1449,102 @@ fn a_pre_step_3_baseline_with_sampled_accuracy_rules_is_definition_not_comparabl
         }
     }
 }
+
+#[test]
+fn a_pre_step_4_baseline_with_timeliness_is_definition_not_comparable() {
+    // A saved 0.14 (no `value_facts`), step 1, step 2, or step 3 baseline on
+    // a dated source read timeliness from the old raw date reader and (above
+    // 10,000 rows) from the retained sample, and skipped start/end pairs with
+    // nulls. Gating a step 4 report against any of them must report
+    // `definition_not_comparable` (`value_facts`) on overall and timeliness,
+    // never `failed`, while unrelated dimensions (completeness, consistency,
+    // precision, accuracy on step 3) still pass.
+    let csv_text: String = std::iter::once("id,start_date,end_date\n".to_string())
+        .chain((0..12_000).map(|row| {
+            if row == 0 {
+                format!("{row},,2024-02-01\n")
+            } else if row >= 11_000 {
+                format!("{row},2029-01-01,2024-01-01\n")
+            } else {
+                format!("{row},2024-01-01,2024-02-01\n")
+            }
+        }))
+        .collect();
+    let file = csv(&csv_text);
+    let report = Profiler::new()
+        .reference_date(chrono::NaiveDate::from_ymd_opt(2024, 6, 1).unwrap())
+        .analyze_file(file.path())
+        .unwrap();
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+
+    for (label, value_facts) in [
+        ("0.14", None),
+        ("step1", Some(json!("every_value"))),
+        ("step2", Some(json!("every_value_consistency_precision"))),
+        (
+            "step3",
+            Some(json!("every_value_consistency_precision_accuracy_rules")),
+        ),
+    ] {
+        let mut baseline = summary.clone();
+        let semantics = baseline["metric_semantics"].as_object_mut().unwrap();
+        match value_facts {
+            Some(v) => {
+                semantics.insert("value_facts".to_string(), v);
+            }
+            None => {
+                semantics.remove("value_facts");
+            }
+        }
+        baseline["quality"]["exact_dimensions"] =
+            json!(["completeness", "consistency", "duplicate_rows", "precision"]);
+        baseline["quality"]["sampled_dimensions"] = json!(["accuracy", "timeliness", "validity"]);
+        baseline["quality"]["dimension_scores"]["timeliness"] = json!(100.0);
+        baseline["quality"]["overall_score"] = json!(100.0);
+
+        let side = ReportSide::from_summary_json(&baseline.to_string()).unwrap();
+        let result = QualityPolicy::new()
+            .max_quality_score_drop(0.0)
+            .max_dimension_score_drop(QualityDimension::Timeliness, 0.0)
+            .max_dimension_score_drop(QualityDimension::Completeness, 0.0)
+            .max_dimension_score_drop(QualityDimension::Consistency, 0.0)
+            .evaluate_against(&report, &side)
+            .unwrap();
+
+        for (code, subject) in [
+            (CheckCode::MaxQualityScoreDrop, None),
+            (CheckCode::MaxDimensionScoreDrop, Some("timeliness")),
+        ] {
+            let c = check(&result, code, subject);
+            assert!(
+                matches!(
+                    reason(c),
+                    Some(NotEvaluated::DefinitionNotComparable { definition, .. }) if definition == "value_facts"
+                ),
+                "[{label}] {code:?} {subject:?}: {c:#?}"
+            );
+        }
+        assert_eq!(
+            check(
+                &result,
+                CheckCode::MaxDimensionScoreDrop,
+                Some("completeness")
+            )
+            .status,
+            CheckStatus::Passed,
+            "[{label}] completeness"
+        );
+        if label == "step3" {
+            assert_eq!(
+                check(
+                    &result,
+                    CheckCode::MaxDimensionScoreDrop,
+                    Some("consistency")
+                )
+                .status,
+                CheckStatus::Passed,
+                "[{label}] consistency"
+            );
+        }
+    }
+}

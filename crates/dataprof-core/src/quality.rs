@@ -236,15 +236,15 @@ pub enum DateForms {
 }
 
 /// Which values column types, `type_homogeneity`, `locale_number_count`,
-/// `zero_padded_count`, consistency, precision, accuracy rules and
+/// `zero_padded_count`, consistency, precision, accuracy rules, timeliness and
 /// value-driven semantic-hint bindings are counted over, as recorded in a
 /// report's metric semantics (#788).
 ///
 /// Through 0.14 the engines that retain a bounded sample of each column (files,
 /// Arrow and the streaming readers) typed a text column, classified its values,
-/// and computed consistency, precision and accuracy rules from that sample;
-/// those releases recorded no definition. Step 1 (`every_value`) moved type
-/// inference, `type_homogeneity`, `locale_number_count` and
+/// and computed consistency, precision, accuracy rules and timeliness from that
+/// sample; those releases recorded no definition. Step 1 (`every_value`) moved
+/// type inference, `type_homogeneity`, `locale_number_count` and
 /// `zero_padded_count` to every non-null value read and changed the digit-code
 /// rule to 1%. Step 2 (`every_value_consistency_precision`) also counts
 /// consistency and precision over every non-null value read on every engine.
@@ -252,7 +252,10 @@ pub enum DateForms {
 /// accuracy range/sign rules (`rule_values_checked`, `rule_violating_values`,
 /// `range_violations`, `negative_values_in_positive`,
 /// `numeric_values_checked`) and value-driven hint bindings over every
-/// non-null value read on every engine.
+/// non-null value read on every engine. Step 4
+/// (`every_value_consistency_precision_accuracy_rules_timeliness`) also counts
+/// timeliness (per-column dates and row-aligned start/end pairs) over every
+/// value read using the same date reading as the date statistics.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -260,18 +263,26 @@ pub enum DateForms {
 pub enum ValueFacts {
     /// Step 1 (#788): every non-null value read for type inference,
     /// `type_homogeneity`, `locale_number_count` and `zero_padded_count`;
-    /// consistency, precision and accuracy rules still read the retained sample.
+    /// consistency, precision, accuracy rules and timeliness still read the
+    /// retained sample.
     EveryValue,
     /// Step 2 (#788): every non-null value read for type inference,
     /// `type_homogeneity`, `locale_number_count`, `zero_padded_count`,
-    /// consistency and precision, on every engine; accuracy rules still read
-    /// the retained sample.
+    /// consistency and precision, on every engine; accuracy rules and
+    /// timeliness still read the retained sample.
     EveryValueConsistencyPrecision,
     /// Step 3 (#788): every non-null value read for type inference,
     /// `type_homogeneity`, `locale_number_count`, `zero_padded_count`,
     /// consistency, precision, accuracy range/sign rules and value-driven
-    /// semantic-hint bindings, on every engine.
+    /// semantic-hint bindings, on every engine; timeliness still reads the
+    /// retained sample.
     EveryValueConsistencyPrecisionAccuracyRules,
+    /// Step 4 (#788): every non-null value read for type inference,
+    /// `type_homogeneity`, `locale_number_count`, `zero_padded_count`,
+    /// consistency, precision, accuracy range/sign rules, value-driven
+    /// semantic-hint bindings and timeliness (using the same date reading as
+    /// the date statistics, with row-aligned start/end pairs), on every engine.
+    EveryValueConsistencyPrecisionAccuracyRulesTimeliness,
 }
 
 impl ValueFacts {
@@ -284,6 +295,7 @@ impl ValueFacts {
             Self::EveryValue
                 | Self::EveryValueConsistencyPrecision
                 | Self::EveryValueConsistencyPrecisionAccuracyRules
+                | Self::EveryValueConsistencyPrecisionAccuracyRulesTimeliness
         )
     }
 
@@ -294,13 +306,28 @@ impl ValueFacts {
             self,
             Self::EveryValueConsistencyPrecision
                 | Self::EveryValueConsistencyPrecisionAccuracyRules
+                | Self::EveryValueConsistencyPrecisionAccuracyRulesTimeliness
         )
     }
 
     /// Whether this definition also counts accuracy range/sign rules over every
     /// value read (step 3 and later).
     pub fn has_exact_accuracy_rules(self) -> bool {
-        matches!(self, Self::EveryValueConsistencyPrecisionAccuracyRules)
+        matches!(
+            self,
+            Self::EveryValueConsistencyPrecisionAccuracyRules
+                | Self::EveryValueConsistencyPrecisionAccuracyRulesTimeliness
+        )
+    }
+
+    /// Whether this definition also counts timeliness over every value read
+    /// using the date statistics reader and row-aligned start/end pairs
+    /// (step 4 and later).
+    pub fn has_exact_timeliness(self) -> bool {
+        matches!(
+            self,
+            Self::EveryValueConsistencyPrecisionAccuracyRulesTimeliness
+        )
     }
 }
 

@@ -12,11 +12,13 @@ use pyo3::prelude::*;
 
 use dataprof::{
     CsvSourceMetadata, DataFrameLibrary, DataSource, DelimiterDetection, ExecutionMetadata,
-    FileFormat, MetricPack, TruncationReason, is_null_like_token,
+    FileFormat, IsoQualityConfig, MetricPack, TruncationReason, is_null_like_token,
 };
+use dataprof_metrics::DateTimeAccumulator;
 use dataprof_runtime::{
     ColumnProfileInput, LexicalTally, ReportAssembler, RowCompletenessTracker, RowSignature,
-    RowUniquenessTracker, build_column_profile, nested_column_profile,
+    RowUniquenessTracker, TemporalPairTracker, TimelinessTallies, TimelinessWindow,
+    build_column_profile, nested_column_profile,
 };
 
 use super::config::PyProfilerConfig;
@@ -163,6 +165,7 @@ pub fn profile_columns(
         column_profiles,
         sample_columns,
         lexical_tallies,
+        timeliness_tallies,
         row_duplicates,
         row_completeness,
         composite_keys,
@@ -170,6 +173,9 @@ pub fn profile_columns(
         let mut profiles = Vec::with_capacity(num_cols);
         let mut samples = std::collections::HashMap::new();
         let mut tallies = std::collections::HashMap::new();
+        let mut date_accumulators = std::collections::HashMap::new();
+        let (timeliness_window, timeliness_clock_mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), options.reference_date());
 
         // Full-stream duplicate-row tracking over the row-aligned input,
         // through the same `RowSignature` encoding the file engines use, so
@@ -179,6 +185,9 @@ pub fn profile_columns(
             RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
         let mut completeness_tracker = RowCompletenessTracker::default();
         let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(&options);
+        let mut temporal_pairs = TemporalPairTracker::new(&semantic_hints.temporal_pairs);
+        let projected_names: Vec<String> = columns.iter().map(|(n, _, _)| n.clone()).collect();
+        temporal_pairs.register_columns(&projected_names);
         if num_cols > 0 {
             for row_index in 0..num_rows {
                 let mut row_signature = RowSignature::default();
@@ -189,10 +198,16 @@ pub fn profile_columns(
                     if containers.binary_search(&row_index).is_ok() {
                         row_signature.push_container_field(value);
                         key_tracker.unsupported_field(name);
+                        if temporal_pairs.is_enabled() {
+                            temporal_pairs.record_text(name, None);
+                        }
                     } else {
                         row_signature.push_field(value);
                         if key_tracker.is_enabled() {
                             key_tracker.text_field(name, Some(value));
+                        }
+                        if temporal_pairs.is_enabled() {
+                            temporal_pairs.record_text(name, cells[row_index].as_deref());
                         }
                     }
                     // A missing cell renders empty, which `is_null_like_token`
@@ -203,6 +218,7 @@ pub fn profile_columns(
                 row_tracker.observe(row_signature.finish());
                 completeness_tracker.observe(row_has_null);
                 key_tracker.finish_row();
+                temporal_pairs.finish_row();
             }
         }
 
@@ -234,6 +250,10 @@ pub fn profile_columns(
                 ));
                 if include_quality {
                     samples.insert(col_name.clone(), Vec::new());
+                    date_accumulators.insert(
+                        col_name.clone(),
+                        DateTimeAccumulator::with_timeliness_window(timeliness_window),
+                    );
                 }
                 continue;
             }
@@ -243,6 +263,10 @@ pub fn profile_columns(
                     options.unique_count_exact_limit(col_name),
                 );
             let lexical = LexicalTally::from_values(&present);
+            let mut date_acc = DateTimeAccumulator::with_timeliness_window(timeliness_window);
+            for value in &present {
+                date_acc.update(value);
+            }
 
             let data_type = if semantic_hints.is_identifier_column(col_name) {
                 dataprof::DataType::Identifier
@@ -267,8 +291,8 @@ pub fn profile_columns(
                 // `present` is the full column, so the sample-derived stats
                 // are already exact.
                 exact_numeric: None,
-                exact_date_matches: None,
-                exact_dates: None,
+                exact_date_matches: Some(lexical.temporal_match_count()),
+                exact_dates: Some(&date_acc),
                 exact_lexical: Some(&lexical),
                 decimal_values: false,
             }));
@@ -276,13 +300,22 @@ pub fn profile_columns(
             if include_quality {
                 samples.insert(col_name.clone(), present);
                 tallies.insert(col_name.clone(), lexical);
+                date_accumulators.insert(col_name.clone(), date_acc);
             }
         }
+
+        let timeliness = TimelinessTallies {
+            columns: date_accumulators,
+            pairs: temporal_pairs.finish(),
+            clock_mode: timeliness_clock_mode,
+            window: timeliness_window,
+        };
 
         (
             profiles,
             samples,
             tallies,
+            timeliness,
             row_tracker.summary(),
             completeness_tracker.summary(),
             key_tracker.summaries(),
@@ -345,7 +378,8 @@ pub fn profile_columns(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_lexical_tallies(lexical_tallies);
+            .with_lexical_tallies(lexical_tallies)
+            .with_timeliness_tallies(timeliness_tallies);
     }
 
     let report = assembler.build();

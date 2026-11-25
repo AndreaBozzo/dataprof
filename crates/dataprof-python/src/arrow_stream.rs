@@ -390,7 +390,8 @@ pub(crate) fn profile_stream(
     if include_quality {
         assembler = assembler
             .with_quality_data(analyzer.create_sample_columns())
-            .with_lexical_tallies(analyzer.lexical_tallies());
+            .with_lexical_tallies(analyzer.lexical_tallies())
+            .with_timeliness_tallies(analyzer.timeliness_tallies());
     }
     let report = assembler.build();
     crate::errors::validate_report_hints(&report, hints, include_quality)?;

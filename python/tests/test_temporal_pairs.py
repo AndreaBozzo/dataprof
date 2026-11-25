@@ -31,14 +31,14 @@ def _codes(report: dp.ProfileReport) -> tuple[set[str], set[str]]:
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_a_pair_with_nulls_is_not_compared(tmp_path: Path, engine: str):
+def test_a_pair_with_nulls_is_compared_row_by_row(tmp_path: Path, engine: str):
     path = tmp_path / "pairs.csv"
     path.write_text(ISSUE_EXAMPLE)
     report = dp.profile_file(path, engine=engine)
-    assert _pairs(report) == (0, 0)
+    assert _pairs(report) == (2, 0)
     found, not_evaluated = _codes(report)
     assert "temporal_order_violations" not in found
-    assert "temporal_order_violations" in not_evaluated
+    assert "temporal_order_violations" not in not_evaluated
 
 
 def _big_rows() -> list[dict[str, str]]:
@@ -78,7 +78,7 @@ def test_null_free_columns_keep_the_same_rows_on_every_in_memory_route(tmp_path:
     frame.to_json(jsonl, orient="records", lines=True)
     for name, source in sources.items():
         checked, violations = _pairs(dp.profile(source))
-        # Row dicts keep every non-null value; the others keep a 10,000-value sample.
-        assert checked == (20_000 if name == "dicts" else 10_000), name
+        # Every route counts start/end pairs over every scanned row (#788 step 4).
+        assert checked == 20_000, name
         assert violations == 0, f"{name} paired values from different rows"
-    assert _pairs(dp.profile_file(jsonl)) == (10_000, 0)
+    assert _pairs(dp.profile_file(jsonl)) == (20_000, 0)

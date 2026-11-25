@@ -12,7 +12,8 @@ pub use inference::{
     LexicalTally, classify_lexical_forms, infer_type, is_null_like_token, lexical_class,
 };
 pub use metrics::{
-    MetricsCalculator, compute_value_hint_bindings, compute_value_hint_bindings_from_tallies,
+    MetricsCalculator, PairOrderCounts, TemporalPairTracker, TimelinessTallies,
+    compute_value_hint_bindings, compute_value_hint_bindings_from_tallies,
     is_accuracy_ruled_column, value_matches_hint,
 };
 pub use patterns::{PatternMetadata, detect_patterns, list_patterns};
