@@ -1564,6 +1564,26 @@ whenever it is. Absent means the count did not run, including a report
 written before 0.15; `0` means none were found. The field is additive and
 not `required`, so stored v1 reports remain valid.
 
+## v1 additive change: column `fingerprint`
+
+Both report forms record `metric_semantics.column_fingerprint` as
+`xxh3_128_sum_v1`. A column's `fingerprint` is a 32-character lowercase hex
+string. It sums the XXH3-128 hashes of canonical cells modulo 2^128. The sum
+includes each occurrence, including nulls, and is independent of row order.
+For example, `1`, `1.0` and `1.00` have the same canonical encoding. A
+complete column with zero rows has a fingerprint of 32 zeroes.
+Recognized padded spellings of binary floats, such as `0.10000000000000001`
+written by `%.17g`, hash as the float. A declared decimal keeps its digits.
+
+An incomplete read omits the field, including when rows were capped,
+sampled, stopped early, or skipped after a parse error. Mixed slash-date
+order, decimals outside the exact representation, nested values and database
+binary placeholders also leave the field absent. Older reports can omit
+both fields.
+
+Use the fingerprint to detect accidental changes to the values in a column.
+The additive hash is unsuitable for verifying adversarial input.
+
 ## v1 additive change: column `pattern_values_checked`
 
 Both dialects carry an optional integer `pattern_values_checked` on each column

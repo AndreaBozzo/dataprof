@@ -12,6 +12,15 @@ pub struct ColumnProfile {
     pub data_type: DataType,
     pub null_count: usize,
     pub total_count: usize,
+    /// Order-independent fingerprint of all column values, including nulls.
+    /// Absent when the values are unavailable or the read was incomplete.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::serde_helpers::deserialize_column_fingerprint"
+    )]
+    #[schemars(with = "String", regex(pattern = "^[0-9a-f]{32}$"))]
+    pub fingerprint: Option<String>,
     pub unique_count: Option<usize>,
     /// Whether `unique_count` is an approximate (HyperLogLog) estimate rather
     /// than an exact distinct count.
@@ -708,6 +717,7 @@ mod tests {
             total_count: 10,
             unique_count: Some(8),
             unique_count_is_approximate: Some(false),
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: Some(0),
             type_homogeneity: None,
@@ -768,6 +778,7 @@ mod tests {
             total_count: 3,
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,

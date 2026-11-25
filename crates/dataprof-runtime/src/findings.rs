@@ -1512,6 +1512,7 @@ mod tests {
             total_count: total,
             unique_count: None,
             unique_count_is_approximate: None,
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,

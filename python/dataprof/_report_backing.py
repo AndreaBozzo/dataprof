@@ -178,6 +178,18 @@ def _is_native_type(value: Any) -> bool:
 
 def _column_accessor(document: dict[str, Any], path: str) -> _MappingAccessor:
     values = dict(document)
+    values["fingerprint"] = _read_field(
+        document,
+        "fingerprint",
+        f"{path}.fingerprint",
+        "32 lowercase hexadecimal digits",
+        lambda value: (
+            isinstance(value, str)
+            and len(value) == 32
+            and all(digit in "0123456789abcdef" for digit in value)
+        ),
+        None,
+    )
     # `null` is the schema's "not analyzed", the same answer as a missing key.
     stats = _read_field(
         document,
@@ -411,6 +423,7 @@ _METRIC_SEMANTICS = {
         "every_value_consistency_precision_accuracy_rules",
         "every_value_consistency_precision_accuracy_rules_timeliness",
     ),
+    "column_fingerprint": ("xxh3_128_sum_v1",),
 }
 
 

@@ -305,7 +305,17 @@ pub async fn analyze_database_with_options(
                 let native_type = type_system
                     .zip(type_name)
                     .map(|(system, type_name)| NativeType::new(system, type_name));
-                analyze_declared_column(name, data, options, native_type)
+                let mut profile = analyze_declared_column(name, data, options, native_type);
+                // Binary cells arrive as null placeholders (#645). A
+                // declared PostgreSQL array also has no scalar encoding,
+                // even if every row is SQL NULL.
+                if type_name.is_some_and(|name| {
+                    is_binary_type(name)
+                        || (type_system == Some(NativeType::POSTGRESQL) && name.ends_with("[]"))
+                }) {
+                    profile.fingerprint = None;
+                }
+                profile
             })
             .collect(),
         &columns.container_counts(),

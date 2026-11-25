@@ -17,6 +17,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -100,6 +102,7 @@ ENGINES = (
     "parquet",
     "parquet.bytes",
     "arrow",
+    "arrow.stream",
     "pandas",
     "polars",
 )
@@ -159,9 +162,12 @@ def build_report(engine: str, tmp_path):
             return dataprof.profile(path.read_bytes(), format="parquet")
         return dataprof.profile(str(path))
 
-    if engine == "arrow":
+    if engine in ("arrow", "arrow.stream"):
         pa = pytest.importorskip("pyarrow")
-        return dataprof.profile(pa.table(COLUMNS))
+        table = pa.table(COLUMNS)
+        return dataprof.profile(
+            table.to_reader(max_chunksize=2) if engine == "arrow.stream" else table
+        )
 
     if engine == "pandas":
         pd = pytest.importorskip("pandas")
@@ -172,6 +178,198 @@ def build_report(engine: str, tmp_path):
         return dataprof.profile(pl.DataFrame(COLUMNS))
 
     raise AssertionError(f"unknown engine {engine}")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_column_fingerprints_match_across_routes(engine, tmp_path):
+    report = build_report(engine, tmp_path)
+    reference = dataprof.profile(COLUMNS)
+    actual = {name: report[name].fingerprint for name in COLUMNS}
+    assert all(
+        value is not None and re.fullmatch(r"[0-9a-f]{32}", value) for value in actual.values()
+    )
+    assert actual == {name: reference[name].fingerprint for name in COLUMNS}
+    # This fixture's all-null column has five cells. Pin the multiplication
+    # independently of either profiler route, including modulo wraparound.
+    assert actual["all_null"] == f"{(0xA6CD5E9392000F6AC44BDFF4074EECDB * 5) % (1 << 128):032x}"
+
+
+def test_column_fingerprint_uses_values_multiplicity_and_numeric_scale(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    # This is the sum of the pinned hashes of 1, 1.5, 1.5 and null.
+    expected = "b145fdfd90a4bc5933a166681c5adb88"
+    csv_path = tmp_path / "values.csv"
+    csv_path.write_bytes(b"v\n1.50\n1\n1.50\nNULL\n")
+    for engine in ("auto", "incremental", "columnar"):
+        assert dataprof.profile(csv_path, engine=engine)["v"].fingerprint == expected
+
+    document = b'[{"v": null}, {"v": 1.5}, {"v": 1.00}, {"v": 1.5}]'
+    assert dataprof.profile(document, format="json")["v"].fingerprint == expected
+    assert (
+        dataprof.profile({"v": [1, Decimal("1.5000"), None, Decimal("1.5")]})["v"].fingerprint
+        == expected
+    )
+    changed = dataprof.profile({"v": [1.0, 1.5, 1.6, None]})["v"].fingerprint
+    without_null = dataprof.profile({"v": [1.0, 1.5, 1.5]})["v"].fingerprint
+    assert changed is not None and changed != expected
+    assert without_null is not None and without_null != expected
+
+    for scale in (1, 4):
+        table = pa.table(
+            {
+                "v": pa.array(
+                    [Decimal("1.5"), None, Decimal("1"), Decimal("1.5")],
+                    type=pa.decimal128(8, scale),
+                )
+            }
+        )
+        parquet_path = tmp_path / f"decimal-{scale}.parquet"
+        pq.write_table(table, parquet_path, row_group_size=2)
+        for source in (table, table.to_reader(max_chunksize=1), parquet_path):
+            assert dataprof.profile(source)["v"].fingerprint == expected
+        assert (
+            dataprof.profile(parquet_path.read_bytes(), format="parquet")["v"].fingerprint
+            == expected
+        )
+
+
+@pytest.mark.parametrize(
+    ("fmt", "data"),
+    [
+        ("csv", b"v,k\nNULL,a\n1.50,b\n1,c\n"),
+        ("json", b'[{"k":"a"},{"v":1.5,"k":"b"},{"v":1.0,"k":"c"}]'),
+        ("jsonl", b'{"k":"a"}\n{"v":1.5,"k":"b"}\n{"v":1.0,"k":"c"}\n'),
+    ],
+)
+def test_async_column_fingerprint_parity(tmp_path, fmt, data):
+    import asyncio
+
+    from dataprof.asyncio import profile_bytes, profile_file
+
+    if not dataprof.capabilities().async_streaming:
+        pytest.skip("async streaming not compiled")
+    path = tmp_path / f"input.{fmt}"
+    path.write_bytes(data)
+    expected = dataprof.profile({"v": [1.5, None, 1]})["v"].fingerprint
+    assert expected is not None
+    assert dataprof.profile(path)["v"].fingerprint == expected
+    assert asyncio.run(profile_file(path, chunk_size=1))["v"].fingerprint == expected
+    assert asyncio.run(profile_bytes(data, format=fmt, chunk_size=1))["v"].fingerprint == expected
+
+
+def test_padded_float_column_fingerprint_matches_arrow(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    path = tmp_path / "padded.csv"
+    path.write_bytes(b"v\n4.9406564584124654e-324\n1.4999833007740245e-320\n0.10000000000000001\n")
+    expected = dataprof.profile(pa.table({"v": [5e-324, 1.5e-320, 0.1]}))["v"].fingerprint
+    assert expected is not None
+    for engine in ("auto", "incremental", "columnar"):
+        assert dataprof.profile(path, engine=engine)["v"].fingerprint == expected
+
+
+def test_partial_column_fingerprint_is_absent(tmp_path):
+    path = tmp_path / "values.csv"
+    path.write_bytes(b"v\n1\n2\n3\n4\n")
+    for engine in ("auto", "incremental", "columnar"):
+        assert dataprof.profile(path, engine=engine, max_rows=4)["v"].fingerprint is not None
+        assert dataprof.profile(path, engine=engine, max_rows=2)["v"].fingerprint is None
+    assert (
+        dataprof.profile(
+            path, engine="incremental", stop_condition=dataprof.StopCondition.max_rows(2)
+        )["v"].fingerprint
+        is None
+    )
+    assert (
+        dataprof.profile(path, sampling=dataprof.SamplingStrategy.reservoir(2))["v"].fingerprint
+        is None
+    )
+    assert dataprof.profile({"v": [1, 2]}, max_rows=1)["v"].fingerprint is None
+    skipped = dataprof.profile(
+        b'{"v": 1}\ninvalid\n{"v": 2}\n', format="jsonl", jsonl_on_error="skip"
+    )
+    assert skipped.error_count == 1
+    assert skipped["v"].fingerprint is None
+
+
+def test_slash_date_column_fingerprint_uses_the_whole_column(tmp_path):
+    # The second row supplies the first evidence of order, in a different
+    # batch from the ambiguous date and datetime.
+    pa = pytest.importorskip("pyarrow")
+    month_first = ["01/02/2024 12:30:00", "12/31/2024", "03/04/2024"]
+    iso = ["2024-01-02T12:30:00", "2024-12-31", "2024-03-04"]
+    expected = dataprof.profile({"v": iso})["v"].fingerprint
+    assert expected is not None
+    assert dataprof.profile({"v": month_first})["v"].fingerprint == expected
+    assert (
+        dataprof.profile(pa.table({"v": month_first}).to_reader(max_chunksize=1))["v"].fingerprint
+        == expected
+    )
+    path = tmp_path / "slash.csv"
+    path.write_text("v\n" + "\n".join(month_first) + "\n", encoding="utf-8")
+    assert dataprof.profile(path, metrics=["schema"])["v"].fingerprint == expected
+    mixed = [*month_first, "31/12/2024"]
+    assert dataprof.profile({"v": mixed}, metrics=["schema"])["v"].fingerprint is None
+    assert (
+        dataprof.profile(pa.table({"v": mixed}).to_reader(max_chunksize=1))["v"].fingerprint is None
+    )
+
+
+def test_unavailable_column_fingerprints_and_empty_columns(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    zero = "0" * 32
+    for source in ({"v": []}, pa.table({"v": pa.array([], type=pa.int64())})):
+        assert dataprof.profile(source)["v"].fingerprint == zero
+    header = tmp_path / "empty.csv"
+    header.write_bytes(b"v\n")
+    for engine in ("auto", "incremental", "columnar"):
+        assert dataprof.profile(header, engine=engine)["v"].fingerprint == zero
+
+    wide = "1234567890123456789012345678901234567891"
+    assert dataprof.profile({"v": [wide]})["v"].fingerprint is None
+    assert (
+        dataprof.profile(pa.table({"v": pa.array([Decimal(wide)], type=pa.decimal256(40, 0))}))[
+            "v"
+        ].fingerprint
+        is None
+    )
+    assert dataprof.profile({"v": [[1], None]})["v"].fingerprint is None
+    mixed = tmp_path / "mixed.json"
+    mixed.write_text('[{"v": [1]}, {"v": "scalar"}]', encoding="utf-8")
+    assert dataprof.profile(mixed)["v"].fingerprint is None
+    assert dataprof.profile({"v": [[1], "scalar"]})["v"].fingerprint is None
+    assert (
+        dataprof.profile(pa.table({"v": pa.array([], type=pa.list_(pa.int64()))}))["v"].fingerprint
+        is None
+    )
+    assert dataprof.profile(pa.table({"v": [b"\0\xff"]}))["v"].fingerprint == (
+        "c22451481e79b5755e1b71ed05857c1d"
+    )
+
+
+def test_column_fingerprint_roundtrips_and_preserves_absence():
+    report = dataprof.profile({"v": [1.5, None], "nested": [[1], None]})
+    expected = report["v"].fingerprint
+    assert expected is not None
+    documents = (report.to_dict(), json.loads(report.to_json()))
+    for document in documents:
+        columns = document.get("columns", document.get("column_profiles"))
+        assert columns[0]["fingerprint"] == expected
+        assert "fingerprint" not in columns[1]
+        for restored in (
+            dataprof.ProfileReport.from_dict(document),
+            dataprof.ProfileReport.from_json(json.dumps(document)),
+        ):
+            assert restored["v"].fingerprint == expected
+            assert restored["nested"].fingerprint is None
+            assert restored.to_dict()["columns"][0]["fingerprint"] == expected
+        del columns[0]["fingerprint"]
+        legacy = dataprof.ProfileReport.from_dict(document)
+        assert legacy["v"].fingerprint is None
+        assert "fingerprint" not in legacy.to_dict()["columns"][0]
+        columns[0]["fingerprint"] = "A" * 32
+        with pytest.raises(ValueError, match="fingerprint"):
+            dataprof.ProfileReport.from_dict(document)
 
 
 def field_value(report, column: str, field: str) -> Any:
@@ -308,6 +506,7 @@ def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
         "outlier_spread": "nonzero_iqr",
         "date_forms": "spaced_iso_datetimes",
         "value_facts": "every_value_consistency_precision_accuracy_rules_timeliness",
+        "column_fingerprint": "xxh3_128_sum_v1",
     }
     assert report.metric_semantics == expected
     assert report.to_dict()["metric_semantics"] == expected

@@ -171,6 +171,8 @@ class ColumnProfile:
     data_type: str
     total_count: int
     null_count: int
+    #: Canonical, order-independent fingerprint of the complete column.
+    fingerprint: str | None
     unique_count: int | None
     unique_count_is_approximate: bool | None
     invalid_count: int | None

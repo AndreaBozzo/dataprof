@@ -126,6 +126,8 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
         col_data["zero_padded_count"] = col.zero_padded_count
     if col.pattern_values_checked is not None:
         col_data["pattern_values_checked"] = col.pattern_values_checked
+    if col.fingerprint is not None:
+        col_data["fingerprint"] = col.fingerprint
     # Omitted when the source declared no type, as the Rust document does.
     if col.native_type is not None:
         col_data["native_type"] = {

@@ -422,6 +422,37 @@ mod postgres_tests {
         }
     }
 
+    #[tokio::test]
+    async fn postgres_column_fingerprints_match_text_and_withhold_unavailable_values() {
+        use std::io::Write as _;
+
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let sql = "SELECT amount, flag, narrow, payload, nested, wide, NULL::integer[] AS null_array FROM (VALUES
+            (1, NUMERIC '1.50', true, REAL '0.1', BYTEA 'abc', ARRAY[1], NUMERIC '1234567890123456789012345678901234567891'),
+            (2, NUMERIC '1.00', false, REAL '0.5', BYTEA 'def', ARRAY[2], NULL),
+            (3, NULL, NULL, NULL, NULL, NULL, NULL)
+        ) AS fixture(position, amount, flag, narrow, payload, nested, wide) ORDER BY position";
+        let mut config = postgres_config(&url);
+        config.batch_size = 1;
+        let postgres = analyze_database(config, sql, true, None).await.unwrap();
+        let mut csv_file = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+        writeln!(
+            csv_file,
+            "amount,flag,narrow\nNULL,NULL,NULL\n1,false,0.5\n1.5,true,0.10000000149011612"
+        )
+        .unwrap();
+        let csv = Profiler::new().analyze_file(csv_file.path()).unwrap();
+        for (db, file) in postgres.column_profiles.iter().zip(&csv.column_profiles) {
+            assert!(db.fingerprint.is_some(), "{}", db.name);
+            assert_eq!(db.fingerprint, file.fingerprint, "{}", db.name);
+        }
+        for column in &postgres.column_profiles[3..] {
+            assert!(column.fingerprint.is_none(), "{}", column.name);
+        }
+    }
+
     #[cfg(feature = "parquet")]
     #[tokio::test]
     async fn postgres_timestamptz_matches_zoned_arrow_and_csv() {
@@ -488,6 +519,7 @@ mod postgres_tests {
         let postgres_findings = to_value(postgres.findings().findings).unwrap();
         let postgres = to_value(&postgres).unwrap();
         let mut postgres_column = postgres["column_profiles"][0].clone();
+        assert!(postgres_column["fingerprint"].is_string());
         assert_eq!(postgres_column["native_type"]["name"], "TIMESTAMPTZ");
         assert_eq!(
             postgres_column["stats"]["DateTime"]["min_datetime"],

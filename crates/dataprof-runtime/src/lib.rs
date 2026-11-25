@@ -38,8 +38,9 @@ pub use profile_report::profile_report_schema_document;
 #[doc(hidden)]
 pub use profile_report::record_build_identity;
 pub use profile_report::{
-    AnalysisSettings, ColumnSelection, MetricSemantics, PatternLocale, ProfileReport,
-    QualityAnalysisStatus, REPORT_SCHEMA_VERSION, ReportGenerator, SourceIdentity, TemporalPair,
+    AnalysisSettings, ColumnFingerprintAlgorithm, ColumnSelection, MetricSemantics, PatternLocale,
+    ProfileReport, QualityAnalysisStatus, REPORT_SCHEMA_VERSION, ReportGenerator, SourceIdentity,
+    TemporalPair,
 };
 pub use quality_gate::{
     BaselineComparison, BaselineReading, Check, CheckBounds, CheckCode, CheckStatus, Diagnostic,

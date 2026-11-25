@@ -257,6 +257,7 @@ impl Default for TextLengthStats {
 pub struct StreamingStatistics {
     pub count: usize,
     pub null_count: usize,
+    fingerprint: dataprof_metrics::stats::canonical_value::ColumnFingerprint,
     pub min: f64,
     pub max: f64,
     welford: NumericAccumulator,
@@ -291,6 +292,7 @@ impl StreamingStatistics {
         Self {
             count: 0,
             null_count: 0,
+            fingerprint: Default::default(),
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
             welford: NumericAccumulator::new(),
@@ -324,6 +326,7 @@ impl StreamingStatistics {
             return None;
         }
 
+        self.fingerprint.update_text(value);
         self.distinct.insert(value);
         self.sampler.offer(value);
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
@@ -356,6 +359,7 @@ impl StreamingStatistics {
         self.text_length_tracker.merge(&other.text_length_tracker);
         self.dates.merge(&other.dates);
         self.lexical.merge(&other.lexical);
+        self.fingerprint.merge(&other.fingerprint);
     }
 
     pub fn mean(&self) -> f64 {
@@ -421,6 +425,10 @@ impl StreamingStatistics {
         &self.lexical
     }
 
+    pub(crate) fn fingerprint(&self) -> Option<String> {
+        self.fingerprint.finish(self.count, self.null_count)
+    }
+
     /// Exact aggregates over every numeric value this column has streamed,
     /// or `None` when no value parsed as a finite number.
     ///
@@ -466,7 +474,12 @@ impl StreamingStatistics {
         let dates_size = self.dates.heap_bytes();
         let lexical_size = self.lexical.heap_bytes();
 
-        struct_size + distinct_size + reservoir_size + dates_size + lexical_size
+        struct_size
+            + distinct_size
+            + reservoir_size
+            + dates_size
+            + lexical_size
+            + self.fingerprint.heap_bytes()
     }
 }
 
@@ -474,6 +487,25 @@ impl Default for StreamingStatistics {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cfg(test)]
+#[test]
+fn column_fingerprint_merges_full_stream_and_null_counts() {
+    let mut whole = StreamingStatistics::with_sample_capacity(1);
+    for value in ["1.50", "1", "1.5", "NULL"] {
+        whole.update(value);
+    }
+    let mut left = StreamingStatistics::with_sample_capacity(1);
+    left.update("1.5");
+    left.update("NULL");
+    let mut right = StreamingStatistics::with_sample_capacity(1);
+    right.update("1");
+    right.update("1.50");
+    left.merge(&right);
+    let expected = Some("b145fdfd90a4bc5933a166681c5adb88");
+    assert_eq!(whole.fingerprint().as_deref(), expected);
+    assert_eq!(left.fingerprint().as_deref(), expected);
 }
 
 /// Canonical encoding of one row, for duplicate detection.
