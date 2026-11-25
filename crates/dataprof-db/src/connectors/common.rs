@@ -73,7 +73,8 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// because SQLite has no decimal type).
 ///
 /// PostgreSQL `TIMESTAMPTZ` renders as a UTC instant with a trailing `Z`,
-/// matching Arrow's UTC timestamp spelling. Other temporal renderings keep
+/// matching Arrow's UTC timestamp spelling, for years 0 to 9999; a year
+/// outside RFC 3339 keeps the naive form. Other temporal renderings keep
 /// their existing forms, including naive ISO text for PostgreSQL `TIMESTAMP`.
 ///
 /// The last arm is [`DecodeStructured`]: JSON, array and PostgreSQL enum types,
@@ -133,7 +134,11 @@ macro_rules! db_column_to_string {
             let type_name = ::sqlx::TypeInfo::name(::sqlx::Column::type_info(column));
             v.map(|x| {
                 let mut text = $crate::render_naive_datetime(x.naive_utc());
-                if type_name == "TIMESTAMPTZ" {
+                // RFC 3339 has four-digit years. A year outside 0 to 9999
+                // (PostgreSQL allows them) keeps the naive form the date
+                // grammar reads, rather than a `Z` it would not parse; `%Y`
+                // signs exactly those years (`+10000`, `-0001`).
+                if type_name == "TIMESTAMPTZ" && !text.starts_with(['+', '-']) {
                     text.push('Z');
                 }
                 text

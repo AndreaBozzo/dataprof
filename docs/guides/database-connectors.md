@@ -29,7 +29,8 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 > if you need statistics for one.
 >
 > PostgreSQL `TIMESTAMPTZ` renders in UTC with a trailing `Z`, for example
-> `2024-01-15T10:30:00.123456Z`. PostgreSQL `TIMESTAMP` and MySQL `TIMESTAMP`
+> `2024-01-15T10:30:00.123456Z`; a year outside 0 to 9999 keeps the naive form,
+> which RFC 3339 cannot spell. PostgreSQL `TIMESTAMP` and MySQL `TIMESTAMP`
 > and `DATETIME` use the naive ISO form (`YYYY-MM-DDTHH:MM:SS` with optional
 > fractional seconds). Date statistics use the UTC date of an offset-bearing
 > timestamp.

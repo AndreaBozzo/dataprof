@@ -8,7 +8,9 @@ use crate::stats::numeric::{
     compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
     compute_numeric_stats_with_parsed_count,
 };
-use crate::stats::{CardinalityEstimator, DateTimeAccumulator, calculate_text_stats_from_refs};
+use crate::stats::{
+    CardinalityEstimator, calculate_datetime_stats, calculate_text_stats_from_refs,
+};
 
 /// Which parts of a column analysis to perform.
 ///
@@ -29,8 +31,6 @@ struct ColumnAnalysis {
     /// as a decimal's renderings, as `build_column_profile` reads an Arrow
     /// decimal's (#1268).
     decimal_values: bool,
-    /// PostgreSQL's UTC renderings can have signed years outside RFC 3339.
-    postgres_utc_timestamps: bool,
 }
 
 /// The statistics a column carries: none when it holds no non-null value.
@@ -61,7 +61,6 @@ pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
             skip_unique_count: false,
             unique_count_exact_limit: None,
             decimal_values: false,
-            postgres_utc_timestamps: false,
         },
     )
 }
@@ -78,7 +77,6 @@ pub fn analyze_column_fast(name: &str, data: &[String]) -> ColumnProfile {
             skip_unique_count: true,
             unique_count_exact_limit: None,
             decimal_values: false,
-            postgres_utc_timestamps: false,
         },
     )
 }
@@ -121,9 +119,6 @@ pub fn analyze_declared_column(
             decimal_values: native_type
                 .as_ref()
                 .is_some_and(NativeType::declares_decimal),
-            postgres_utc_timestamps: native_type.as_ref().is_some_and(|native| {
-                native.system == NativeType::POSTGRESQL && native.name == "TIMESTAMPTZ"
-            }),
         },
     );
     profile.native_type = native_type;
@@ -199,20 +194,7 @@ fn analyze_column_with_options(
                         .saturating_sub(null_count)
                         .saturating_sub(parsed),
                 );
-                let mut dates = DateTimeAccumulator::new();
-                for value in data {
-                    // In a column inferred as Date, the accumulator used to
-                    // include signed years even though inference does not
-                    // count them as dates. Read their UTC wall clock as before.
-                    let datetime =
-                        if analysis.postgres_utc_timestamps && value.starts_with(['+', '-']) {
-                            value.strip_suffix('Z').unwrap_or(value)
-                        } else {
-                            value
-                        };
-                    dates.update(datetime);
-                }
-                ColumnStats::DateTime(dates.finish())
+                calculate_datetime_stats(data)
             }
             DataType::Boolean => {
                 let tc = data
