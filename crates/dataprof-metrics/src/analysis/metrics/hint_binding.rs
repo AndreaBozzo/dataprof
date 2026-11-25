@@ -97,15 +97,16 @@ fn binding(
 
 /// Apply the exact value predicate used by the quality calculator for `kind`.
 ///
-/// Mirrors the quality calculators exactly: numeric rules accept surrounding
-/// whitespace, while temporal quality predicates deliberately require the raw
-/// value to be directly parseable.
+/// Mirrors the quality calculators exactly: both numeric rules and temporal
+/// predicates accept surrounding whitespace, matching type inference and
+/// `DateTimeAccumulator` (#788 step 4).
 pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
     match kind {
         // The sign rule's own reading of a cell, surrounding whitespace
         // accepted.
         SemanticHintKind::Positive => rule_value(value.trim()).is_some(),
-        // Mirror timeliness.rs: it extracts a year from the original cell.
+        // Mirror timeliness and DateTimeAccumulator: parse through the shared
+        // date reader.
         SemanticHintKind::Temporal | SemanticHintKind::TemporalPair => {
             extract_year(value).is_some()
         }
@@ -182,9 +183,9 @@ mod tests {
 
     #[test]
     fn whitespace_padded_values_match_each_calculators_normalization() {
-        // Numeric calculators accept surrounding whitespace while temporal
-        // quality predicates require the raw date to be directly parseable.
-        // Binding evidence must make the same distinction.
+        // Both numeric rules and temporal predicates trim surrounding
+        // whitespace, matching type inference and `DateTimeAccumulator`
+        // (#788 step 4).
         let d = data(&[
             ("pressure", &[" 101325", "100900", " -inf "]),
             ("event", &[" 2020-01-01", "2022-06-15"]),
@@ -205,7 +206,7 @@ mod tests {
             .find(|b| b.column == "event")
             .expect("temporal binding");
         assert_eq!(temporal.checked_values, 2);
-        assert_eq!(temporal.matched_values, 1);
+        assert_eq!(temporal.matched_values, 2);
     }
 
     /// A literal past the `f64` range is a value the sign rule checks

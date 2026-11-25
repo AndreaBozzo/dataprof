@@ -8,10 +8,425 @@ use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::quality::{TimelinessClock, TimelinessClockMode};
-use crate::stats::datetime::resolve_slash_order;
+use crate::stats::datetime::{
+    DateTimeAccumulator, DualDate, TimelinessWindow, parse_dual_date, reads_month_first,
+    resolve_slash_order,
+};
 use crate::types::{ColumnProfile, ColumnStats, SlashDateOrder};
-use chrono::{Days, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
+
+/// Start/end role-word pairs checked automatically when not overridden by
+/// `temporal_pairs`.
+const TEMPORAL_ROLE_PAIRS: [(&str, &str); 6] = [
+    ("start_date", "end_date"),
+    ("start", "end"),
+    ("created_at", "updated_at"),
+    ("created", "updated"),
+    ("begin_date", "end_date"),
+    ("from_date", "to_date"),
+];
+
+/// Full-stream start/end ordering counts for one candidate column pair,
+/// covering all four `(start_month_first, end_month_first)` combinations so
+/// slash-date order can be decided after every value has been read (#788 step 4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PairOrderCounts {
+    /// Rows where both columns parsed as calendar dates (independent of slash
+    /// order).
+    pub pairs_checked: usize,
+    /// Rows with `start > end`, indexed by `[usize::from(start_mf)][usize::from(end_mf)]`.
+    pub violations: [[usize; 2]; 2],
+}
+
+impl PairOrderCounts {
+    /// Observe one row where both columns parsed as dates.
+    pub fn observe(&mut self, start: DualDate, end: DualDate) {
+        self.pairs_checked += 1;
+        if start.day_first == start.month_first && end.day_first == end.month_first {
+            if start.day_first > end.day_first {
+                self.violations[0][0] += 1;
+                self.violations[0][1] += 1;
+                self.violations[1][0] += 1;
+                self.violations[1][1] += 1;
+            }
+        } else {
+            if start.day_first > end.day_first {
+                self.violations[0][0] += 1;
+            }
+            if start.day_first > end.month_first {
+                self.violations[0][1] += 1;
+            }
+            if start.month_first > end.day_first {
+                self.violations[1][0] += 1;
+            }
+            if start.month_first > end.month_first {
+                self.violations[1][1] += 1;
+            }
+        }
+    }
+
+    /// Merge counts from another partition.
+    pub fn merge(&mut self, other: &Self) {
+        self.pairs_checked += other.pairs_checked;
+        for i in 0..2 {
+            for j in 0..2 {
+                self.violations[i][j] += other.violations[i][j];
+            }
+        }
+    }
+
+    /// Violations under the resolved `(start_month_first, end_month_first)`
+    /// orders.
+    pub fn violations_for(&self, start_month_first: bool, end_month_first: bool) -> usize {
+        self.violations[usize::from(start_month_first)][usize::from(end_month_first)]
+    }
+}
+
+/// Cap on unrelated `(start, end)` cross-products tracked for the `lone`
+/// role-pair fallback. Matching-rest pairs and declared pairs are always
+/// tracked regardless of table width.
+const LONE_PAIR_CARTESIAN_CAP: usize = 256;
+
+/// Row-level tracker for start/end date ordering over every scanned row
+/// (#788 step 4, #787).
+///
+/// Tracks every declared pair plus every candidate role-word pair that
+/// `TimelinessCalculator::column_pairs` could select once column types are
+/// finalized. Null cells on one row skip that row alone without shifting
+/// partner rows, and all four slash-order combinations are accumulated in
+/// O(1) memory per pair.
+#[derive(Debug, Clone, Default)]
+pub struct TemporalPairTracker {
+    declared_pairs: Vec<(String, String)>,
+    declared_columns: HashSet<String>,
+    known_columns: Vec<String>,
+    known_set: HashSet<String>,
+    /// Tracked column name -> slot index in `current_row`.
+    tracked_slots: HashMap<String, usize>,
+    /// Candidate pairs `(start_name, end_name, start_slot, end_slot, counts)`.
+    pairs: Vec<TrackedPair>,
+    pair_index: HashMap<(String, String), usize>,
+    /// Scratch buffer holding the current row's parsed dates by slot.
+    current_row: Vec<Option<DualDate>>,
+    /// Pairs a merged partition read rows for without counting them: their
+    /// counts would cover only part of the data, so they are never tracked
+    /// again and the calculator falls back to the sample for them.
+    unavailable: HashSet<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+struct TrackedPair {
+    start_name: String,
+    end_name: String,
+    start_slot: usize,
+    end_slot: usize,
+    counts: PairOrderCounts,
+}
+
+impl TemporalPairTracker {
+    /// Create a tracker configured with any explicitly declared `temporal_pairs`.
+    pub fn new(declared_pairs: &[(String, String)]) -> Self {
+        let declared_columns: HashSet<String> = declared_pairs
+            .iter()
+            .flat_map(|(s, e)| [s.clone(), e.clone()])
+            .collect();
+        Self {
+            declared_pairs: declared_pairs.to_vec(),
+            declared_columns,
+            known_columns: Vec::new(),
+            known_set: HashSet::new(),
+            tracked_slots: HashMap::new(),
+            pairs: Vec::new(),
+            pair_index: HashMap::new(),
+            current_row: Vec::new(),
+            unavailable: HashSet::new(),
+        }
+    }
+
+    /// Whether at least one candidate pair is being tracked. When `false`,
+    /// per-row tracking does no work.
+    pub fn is_enabled(&self) -> bool {
+        !self.pairs.is_empty()
+    }
+
+    /// Whether `name` participates in any tracked candidate pair.
+    pub fn tracks_column(&self, name: &str) -> bool {
+        self.tracked_slots.contains_key(name)
+    }
+
+    /// Register a slice of column names (e.g. a table or CSV header).
+    pub fn register_columns(&mut self, names: &[String]) {
+        let mut added = false;
+        for name in names {
+            if self.known_set.insert(name.clone()) {
+                self.known_columns.push(name.clone());
+                added = true;
+            }
+        }
+        if added {
+            self.refresh_candidates();
+        }
+    }
+
+    /// Register one newly discovered column (e.g. a mid-stream JSON key).
+    /// Any candidate pair involving this column had nulls in all prior rows,
+    /// so starting its counts at zero is exact.
+    pub fn register_column(&mut self, name: &str) {
+        if self.known_set.insert(name.to_string()) {
+            self.known_columns.push(name.to_string());
+            self.refresh_candidates();
+        }
+    }
+
+    fn slot_for(&mut self, name: &str) -> usize {
+        if let Some(&slot) = self.tracked_slots.get(name) {
+            return slot;
+        }
+        let slot = self.current_row.len();
+        self.tracked_slots.insert(name.to_string(), slot);
+        self.current_row.push(None);
+        slot
+    }
+
+    fn add_pair(&mut self, start: &str, end: &str) {
+        if start == end {
+            return;
+        }
+        let key = (start.to_string(), end.to_string());
+        if self.pair_index.contains_key(&key) || self.unavailable.contains(&key) {
+            return;
+        }
+        let start_slot = self.slot_for(start);
+        let end_slot = self.slot_for(end);
+        let idx = self.pairs.len();
+        self.pairs.push(TrackedPair {
+            start_name: start.to_string(),
+            end_name: end.to_string(),
+            start_slot,
+            end_slot,
+            counts: PairOrderCounts::default(),
+        });
+        self.pair_index.insert(key, idx);
+    }
+
+    fn refresh_candidates(&mut self) {
+        let declared_pairs = self.declared_pairs.clone();
+        for (start, end) in &declared_pairs {
+            if start != end && self.known_set.contains(start) && self.known_set.contains(end) {
+                self.add_pair(start, end);
+            }
+        }
+
+        let candidates: Vec<(String, String)> = {
+            let mut found = Vec::new();
+            for (start_role, end_role) in &TEMPORAL_ROLE_PAIRS {
+                let starts: Vec<(&str, Vec<String>)> = self
+                    .known_columns
+                    .iter()
+                    .filter(|name| !self.declared_columns.contains(name.as_str()))
+                    .filter_map(|name| Some((name.as_str(), words_beside_role(name, start_role)?)))
+                    .collect();
+                let ends: Vec<(&str, Vec<String>)> = self
+                    .known_columns
+                    .iter()
+                    .filter(|name| !self.declared_columns.contains(name.as_str()))
+                    .filter_map(|name| Some((name.as_str(), words_beside_role(name, end_role)?)))
+                    .collect();
+                if starts.is_empty() || ends.is_empty() {
+                    continue;
+                }
+                let allow_all = starts.len().saturating_mul(ends.len()) <= LONE_PAIR_CARTESIAN_CAP;
+                for (start_name, start_rest) in &starts {
+                    let start_trimmed = without_date_words(start_rest);
+                    for (end_name, end_rest) in &ends {
+                        if start_name == end_name {
+                            continue;
+                        }
+                        if allow_all
+                            || start_rest == end_rest
+                            || start_trimmed == without_date_words(end_rest)
+                        {
+                            found.push(((*start_name).to_string(), (*end_name).to_string()));
+                        }
+                    }
+                }
+            }
+            found
+        };
+
+        // The tracked set must depend on the columns known, not on the order
+        // they were registered in: a reader that registers keys one by one
+        // (JSON) can add an unrelated pair while the cross-product is still
+        // under the cap. Once the cap is crossed, drop every pair the whole
+        // schema would not select, so it falls back to the sample as it does
+        // on a reader that registers the full header at once (CSV).
+        let keep: HashSet<(&str, &str)> = declared_pairs
+            .iter()
+            .map(|(start, end)| (start.as_str(), end.as_str()))
+            .chain(
+                candidates
+                    .iter()
+                    .map(|(start, end)| (start.as_str(), end.as_str())),
+            )
+            .collect();
+        self.retain_pairs(|start, end| keep.contains(&(start, end)));
+
+        for (start, end) in candidates {
+            self.add_pair(&start, &end);
+        }
+    }
+
+    /// Keep only the tracked pairs `keep` accepts, and reindex them.
+    fn retain_pairs(&mut self, keep: impl Fn(&str, &str) -> bool) {
+        if self
+            .pairs
+            .iter()
+            .all(|pair| keep(&pair.start_name, &pair.end_name))
+        {
+            return;
+        }
+        self.pairs
+            .retain(|pair| keep(&pair.start_name, &pair.end_name));
+        self.pair_index = self
+            .pairs
+            .iter()
+            .enumerate()
+            .map(|(index, pair)| ((pair.start_name.clone(), pair.end_name.clone()), index))
+            .collect();
+    }
+
+    /// Record an already-parsed date for `column` in the current row.
+    pub fn record_date(&mut self, column: &str, date: Option<DualDate>) {
+        if let Some(&slot) = self.tracked_slots.get(column) {
+            self.current_row[slot] = date;
+        }
+    }
+
+    /// Parse and record a raw cell for `column` in the current row if `column`
+    /// is part of any tracked candidate pair.
+    pub fn record_text(&mut self, column: &str, value: Option<&str>) {
+        if let Some(&slot) = self.tracked_slots.get(column) {
+            self.current_row[slot] = value.and_then(parse_dual_date);
+        }
+    }
+
+    /// Commit the current row to every candidate pair whose endpoints both
+    /// parsed as calendar dates, then reset the row buffer.
+    ///
+    /// The buffer is cleared even when no pair is tracked: a pair can be
+    /// dropped (cap crossed) or added (new column) between rows, and a date
+    /// left in a slot would otherwise pair with a later row's partner.
+    pub fn finish_row(&mut self) {
+        for pair in &mut self.pairs {
+            if let (Some(start), Some(end)) = (
+                self.current_row[pair.start_slot],
+                self.current_row[pair.end_slot],
+            ) {
+                pair.counts.observe(start, end);
+            }
+        }
+        self.current_row.fill(None);
+    }
+
+    /// Drop candidate pairs referencing columns outside `names`.
+    pub fn retain_columns(&mut self, names: &[String]) {
+        let selected: HashSet<&str> = names.iter().map(String::as_str).collect();
+        self.known_columns
+            .retain(|name| selected.contains(name.as_str()));
+        self.known_set
+            .retain(|name| selected.contains(name.as_str()));
+        let kept: Vec<(String, String, PairOrderCounts)> = self
+            .pairs
+            .iter()
+            .filter(|pair| {
+                selected.contains(pair.start_name.as_str())
+                    && selected.contains(pair.end_name.as_str())
+            })
+            .map(|pair| (pair.start_name.clone(), pair.end_name.clone(), pair.counts))
+            .collect();
+        self.tracked_slots.clear();
+        self.pairs.clear();
+        self.pair_index.clear();
+        self.current_row.clear();
+        for (start, end, counts) in kept {
+            self.add_pair(&start, &end);
+            let idx = self.pair_index[&(start, end)];
+            self.pairs[idx].counts = counts;
+        }
+    }
+
+    /// Merge another partition's pair counts into this tracker.
+    pub fn merge(&mut self, other: &Self) {
+        for pair in &other.declared_pairs {
+            if !self.declared_pairs.contains(pair) {
+                self.declared_pairs.push(pair.clone());
+                self.declared_columns.insert(pair.0.clone());
+                self.declared_columns.insert(pair.1.clone());
+            }
+        }
+        // Registering the other side's columns applies the combined schema's
+        // admission rule, the cap included, to this side's pairs. Adding
+        // columns only ever removes pairs, so a pair still admitted was
+        // tracked by every side that saw both of its columns, and a side that
+        // missed a column read only nulls for it: its counts add exactly. A
+        // pair the combined schema does not admit is not taken from the other
+        // side and falls back to the sample.
+        self.register_columns(&other.known_columns);
+
+        // A pair the other side read both columns of without counting it
+        // (it was unavailable there) covers part of the rows only: make it
+        // unavailable here too rather than report a partial count as exact.
+        self.unavailable.extend(other.unavailable.iter().cloned());
+        let partial: HashSet<(String, String)> = self
+            .pairs
+            .iter()
+            .map(|pair| (pair.start_name.clone(), pair.end_name.clone()))
+            .filter(|key| {
+                self.unavailable.contains(key)
+                    || (other.known_set.contains(&key.0)
+                        && other.known_set.contains(&key.1)
+                        && !other.pair_index.contains_key(key))
+            })
+            .collect();
+        self.unavailable.extend(partial.iter().cloned());
+        self.retain_pairs(|start, end| !partial.contains(&(start.to_string(), end.to_string())));
+
+        for other_pair in &other.pairs {
+            let key = (other_pair.start_name.clone(), other_pair.end_name.clone());
+            if let Some(&index) = self.pair_index.get(&key) {
+                self.pairs[index].counts.merge(&other_pair.counts);
+            }
+        }
+    }
+
+    /// Extract the accumulated per-pair counts.
+    pub fn finish(&self) -> HashMap<(String, String), PairOrderCounts> {
+        self.pairs
+            .iter()
+            .map(|pair| {
+                (
+                    (pair.start_name.clone(), pair.end_name.clone()),
+                    pair.counts,
+                )
+            })
+            .collect()
+    }
+}
+
+/// Full-stream timeliness counters accumulated over every scanned value and
+/// row (#788 step 4).
+#[derive(Debug, Clone)]
+pub struct TimelinessTallies {
+    /// Per-column date statistics & timeliness accumulators.
+    pub columns: HashMap<String, DateTimeAccumulator>,
+    /// Candidate start/end pair ordering counts over every scanned row.
+    pub pairs: HashMap<(String, String), PairOrderCounts>,
+    /// Clock mode captured at scan start (`Fixed` or `Rolling`).
+    pub clock_mode: TimelinessClockMode,
+    /// Freshness/future window that `columns` were counted against.
+    pub window: TimelinessWindow,
+}
 
 /// What may follow a one-word role inside a single word of a name, besides
 /// one of [`DATE_WORDS`]: an inflection (`starts_at`, `ended_at`). The date
@@ -204,11 +619,28 @@ impl<'a> TimelinessCalculator<'a> {
         thresholds: &'a IsoQualityConfig,
         reference_date: NaiveDate,
     ) -> Self {
+        Self::with_clock(thresholds, reference_date, TimelinessClockMode::Fixed)
+    }
+
+    /// Construct with an explicit reference date and clock mode, so a rolling
+    /// clock captured at scan start stays locked to one day while still
+    /// recording `TimelinessClockMode::Rolling` (#788 step 4).
+    pub(crate) fn with_clock(
+        thresholds: &'a IsoQualityConfig,
+        reference_date: NaiveDate,
+        mode: TimelinessClockMode,
+    ) -> Self {
         Self {
             thresholds,
             reference_date,
-            mode: TimelinessClockMode::Fixed,
+            mode,
         }
+    }
+
+    /// The `(reference_date, stale_cutoff)` window this calculator judges dates
+    /// against.
+    pub(crate) fn window(&self) -> TimelinessWindow {
+        TimelinessWindow::new(self.reference_date, self.thresholds.max_data_age_years)
     }
 
     /// What this calculator measures against, as the report records it.
@@ -218,6 +650,101 @@ impl<'a> TimelinessCalculator<'a> {
             self.reference_date,
             self.thresholds.max_data_age_years,
         )
+    }
+
+    /// Calculate timeliness metrics directly from full-stream
+    /// [`TimelinessTallies`] (#788 step 4).
+    ///
+    /// Returns `Ok(Some(...))` when every temporal column's accumulator was
+    /// counted against `self.window()`, or `Ok(None)` when the caller selected
+    /// custom thresholds that do not match the tallied window (so the caller
+    /// can fall back to `calculate`).
+    pub fn calculate_from_tallies(
+        &self,
+        tallies: &TimelinessTallies,
+        temporal_columns: &[String],
+        declared_pairs: &[(String, String)],
+    ) -> Result<Option<TimelinessMetrics>, DataProfilerError> {
+        let window = self.window();
+        if tallies.window != window {
+            return Ok(None);
+        }
+
+        let mut future_count = 0usize;
+        let mut stale_dates = 0usize;
+        let mut valid_dates = 0usize;
+        let mut checked = 0usize;
+        let mut invalid_dates = 0usize;
+
+        for column_name in temporal_columns {
+            // A temporal column the engine did not tally would drop its dates
+            // from every count: fall back to the sample instead.
+            let Some(acc) = tallies.columns.get(column_name) else {
+                return Ok(None);
+            };
+            let Some(summary) = acc.timeliness_summary(window) else {
+                return Ok(None);
+            };
+            future_count += summary.future_dates;
+            stale_dates += summary.stale_dates;
+            valid_dates += summary.valid_dates;
+            checked += summary.checked;
+            invalid_dates += summary.invalid_dates;
+        }
+
+        let stale_data_ratio = if valid_dates == 0 {
+            0.0
+        } else {
+            (stale_dates as f64 / valid_dates as f64) * 100.0
+        };
+
+        let mut violations = 0usize;
+        let mut pairs_checked = 0usize;
+        let mut compared_pairs = Vec::new();
+        for (start_name, end_name) in Self::column_pairs_with(
+            |name| tallies.columns.contains_key(name),
+            temporal_columns,
+            declared_pairs,
+        ) {
+            let start_mf = reads_month_first(
+                tallies
+                    .columns
+                    .get(start_name)
+                    .and_then(DateTimeAccumulator::slash_order),
+            );
+            let end_mf = reads_month_first(
+                tallies
+                    .columns
+                    .get(end_name)
+                    .and_then(DateTimeAccumulator::slash_order),
+            );
+            // A pair the tracker did not follow (past `LONE_PAIR_CARTESIAN_CAP`)
+            // has no row counts: fall back to the sample rather than report
+            // it compared over zero rows.
+            let Some(counts) = tallies
+                .pairs
+                .get(&(start_name.to_string(), end_name.to_string()))
+                .copied()
+            else {
+                return Ok(None);
+            };
+            pairs_checked += counts.pairs_checked;
+            violations += counts.violations_for(start_mf, end_mf);
+            compared_pairs.push((start_name.to_string(), end_name.to_string()));
+        }
+
+        Ok(Some(TimelinessMetrics {
+            future_dates_count: future_count,
+            stale_data_ratio,
+            temporal_violations: violations,
+            invalid_date_values: invalid_dates,
+            date_values_checked: checked,
+            temporal_pairs_checked: pairs_checked,
+            valid_dates,
+            stale_dates,
+            temporal_column_pairs: compared_pairs.len(),
+            compared_pairs,
+        }))
     }
 
     /// Calculate timeliness dimension metrics
@@ -272,13 +799,8 @@ impl<'a> TimelinessCalculator<'a> {
         let mut checked = 0;
         let mut invalid_dates = 0;
 
-        // The Gregorian mean year keeps fractional policies meaningful. Values
-        // are dates, so a fractional day cannot separate two adjacent dates.
-        let age_days = (self.thresholds.max_data_age_years * 365.2425).floor() as u64;
-        let threshold_date = self
-            .reference_date
-            .checked_sub_days(Days::new(age_days))
-            .unwrap_or(NaiveDate::MIN);
+        let window = self.window();
+        let threshold_date = window.stale_cutoff;
 
         for column_name in temporal_columns {
             let Some(column_data) = data.get(column_name) else {
@@ -343,15 +865,18 @@ impl<'a> TimelinessCalculator<'a> {
         temporal_columns: &'d [String],
         declared_pairs: &'d [(String, String)],
     ) -> Vec<(&'d str, &'d str)> {
-        let temporal_pairs = [
-            ("start_date", "end_date"),
-            ("start", "end"),
-            ("created_at", "updated_at"),
-            ("created", "updated"),
-            ("begin_date", "end_date"),
-            ("from_date", "to_date"),
-        ];
+        Self::column_pairs_with(
+            |name| data.contains_key(name),
+            temporal_columns,
+            declared_pairs,
+        )
+    }
 
+    fn column_pairs_with<'d>(
+        has_column: impl Fn(&str) -> bool,
+        temporal_columns: &'d [String],
+        declared_pairs: &'d [(String, String)],
+    ) -> Vec<(&'d str, &'d str)> {
         // The role patterns overlap: `start_date`/`end_date` is matched by both
         // ("start_date", "end_date") and ("start", "end"). Without this the same
         // two columns are compared once per matching pattern, and every pair and
@@ -365,22 +890,22 @@ impl<'a> TimelinessCalculator<'a> {
             .collect();
         for (start_name, end_name) in declared_pairs {
             if start_name != end_name
-                && data.contains_key(start_name)
-                && data.contains_key(end_name)
+                && has_column(start_name)
+                && has_column(end_name)
                 && evaluated.insert((start_name, end_name))
             {
                 pairs.push((start_name.as_str(), end_name.as_str()));
             }
         }
 
-        for (start_col, end_col) in &temporal_pairs {
-            // Walk `temporal_columns`, not `data`: the HashMap's iteration order
+        for (start_col, end_col) in &TEMPORAL_ROLE_PAIRS {
+            // Walk `temporal_columns`, not a HashMap: HashMap iteration order
             // is randomized. A name the caller listed but the data does not
             // carry fills no role, so it cannot hide one that has values.
             let holders = |role: &str| -> Vec<(&'d str, Vec<String>)> {
                 temporal_columns
                     .iter()
-                    .filter(|name| data.contains_key(*name) && !declared.contains(name.as_str()))
+                    .filter(|name| has_column(name) && !declared.contains(name.as_str()))
                     .filter_map(|name| Some((name.as_str(), words_beside_role(name, role)?)))
                     .collect()
             };
@@ -1317,5 +1842,88 @@ mod tests {
             )
             .collect();
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// 17 `start_*` and 16 `end_*x` names: 272 unrelated combinations, past
+    /// `LONE_PAIR_CARTESIAN_CAP`, none sharing a stem.
+    fn wide_schema() -> Vec<String> {
+        ('a'..='q')
+            .map(|c| format!("start_{c}"))
+            .chain(('b'..='q').map(|c| format!("end_{c}x")))
+            .collect()
+    }
+
+    fn date(text: &str) -> Option<DualDate> {
+        crate::stats::datetime::parse_dual_date(text)
+    }
+
+    #[test]
+    fn a_merge_never_takes_a_pair_the_combined_schema_does_not_admit() {
+        // The narrow partition tracks the lone pair and counts one row; the
+        // wide one is past the cap and never tracks it. In either merge
+        // order the pair must be absent, so timeliness falls back to the
+        // sample instead of reporting the narrow side's rows as exact.
+        let pair = ("start_a".to_string(), "end_bx".to_string());
+        let mut narrow = TemporalPairTracker::new(&[]);
+        narrow.register_columns(&[pair.0.clone(), pair.1.clone()]);
+        narrow.record_date(&pair.0, date("2024-03-10"));
+        narrow.record_date(&pair.1, date("2024-03-01"));
+        narrow.finish_row();
+        assert_eq!(narrow.finish()[&pair].pairs_checked, 1);
+        let mut wide = TemporalPairTracker::new(&[]);
+        wide.register_columns(&wide_schema());
+        assert!(!wide.finish().contains_key(&pair));
+
+        let mut wide_first = wide.clone();
+        wide_first.merge(&narrow);
+        assert!(!wide_first.finish().contains_key(&pair));
+        let mut narrow_first = narrow.clone();
+        narrow_first.merge(&wide);
+        assert!(!narrow_first.finish().contains_key(&pair));
+    }
+
+    #[test]
+    fn a_merge_adds_the_counts_of_a_pair_both_sides_admit() {
+        let pair = ("start_date".to_string(), "end_date".to_string());
+        let names = [pair.0.clone(), pair.1.clone()];
+        let mut left = TemporalPairTracker::new(&[]);
+        left.register_columns(&names);
+        left.record_date(&pair.0, date("2024-03-10"));
+        left.record_date(&pair.1, date("2024-03-01"));
+        left.finish_row();
+        // A partition that never saw `end_date` read only nulls for it.
+        let mut right = TemporalPairTracker::new(&[]);
+        right.register_columns(&names[..1]);
+        right.finish_row();
+        let mut other = TemporalPairTracker::new(&[]);
+        other.register_columns(&names);
+        other.record_date(&pair.0, date("2024-03-01"));
+        other.record_date(&pair.1, date("2024-03-10"));
+        other.finish_row();
+
+        left.merge(&right);
+        left.merge(&other);
+        let counts = left.finish()[&pair];
+        assert_eq!(counts.pairs_checked, 2);
+        assert_eq!(counts.violations_for(false, false), 1);
+    }
+
+    #[test]
+    fn a_row_buffer_is_cleared_after_its_last_pair_is_dropped() {
+        // `start_a` holds a date when the cap drops every pair. A later
+        // same-stem `end_a` pairs with `start_a` again: it must not see the
+        // earlier row's date.
+        let mut tracker = TemporalPairTracker::new(&[]);
+        tracker.register_columns(&["start_a".to_string(), "end_bx".to_string()]);
+        tracker.record_date("start_a", date("2024-03-10"));
+        tracker.register_columns(&wide_schema());
+        assert!(!tracker.is_enabled());
+        tracker.finish_row();
+        tracker.register_column("end_a");
+        assert!(tracker.is_enabled());
+        tracker.record_date("end_a", date("2024-03-01"));
+        tracker.finish_row();
+        let counts = tracker.finish()[&("start_a".to_string(), "end_a".to_string())];
+        assert_eq!(counts.pairs_checked, 0);
     }
 }

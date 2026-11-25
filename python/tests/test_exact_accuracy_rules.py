@@ -244,7 +244,10 @@ def test_every_route_matches_accuracy_rules_and_hint_bindings_at_40k_rows(
         restored = dp.ProfileReport.from_dict(summary)
 
         semantics = report.metric_semantics or {}
-        if semantics.get("value_facts") != "every_value_consistency_precision_accuracy_rules":
+        if (
+            semantics.get("value_facts")
+            != "every_value_consistency_precision_accuracy_rules_timeliness"
+        ):
             wrong.append(f"[{label}] value_facts={semantics.get('value_facts')!r}")
 
         acc = doc["quality"]["metrics"]["accuracy"]

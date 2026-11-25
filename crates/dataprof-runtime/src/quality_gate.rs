@@ -4335,6 +4335,7 @@ impl Definition {
                 facts.retyped_columns
                     || facts.sampled_consistency_precision
                     || facts.sampled_accuracy_rules
+                    || facts.timeliness_changed
             }
             Self::NullTokens
             | Self::PatternMatchCount
@@ -4400,6 +4401,12 @@ struct RunFacts {
     /// `value_facts: every_value_consistency_precision_accuracy_rules`
     /// (#788 step 3).
     sampled_accuracy_rules: bool,
+    /// Timeliness may have been scored over a retained sample, with the old
+    /// raw date reader, or without row-aligned null-tolerant start/end pairs
+    /// on a side written before
+    /// `value_facts: every_value_consistency_precision_accuracy_rules_timeliness`
+    /// (#788 step 4).
+    timeliness_changed: bool,
 }
 
 impl RunFacts {
@@ -4420,6 +4427,8 @@ impl RunFacts {
                 || sides.b.may_sample_consistency_or_precision(dimension),
             sampled_accuracy_rules: sides.a.may_sample_accuracy_rules(dimension)
                 || sides.b.may_sample_accuracy_rules(dimension),
+            timeliness_changed: sides.a.may_move_timeliness(dimension)
+                || sides.b.may_move_timeliness(dimension),
         }
     }
 }

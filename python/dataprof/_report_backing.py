@@ -421,6 +421,7 @@ _METRIC_SEMANTICS = {
         "every_value",
         "every_value_consistency_precision",
         "every_value_consistency_precision_accuracy_rules",
+        "every_value_consistency_precision_accuracy_rules_timeliness",
     ),
     "column_fingerprint": ("xxh3_128_sum_v1",),
 }

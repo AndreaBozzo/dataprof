@@ -276,20 +276,24 @@ pub struct MetricSemantics {
     pub date_forms: Option<DateForms>,
     /// Which values a column's `data_type`, `type_homogeneity`,
     /// `locale_number_count`, `zero_padded_count`, consistency, precision,
-    /// accuracy rules and value-driven semantic-hint bindings are counted over,
-    /// and how many zero-padded numbers make digit codes.
+    /// accuracy rules, timeliness and value-driven semantic-hint bindings are
+    /// counted over, and how many zero-padded numbers make digit codes.
     ///
     /// Absent means not recorded: through 0.14 an engine that retained a
     /// bounded sample typed and classified a text column, and computed
-    /// consistency, precision and accuracy rules, from that sample; and one
-    /// zero-padded number made a column digit codes. `every_value` (step 1)
-    /// counted type inference and lexical forms over every value read while
-    /// consistency, precision and accuracy rules still read the sample.
-    /// `every_value_consistency_precision` (step 2) also counts consistency
-    /// and precision over every value read.
+    /// consistency, precision, accuracy rules and timeliness, from that sample;
+    /// and one zero-padded number made a column digit codes. `every_value`
+    /// (step 1) counted type inference and lexical forms over every value read
+    /// while consistency, precision, accuracy rules and timeliness still read
+    /// the sample. `every_value_consistency_precision` (step 2) also counts
+    /// consistency and precision over every value read.
     /// `every_value_consistency_precision_accuracy_rules` (step 3) also counts
     /// accuracy range/sign rules and value-driven hint bindings over every
     /// value read.
+    /// `every_value_consistency_precision_accuracy_rules_timeliness` (step 4)
+    /// also counts timeliness (per-column dates and row-aligned start/end
+    /// pairs) over every value read using the same date reading as the date
+    /// statistics.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -336,7 +340,7 @@ impl MetricSemantics {
             date_statistics: Some(DateStatistics::EveryValue),
             outlier_spread: Some(OutlierSpread::NonzeroIqr),
             date_forms: Some(DateForms::SpacedIsoDatetimes),
-            value_facts: Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRules),
+            value_facts: Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRulesTimeliness),
             column_fingerprint: Some(ColumnFingerprintAlgorithm::Xxh3_128SumV1),
         }
     }
@@ -1902,7 +1906,7 @@ mod tests {
             "date_statistics": "every_value",
             "outlier_spread": "nonzero_iqr",
             "date_forms": "spaced_iso_datetimes",
-            "value_facts": "every_value_consistency_precision_accuracy_rules",
+            "value_facts": "every_value_consistency_precision_accuracy_rules_timeliness",
             "column_fingerprint": "xxh3_128_sum_v1",
         });
         assert_eq!(document["metric_semantics"], recorded);

@@ -4,13 +4,14 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{Field, Schema};
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
-    FileFormat, Locale, MetricPack, PeakMemorySampler, QualityDimension, SemanticHints,
-    TruncationReason, char_len,
+    FileFormat, IsoQualityConfig, Locale, MetricPack, PeakMemorySampler, QualityDimension,
+    SemanticHints, TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
     CardinalityEstimator, DateTimeAccumulator, LexicalTally, NumericAccumulator, ParsedNumber,
+    TemporalPairTracker, TimelinessClockMode, TimelinessTallies, TimelinessWindow,
 };
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
@@ -125,6 +126,9 @@ struct CsvDecodeOutcome {
     column_analyzers: std::collections::HashMap<String, ColumnAnalyzer>,
     row_tracker: BatchRowTracker,
     key_tracker: dataprof_runtime::CompositeKeyTracker,
+    temporal_pairs: TemporalPairTracker,
+    timeliness_window: TimelinessWindow,
+    timeliness_clock_mode: TimelinessClockMode,
     total_rows: usize,
     /// Rows `arrow-csv` padded to the schema width, cumulative over the decode.
     /// This is the ragged-row count only when no record is *wider* than the
@@ -370,6 +374,10 @@ impl ArrowProfiler {
         // count and fails on the first byte it reads, blank or not (#964).
         // There is nothing to decode, so the source is only read through for
         // its quote state.
+        let (timeliness_window, timeliness_clock_mode) = TimelinessWindow::from_config(
+            &IsoQualityConfig::default(),
+            self.options.reference_date(),
+        );
         if schema.fields().is_empty() {
             let mut source = self.quote_tracked(file);
             let quote_outcome = source.outcome();
@@ -383,6 +391,11 @@ impl ArrowProfiler {
                     self.options.duplicate_rows_exact_limit(),
                 ),
                 key_tracker: dataprof_runtime::CompositeKeyTracker::new(&self.options),
+                temporal_pairs: TemporalPairTracker::new(
+                    &self.options.semantic_hints().temporal_pairs,
+                ),
+                timeliness_window,
+                timeliness_clock_mode,
                 total_rows: 0,
                 padded_rows: 0,
                 peak_memory_mb: memory_sampler.peak_mb(),
@@ -424,7 +437,10 @@ impl ArrowProfiler {
         for name in projected_header_names {
             column_analyzers.insert(
                 name.clone(),
-                ColumnAnalyzer::with_exact_limit(self.options.unique_count_exact_limit(name)),
+                ColumnAnalyzer::with_exact_limit_and_timeliness(
+                    self.options.unique_count_exact_limit(name),
+                    timeliness_window,
+                ),
             );
         }
 
@@ -437,6 +453,9 @@ impl ArrowProfiler {
         let mut row_tracker =
             BatchRowTracker::with_exact_limit(self.options.duplicate_rows_exact_limit());
         let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(&self.options);
+        let mut temporal_pairs =
+            TemporalPairTracker::new(&self.options.semantic_hints().temporal_pairs);
+        temporal_pairs.register_columns(projected_header_names);
 
         let mut memory_sampler = PeakMemorySampler::new();
         // The share of the memory limit the exact distinct sets may hold, the
@@ -479,6 +498,30 @@ impl ArrowProfiler {
                 }
             }
 
+            if temporal_pairs.is_enabled() {
+                let schema = batch.schema();
+                let pair_fields: Vec<_> = schema
+                    .fields()
+                    .iter()
+                    .zip(batch.columns())
+                    .filter(|(field, _)| temporal_pairs.tracks_column(field.name()))
+                    .map(|(field, array)| {
+                        let strings = array
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .expect("the CSV decoder emits UTF-8 arrays");
+                        (field.name(), strings)
+                    })
+                    .collect();
+                for row in 0..batch.num_rows() {
+                    for (name, array) in &pair_fields {
+                        let value = (!array.is_null(row)).then(|| array.value(row));
+                        temporal_pairs.record_text(name, value);
+                    }
+                    temporal_pairs.finish_row();
+                }
+            }
+
             for (col_idx, column) in batch.columns().iter().enumerate() {
                 let schema = batch.schema();
                 let field = schema.field(col_idx);
@@ -516,6 +559,9 @@ impl ArrowProfiler {
             column_analyzers,
             row_tracker,
             key_tracker,
+            temporal_pairs,
+            timeliness_window,
+            timeliness_clock_mode,
             total_rows,
             // Read after the final flush: the counter is cumulative across
             // flushes, so this is the whole decode's total.
@@ -612,6 +658,9 @@ impl ArrowProfiler {
             column_analyzers,
             row_tracker,
             key_tracker,
+            temporal_pairs,
+            timeliness_window,
+            timeliness_clock_mode,
             total_rows,
             padded_rows,
             peak_memory_mb,
@@ -649,6 +698,7 @@ impl ArrowProfiler {
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
         let mut lexical_tallies = std::collections::HashMap::new();
+        let mut date_accumulators = std::collections::HashMap::new();
 
         for name in &projected_header_names {
             if let Some(analyzer) = column_analyzers.get(name) {
@@ -662,8 +712,15 @@ impl ArrowProfiler {
                 column_profiles.push(profile);
                 sample_columns.insert(name.clone(), analyzer.get_sample_values());
                 lexical_tallies.insert(name.clone(), analyzer.lexical.clone());
+                date_accumulators.insert(name.clone(), analyzer.dates.clone());
             }
         }
+        let timeliness_tallies = TimelinessTallies {
+            columns: date_accumulators,
+            pairs: temporal_pairs.finish(),
+            clock_mode: timeliness_clock_mode,
+            window: timeliness_window,
+        };
 
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
@@ -703,6 +760,7 @@ impl ArrowProfiler {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_lexical_tallies(lexical_tallies)
+                .with_timeliness_tallies(timeliness_tallies)
                 .with_analysis_options(options);
         }
 
@@ -778,7 +836,10 @@ struct ColumnAnalyzer {
 }
 
 impl ColumnAnalyzer {
-    fn with_exact_limit(limit: Option<usize>) -> Self {
+    fn with_exact_limit_and_timeliness(
+        limit: Option<usize>,
+        timeliness_window: TimelinessWindow,
+    ) -> Self {
         Self {
             total_count: 0,
             null_count: 0,
@@ -789,7 +850,7 @@ impl ColumnAnalyzer {
             max_length: 0,
             total_length: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
-            dates: DateTimeAccumulator::new(),
+            dates: DateTimeAccumulator::with_timeliness_window(timeliness_window),
             lexical: LexicalTally::new(),
         }
     }
@@ -931,7 +992,10 @@ mod tests {
 
     #[test]
     fn column_fingerprint_arrow_csv() {
-        let mut analyzer = ColumnAnalyzer::with_exact_limit(None);
+        let mut analyzer = ColumnAnalyzer::with_exact_limit_and_timeliness(
+            None,
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None).0,
+        );
         analyzer
             .process_array(&StringArray::from(vec![None, Some("1.00")]))
             .unwrap();
@@ -1554,7 +1618,10 @@ mod tests {
     #[test]
     fn test_typed_array_is_rejected_without_changing_column_state() -> Result<(), DataProfilerError>
     {
-        let mut analyzer = ColumnAnalyzer::with_exact_limit(None);
+        let mut analyzer = ColumnAnalyzer::with_exact_limit_and_timeliness(
+            None,
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None).0,
+        );
         let typed = arrow::array::Float64Array::from(vec![Some(42.0), None, Some(f64::NAN)]);
         let error = analyzer
             .process_array(&typed)

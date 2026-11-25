@@ -24,7 +24,7 @@ CURRENT = {
     "date_statistics": "every_value",
     "outlier_spread": "nonzero_iqr",
     "date_forms": "spaced_iso_datetimes",
-    "value_facts": "every_value_consistency_precision_accuracy_rules",
+    "value_facts": "every_value_consistency_precision_accuracy_rules_timeliness",
     "column_fingerprint": "xxh3_128_sum_v1",
 }
 # The same values the 0.11.0 fixture was profiled from, with the published wheel.
@@ -234,9 +234,16 @@ def test_malformed_semantics_are_rejected_by_both_readers(value):
         {},
         {**CURRENT, "value_facts": "every_value"},
         {**CURRENT, "value_facts": "every_value_consistency_precision"},
+        {**CURRENT, "value_facts": "every_value_consistency_precision_accuracy_rules"},
         {**CURRENT, "grapheme_policy": "extended"},
     ],
-    ids=["empty", "step1-value-facts", "step2-value-facts", "unknown-definition"],
+    ids=[
+        "empty",
+        "step1-value-facts",
+        "step2-value-facts",
+        "step3-value-facts",
+        "unknown-definition",
+    ],
 )
 def test_both_readers_agree_on_accepted_semantics(value):
     summary, canonical = _through_both_readers(value)

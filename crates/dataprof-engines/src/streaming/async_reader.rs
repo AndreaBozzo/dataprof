@@ -192,9 +192,7 @@ fn fold_row(
     containers: &[usize],
 ) {
     let width = values.len().min(headers.len()).max(*registered);
-    for header in &headers[*registered..width] {
-        column_stats.init_column_with_missing(header, folded_rows);
-    }
+    column_stats.init_columns_with_missing(&headers[*registered..width], folded_rows);
     *registered = width;
     let covered = &headers[..width];
     count_containers(covered, containers, container_counts);
@@ -692,6 +690,7 @@ impl AsyncStreamingProfiler {
             .columns(column_profiles)
             .with_quality_data(sample_columns)
             .with_lexical_tallies(column_stats.lexical_tallies())
+            .with_timeliness_tallies(column_stats.timeliness_tallies())
             .with_row_duplicates(column_stats.row_duplicate_summary())
             .with_composite_keys(column_stats.composite_key_summaries()?)
             .with_row_completeness(column_stats.row_completeness_summary())
@@ -1568,7 +1567,8 @@ impl AsyncStreamingProfiler {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb)
             .with_duplicate_rows_exact_limit(self.options.duplicate_rows_exact_limit())
             .with_unique_count_exact_limits(self.options.unique_count_exact_limits())
-            .with_unique_keys(&self.options);
+            .with_unique_keys(&self.options)
+            .with_timeliness(&self.options);
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
         let mut total_rows: usize = 0;
@@ -1884,9 +1884,7 @@ impl AsyncStreamingProfiler {
         // A column the consumed rows reach but no folded row covers is missing
         // from every folded row: none was read after it appeared, or it would
         // cover it. Columns only rows past a row cap reach are not registered.
-        for header in &headers[registered..discovered] {
-            column_stats.init_column_with_missing(header, sampled_rows);
-        }
+        column_stats.init_columns_with_missing(&headers[registered..discovered], sampled_rows);
 
         Ok((
             headers,

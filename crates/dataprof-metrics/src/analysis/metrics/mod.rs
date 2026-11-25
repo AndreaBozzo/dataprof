@@ -71,6 +71,7 @@ pub use bounds::SCORE_BOUNDS_CONFIDENCE;
 pub use hint_binding::{
     compute_value_hint_bindings, compute_value_hint_bindings_from_tallies, value_matches_hint,
 };
+pub use timeliness::{PairOrderCounts, TemporalPairTracker, TimelinessTallies};
 pub use utils::{StatisticalValidation, validate_sample_size};
 
 use accuracy::AccuracyCalculator;
@@ -84,6 +85,7 @@ use validity::ValidityCalculator;
 use crate::analysis::inference::LexicalTally;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
+use crate::quality::TimelinessClockMode;
 use crate::types::{
     AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, DataType,
     PrecisionMetrics, QualityDimension, QualityMetrics, RowCompletenessSummary,
@@ -101,6 +103,10 @@ pub struct MetricsCalculator {
     /// Exact per-column lexical/quality tallies over every scanned value, when
     /// the engine tracked them (#788 step 2).
     lexical_tallies: Option<HashMap<String, LexicalTally>>,
+    /// Exact full-stream timeliness tallies (per-column date accumulators and
+    /// row-level start/end pair counts), when the engine tracked them
+    /// (#788 step 4).
+    timeliness_tallies: Option<TimelinessTallies>,
     /// The fixed date timeliness measures against; `None` reads today's.
     reference_date: Option<chrono::NaiveDate>,
 }
@@ -123,6 +129,7 @@ impl MetricsCalculator {
             thresholds,
             row_completeness: None,
             lexical_tallies: None,
+            timeliness_tallies: None,
             reference_date: None,
         }
     }
@@ -147,6 +154,24 @@ impl MetricsCalculator {
     /// The timeliness calculator for one calculation, so every timeliness
     /// figure of a report, its score bounds included, reads one date.
     fn timeliness_calculator(&self) -> TimelinessCalculator<'_> {
+        if let Some(tallies) = self.timeliness_tallies.as_ref()
+            && self
+                .reference_date
+                .is_none_or(|date| date == tallies.window.reference_date)
+        {
+            // A date the caller fixed is a fixed clock, whatever mode the
+            // engine captured when it opened the tallies.
+            let mode = if self.reference_date.is_some() {
+                TimelinessClockMode::Fixed
+            } else {
+                tallies.clock_mode
+            };
+            return TimelinessCalculator::with_clock(
+                &self.thresholds,
+                tallies.window.reference_date,
+                mode,
+            );
+        }
         TimelinessCalculator::new(&self.thresholds, self.reference_date)
     }
 
@@ -168,6 +193,17 @@ impl MetricsCalculator {
     /// `exact_dimensions`.
     pub fn with_lexical_tallies(mut self, tallies: Option<HashMap<String, LexicalTally>>) -> Self {
         self.lexical_tallies = tallies;
+        self
+    }
+
+    /// Supply the engine's exact full-stream timeliness tallies over every
+    /// scanned value and row (#788 step 4).
+    ///
+    /// When present (and matching this calculator's thresholds), timeliness
+    /// reads these counters instead of the retained sample and moves from
+    /// `sampled_dimensions` to `exact_dimensions`.
+    pub fn with_timeliness_tallies(mut self, tallies: Option<TimelinessTallies>) -> Self {
+        self.timeliness_tallies = tallies;
         self
     }
 
@@ -360,12 +396,21 @@ impl MetricsCalculator {
             let temporal_columns =
                 Self::effective_temporal_columns(column_profiles, semantic_hints);
             let calculator = self.timeliness_calculator();
-            let t = calculator.calculate(
-                data,
-                &temporal_columns,
-                &semantic_hints.temporal_pairs,
-                column_profiles,
-            )?;
+            let t = if let Some(tallies) = self.timeliness_tallies.as_ref()
+                && let Some(exact) = calculator.calculate_from_tallies(
+                    tallies,
+                    &temporal_columns,
+                    &semantic_hints.temporal_pairs,
+                )? {
+                exact
+            } else {
+                calculator.calculate(
+                    data,
+                    &temporal_columns,
+                    &semantic_hints.temporal_pairs,
+                    column_profiles,
+                )?
+            };
             Some(TimelinessMetrics {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
@@ -748,28 +793,42 @@ impl MetricsCalculator {
         };
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
-            let t = if !data.is_empty() {
-                timeliness_calculator.calculate(
-                    data,
+            let exact = if let Some(tallies) = self.timeliness_tallies.as_ref() {
+                timeliness_calculator.calculate_from_tallies(
+                    tallies,
                     &temporal_columns,
                     &semantic_hints.temporal_pairs,
-                    column_profiles,
                 )?
             } else {
-                timeliness::TimelinessMetrics {
-                    future_dates_count: 0,
-                    stale_data_ratio: 0.0,
-                    temporal_violations: 0,
-                    invalid_date_values: 0,
-                    date_values_checked: 0,
-                    temporal_pairs_checked: 0,
-                    valid_dates: 0,
-                    stale_dates: 0,
-                    temporal_column_pairs: 0,
-                    compared_pairs: Vec::new(),
+                None
+            };
+            let t = if let Some(exact) = exact {
+                exact_dimensions.push("timeliness".to_string());
+                exact
+            } else {
+                sampled_dimensions.push("timeliness".to_string());
+                if !data.is_empty() {
+                    timeliness_calculator.calculate(
+                        data,
+                        &temporal_columns,
+                        &semantic_hints.temporal_pairs,
+                        column_profiles,
+                    )?
+                } else {
+                    timeliness::TimelinessMetrics {
+                        future_dates_count: 0,
+                        stale_data_ratio: 0.0,
+                        temporal_violations: 0,
+                        invalid_date_values: 0,
+                        date_values_checked: 0,
+                        temporal_pairs_checked: 0,
+                        valid_dates: 0,
+                        stale_dates: 0,
+                        temporal_column_pairs: 0,
+                        compared_pairs: Vec::new(),
+                    }
                 }
             };
-            sampled_dimensions.push("timeliness".to_string());
             Some(TimelinessMetrics {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
@@ -1178,5 +1237,30 @@ mod tests {
         assert_eq!(precision.inconsistent_precision_values, 0);
         assert_eq!(precision.numeric_values_checked, 0);
         assert!(result.metrics.assessed_dimensions().is_empty());
+    }
+
+    #[test]
+    fn a_reference_date_the_caller_fixed_reads_as_a_fixed_clock() {
+        // The engine opened its tallies on a rolling clock that read the same
+        // date the caller then fixed: the report must say the date was fixed.
+        let day = chrono::NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let tallies = TimelinessTallies {
+            columns: HashMap::new(),
+            pairs: HashMap::new(),
+            clock_mode: TimelinessClockMode::Rolling,
+            window: crate::stats::datetime::TimelinessWindow::new(day, 5.0),
+        };
+        let fixed = MetricsCalculator::new()
+            .with_reference_date(Some(day))
+            .with_timeliness_tallies(Some(tallies.clone()));
+        assert_eq!(
+            fixed.timeliness_calculator().clock().mode,
+            TimelinessClockMode::Fixed
+        );
+        let rolling = MetricsCalculator::new().with_timeliness_tallies(Some(tallies));
+        assert_eq!(
+            rolling.timeliness_calculator().clock().mode,
+            TimelinessClockMode::Rolling
+        );
     }
 }
