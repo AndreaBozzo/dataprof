@@ -133,6 +133,8 @@ dp.profile(
     reference_date=None,             # datetime.date | "YYYY-MM-DD" -- the date timeliness measures against
     duplicate_rows_exact_limit=None, # int -- distinct rows counted exactly for duplicate rows (default 1,000,000)
     unique_count_exact_limits=None,  # dict[str, int] -- exact distinct limits for named columns
+    unique_keys=None,                # list[list[str]] -- column groups whose repeated keys are counted
+    unique_keys_exact_limit=None,    # int -- distinct keys kept per group (default 1,000,000)
     source_version=None,             # str -- the caller's version of the source, recorded verbatim
 ) -> ProfileReport
 ```
@@ -1255,6 +1257,27 @@ The report records the requested map in
 `analysis_settings["unique_count_exact_limits"]`. `compare()` shows differences
 in the map under `configuration`. `max_distinct_drop` compares exact counts
 across limits and returns `approximate_count` when either count is estimated.
+
+Set `unique_keys=[["country", "year"]]` to count repeated keys over several
+columns. Each group is counted over every row read, and the report holds one
+entry per group in `report.composite_keys`: the columns, rows counted, rows
+skipped because every key cell was null, distinct keys, repeated rows, distinct
+repeated keys, `is_exact`, and up to five repeated keys as samples. A row whose
+key is null in every column is skipped; a partly null key counts, so
+`("IT", None)` twice is a repeat. Each group keeps up to
+`unique_keys_exact_limit` distinct keys (one million by default) as XXH3-128
+hashes outside `memory_limit_mb`, about 90 MiB at one million keys; past it the
+counts become lower bounds and `is_exact` is `False`.
+
+Key cells are compared by value, not by spelling: `1.5` and `1.50`, or `1`
+and `1.0`, are one key value, and a CSV cell matches the same value read from
+a typed Parquet or Arrow column. A column's own `unique_count` compares the
+cells as written, so a one-column group such as `unique_keys=[["amount"]]` can
+count fewer distinct keys than `report["amount"].unique_count` when the column
+spells one value in two ways. A zero-padded code such as `007` stays distinct
+from `7`, and an ambiguous slash date reads day first. `compare()` shows
+changed groups under `configuration`. The quality gate does not read the
+block yet.
 
 `min_rows` reads the report's `execution.rows_processed`. Rows already read do
 not go away when more are read, so a scan that read at least `min_rows` rows

@@ -865,6 +865,8 @@ class TestNamespace:
             "reference_date",
             "duplicate_rows_exact_limit",
             "unique_count_exact_limits",
+            "unique_keys",
+            "unique_keys_exact_limit",
             "source_version",
         }
         actual_params = set(sig.parameters.keys())

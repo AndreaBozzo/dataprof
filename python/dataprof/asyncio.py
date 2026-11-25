@@ -123,6 +123,8 @@ async def profile_bytes(
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile in-memory bytes asynchronously.
@@ -166,6 +168,8 @@ async def profile_bytes(
             "reference_date": reference_date,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
             "unique_count_exact_limits": unique_count_exact_limits,
+            "unique_keys": unique_keys,
+            "unique_keys_exact_limit": unique_keys_exact_limit,
         }
     )
     if config is not None and config.engine == "columnar":
@@ -203,6 +207,8 @@ async def profile_file(
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile a local file asynchronously.
@@ -253,6 +259,8 @@ async def profile_file(
             "reference_date": reference_date,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
             "unique_count_exact_limits": unique_count_exact_limits,
+            "unique_keys": unique_keys,
+            "unique_keys_exact_limit": unique_keys_exact_limit,
         }
     )
     # Name a missing file the way the sync API does, not as a Rust I/O error.
@@ -287,6 +295,8 @@ async def profile_url(
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> _ProfileReport:
     """Profile data from a remote URL asynchronously.
@@ -341,6 +351,8 @@ async def profile_url(
             "reference_date": reference_date,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
             "unique_count_exact_limits": unique_count_exact_limits,
+            "unique_keys": unique_keys,
+            "unique_keys_exact_limit": unique_keys_exact_limit,
         }
     )
     rust_report = await _profile_url_async(url, format, config)

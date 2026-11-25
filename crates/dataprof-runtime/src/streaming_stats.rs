@@ -751,6 +751,7 @@ pub struct StreamingColumnCollection {
     completeness_tracker: RowCompletenessTracker,
     hint_bindings: ValueHintBindingAccumulator,
     unique_count_exact_limits: BTreeMap<String, usize>,
+    composite_keys: crate::CompositeKeyTracker,
 }
 
 impl StreamingColumnCollection {
@@ -763,6 +764,7 @@ impl StreamingColumnCollection {
             completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
             unique_count_exact_limits: BTreeMap::new(),
+            composite_keys: crate::CompositeKeyTracker::default(),
         }
     }
 
@@ -775,6 +777,7 @@ impl StreamingColumnCollection {
             completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
             unique_count_exact_limits: BTreeMap::new(),
+            composite_keys: crate::CompositeKeyTracker::default(),
         }
     }
 
@@ -795,6 +798,19 @@ impl StreamingColumnCollection {
     pub fn with_unique_count_exact_limits(mut self, limits: &BTreeMap<String, usize>) -> Self {
         self.unique_count_exact_limits = limits.clone();
         self
+    }
+
+    /// Configure key tracking before any records are processed.
+    pub fn with_unique_keys(mut self, options: &dataprof_core::AnalysisOptions) -> Self {
+        self.composite_keys = crate::CompositeKeyTracker::new(options);
+        self
+    }
+
+    /// Full-stream repeat counts for the requested groups.
+    pub fn composite_key_summaries(
+        &self,
+    ) -> Result<Vec<crate::CompositeKeySummary>, dataprof_core::DataProfilerError> {
+        self.composite_keys.summaries()
     }
 
     fn new_column(&self, name: &str) -> StreamingStatistics {
@@ -864,8 +880,12 @@ impl StreamingColumnCollection {
             let value = values.next().unwrap_or_default();
             if containers.contains(&position) {
                 row_signature.push_container_field(&value);
+                self.composite_keys.unsupported_field(header);
             } else {
                 row_signature.push_field(&value);
+                if self.composite_keys.is_enabled() {
+                    self.composite_keys.text_field(header, Some(&value));
+                }
             }
 
             if let Some(stats) = self.columns.get_mut(header) {
@@ -887,6 +907,7 @@ impl StreamingColumnCollection {
         // their empty signatures already match rows of trailing absent fields.
         self.row_tracker.observe(row_signature.finish());
         self.completeness_tracker.observe(row_has_null);
+        self.composite_keys.finish_row();
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen.
@@ -1076,6 +1097,7 @@ impl StreamingColumnCollection {
             mut completeness_tracker,
             hint_bindings,
             unique_count_exact_limits,
+            composite_keys,
         } = other;
 
         if self_rows == 0 && self.columns.is_empty() && self.unique_count_exact_limits.is_empty() {
@@ -1132,6 +1154,11 @@ impl StreamingColumnCollection {
 
         self.completeness_tracker.merge(&completeness_tracker);
         self.row_tracker.merge(&row_tracker);
+        if self_rows == 0 && !self.composite_keys.is_enabled() {
+            self.composite_keys = composite_keys;
+        } else {
+            self.composite_keys.merge(composite_keys);
+        }
         // Only a side that signed rows can make them incomparable, so folding
         // a partition into a fresh accumulator stays a plain accumulation.
         if self_rows > 0 && other_rows > 0 && !schemas_match {

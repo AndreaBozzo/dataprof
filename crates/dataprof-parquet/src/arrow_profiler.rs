@@ -124,6 +124,7 @@ struct CsvPreScan {
 struct CsvDecodeOutcome {
     column_analyzers: std::collections::HashMap<String, ColumnAnalyzer>,
     row_tracker: BatchRowTracker,
+    key_tracker: dataprof_runtime::CompositeKeyTracker,
     hint_bindings: ValueHintBindingAccumulator,
     total_rows: usize,
     /// Rows `arrow-csv` padded to the schema width, cumulative over the decode.
@@ -382,6 +383,7 @@ impl ArrowProfiler {
                 row_tracker: BatchRowTracker::with_exact_limit(
                     self.options.duplicate_rows_exact_limit(),
                 ),
+                key_tracker: dataprof_runtime::CompositeKeyTracker::new(&self.options),
                 hint_bindings: ValueHintBindingAccumulator::new(self.options.semantic_hints()),
                 total_rows: 0,
                 padded_rows: 0,
@@ -436,6 +438,7 @@ impl ArrowProfiler {
         // cross-engine score parity with the incremental engine.
         let mut row_tracker =
             BatchRowTracker::with_exact_limit(self.options.duplicate_rows_exact_limit());
+        let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(&self.options);
         let mut hint_bindings = ValueHintBindingAccumulator::new(self.options.semantic_hints());
 
         let mut memory_sampler = PeakMemorySampler::new();
@@ -455,6 +458,29 @@ impl ArrowProfiler {
 
             total_rows += batch.num_rows();
             row_tracker.observe_batch(&batch);
+            if key_tracker.is_enabled() {
+                let schema = batch.schema();
+                let key_fields: Vec<_> = schema
+                    .fields()
+                    .iter()
+                    .zip(batch.columns())
+                    .filter(|(field, _)| key_tracker.contains(field.name()))
+                    .map(|(field, array)| {
+                        let strings = array
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .expect("the CSV decoder emits UTF-8 arrays");
+                        (field.name(), strings)
+                    })
+                    .collect();
+                for row in 0..batch.num_rows() {
+                    for (name, array) in &key_fields {
+                        let value = (!array.is_null(row)).then(|| array.value(row));
+                        key_tracker.text_field(name, value);
+                    }
+                    key_tracker.finish_row();
+                }
+            }
 
             for (col_idx, column) in batch.columns().iter().enumerate() {
                 let schema = batch.schema();
@@ -499,6 +525,7 @@ impl ArrowProfiler {
         Ok(CsvDecodeOutcome {
             column_analyzers,
             row_tracker,
+            key_tracker,
             hint_bindings,
             total_rows,
             // Read after the final flush: the counter is cumulative across
@@ -595,6 +622,7 @@ impl ArrowProfiler {
         let CsvDecodeOutcome {
             column_analyzers,
             row_tracker,
+            key_tracker,
             hint_bindings,
             total_rows,
             padded_rows,
@@ -678,6 +706,7 @@ impl ArrowProfiler {
         )
         .columns(column_profiles)
         .with_row_duplicates(row_tracker.summary())
+        .with_composite_keys(key_tracker.summaries()?)
         .with_row_completeness(row_tracker.completeness_summary());
 
         if !MetricPack::include_quality(packs) {

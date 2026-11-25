@@ -74,6 +74,7 @@ pub use dataprof_runtime::{
     ReportReference, ReportSide, SchemaChange, ScoreChange, SemanticsComparison, SettingComparison,
     Sides,
 };
+pub use dataprof_runtime::{CompositeKeySummary, UniqueKeySettings};
 
 #[cfg(feature = "async-streaming")]
 pub use dataprof_engines::streaming::ReqwestSource;

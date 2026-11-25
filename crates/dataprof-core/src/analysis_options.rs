@@ -31,6 +31,8 @@ pub struct AnalysisOptions {
     reference_date: Option<NaiveDate>,
     duplicate_rows_exact_limit: Option<usize>,
     unique_count_exact_limits: BTreeMap<String, usize>,
+    unique_keys: Vec<Vec<String>>,
+    unique_keys_exact_limit: Option<usize>,
 }
 
 impl AnalysisOptions {
@@ -110,6 +112,69 @@ impl AnalysisOptions {
     /// The explicitly requested exact distinct limit for this column.
     pub fn unique_count_exact_limit(&self, column: &str) -> Option<usize> {
         self.unique_count_exact_limits.get(column).copied()
+    }
+
+    /// Count repeats in each ordered group of key columns, including groups
+    /// with one column. Every group must contain distinct column names.
+    pub fn with_unique_keys(mut self, mut keys: Vec<Vec<String>>) -> Self {
+        keys.sort();
+        keys.dedup();
+        self.unique_keys = keys;
+        self
+    }
+
+    /// Set the per-key distinct limit. The default is one million.
+    pub fn with_unique_keys_exact_limit(mut self, limit: Option<usize>) -> Self {
+        self.unique_keys_exact_limit = limit;
+        self
+    }
+
+    /// The requested groups, in lexicographic order with duplicates removed.
+    pub fn unique_keys(&self) -> &[Vec<String>] {
+        &self.unique_keys
+    }
+
+    /// Maximum distinct keys to retain per requested group.
+    pub fn unique_keys_exact_limit(&self) -> usize {
+        self.unique_keys_exact_limit.unwrap_or(1_000_000)
+    }
+
+    /// Validate requested key columns after the source schema is discovered.
+    pub fn validate_unique_keys(&self, available: &[String]) -> Result<(), DataProfilerError> {
+        if self.unique_keys_exact_limit() == 0 {
+            return Err(DataProfilerError::invalid_config(
+                "unique_keys_exact_limit must be at least 1",
+                "Give the key groups a positive distinct count.",
+            ));
+        }
+        for group in &self.unique_keys {
+            let mut seen = HashSet::with_capacity(group.len());
+            if group.is_empty() || !group.iter().all(|name| seen.insert(name)) {
+                return Err(DataProfilerError::invalid_config(
+                    &format!("unique_keys group {group:?} must be nonempty with distinct columns"),
+                    "List each key column once in its group.",
+                ));
+            }
+            for name in group {
+                if !available.contains(name) {
+                    return Err(DataProfilerError::invalid_config(
+                        &format!("unique_keys names column {name:?} absent from the source"),
+                        "Choose column names from the source schema.",
+                    ));
+                }
+                if self
+                    .columns
+                    .as_ref()
+                    .is_some_and(|columns| !columns.contains(name))
+                {
+                    return Err(DataProfilerError::invalid_config(
+                        &format!("unique_keys names column {name:?} excluded from profiling"),
+                        "Include the key column in the projection.",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The packs to compute, with an empty quality-dimension selection folded in.
@@ -243,6 +308,7 @@ impl AnalysisOptions {
         available: &[String],
     ) -> Result<Option<Vec<usize>>, DataProfilerError> {
         self.validate_unique_count_exact_limits(available)?;
+        self.validate_unique_keys(available)?;
         let Some(requested) = &self.columns else {
             return Ok(None);
         };

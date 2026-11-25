@@ -128,6 +128,8 @@ def profile_file(
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
@@ -216,6 +218,10 @@ def profile_file(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        unique_keys: Ordered groups of columns whose repeat counts and samples
+            should be recorded. Rows with every key cell null are skipped.
+        unique_keys_exact_limit: Distinct keys to retain per requested group,
+            defaulting to one million. Counts become lower bounds past the limit.
         unique_count_exact_limits: Positive distinct-count limits per named
             column, for example ``{"order_id": 2_000_000}``. A named column keeps
             XXH3-128 fingerprints in memory outside ``memory_limit_mb``.
@@ -254,6 +260,8 @@ def profile_file(
             "temporal_pairs": temporal_pairs,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
             "unique_count_exact_limits": unique_count_exact_limits,
+            "unique_keys": unique_keys,
+            "unique_keys_exact_limit": unique_keys_exact_limit,
         }
     )
     _check_source_version(source_version)
@@ -282,6 +290,8 @@ def profile_file(
         reference_date=reference_date,
         duplicate_rows_exact_limit=duplicate_rows_exact_limit,
         unique_count_exact_limits=unique_count_exact_limits,
+        unique_keys=unique_keys,
+        unique_keys_exact_limit=unique_keys_exact_limit,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)._record_source_version(source_version)
@@ -314,6 +324,8 @@ def profile(
     reference_date: _date | str | None = None,
     duplicate_rows_exact_limit: int | None = None,
     unique_count_exact_limits: dict[str, int] | None = None,
+    unique_keys: list[list[str]] | None = None,
+    unique_keys_exact_limit: int | None = None,
     source_version: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
@@ -412,6 +424,10 @@ def profile(
             score moves as the calendar does; a fixed date makes it
             reproducible. The report records which one it used under
             ``quality.timeliness["clock"]``.
+        unique_keys: Ordered groups of columns whose repeat counts and samples
+            should be recorded. Rows with every key cell null are skipped.
+        unique_keys_exact_limit: Distinct keys to retain per requested group,
+            defaulting to one million. Counts become lower bounds past the limit.
         unique_count_exact_limits: Positive distinct-count limits per named
             column, for example ``{"order_id": 2_000_000}``. A named column keeps
             XXH3-128 fingerprints in memory outside ``memory_limit_mb``.
@@ -450,6 +466,8 @@ def profile(
             "temporal_pairs": temporal_pairs,
             "duplicate_rows_exact_limit": duplicate_rows_exact_limit,
             "unique_count_exact_limits": unique_count_exact_limits,
+            "unique_keys": unique_keys,
+            "unique_keys_exact_limit": unique_keys_exact_limit,
         }
     )
     _check_source_version(source_version)
@@ -481,6 +499,8 @@ def profile(
             reference_date=reference_date,
             duplicate_rows_exact_limit=duplicate_rows_exact_limit,
             unique_count_exact_limits=unique_count_exact_limits,
+            unique_keys=unique_keys,
+            unique_keys_exact_limit=unique_keys_exact_limit,
             source_version=source_version,
         )
 
@@ -502,6 +522,8 @@ def profile(
                 reference_date,
                 duplicate_rows_exact_limit,
                 unique_count_exact_limits,
+                unique_keys,
+                unique_keys_exact_limit,
             )
         ):
             return ProfilerConfig(
@@ -517,6 +539,8 @@ def profile(
                 reference_date=reference_date,
                 duplicate_rows_exact_limit=duplicate_rows_exact_limit,
                 unique_count_exact_limits=unique_count_exact_limits,
+                unique_keys=unique_keys,
+                unique_keys_exact_limit=unique_keys_exact_limit,
             )
         return None
 

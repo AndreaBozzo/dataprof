@@ -1504,7 +1504,38 @@ impl PyProfileReport {
                 &settings.unique_count_exact_limits,
             )?;
         }
+        if let Some(keys) = &settings.unique_keys {
+            let item = PyDict::new(py);
+            item.set_item("groups", &keys.groups)?;
+            item.set_item("exact_limit", keys.exact_limit)?;
+            dict.set_item("unique_keys", item)?;
+        }
         Ok(Some(dict))
+    }
+
+    /// Repeat counts and samples for explicitly requested key groups.
+    #[getter]
+    fn composite_keys<'py>(&self, py: Python<'py>) -> PyResult<Option<Vec<Bound<'py, PyDict>>>> {
+        self.inner
+            .composite_keys
+            .as_ref()
+            .map(|keys| {
+                keys.iter()
+                    .map(|key| {
+                        let item = PyDict::new(py);
+                        item.set_item("columns", &key.columns)?;
+                        item.set_item("rows_counted", key.rows_counted)?;
+                        item.set_item("rows_skipped_all_null", key.rows_skipped_all_null)?;
+                        item.set_item("distinct_keys", key.distinct_keys)?;
+                        item.set_item("repeated_rows", key.repeated_rows)?;
+                        item.set_item("distinct_repeated_keys", key.distinct_repeated_keys)?;
+                        item.set_item("is_exact", key.is_exact)?;
+                        item.set_item("sample_repeated_keys", &key.sample_repeated_keys)?;
+                        Ok(item)
+                    })
+                    .collect()
+            })
+            .transpose()
     }
 
     /// The dataprof build that produced the report, as a dict with

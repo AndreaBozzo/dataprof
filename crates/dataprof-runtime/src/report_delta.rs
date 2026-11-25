@@ -416,6 +416,9 @@ pub struct ConfigurationComparison {
     /// used the option. Exact counts remain comparable across limit changes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unique_count_exact_limits: Option<SettingComparison<BTreeMap<String, usize>>>,
+    /// Requested key groups and effective distinct limits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_keys: Option<SettingComparison<crate::UniqueKeySettings>>,
 }
 
 /// Which columns each side has.
@@ -590,6 +593,10 @@ impl ReportDelta {
                         b.unique_count_exact_limits.clone(),
                     )
                 }),
+                unique_keys: [&a.unique_keys, &b.unique_keys]
+                    .into_iter()
+                    .any(|keys| keys.as_ref().is_some_and(|keys| !keys.groups.is_empty()))
+                    .then(|| SettingComparison::new(a.unique_keys.clone(), b.unique_keys.clone())),
             },
             schema: SchemaChange {
                 added,
@@ -662,6 +669,7 @@ pub struct ReportSide {
     /// them.
     temporal_pairs: Option<Vec<TemporalPair>>,
     unique_count_exact_limits: Option<BTreeMap<String, usize>>,
+    unique_keys: Option<crate::UniqueKeySettings>,
     /// Whether the source declares its columns up front, so the column set
     /// does not depend on how many rows were read.
     schema_declared: bool,
@@ -998,6 +1006,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.unique_count_exact_limits.clone()),
+            unique_keys: report
+                .analysis_settings
+                .as_ref()
+                .map(|settings| settings.unique_keys.clone().unwrap_or_default()),
             schema_declared: declares_schema(&report.data_source),
             json_numbers: may_read_json_numbers(&report.data_source),
             unlisted_components: unlisted,
@@ -1333,6 +1345,10 @@ impl ReportSide {
                 .analysis_settings
                 .as_ref()
                 .map(|settings| settings.unique_count_exact_limits.clone()),
+            unique_keys: summary
+                .analysis_settings
+                .as_ref()
+                .map(|settings| settings.unique_keys.clone().unwrap_or_default()),
             column_selection: summary.analysis_settings.map(|settings| settings.columns),
             // The rule the canonical reader applies, over the kind and the
             // format the summary recorded. A summary written before 0.14 has

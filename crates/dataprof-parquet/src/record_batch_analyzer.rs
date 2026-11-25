@@ -702,6 +702,7 @@ pub struct RecordBatchAnalyzer {
     column_order: Vec<String>,
     total_rows: usize,
     row_tracker: BatchRowTracker,
+    key_tracker: dataprof_runtime::CompositeKeyTracker,
     options: AnalysisOptions,
     /// Bytes the exact distinct sets may hold before they spill.
     exact_sets_budget: usize,
@@ -721,6 +722,7 @@ impl RecordBatchAnalyzer {
             column_order: Vec::new(),
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
+            key_tracker: dataprof_runtime::CompositeKeyTracker::default(),
             options: AnalysisOptions::default(),
             exact_sets_budget: DEFAULT_EXACT_SETS_BUDGET,
         }
@@ -747,6 +749,7 @@ impl RecordBatchAnalyzer {
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
         self.options = options.clone();
         self.row_tracker = BatchRowTracker::with_exact_limit(options.duplicate_rows_exact_limit());
+        self.key_tracker = dataprof_runtime::CompositeKeyTracker::new(options);
         self
     }
 
@@ -764,9 +767,17 @@ impl RecordBatchAnalyzer {
         dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
 
         self.options.validate_unique_count_exact_limits(&names)?;
+        self.options.validate_unique_keys(&names)?;
         let hints = self.options.semantic_hints();
         let pair_columns = hints.temporal_pair_columns();
         for field in schema.fields() {
+            if self.key_tracker.contains(field.name())
+                && !dataprof_metrics::stats::canonical_value::supports_arrow_type(
+                    &logical_arrow_type(field.data_type()),
+                )
+            {
+                self.key_tracker.unsupported_field(field.name());
+            }
             let column_name = field.name().to_string();
             let positive_hint = hints.is_positive_column(&column_name);
             let temporal_hint = hints.is_temporal_column(&column_name)
@@ -789,6 +800,7 @@ impl RecordBatchAnalyzer {
                 entry.insert(analyzer);
             }
         }
+        self.key_tracker.summaries()?;
         Ok(())
     }
 
@@ -829,6 +841,9 @@ impl RecordBatchAnalyzer {
         if self.column_order.is_empty() {
             self.initialize_schema(batch.schema().as_ref())?;
         }
+        if self.key_tracker.is_enabled() {
+            self.observe_key_batch(batch, container_markers)?;
+        }
         self.total_rows += batch.num_rows();
         self.row_tracker
             .observe_batch_with_container_markers(batch, container_markers);
@@ -864,6 +879,54 @@ impl RecordBatchAnalyzer {
 
     pub fn total_rows(&self) -> usize {
         self.total_rows
+    }
+
+    fn observe_key_batch(
+        &mut self,
+        batch: &RecordBatch,
+        container_markers: &[Option<&[bool]>],
+    ) -> Result<()> {
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        let schema = batch.schema();
+        let mut fields = Vec::new();
+        for (index, field) in schema.fields().iter().enumerate() {
+            if !self.key_tracker.contains(field.name()) {
+                continue;
+            }
+            if container_markers.get(index).is_some_and(|markers| {
+                markers.is_some_and(|markers| markers.iter().any(|&marked| marked))
+            }) {
+                self.key_tracker.unsupported_field(field.name());
+            }
+            let array = batch.column(index);
+            let values = if matches!(
+                array.data_type(),
+                ArrowDataType::Dictionary(..) | ArrowDataType::RunEndEncoded(..)
+            ) {
+                arrow::compute::cast(array, &logical_arrow_type(array.data_type()))?
+            } else {
+                array.clone()
+            };
+            fields.push((field.name(), values));
+        }
+        for row in 0..batch.num_rows() {
+            for (name, values) in &fields {
+                self.key_tracker.arrow_field(name, values.as_ref(), row)?;
+            }
+            self.key_tracker.finish_row();
+        }
+        Ok(())
+    }
+
+    /// Full-stream repeat counts for the requested groups.
+    pub fn composite_key_summaries(
+        &self,
+    ) -> std::result::Result<
+        Vec<dataprof_runtime::CompositeKeySummary>,
+        dataprof_core::DataProfilerError,
+    > {
+        self.key_tracker.summaries()
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen or

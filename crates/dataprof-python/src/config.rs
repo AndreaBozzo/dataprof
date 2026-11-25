@@ -39,6 +39,8 @@ pub struct PyProfilerConfig {
     pub(crate) reference_date: Option<chrono::NaiveDate>,
     pub(crate) duplicate_rows_exact_limit: Option<usize>,
     pub(crate) unique_count_exact_limits: BTreeMap<String, usize>,
+    pub(crate) unique_keys: Vec<Vec<String>>,
+    pub(crate) unique_keys_exact_limit: Option<usize>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
@@ -72,6 +74,8 @@ impl PyProfilerConfig {
         reference_date = None,
         duplicate_rows_exact_limit = None,
         unique_count_exact_limits = None,
+        unique_keys = None,
+        unique_keys_exact_limit = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -98,7 +102,14 @@ impl PyProfilerConfig {
         reference_date: Option<&Bound<'_, PyAny>>,
         duplicate_rows_exact_limit: Option<usize>,
         unique_count_exact_limits: Option<BTreeMap<String, usize>>,
+        unique_keys: Option<Vec<Vec<String>>>,
+        unique_keys_exact_limit: Option<usize>,
     ) -> PyResult<Self> {
+        if unique_keys_exact_limit == Some(0) {
+            return Err(PyValueError::new_err(
+                "unique_keys_exact_limit must be at least 1",
+            ));
+        }
         let unique_count_exact_limits = unique_count_exact_limits.unwrap_or_default();
         if let Some((name, _)) = unique_count_exact_limits
             .iter()
@@ -211,6 +222,8 @@ impl PyProfilerConfig {
             reference_date,
             duplicate_rows_exact_limit,
             unique_count_exact_limits,
+            unique_keys: unique_keys.unwrap_or_default(),
+            unique_keys_exact_limit,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
             temporal_columns: temporal_columns.unwrap_or_default(),
@@ -301,6 +314,16 @@ impl PyProfilerConfig {
     #[getter]
     fn unique_count_exact_limits(&self) -> BTreeMap<String, usize> {
         self.unique_count_exact_limits.clone()
+    }
+
+    #[getter]
+    fn unique_keys(&self) -> Vec<Vec<String>> {
+        self.unique_keys.clone()
+    }
+
+    #[getter]
+    fn unique_keys_exact_limit(&self) -> Option<usize> {
+        self.unique_keys_exact_limit
     }
 
     /// Columns selected for profiling, or `None` for every column.
@@ -420,7 +443,12 @@ impl PyProfilerConfig {
             profiler = profiler.temporal_pairs(self.temporal_pairs.clone());
         }
 
-        profiler.unique_count_exact_limits(self.unique_count_exact_limits.clone())
+        if let Some(limit) = self.unique_keys_exact_limit {
+            profiler = profiler.unique_keys_exact_limit(limit);
+        }
+        profiler
+            .unique_count_exact_limits(self.unique_count_exact_limits.clone())
+            .unique_keys(self.unique_keys.clone())
     }
 
     pub(crate) fn semantic_hints(&self) -> SemanticHints {
@@ -447,6 +475,8 @@ impl PyProfilerConfig {
             .with_reference_date(self.reference_date)
             .with_duplicate_rows_exact_limit(self.duplicate_rows_exact_limit)
             .with_unique_count_exact_limits(self.unique_count_exact_limits.clone())
+            .with_unique_keys(self.unique_keys.clone())
+            .with_unique_keys_exact_limit(self.unique_keys_exact_limit)
             .with_semantic_hints(self.semantic_hints())
     }
 }

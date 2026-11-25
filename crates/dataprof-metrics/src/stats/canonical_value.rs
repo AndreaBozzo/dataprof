@@ -31,7 +31,6 @@ const DATE: u8 = 0x05;
 const ZONED: u8 = 0x06;
 const NAIVE: u8 = 0x07;
 const TEXT: u8 = 0x08;
-#[cfg(feature = "arrow")]
 const BINARY: u8 = 0x09;
 const INVALID_DATE: u8 = 0xfe;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
@@ -79,6 +78,14 @@ pub fn encode_text(value: Option<&str>, output: &mut Vec<u8>) {
             }
         }
         LexicalClass::Numeric | LexicalClass::Text => tagged(TEXT, raw.as_bytes(), output),
+    }
+}
+
+pub(crate) fn encode_utc_timestamp_text(value: &str, output: &mut Vec<u8>) {
+    let start = output.len();
+    encode_text(Some(value), output);
+    if output[start] == NAIVE {
+        output[start] = ZONED;
     }
 }
 
@@ -419,6 +426,47 @@ fn date_bytes(year: impl Into<i64>, month: u32, day: u32, output: &mut Vec<u8>) 
 fn timestamp(seconds: i64, subsecond: u32, tag: u8, output: &mut Vec<u8>) {
     let nanos = i128::from(seconds) * NANOS_PER_SECOND + i128::from(subsecond);
     tagged(tag, &nanos.to_be_bytes(), output);
+}
+
+pub(crate) fn sample_value(encoded: &[u8]) -> Option<String> {
+    use fmt::Write as _;
+
+    let (tag, bytes) = encoded.split_first().expect("encoded value has a tag");
+    let text = |bytes: &[u8]| {
+        std::str::from_utf8(bytes)
+            .expect("cell payload is UTF-8")
+            .to_owned()
+    };
+    Some(match *tag {
+        NULL_TAG => return None,
+        BOOLEAN => (bytes == [1]).to_string(),
+        FLOAT => f64::from_be_bytes(bytes.try_into().expect("float width")).to_string(),
+        ZONED | NAIVE => {
+            let nanos = i128::from_be_bytes(bytes.try_into().expect("timestamp width"));
+            let seconds = i64::try_from(nanos.div_euclid(NANOS_PER_SECOND))
+                .expect("timestamp originates from i64 seconds or narrower");
+            let subsecond = nanos.rem_euclid(NANOS_PER_SECOND) as u32;
+            let zone = if *tag == ZONED { "Z" } else { "" };
+            chrono::DateTime::from_timestamp(seconds, subsecond).map_or_else(
+                || format!("{nanos} ns since epoch{zone}"),
+                |time| format!("{}{zone}", time.format("%Y-%m-%dT%H:%M:%S%.f")),
+            )
+        }
+        BINARY => {
+            let mut hex = String::from("0x");
+            for byte in bytes {
+                write!(hex, "{byte:02x}").expect("writing to String is infallible");
+            }
+            hex
+        }
+        WIDE_DECIMAL => {
+            let sign = if bytes[0] == 1 { "-" } else { "" };
+            let scale = i64::from_be_bytes(bytes[1..9].try_into().expect("decimal scale width"));
+            let digits = std::str::from_utf8(&bytes[9..]).expect("decimal digits are ASCII");
+            format!("{sign}{digits}e{}", -i128::from(scale))
+        }
+        _ => text(bytes),
+    })
 }
 
 /// XXH3-128 of a null encoding, pinned by the cell vectors.

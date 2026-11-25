@@ -247,6 +247,7 @@ pub async fn analyze_database_with_options(
 
     if columns.is_empty() {
         options.validate_unique_count_exact_limits(&[])?;
+        options.validate_unique_keys(&[])?;
         let exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis())
             .with_engine(query_engine.to_string());
         return Ok(ReportAssembler::new(
@@ -320,19 +321,39 @@ pub async fn analyze_database_with_options(
     // from value-level checks, and the columns no longer line up.
     let mut uniqueness =
         RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
+    let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(options);
+    // Binary values still read as null (#645), so a key over them would skip
+    // or merge rows that differ.
+    for (name, type_name) in columns.names().zip(columns.type_names()) {
+        if type_name.is_some_and(is_binary_type) {
+            key_tracker.unsupported_field(name);
+        }
+    }
     if !aligned.is_empty() {
         let container_rows: Vec<&[usize]> = columns.container_rows().collect();
+        let key_columns: Vec<_> = columns.names().zip(columns.type_names()).collect();
         for row_index in 0..actual_rows_processed {
             let mut signature = RowSignature::default();
-            for (cells, containers) in aligned.iter().zip(&container_rows) {
+            for (index, (cells, containers)) in aligned.iter().zip(&container_rows).enumerate() {
+                let (name, type_name) = key_columns[index];
+                let value = &cells[row_index];
                 // Ascending by construction: rows are pushed in order.
                 if containers.binary_search(&row_index).is_ok() {
-                    signature.push_container_field(&cells[row_index]);
+                    signature.push_container_field(value);
+                    key_tracker.unsupported_field(name);
                 } else {
-                    signature.push_field(&cells[row_index]);
+                    signature.push_field(value);
+                    if key_tracker.is_enabled() {
+                        if type_name == Some("TIMESTAMPTZ") {
+                            key_tracker.utc_timestamp_field(name, value);
+                        } else {
+                            key_tracker.text_field(name, Some(value));
+                        }
+                    }
                 }
             }
             uniqueness.observe(signature.finish());
+            key_tracker.finish_row();
         }
     }
 
@@ -363,6 +384,7 @@ pub async fn analyze_database_with_options(
     .with_lexical_tallies(lexical_tallies)
     .with_row_completeness(row_completeness)
     .with_row_duplicates(uniqueness.summary())
+    .with_composite_keys(key_tracker.summaries()?)
     .with_analysis_options(options)
     .build())
 }

@@ -16,6 +16,9 @@ pub use async_source::ReqwestSource;
 #[cfg(feature = "async-streaming")]
 pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
 pub use dataprof_metrics::LexicalTally;
+pub use dataprof_metrics::stats::composite_keys::{
+    CompositeKeySummary, CompositeKeyTracker, UniqueKeySettings,
+};
 pub use findings::{
     DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE, EvidenceValue, Finding,
     FindingCode, FindingPolicy, FindingPolicyError, FindingsInput, FindingsResult,

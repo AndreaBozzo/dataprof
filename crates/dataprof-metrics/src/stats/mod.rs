@@ -1,6 +1,7 @@
 pub mod accumulator;
 pub mod canonical_value;
 pub mod cardinality;
+pub mod composite_keys;
 pub mod datetime;
 pub mod numeric;
 pub mod text;

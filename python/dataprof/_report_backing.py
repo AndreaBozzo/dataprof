@@ -496,6 +496,21 @@ def _read_analysis_settings(document: dict[str, Any]) -> dict[str, Any] | None:
             )
         if limits:
             read["unique_count_exact_limits"] = dict(sorted(limits.items()))
+    if "unique_keys" in settings:
+        keys = settings["unique_keys"]
+        if (
+            not isinstance(keys, dict)
+            or not _is_count(keys.get("exact_limit"))
+            or not isinstance(keys.get("groups"), list)
+            or not all(_is_key_columns(group) for group in keys["groups"])
+        ):
+            raise ValueError(
+                "from_dict(): 'analysis_settings.unique_keys' needs groups and a limit."
+            )
+        read["unique_keys"] = {
+            "groups": [list(group) for group in keys["groups"]],
+            "exact_limit": keys["exact_limit"],
+        }
     return read
 
 
@@ -637,6 +652,59 @@ def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
     return read
 
 
+def _is_key_columns(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(column, str) for column in value)
+
+
+def _read_composite_keys(document: dict[str, Any]) -> list[dict[str, Any]] | None:
+    if "composite_keys" not in document:
+        return None
+    keys = document["composite_keys"]
+    if not _is_list_of_mappings(keys):
+        raise ValueError("from_dict(): 'composite_keys' must be a list of mappings.")
+    result = []
+    for item in keys:
+        record: dict[str, Any] = {
+            "columns": list(
+                _read_required_key_field(item, "columns", "column names", _is_key_columns)
+            ),
+            "is_exact": _read_required_key_field(item, "is_exact", "a boolean", _is_bool),
+            "sample_repeated_keys": [
+                list(row)
+                for row in _read_required_key_field(
+                    item,
+                    "sample_repeated_keys",
+                    "a list of string or null tuples",
+                    lambda value: (
+                        isinstance(value, list)
+                        and all(
+                            isinstance(row, list)
+                            and all(cell is None or isinstance(cell, str) for cell in row)
+                            for row in value
+                        )
+                    ),
+                )
+            ],
+        }
+        for field in (
+            "rows_counted",
+            "rows_skipped_all_null",
+            "distinct_keys",
+            "repeated_rows",
+            "distinct_repeated_keys",
+        ):
+            record[field] = _read_required_key_field(item, field, "a count", _is_count)
+        result.append(record)
+    return result
+
+
+def _read_required_key_field(item: dict[str, Any], field: str, expected: str, accepts: Any) -> Any:
+    path = f"composite_keys entry.{field}"
+    if field not in item:
+        raise ValueError(f"from_dict(): missing {path!r}.")
+    return _read_field(item, field, path, expected, accepts, None)
+
+
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     execution = document.get("execution") or {}
     values = dict(execution)
@@ -683,6 +751,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     )
     values["metric_semantics"] = _read_metric_semantics(document)
     values["analysis_settings"] = _read_analysis_settings(document)
+    values["composite_keys"] = _read_composite_keys(document)
     values["generator"] = _read_generator(document)
     values["source_identity"] = _read_source_identity(document)
     values["csv_metadata"] = _read_csv_metadata(document)

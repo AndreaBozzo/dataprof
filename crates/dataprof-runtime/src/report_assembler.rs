@@ -33,6 +33,7 @@ pub struct ReportAssembler {
     semantic_hints: SemanticHints,
     exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
+    composite_keys: Option<Vec<crate::CompositeKeySummary>>,
     row_completeness: Option<RowCompletenessSummary>,
     /// Exact per-column lexical/quality tallies over every scanned value
     /// (#788 step 2).
@@ -68,6 +69,7 @@ impl ReportAssembler {
             semantic_hints: SemanticHints::default(),
             exact_value_hint_bindings: None,
             row_duplicates: None,
+            composite_keys: None,
             row_completeness: None,
             lexical_tallies: None,
             analysis_settings: None,
@@ -209,6 +211,12 @@ impl ReportAssembler {
         self
     }
 
+    /// Record repeat counts for explicitly requested key groups.
+    pub fn with_composite_keys(mut self, summaries: Vec<crate::CompositeKeySummary>) -> Self {
+        self.composite_keys = (!summaries.is_empty()).then_some(summaries);
+        self
+    }
+
     /// Provide full-stream complete-record counts from an engine's row
     /// tracker. Without them `complete_records_ratio` can only be bounded
     /// from below, since per-column null totals cannot tell whether two
@@ -264,6 +272,7 @@ impl ReportAssembler {
         {
             semantics.value_facts = Some(dataprof_core::ValueFacts::EveryValue);
         }
+        report.composite_keys = self.composite_keys;
         report
     }
 

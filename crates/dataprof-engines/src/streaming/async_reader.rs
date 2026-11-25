@@ -693,6 +693,7 @@ impl AsyncStreamingProfiler {
             .with_quality_data(sample_columns)
             .with_lexical_tallies(column_stats.lexical_tallies())
             .with_row_duplicates(column_stats.row_duplicate_summary())
+            .with_composite_keys(column_stats.composite_key_summaries()?)
             .with_row_completeness(column_stats.row_completeness_summary())
             .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
             .with_analysis_options(&self.options)
@@ -1568,7 +1569,8 @@ impl AsyncStreamingProfiler {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb)
             .with_semantic_hints(self.options.semantic_hints())
             .with_duplicate_rows_exact_limit(self.options.duplicate_rows_exact_limit())
-            .with_unique_count_exact_limits(self.options.unique_count_exact_limits());
+            .with_unique_count_exact_limits(self.options.unique_count_exact_limits())
+            .with_unique_keys(&self.options);
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
         let mut total_rows: usize = 0;

@@ -431,6 +431,11 @@ class ProfileReport:
         return None if settings is None else dict(settings)
 
     @property
+    def composite_keys(self) -> list[dict[str, _Any]] | None:
+        """Repeat counts and samples for the requested key groups."""
+        return self._report.composite_keys
+
+    @property
     def generator(self) -> dict[str, _Any] | None:
         """The dataprof build that produced this report.
 
@@ -752,6 +757,9 @@ class ProfileReport:
         settings = self.analysis_settings
         if settings is not None:
             document["analysis_settings"] = settings
+        keys = self.composite_keys
+        if keys is not None:
+            document["composite_keys"] = keys
         generator = self.generator
         if generator is not None:
             document["generator"] = generator

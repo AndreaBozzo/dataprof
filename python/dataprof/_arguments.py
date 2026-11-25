@@ -24,6 +24,7 @@ _UNSIGNED_LIMITS = {
     "memory_limit_mb": _USIZE_MAX,
     "progress_interval_ms": _U64_MAX,
     "duplicate_rows_exact_limit": _USIZE_MAX,
+    "unique_keys_exact_limit": _USIZE_MAX,
 }
 
 # Option name -> what its list holds, for the error message.
@@ -140,5 +141,14 @@ def _check_profile_options(options: _Mapping[str, _Any]) -> None:
         _check_name_list(name, options.get(name))
     _check_temporal_pairs(options.get("temporal_pairs"))
     _check_unique_count_exact_limits(options.get("unique_count_exact_limits"))
+    groups = options.get("unique_keys")
+    if groups is not None:
+        if not isinstance(groups, (list, tuple)):
+            raise TypeError("unique_keys must be a list of column groups.")
+        for group in groups:
+            if not isinstance(group, (list, tuple)):
+                raise TypeError("unique_keys must contain lists of column names.")
+            if not group or any(not isinstance(column, str) for column in group):
+                raise ValueError("Each unique_keys group must contain column names.")
     for name in _UNSIGNED_LIMITS:
         _check_unsigned(name, options.get(name))
