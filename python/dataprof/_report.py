@@ -22,7 +22,12 @@ from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _Rep
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ProfileReport as _RustProfileReport, report_delta_json as _report_delta_json
 from ._findings import FindingsResult as _FindingsResult, _evaluate as _evaluate_findings
-from ._gate import QualityGateResult as _QualityGateResult, _Policy, _PolicyFieldError
+from ._gate import (
+    QualityGateResult as _QualityGateResult,
+    _Policy,
+    _PolicyFieldError,
+    _UniqueColumns,
+)
 from ._paths import _normalize_pathlike
 from ._render import (
     _bounded,
@@ -879,7 +884,7 @@ class ProfileReport:
         max_null_percentage: _Mapping[str, float] | float | None = None,
         max_null_count: _Mapping[str, int] | int | None = None,
         max_duplicate_rows: int | None = None,
-        unique_columns: _Sequence[str] | None = None,
+        unique_columns: _UniqueColumns | None = None,
         max_date_age: _Mapping[str, int] | None = None,
         max_date_gap: _Mapping[str, int] | None = None,
         require_metrics: _Sequence[str] | None = None,
@@ -956,6 +961,16 @@ class ProfileReport:
                 the ``identifier_columns`` profiling option, which picks the
                 key the uniqueness score and the ``key_duplicates`` finding
                 read; declaring one does not imply the other.
+                An ordered group, for example ``["id", ["country", "year"]]``,
+                adds a ``unique_key`` check over the corresponding
+                ``composite_keys`` entry. Request that group with
+                ``unique_keys=[["country", "year"]]`` when profiling. Even a
+                group of one uses the tuple tracker. All-null tuples are
+                skipped. A witnessed repeat fails and includes repeat counts
+                and up to five tuples. Passing requires an exact count, and
+                with ``scope="full_source"`` a complete scan, as for a single
+                column. Set ``unique_keys_exact_limit`` when a bounded
+                count cannot decide the check.
             max_date_age: Days a column's newest date (its ``max_datetime``)
                 may lie before the timeliness reference date the report
                 recorded, so a feed that stopped moving fails:

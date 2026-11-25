@@ -6,6 +6,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, Literal
 
 _Verdict = Literal["pass", "fail", "inconclusive"]
+_UniqueColumns = Sequence[str | Sequence[str]]
 
 class QualityCheck:
     """One requirement and what the report said about it."""
@@ -24,6 +25,7 @@ class QualityCheck:
     baseline: dict[str, Any] | None
     finding: str | None
     findings: tuple[dict[str, Any], ...]
+    key: dict[str, Any] | None
 
     def __init__(
         self,
@@ -41,6 +43,7 @@ class QualityCheck:
         baseline: dict[str, Any] | None = ...,
         finding: str | None = ...,
         findings: tuple[dict[str, Any], ...] = ...,
+        key: dict[str, Any] | None = ...,
     ) -> None: ...
     @property
     def is_violation(self) -> bool: ...
@@ -82,6 +85,7 @@ class QualityGateResult:
     def __str__(self) -> str: ...
 
 def combine_verdicts(results: Iterable[QualityGateResult]) -> _Verdict: ...
+def _check_summary(check: QualityCheck) -> str: ...
 def _summary_lines(
     result: QualityGateResult, *, version: str, baseline_path: object = ...
 ) -> list[str]: ...
@@ -93,6 +97,8 @@ class _PolicyFieldError(ValueError):
     def __init__(self, key: str, message: str) -> None: ...
 
 class _Policy:
+    unique_keys: list[list[str]]
+
     def __init__(
         self,
         *,
@@ -106,7 +112,7 @@ class _Policy:
         max_null_count: Mapping[str, int] | int | None = ...,
         max_date_age: Mapping[str, int] | None = ...,
         max_date_gap: Mapping[str, int] | None = ...,
-        unique_columns: Sequence[str] | None = ...,
+        unique_columns: _UniqueColumns | None = ...,
         baseline: Any = ...,
         allow_missing_baseline: bool = ...,
         max_quality_score_drop: float | None = ...,

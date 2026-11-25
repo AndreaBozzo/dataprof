@@ -1,6 +1,9 @@
 use std::io::Write as _;
 
-use dataprof::{AnalysisOptions, EngineType, ProfileReport, Profiler};
+use dataprof::{
+    AnalysisOptions, EngineType, PolicyScope, ProfileReport, Profiler, QualityPolicy,
+    SamplingStrategy, StopCondition, Verdict,
+};
 use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 
@@ -259,6 +262,7 @@ fn composite_keys_agree_over_whole_rows() {
 
     let mut wrong = Vec::new();
     let wanted = expected();
+    let policy = QualityPolicy::new().unique_keys(groups());
     for (route, report) in reports {
         let report = match report {
             Ok(report) => report,
@@ -270,6 +274,34 @@ fn composite_keys_agree_over_whole_rows() {
         let document = serde_json::to_value(&report).unwrap();
         let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        for candidate in [&report, &restored] {
+            let result = policy.evaluate(candidate).unwrap();
+            assert_eq!(result.verdict, Verdict::Fail, "{route}");
+            assert_eq!(
+                serde_json::to_value(&result.checks).unwrap(),
+                json!([
+                    {
+                        "code": "unique_key", "key": {
+                            "columns": wanted[0]["columns"],
+                            "repeats": {
+                                "distinct_repeated_keys": 7, "is_exact": true,
+                                "sample_repeated_keys": wanted[0]["sample_repeated_keys"],
+                            },
+                        },
+                        "expected": {"comparison": "at_most", "value": 0},
+                        "observed": 8, "scope": "full_source", "evidence": {"coverage": "complete"},
+                        "status": "failed", "message": "some key tuples occur more than once",
+                    },
+                    {
+                        "code": "unique_key", "key": {"columns": ["id"]},
+                        "expected": {"comparison": "at_most", "value": 0},
+                        "observed": 0, "scope": "full_source", "evidence": {"coverage": "complete"},
+                        "status": "passed", "message": "no key tuple occurs more than once",
+                    },
+                ]),
+                "{route}"
+            );
+        }
         for (label, block) in [
             ("document", document["composite_keys"].clone()),
             ("summary", summary["composite_keys"].clone()),
@@ -293,6 +325,122 @@ fn composite_keys_agree_over_whole_rows() {
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn unique_key_gate_uses_policy_groups() {
+    let path = file(".csv", b"country,year,id\nIT,2024,1\nIT,2024,2\n");
+    let policy = QualityPolicy::new().unique_keys([["country", "year"]]);
+    let report = Profiler::new()
+        .unique_keys(vec![vec!["id".to_string()]])
+        .unique_keys_from_policy(&policy)
+        .analyze_file(path.path())
+        .unwrap();
+    assert_eq!(report.composite_keys.as_ref().unwrap().len(), 2);
+    assert_eq!(policy.evaluate(&report).unwrap().verdict, Verdict::Fail);
+    assert!(
+        QualityPolicy::new()
+            .unique_keys([["id", "id"]])
+            .validate()
+            .is_err()
+    );
+}
+
+#[test]
+fn unique_key_gate_decides_partial_reads_by_scope() {
+    // As for a single column: a partial read with no repeat passes under
+    // `observed`, whose claim covers only the rows read, and is inconclusive
+    // under `full_source`. A repeat in the rows read fails under both.
+    let path = file(
+        ".csv",
+        b"country,year\nIT,2024\nIT,2025\nIT,2024\nIT,2026\n",
+    );
+    // A partial read, the verdict when it holds a repeat, and its evidence.
+    type PartialRead = (fn() -> Profiler, Option<Verdict>, Value);
+    let partial_reads: [PartialRead; 4] = [
+        (
+            || Profiler::new().stop_when(StopCondition::MaxRows(2)),
+            None,
+            json!({"coverage": "incomplete", "reason": "truncated"}),
+        ),
+        (
+            || Profiler::new().stop_when(StopCondition::MaxBytes(29)),
+            None,
+            json!({"coverage": "incomplete", "reason": "truncated"}),
+        ),
+        (
+            || Profiler::new().sampling(SamplingStrategy::Systematic { interval: 3 }),
+            None,
+            json!({"coverage": "incomplete", "reason": "sampled"}),
+        ),
+        (
+            || Profiler::new().stop_when(StopCondition::MaxRows(3)),
+            Some(Verdict::Fail),
+            json!({"coverage": "incomplete", "reason": "truncated"}),
+        ),
+    ];
+    for (scope, unrepeated) in [
+        (PolicyScope::Observed, Verdict::Pass),
+        (PolicyScope::FullSource, Verdict::Inconclusive),
+    ] {
+        let policy = QualityPolicy::new()
+            .unique_keys([["country", "year"]])
+            .scope(scope);
+        for (profiler, repeated, reason) in &partial_reads {
+            let report = profiler()
+                .engine(EngineType::Incremental)
+                .unique_keys_from_policy(&policy)
+                .analyze_file(path.path())
+                .unwrap();
+            let result = policy.evaluate(&report).unwrap();
+            assert_eq!(
+                result.verdict,
+                repeated.unwrap_or(unrepeated),
+                "{scope:?} {reason}"
+            );
+            assert_eq!(
+                &serde_json::to_value(result.checks[0].evidence).unwrap(),
+                reason
+            );
+        }
+    }
+}
+
+#[test]
+fn unique_key_gate_decides_bounded_counts_from_witnesses() {
+    let clean = file(".csv", b"country,year\nIT,2024\nIT,2025\n");
+    let repeated = file(".csv", b"country,year\nIT,2024\nIT,2025\nIT,2024\n");
+    let policy = QualityPolicy::new().unique_keys([["country", "year"]]);
+    let profile = |file: &NamedTempFile, limit| {
+        Profiler::new()
+            .unique_keys_from_policy(&policy)
+            .unique_keys_exact_limit(limit)
+            .analyze_file(file.path())
+            .unwrap()
+    };
+    let bounded = policy.evaluate(&profile(&clean, 1)).unwrap();
+    assert_eq!(bounded.verdict, Verdict::Inconclusive);
+    assert!(matches!(
+        bounded.checks[0].not_evaluated(),
+        Some(dataprof::NotEvaluated::ApproximateCount)
+    ));
+    assert!(
+        bounded.checks[0]
+            .message
+            .contains("unique_keys_exact_limit")
+    );
+    assert_eq!(
+        policy.evaluate(&profile(&clean, 2)).unwrap().verdict,
+        Verdict::Pass,
+    );
+
+    let witnessed = policy.evaluate(&profile(&repeated, 1)).unwrap();
+    assert_eq!(witnessed.verdict, Verdict::Fail);
+    let check = &witnessed.checks[0];
+    assert_eq!(check.observed, Some(dataprof::MetricValue::Count(1)));
+    let repeats = check.key.as_ref().unwrap().repeats.as_ref().unwrap();
+    assert_eq!(repeats.distinct_repeated_keys, 1);
+    assert!(!repeats.is_exact);
 }
 
 #[cfg(feature = "sqlite")]

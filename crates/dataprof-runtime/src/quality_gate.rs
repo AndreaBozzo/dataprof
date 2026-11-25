@@ -111,6 +111,10 @@
 //! [`PolicyScope::FullSource`] only on a scan that covered the source. An
 //! estimated distinct count settles neither direction
 //! ([`NotEvaluated::ApproximateCount`]).
+//! [`QualityPolicy::unique_keys`] evaluates ordered column groups from
+//! `composite_keys`. A witnessed repeat fails even with an incomplete scan
+//! or a bounded count. Passing requires an exact count, and under
+//! [`PolicyScope::FullSource`] a scan that covered the source.
 //!
 //! # Freshness
 //!
@@ -238,6 +242,8 @@ pub enum PolicyError {
         /// The value as supplied.
         value: f64,
     },
+    /// A key group is empty or names a column more than once.
+    InvalidUniqueKey(Vec<String>),
     /// The policy states no requirement at all. An empty policy passes every
     /// report, which is never what a gate is for.
     NoRequirements,
@@ -267,6 +273,12 @@ impl fmt::Display for PolicyError {
                         "must be a percentage between 0 and {PERCENTAGE_MAX}, got {value}"
                     )
                 }
+            }
+            Self::InvalidUniqueKey(columns) => {
+                write!(
+                    f,
+                    "unique key {columns:?} must be nonempty with distinct columns"
+                )
             }
             Self::NoRequirements => write!(
                 f,
@@ -470,6 +482,8 @@ pub enum CheckCode {
     MaxDuplicateRows,
     /// No non-null value of a column may occur more than once.
     UniqueColumn,
+    /// No key tuple with a non-null cell may occur more than once.
+    UniqueKey,
     /// A column's newest date may lie at most the threshold's number of days
     /// before the timeliness reference date.
     MaxDateAge,
@@ -519,6 +533,7 @@ impl fmt::Display for CheckCode {
             Self::MaxNullCount => write!(f, "max_null_count"),
             Self::MaxDuplicateRows => write!(f, "max_duplicate_rows"),
             Self::UniqueColumn => write!(f, "unique_column"),
+            Self::UniqueKey => write!(f, "unique_key"),
             Self::MaxDateAge => write!(f, "max_date_age"),
             Self::MaxDateGap => write!(f, "max_date_gap"),
             Self::RequireMetric => write!(f, "require_metric"),
@@ -681,8 +696,8 @@ pub enum NotEvaluated {
     /// it.
     NotInBaseline,
     /// The requirement needs an exact count. A duplicate-row or distinct
-    /// count spilled into a sketch, or a report did not record whether its
-    /// distinct count is exact.
+    /// count spilled into a sketch, a key count reached its tracking limit,
+    /// or a report did not record whether its distinct count is exact.
     ApproximateCount,
     /// The two reports profiled different column sets, and the requirement
     /// is about a dataset-level score, whose subject is the column set. The
@@ -741,6 +756,30 @@ pub enum CheckStatus {
 
 const NO_BASELINE: &str = "no baseline was used for this run";
 
+/// Subject and repeat evidence of a [`CheckCode::UniqueKey`] check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct UniqueKeyEvidence {
+    /// Columns in the order used to profile and display the key.
+    pub columns: Vec<String>,
+    /// Evidence of a witnessed repeat, present on failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeats: Option<KeyRepeats>,
+}
+
+/// Counts and examples of repeated keys observed by a failed check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct KeyRepeats {
+    /// Number of distinct tuples observed at least twice.
+    pub distinct_repeated_keys: usize,
+    /// Up to five repeated tuples, with null cells preserved.
+    pub sample_repeated_keys: Vec<Vec<Option<String>>>,
+    /// Whether the counts are exact over the scanned rows. Otherwise the
+    /// counts are lower bounds. The check's scan evidence describes coverage.
+    pub is_exact: bool,
+}
+
 /// One requirement and what the report said about it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[non_exhaustive]
@@ -783,15 +822,16 @@ pub struct Check {
     /// and not serialized, when there are none and on every other rule.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
+    /// The key group this check concerns, with repeat evidence on failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<UniqueKeyEvidence>,
     /// Passed, failed, not evaluated, or not applicable.
     #[serde(flatten)]
     pub status: CheckStatus,
     /// A fixed sentence naming the outcome.
     ///
-    /// Deliberately free of numbers: `observed` and `expected` carry those, so
-    /// the prose is identical wherever a value would have been formatted and
-    /// the Rust and Python implementations cannot drift on rounding inside a
-    /// string.
+    /// Measured values and thresholds belong in `observed` and `expected`,
+    /// so the prose need not format or round them.
     pub message: String,
 }
 
@@ -1070,6 +1110,7 @@ pub struct QualityPolicy {
     max_null_count_any: Option<usize>,
     max_duplicate_rows: Option<usize>,
     unique_columns: BTreeSet<String>,
+    unique_keys: BTreeSet<Vec<String>>,
     max_date_age: BTreeMap<String, u32>,
     max_date_gap: BTreeMap<String, u32>,
     require_metrics: Vec<RequiredMetric>,
@@ -1186,6 +1227,33 @@ impl QualityPolicy {
         self.unique_columns
             .extend(columns.into_iter().map(Into::into));
         self
+    }
+
+    /// Require uniqueness of each ordered group of columns. A group of one
+    /// uses the same tuple count as a wider group. All-null tuples are skipped.
+    ///
+    /// Request [`unique_key_groups`](Self::unique_key_groups) as `unique_keys`
+    /// when profiling. A missing summary leaves the check unevaluated. Any
+    /// witnessed repeat fails. Passing requires exact counts, and under
+    /// [`PolicyScope::FullSource`] a complete scan, as for
+    /// [`unique_columns`](Self::unique_columns).
+    pub fn unique_keys<I, G, S>(mut self, groups: I) -> Self
+    where
+        I: IntoIterator<Item = G>,
+        G: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.unique_keys.extend(
+            groups
+                .into_iter()
+                .map(|group| group.into_iter().map(Into::into).collect()),
+        );
+        self
+    }
+
+    /// Ordered groups the profiler must count for this policy.
+    pub fn unique_key_groups(&self) -> impl ExactSizeIterator<Item = &[String]> {
+        self.unique_keys.iter().map(Vec::as_slice)
     }
 
     /// Require the named column's newest date to lie at most `days` days
@@ -1444,6 +1512,12 @@ impl QualityPolicy {
     /// Callers that read a policy out of configuration should do this at
     /// startup rather than discovering a bad threshold on the first dataset.
     pub fn validate(&self) -> Result<(), PolicyError> {
+        for columns in &self.unique_keys {
+            if columns.is_empty() || columns.iter().collect::<BTreeSet<_>>().len() != columns.len()
+            {
+                return Err(PolicyError::InvalidUniqueKey(columns.clone()));
+            }
+        }
         if let Some(min) = self.min_quality_score {
             check_percentage(CheckCode::MinQualityScore, None, min)?;
         }
@@ -1514,6 +1588,7 @@ impl QualityPolicy {
             && self.max_null_count_any.is_none()
             && self.max_duplicate_rows.is_none()
             && self.unique_columns.is_empty()
+            && self.unique_keys.is_empty()
             && self.max_date_age.is_empty()
             && self.max_date_gap.is_empty()
             && self.require_metrics.is_empty()
@@ -1591,6 +1666,7 @@ impl QualityPolicy {
                 dimension,
                 finding: None,
                 findings: Vec::new(),
+                key: None,
                 expected,
                 observed: None,
                 scope: self.scope,
@@ -1845,6 +1921,9 @@ impl QualityPolicy {
                 .find(|candidate| &candidate.name == column);
             checks.push(self.unique_column_check(report, column, profile, scan));
         }
+        for columns in self.unique_key_groups() {
+            checks.push(self.unique_key_check(report, columns, scan));
+        }
         for (column, days) in &self.max_date_age {
             let profile = report
                 .column_profiles
@@ -1977,6 +2056,7 @@ impl QualityPolicy {
             bounds: None,
             baseline: None,
             findings: found,
+            key: None,
             status,
             message: with_exact_count_hint(message, report, estimated_duplicates),
         }
@@ -2026,6 +2106,7 @@ impl QualityPolicy {
             dimension,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::Analyzed,
             observed: None,
             scope: self.scope,
@@ -2071,6 +2152,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtLeast {
                 value: MetricValue::Count(min),
             },
@@ -2091,6 +2173,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtLeast {
                 value: MetricValue::Percentage(min),
             },
@@ -2136,6 +2219,7 @@ impl QualityPolicy {
             dimension: Some(dimension),
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtLeast {
                 value: MetricValue::Percentage(min),
             },
@@ -2265,6 +2349,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Percentage(max),
             },
@@ -2345,6 +2430,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Count(max),
             },
@@ -2397,6 +2483,7 @@ impl QualityPolicy {
             dimension: Some(QualityDimension::Uniqueness),
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Count(max),
             },
@@ -2483,6 +2570,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Count(0),
             },
@@ -2550,6 +2638,73 @@ impl QualityPolicy {
         check
     }
 
+    fn unique_key_check(
+        &self,
+        report: &ProfileReport,
+        columns: &[String],
+        scan: Evidence,
+    ) -> Check {
+        let summary = report
+            .composite_keys
+            .iter()
+            .flatten()
+            .find(|summary| summary.columns == columns);
+        let witnessed = summary.filter(|summary| summary.repeated_rows > 0);
+        let mut check = Check {
+            code: CheckCode::UniqueKey,
+            column: None,
+            dimension: None,
+            finding: None,
+            findings: Vec::new(),
+            key: Some(UniqueKeyEvidence {
+                columns: columns.to_vec(),
+                repeats: witnessed.map(|summary| KeyRepeats {
+                    distinct_repeated_keys: summary.distinct_repeated_keys,
+                    sample_repeated_keys: summary.sample_repeated_keys.clone(),
+                    is_exact: summary.is_exact,
+                }),
+            }),
+            expected: Expectation::AtMost {
+                value: MetricValue::Count(0),
+            },
+            observed: None,
+            scope: self.scope,
+            evidence: scan,
+            bounds: None,
+            baseline: None,
+            status: CheckStatus::Passed,
+            message: String::new(),
+        };
+        let Some(summary) = summary else {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
+            check.message =
+                "this key group was not counted. Profile again with this group in unique_keys."
+                    .to_string();
+            return check;
+        };
+        if witnessed.is_some() {
+            check.observed = Some(MetricValue::Count(summary.repeated_rows));
+            check.status = CheckStatus::Failed;
+            check.message = "some key tuples occur more than once".to_string();
+        } else if !summary.is_exact {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::ApproximateCount);
+            check.message = format!(
+                "the key tracking limit was exceeded and no repeat was witnessed. Profile again \
+                 with unique_keys_exact_limit set to at least {} (CLI: --unique-keys-exact-limit {}).",
+                summary.rows_counted, summary.rows_counted
+            );
+        } else if let (PolicyScope::FullSource, Some(gap)) = (self.scope, scan.gap()) {
+            check.status = CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap });
+            check.message =
+                "no key tuple was observed more than once, and the rows that were not read may repeat one"
+                    .to_string();
+        } else {
+            check.observed = Some(MetricValue::Count(0));
+            check.message = "no key tuple occurs more than once".to_string();
+        }
+        check
+    }
+
     /// How old a column's newest date may be, in days before the timeliness
     /// reference date. See [`max_date_age`](Self::max_date_age).
     fn date_age_check(
@@ -2566,6 +2721,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Days(i64::from(max_days)),
             },
@@ -2679,6 +2835,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::AtMost {
                 value: MetricValue::Days(i64::from(max_days)),
             },
@@ -2783,6 +2940,7 @@ impl QualityPolicy {
             dimension,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: score_drop_expectation(points),
             observed: change.b.map(MetricValue::Percentage),
             scope: self.scope,
@@ -3020,6 +3178,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::ChangeAtMost {
                 value: MetricValue::Percentage(points),
             },
@@ -3123,6 +3282,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: Expectation::ChangeAtMost {
                 value: MetricValue::Count(nulls),
             },
@@ -3198,6 +3358,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected,
             observed: b.rows_processed.map(MetricValue::Count),
             scope: self.scope,
@@ -3372,6 +3533,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected: distinct_drop_expectation(percent),
             observed: count_b.map(MetricValue::Count),
             scope: self.scope,
@@ -3662,6 +3824,7 @@ impl QualityPolicy {
             dimension: None,
             finding: None,
             findings: Vec::new(),
+            key: None,
             expected,
             observed: None,
             scope: self.scope,

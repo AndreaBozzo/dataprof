@@ -39,6 +39,8 @@ _TIMELINESS_CLOCKS = ("fixed", "rolling")
 #: Valid three-valued verdicts produced by a quality gate.
 _VERDICTS = ("pass", "fail", "inconclusive")
 
+_UniqueColumns = _Sequence[str | _Sequence[str]]
+
 
 class _PolicyFieldError(ValueError):
     """A policy validation error identifying the invalid configuration key."""
@@ -52,10 +54,7 @@ class _PolicyFieldError(ValueError):
 class QualityCheck:
     """One requirement and what the report said about it.
 
-    ``message`` is deliberately free of numbers: ``observed`` and ``expected``
-    carry those, so the prose is identical wherever a value would have been
-    formatted and the Rust and Python implementations cannot drift on rounding
-    inside a string.
+    ``observed`` and ``expected`` carry measured values and thresholds.
     """
 
     #: Stable identifier for the requirement, e.g. ``"max_null_percentage"``.
@@ -99,6 +98,8 @@ class QualityCheck:
     #: ``severity``, ``column`` when there is one, ``evidence`` and
     #: ``summary``. Empty when there are none and on every other rule.
     findings: tuple[dict[str, _Any], ...] = ()
+    #: Ordered columns and, on failure, evidence of repeated tuples.
+    key: dict[str, _Any] | None = None
 
     @property
     def is_violation(self) -> bool:
@@ -125,6 +126,8 @@ class QualityCheck:
             document["baseline"] = dict(self.baseline)
         if self.findings:
             document["findings"] = [dict(finding) for finding in self.findings]
+        if self.key is not None:
+            document["key"] = dict(self.key)
         document["status"] = self.status
         if self.reason is not None:
             document.update(self.reason)
@@ -276,6 +279,32 @@ def combine_verdicts(results: _Iterable[QualityGateResult]) -> str:
 combine_verdicts.__module__ = "dataprof"
 
 
+def _check_summary(check: QualityCheck) -> str:
+    subject = next(
+        (s for s in (check.column, check.dimension, check.finding) if s is not None), None
+    )
+    if check.key is not None:
+        subject = ", ".join(repr(column) for column in check.key["columns"])
+    label = f" [{subject}]" if subject is not None else ""
+    line = f"{check.status}: {check.code}{label}: {check.message}"
+    repeats = check.key.get("repeats") if check.key is not None else None
+    if repeats is not None:
+        qualifier = (
+            "at least "
+            if not repeats["is_exact"] or check.evidence["coverage"] != "complete"
+            else ""
+        )
+        rows = check.observed
+        keys = repeats["distinct_repeated_keys"]
+        line += (
+            f" ({qualifier}{rows} repeated row{'s' if rows != 1 else ''}, "
+            f"{qualifier}{keys} distinct repeated key{'s' if keys != 1 else ''})"
+        )
+        if samples := repeats["sample_repeated_keys"]:
+            line += f". Sample repeated keys: {_json.dumps(samples)}"
+    return line
+
+
 def _summary_lines(
     result: QualityGateResult, *, version: str, baseline_path: object = None
 ) -> list[str]:
@@ -297,12 +326,7 @@ def _summary_lines(
         lines.append(f"  baseline: {baseline_path}")
     for check in result.checks:
         if check.status != "passed":
-            subject = next(
-                (s for s in (check.column, check.dimension, check.finding) if s is not None),
-                None,
-            )
-            label = f" [{subject}]" if subject is not None else ""
-            lines.append(f"  {check.status}: {check.code}{label}: {check.message}")
+            lines.append(f"  {_check_summary(check)}")
     # Schema changes from the baseline never move the verdict, so a pass can
     # carry them; without these lines only --json would show them.
     for diagnostic in (result.baseline or {}).get("diagnostics", []):
@@ -440,6 +464,36 @@ def _column_names(key: str, value: _Sequence[str] | None) -> list[str]:
     return sorted(set(value or ()))
 
 
+def _unique_requirements(value: _UniqueColumns | None) -> tuple[list[str], list[list[str]]]:
+    columns: set[str] = set()
+    groups: set[tuple[str, ...]] = set()
+    if value is not None and (
+        not isinstance(value, _Sequence)
+        or isinstance(value, (str, bytes))
+        or not all(isinstance(item, _Sequence) and not isinstance(item, bytes) for item in value)
+    ):
+        raise _PolicyFieldError(
+            "unique_columns",
+            f"unique_columns must be a list of column names or groups, got {value!r}",
+        )
+    for item in value or ():
+        if isinstance(item, str):
+            columns.add(item)
+            continue
+        if (
+            not item
+            or not all(isinstance(column, str) for column in item)
+            or len(set(item)) != len(item)
+        ):
+            raise _PolicyFieldError(
+                "unique_columns",
+                "unique_columns groups must be nonempty sequences of distinct column names, "
+                f"got {item!r}",
+            )
+        groups.add(tuple(item))
+    return sorted(columns), [list(group) for group in sorted(groups)]
+
+
 class _Policy:
     """The evaluator. Constructed from :meth:`ProfileReport.check` keywords."""
 
@@ -456,7 +510,7 @@ class _Policy:
         max_null_count: _Mapping[str, int] | int | None = None,
         max_date_age: _Mapping[str, int] | None = None,
         max_date_gap: _Mapping[str, int] | None = None,
-        unique_columns: _Sequence[str] | None = None,
+        unique_columns: _UniqueColumns | None = None,
         baseline: _RustProfileReport | str | None = None,
         allow_missing_baseline: bool = False,
         max_quality_score_drop: float | None = None,
@@ -536,7 +590,7 @@ class _Policy:
             None if max_duplicate_rows is None else _count("max_duplicate_rows", max_duplicate_rows)
         )
 
-        self.unique_columns = _column_names("unique_columns", unique_columns)
+        self.unique_columns, self.unique_keys = _unique_requirements(unique_columns)
 
         self.max_date_age = _date_columns("max_date_age", max_date_age)
         self.max_date_gap = _date_columns("max_date_gap", max_date_gap)
@@ -680,6 +734,7 @@ class _Policy:
             or self.max_null_count_any is not None
             or self.max_duplicate_rows is not None
             or self.unique_columns
+            or self.unique_keys
             or self.max_date_age
             or self.max_date_gap
             or self.require_quality
@@ -732,6 +787,7 @@ class _Policy:
                 max_null_count_any=self.max_null_count_any,
                 max_duplicate_rows=self.max_duplicate_rows,
                 unique_columns=self.unique_columns,
+                unique_keys=self.unique_keys,
                 max_date_age=list(self.max_date_age.items()),
                 max_date_gap=list(self.max_date_gap.items()),
                 require_quality=self.require_quality,
@@ -773,6 +829,7 @@ _CHECK_FIELDS = (
     "baseline",
     "finding",
     "findings",
+    "key",
     "status",
     "message",
 )
@@ -792,6 +849,7 @@ def _check_from_document(document: dict[str, _Any]) -> QualityCheck:
         baseline=document.get("baseline"),
         finding=document.get("finding"),
         findings=tuple(document.get("findings", ())),
+        key=document.get("key"),
         status=document["status"],
         reason=reason or None,
         message=document["message"],
