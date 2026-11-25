@@ -250,6 +250,36 @@ impl TemporalPairTracker {
             found
         };
 
+        // The tracked set must depend on the columns known, not on the order
+        // they were registered in: a reader that registers keys one by one
+        // (JSON) can add an unrelated pair while the cross-product is still
+        // under the cap. Once the cap is crossed, drop every pair the whole
+        // schema would not select, so it falls back to the sample as it does
+        // on a reader that registers the full header at once (CSV).
+        let keep: HashSet<(&str, &str)> = declared_pairs
+            .iter()
+            .map(|(start, end)| (start.as_str(), end.as_str()))
+            .chain(
+                candidates
+                    .iter()
+                    .map(|(start, end)| (start.as_str(), end.as_str())),
+            )
+            .collect();
+        if self
+            .pairs
+            .iter()
+            .any(|pair| !keep.contains(&(pair.start_name.as_str(), pair.end_name.as_str())))
+        {
+            self.pairs
+                .retain(|pair| keep.contains(&(pair.start_name.as_str(), pair.end_name.as_str())));
+            self.pair_index = self
+                .pairs
+                .iter()
+                .enumerate()
+                .map(|(index, pair)| ((pair.start_name.clone(), pair.end_name.clone()), index))
+                .collect();
+        }
+
         for (start, end) in candidates {
             self.add_pair(&start, &end);
         }

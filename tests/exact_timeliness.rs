@@ -521,42 +521,67 @@ fn a_lone_pair_in_a_wide_table_is_never_reported_with_zero_rows() {
     // row. Only those two columns hold dates, so the calculator still selects
     // them as the lone pair: the report must count its rows, not list it as
     // compared with nothing checked.
+    //
+    // JSONL registers late keys one at a time, after `start_a` and `end_bx`,
+    // so the pair is under the cap when it is registered; the tracked set
+    // must still match the CSV header's, or past the 10,000-value sample the
+    // two routes disagree on whether timeliness is exact, and on its counts.
     let starts: Vec<String> = ('a'..='q').map(|c| format!("start_{c}")).collect();
     let ends: Vec<String> = ('b'..='q').map(|c| format!("end_{c}x")).collect();
-    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
-    writeln!(file, "{},{}", starts.join(","), ends.join(",")).unwrap();
-    for row in 0..20 {
-        let (start, end) = if row < 5 {
-            ("2024-03-10", "2024-03-01")
-        } else {
-            ("2024-03-01", "2024-03-10")
-        };
+    let rows: Vec<(&str, &str)> = (0..12_000)
+        .map(|row| {
+            if (11_000..11_005).contains(&row) {
+                ("2024-03-10", "2024-03-01")
+            } else {
+                ("2024-03-01", "2024-03-10")
+            }
+        })
+        .collect();
+
+    let mut csv = NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(csv, "{},{}", starts.join(","), ends.join(",")).unwrap();
+    for (start, end) in &rows {
         let mut cells = vec![start.to_string()];
         cells.extend(std::iter::repeat_n("x".to_string(), starts.len() - 1));
         cells.push(end.to_string());
         cells.extend(std::iter::repeat_n("x".to_string(), ends.len() - 1));
-        writeln!(file, "{}", cells.join(",")).unwrap();
+        writeln!(csv, "{}", cells.join(",")).unwrap();
     }
-    file.flush().unwrap();
+    csv.flush().unwrap();
 
-    let report = Profiler::new()
-        .engine(EngineType::Incremental)
-        .reference_date(day(REFERENCE))
-        .analyze_file(file.path())
-        .unwrap();
-    let t = report
-        .quality
-        .as_ref()
-        .unwrap()
-        .metrics
-        .timeliness
-        .as_ref()
-        .unwrap();
-    assert_eq!(
-        (t.temporal_pairs_checked, t.temporal_violations),
-        (20, 5),
-        "{t:?}"
-    );
+    // The first record holds only the pair; every other key arrives in the
+    // second, so the reader registers them one by one after the pair.
+    let mut jsonl = NamedTempFile::with_suffix(".jsonl").unwrap();
+    for (row, (start, end)) in rows.iter().enumerate() {
+        let mut fields = vec![
+            format!("\"start_a\":\"{start}\""),
+            format!("\"end_bx\":\"{end}\""),
+        ];
+        if row > 0 {
+            fields.extend(starts[1..].iter().map(|name| format!("\"{name}\":\"x\"")));
+            fields.extend(ends[1..].iter().map(|name| format!("\"{name}\":\"x\"")));
+        }
+        writeln!(jsonl, "{{{}}}", fields.join(",")).unwrap();
+    }
+    jsonl.flush().unwrap();
+
+    let mut seen = Vec::new();
+    for path in [csv.path(), jsonl.path()] {
+        let report = Profiler::new()
+            .engine(EngineType::Incremental)
+            .reference_date(day(REFERENCE))
+            .analyze_file(path)
+            .unwrap();
+        let quality = report.quality.as_ref().unwrap();
+        let t = quality.metrics.timeliness.as_ref().unwrap();
+        assert!(t.temporal_pairs_checked > 0, "{path:?}: {t:?}");
+        let exact = quality
+            .exact_dimensions()
+            .unwrap_or_default()
+            .contains(&"timeliness".to_string());
+        seen.push((exact, serialized_timeliness(&report)));
+    }
+    assert_eq!(seen[0], seen[1], "CSV vs JSONL timeliness");
 }
 
 #[test]
