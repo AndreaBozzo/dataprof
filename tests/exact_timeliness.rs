@@ -575,11 +575,24 @@ fn a_lone_pair_in_a_wide_table_is_never_reported_with_zero_rows() {
         let quality = report.quality.as_ref().unwrap();
         let t = quality.metrics.timeliness.as_ref().unwrap();
         assert!(t.temporal_pairs_checked > 0, "{path:?}: {t:?}");
-        let exact = quality
-            .exact_dimensions()
-            .unwrap_or_default()
-            .contains(&"timeliness".to_string());
-        seen.push((exact, serialized_timeliness(&report)));
+        // No full-read tally for the pair: timeliness reads the sample and
+        // says so.
+        let timeliness = "timeliness".to_string();
+        assert!(
+            !quality
+                .exact_dimensions()
+                .unwrap_or_default()
+                .contains(&timeliness),
+            "{path:?}"
+        );
+        assert!(
+            quality
+                .sampled_dimensions()
+                .unwrap_or_default()
+                .contains(&timeliness),
+            "{path:?}"
+        );
+        seen.push(serialized_timeliness(&report));
     }
     assert_eq!(seen[0], seen[1], "CSV vs JSONL timeliness");
 }

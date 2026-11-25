@@ -192,9 +192,7 @@ fn fold_row(
     containers: &[usize],
 ) {
     let width = values.len().min(headers.len()).max(*registered);
-    for header in &headers[*registered..width] {
-        column_stats.init_column_with_missing(header, folded_rows);
-    }
+    column_stats.init_columns_with_missing(&headers[*registered..width], folded_rows);
     *registered = width;
     let covered = &headers[..width];
     count_containers(covered, containers, container_counts);
@@ -1886,9 +1884,7 @@ impl AsyncStreamingProfiler {
         // A column the consumed rows reach but no folded row covers is missing
         // from every folded row: none was read after it appeared, or it would
         // cover it. Columns only rows past a row cap reach are not registered.
-        for header in &headers[registered..discovered] {
-            column_stats.init_column_with_missing(header, sampled_rows);
-        }
+        column_stats.init_columns_with_missing(&headers[registered..discovered], sampled_rows);
 
         Ok((
             headers,

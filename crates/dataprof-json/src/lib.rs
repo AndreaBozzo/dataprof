@@ -733,14 +733,18 @@ fn feed_json_object(
     column_stats: &mut StreamingColumnCollection,
     container_counts: &mut HashMap<String, usize>,
 ) {
+    let first_new = known_columns.len();
     for (key, value) in obj {
         if known_columns_set.insert(key.clone()) {
             known_columns.push(key.clone());
-            column_stats.init_column_with_missing(key, prior_rows);
         }
         if matches!(value, Value::Array(_) | Value::Object(_)) {
             *container_counts.entry(key.clone()).or_default() += 1;
         }
+    }
+    // One registration for every key this object introduces.
+    if known_columns.len() > first_new {
+        column_stats.init_columns_with_missing(&known_columns[first_new..], prior_rows);
     }
 
     let values: Vec<String> = known_columns

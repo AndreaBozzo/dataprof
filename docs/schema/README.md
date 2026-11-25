@@ -1504,7 +1504,12 @@ pairs row by row over every scanned row (#787, #1305). Thus `data_type`,
 `timeliness` cover every value read on every route; `consistency`, `precision`
 and `timeliness` appear in `exact_dimensions` rather than `sampled_dimensions`,
 and `accuracy` leaves `sampled_dimensions` whenever no outlier-eligible numeric
-column is sampled. Reports written by step 1 recorded `"every_value"` (types
+column is sampled. One exception: when a selected start/end pair or temporal
+column has no full-read count (a table with more than 256 unrelated `start*` by
+`end*` name combinations, where an unrelated pair is not followed row by row),
+timeliness reads the retained sample and stays in `sampled_dimensions`. Read
+`exact_dimensions` and `sampled_dimensions`, not `value_facts`, to learn which
+dimensions a report counted over every value. Reports written by step 1 recorded `"every_value"` (types
 and lexical forms exact; consistency, precision, accuracy rules and timeliness
 sampled); reports written by step 2 recorded
 `"every_value_consistency_precision"` (consistency and precision also exact);

@@ -761,6 +761,10 @@ pub struct StreamingColumnCollection {
     timeliness_window: TimelinessWindow,
     timeliness_clock_mode: TimelinessClockMode,
     temporal_pairs: TemporalPairTracker,
+    /// The parsed dates of the record being processed, by position, kept so
+    /// a record that introduces a column can replay them into the pair
+    /// tracker once every column of the record is registered.
+    row_dates: Vec<Option<DualDate>>,
 }
 
 impl StreamingColumnCollection {
@@ -778,6 +782,7 @@ impl StreamingColumnCollection {
             timeliness_window,
             timeliness_clock_mode,
             temporal_pairs: TemporalPairTracker::default(),
+            row_dates: Vec::new(),
         }
     }
 
@@ -795,6 +800,7 @@ impl StreamingColumnCollection {
             timeliness_window,
             timeliness_clock_mode,
             temporal_pairs: TemporalPairTracker::default(),
+            row_dates: Vec::new(),
         }
     }
 
@@ -859,8 +865,30 @@ impl StreamingColumnCollection {
     /// total/null counters rather than looking shorter and more complete than
     /// the dataset.
     pub fn init_column_with_missing(&mut self, header: &str, prior_rows: usize) {
+        if self.insert_missing_column(header, prior_rows) {
+            self.temporal_pairs.register_column(header);
+        }
+    }
+
+    /// [`Self::init_column_with_missing`] for every column one record
+    /// introduces, registering them with the start/end pair tracker in one
+    /// call, so a wide record recomputes the candidate pairs once rather
+    /// than once per column.
+    pub fn init_columns_with_missing(&mut self, headers: &[String], prior_rows: usize) {
+        let mut added = false;
+        for header in headers {
+            added |= self.insert_missing_column(header, prior_rows);
+        }
+        if added {
+            self.temporal_pairs.register_columns(headers);
+        }
+    }
+
+    /// Insert a column padded with `prior_rows` missing values; `false` when
+    /// it already exists.
+    fn insert_missing_column(&mut self, header: &str, prior_rows: usize) -> bool {
         if self.columns.contains_key(header) {
-            return;
+            return false;
         }
 
         let stats = StreamingStatistics {
@@ -870,10 +898,10 @@ impl StreamingColumnCollection {
         };
         self.columns.insert(header.to_string(), stats);
         self.ordered_names.push(header.to_string());
-        self.temporal_pairs.register_column(header);
         if prior_rows > 0 {
             self.completeness_tracker.invalidate_completed_rows();
         }
+        true
     }
 
     pub fn process_record<I>(&mut self, headers: &[String], values: I)
@@ -900,6 +928,8 @@ impl StreamingColumnCollection {
         let mut row_has_null = false;
         let mut values = values.into_iter();
         let track_pairs = self.temporal_pairs.is_enabled();
+        let mut introduced_column = false;
+        self.row_dates.clear();
 
         // Headers define the row schema. Normalize a missing trailing field to
         // the profiler's empty/null representation so ragged flexible records
@@ -925,11 +955,13 @@ impl StreamingColumnCollection {
                 let parsed = stats.update_returning_date(&value);
                 self.columns.insert(header.clone(), stats);
                 self.temporal_pairs.register_column(header);
+                introduced_column = true;
                 parsed
             };
+            let parsed_date = (!is_container).then_some(parsed_date).flatten();
+            self.row_dates.push(parsed_date);
             if track_pairs || self.temporal_pairs.is_enabled() {
-                self.temporal_pairs
-                    .record_date(header, (!is_container).then_some(parsed_date).flatten());
+                self.temporal_pairs.record_date(header, parsed_date);
             }
             // Same null definition the column counters use, so the record
             // count and the cell counts always describe the same nulls.
@@ -942,6 +974,14 @@ impl StreamingColumnCollection {
         self.row_tracker.observe(row_signature.finish());
         self.completeness_tracker.observe(row_has_null);
         self.composite_keys.finish_row();
+        // A column registered mid-record can form a pair with a column read
+        // earlier in the same record, whose date had no slot yet: replay the
+        // record's dates so its first row is compared too.
+        if introduced_column && self.temporal_pairs.is_enabled() {
+            for (header, date) in headers.iter().zip(&self.row_dates) {
+                self.temporal_pairs.record_date(header, *date);
+            }
+        }
         self.temporal_pairs.finish_row();
     }
 
@@ -1146,6 +1186,7 @@ impl StreamingColumnCollection {
             timeliness_window,
             timeliness_clock_mode,
             temporal_pairs,
+            row_dates: _,
         } = other;
 
         if self_rows == 0 && self.columns.is_empty() && self.unique_count_exact_limits.is_empty() {
@@ -2038,5 +2079,21 @@ mod tests {
         }
         let usage = stats.memory_usage_bytes();
         assert!(usage < 1_000_000);
+    }
+
+    #[test]
+    fn a_first_record_without_init_columns_compares_its_dates() {
+        // A direct `process_record` caller that never registered the header:
+        // `start_date` is read before `end_date` exists, so the pair forms
+        // after its date was read. The first row must still be compared.
+        let headers = vec!["start_date".to_string(), "end_date".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        for row in [["2025-02-02", "2025-02-01"], ["2025-01-01", "2025-01-02"]] {
+            collection.process_record(&headers, row.iter().map(|value| value.to_string()));
+        }
+        let counts = collection.timeliness_tallies().pairs
+            [&("start_date".to_string(), "end_date".to_string())];
+        assert_eq!(counts.pairs_checked, 2);
+        assert_eq!(counts.violations_for(false, false), 1);
     }
 }

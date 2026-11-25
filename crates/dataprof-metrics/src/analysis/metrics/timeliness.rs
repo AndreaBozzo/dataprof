@@ -109,6 +109,10 @@ pub struct TemporalPairTracker {
     pair_index: HashMap<(String, String), usize>,
     /// Scratch buffer holding the current row's parsed dates by slot.
     current_row: Vec<Option<DualDate>>,
+    /// Pairs a merged partition read rows for without counting them: their
+    /// counts would cover only part of the data, so they are never tracked
+    /// again and the calculator falls back to the sample for them.
+    unavailable: HashSet<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +140,7 @@ impl TemporalPairTracker {
             pairs: Vec::new(),
             pair_index: HashMap::new(),
             current_row: Vec::new(),
+            unavailable: HashSet::new(),
         }
     }
 
@@ -189,7 +194,7 @@ impl TemporalPairTracker {
             return;
         }
         let key = (start.to_string(), end.to_string());
-        if self.pair_index.contains_key(&key) {
+        if self.pair_index.contains_key(&key) || self.unavailable.contains(&key) {
             return;
         }
         let start_slot = self.slot_for(start);
@@ -265,24 +270,30 @@ impl TemporalPairTracker {
                     .map(|(start, end)| (start.as_str(), end.as_str())),
             )
             .collect();
-        if self
-            .pairs
-            .iter()
-            .any(|pair| !keep.contains(&(pair.start_name.as_str(), pair.end_name.as_str())))
-        {
-            self.pairs
-                .retain(|pair| keep.contains(&(pair.start_name.as_str(), pair.end_name.as_str())));
-            self.pair_index = self
-                .pairs
-                .iter()
-                .enumerate()
-                .map(|(index, pair)| ((pair.start_name.clone(), pair.end_name.clone()), index))
-                .collect();
-        }
+        self.retain_pairs(|start, end| keep.contains(&(start, end)));
 
         for (start, end) in candidates {
             self.add_pair(&start, &end);
         }
+    }
+
+    /// Keep only the tracked pairs `keep` accepts, and reindex them.
+    fn retain_pairs(&mut self, keep: impl Fn(&str, &str) -> bool) {
+        if self
+            .pairs
+            .iter()
+            .all(|pair| keep(&pair.start_name, &pair.end_name))
+        {
+            return;
+        }
+        self.pairs
+            .retain(|pair| keep(&pair.start_name, &pair.end_name));
+        self.pair_index = self
+            .pairs
+            .iter()
+            .enumerate()
+            .map(|(index, pair)| ((pair.start_name.clone(), pair.end_name.clone()), index))
+            .collect();
     }
 
     /// Record an already-parsed date for `column` in the current row.
@@ -302,10 +313,11 @@ impl TemporalPairTracker {
 
     /// Commit the current row to every candidate pair whose endpoints both
     /// parsed as calendar dates, then reset the row buffer.
+    ///
+    /// The buffer is cleared even when no pair is tracked: a pair can be
+    /// dropped (cap crossed) or added (new column) between rows, and a date
+    /// left in a slot would otherwise pair with a later row's partner.
     pub fn finish_row(&mut self) {
-        if self.pairs.is_empty() {
-            return;
-        }
         for pair in &mut self.pairs {
             if let (Some(start), Some(end)) = (
                 self.current_row[pair.start_slot],
@@ -353,12 +365,38 @@ impl TemporalPairTracker {
                 self.declared_columns.insert(pair.1.clone());
             }
         }
+        // Registering the other side's columns applies the combined schema's
+        // admission rule, the cap included, to this side's pairs. Adding
+        // columns only ever removes pairs, so a pair still admitted was
+        // tracked by every side that saw both of its columns, and a side that
+        // missed a column read only nulls for it: its counts add exactly. A
+        // pair the combined schema does not admit is not taken from the other
+        // side and falls back to the sample.
         self.register_columns(&other.known_columns);
+
+        // A pair the other side read both columns of without counting it
+        // (it was unavailable there) covers part of the rows only: make it
+        // unavailable here too rather than report a partial count as exact.
+        self.unavailable.extend(other.unavailable.iter().cloned());
+        let partial: HashSet<(String, String)> = self
+            .pairs
+            .iter()
+            .map(|pair| (pair.start_name.clone(), pair.end_name.clone()))
+            .filter(|key| {
+                self.unavailable.contains(key)
+                    || (other.known_set.contains(&key.0)
+                        && other.known_set.contains(&key.1)
+                        && !other.pair_index.contains_key(key))
+            })
+            .collect();
+        self.unavailable.extend(partial.iter().cloned());
+        self.retain_pairs(|start, end| !partial.contains(&(start.to_string(), end.to_string())));
+
         for other_pair in &other.pairs {
-            self.add_pair(&other_pair.start_name, &other_pair.end_name);
             let key = (other_pair.start_name.clone(), other_pair.end_name.clone());
-            let idx = self.pair_index[&key];
-            self.pairs[idx].counts.merge(&other_pair.counts);
+            if let Some(&index) = self.pair_index.get(&key) {
+                self.pairs[index].counts.merge(&other_pair.counts);
+            }
         }
     }
 
@@ -1804,5 +1842,88 @@ mod tests {
             )
             .collect();
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// 17 `start_*` and 16 `end_*x` names: 272 unrelated combinations, past
+    /// `LONE_PAIR_CARTESIAN_CAP`, none sharing a stem.
+    fn wide_schema() -> Vec<String> {
+        ('a'..='q')
+            .map(|c| format!("start_{c}"))
+            .chain(('b'..='q').map(|c| format!("end_{c}x")))
+            .collect()
+    }
+
+    fn date(text: &str) -> Option<DualDate> {
+        crate::stats::datetime::parse_dual_date(text)
+    }
+
+    #[test]
+    fn a_merge_never_takes_a_pair_the_combined_schema_does_not_admit() {
+        // The narrow partition tracks the lone pair and counts one row; the
+        // wide one is past the cap and never tracks it. In either merge
+        // order the pair must be absent, so timeliness falls back to the
+        // sample instead of reporting the narrow side's rows as exact.
+        let pair = ("start_a".to_string(), "end_bx".to_string());
+        let mut narrow = TemporalPairTracker::new(&[]);
+        narrow.register_columns(&[pair.0.clone(), pair.1.clone()]);
+        narrow.record_date(&pair.0, date("2024-03-10"));
+        narrow.record_date(&pair.1, date("2024-03-01"));
+        narrow.finish_row();
+        assert_eq!(narrow.finish()[&pair].pairs_checked, 1);
+        let mut wide = TemporalPairTracker::new(&[]);
+        wide.register_columns(&wide_schema());
+        assert!(!wide.finish().contains_key(&pair));
+
+        let mut wide_first = wide.clone();
+        wide_first.merge(&narrow);
+        assert!(!wide_first.finish().contains_key(&pair));
+        let mut narrow_first = narrow.clone();
+        narrow_first.merge(&wide);
+        assert!(!narrow_first.finish().contains_key(&pair));
+    }
+
+    #[test]
+    fn a_merge_adds_the_counts_of_a_pair_both_sides_admit() {
+        let pair = ("start_date".to_string(), "end_date".to_string());
+        let names = [pair.0.clone(), pair.1.clone()];
+        let mut left = TemporalPairTracker::new(&[]);
+        left.register_columns(&names);
+        left.record_date(&pair.0, date("2024-03-10"));
+        left.record_date(&pair.1, date("2024-03-01"));
+        left.finish_row();
+        // A partition that never saw `end_date` read only nulls for it.
+        let mut right = TemporalPairTracker::new(&[]);
+        right.register_columns(&names[..1]);
+        right.finish_row();
+        let mut other = TemporalPairTracker::new(&[]);
+        other.register_columns(&names);
+        other.record_date(&pair.0, date("2024-03-01"));
+        other.record_date(&pair.1, date("2024-03-10"));
+        other.finish_row();
+
+        left.merge(&right);
+        left.merge(&other);
+        let counts = left.finish()[&pair];
+        assert_eq!(counts.pairs_checked, 2);
+        assert_eq!(counts.violations_for(false, false), 1);
+    }
+
+    #[test]
+    fn a_row_buffer_is_cleared_after_its_last_pair_is_dropped() {
+        // `start_a` holds a date when the cap drops every pair. A later
+        // same-stem `end_a` pairs with `start_a` again: it must not see the
+        // earlier row's date.
+        let mut tracker = TemporalPairTracker::new(&[]);
+        tracker.register_columns(&["start_a".to_string(), "end_bx".to_string()]);
+        tracker.record_date("start_a", date("2024-03-10"));
+        tracker.register_columns(&wide_schema());
+        assert!(!tracker.is_enabled());
+        tracker.finish_row();
+        tracker.register_column("end_a");
+        assert!(tracker.is_enabled());
+        tracker.record_date("end_a", date("2024-03-01"));
+        tracker.finish_row();
+        let counts = tracker.finish()[&("start_a".to_string(), "end_a".to_string())];
+        assert_eq!(counts.pairs_checked, 0);
     }
 }

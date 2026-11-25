@@ -1548,6 +1548,9 @@ mod tests {
             "05/ 1/2025",
             "05/  1/2025",
             "05/01/ 2025",
+            // --- Category E: a no-break space inside a field ---
+            "2024-01-\u{a0}5",
+            "05/\u{a0}1/2025",
         ];
 
         // Every expected (value, month_first, new_date, reason) disagreement.
@@ -1684,6 +1687,20 @@ mod tests {
 
         type DiffMap<'a> = HashMap<(&'a str, bool), (Option<NaiveDate>, Option<NaiveDate>)>;
 
+        // Every expected (value, month_first, old_date, reason) the old reader
+        // accepted and the new one rejects.
+        let rejected: &[(&str, bool, NaiveDate, &str)] = &[
+            // Category E: a no-break space (U+00A0) inside a field. The old
+            // fixed-offset gate only trimmed the ends and let chrono skip it;
+            // the date statistics reader skips ASCII whitespace between
+            // fields only, so the value is text there. Timeliness now agrees:
+            // a no-break space inside a date is an encoding artefact, not a
+            // date form. (`05/\u{a0}1/2025` is in the corpus too: both readers
+            // already reject it.)
+            ("2024-01-\u{a0}5", false, d(2024, 1, 5), "no-break space"),
+            ("2024-01-\u{a0}5", true, d(2024, 1, 5), "no-break space"),
+        ];
+
         let mut expected_diffs: DiffMap<'_> = HashMap::new();
         for &(value, mf, new_date, _reason) in decided {
             assert!(
@@ -1692,6 +1709,14 @@ mod tests {
             );
             let prev = expected_diffs.insert((value, mf), (None, Some(new_date)));
             assert!(prev.is_none(), "duplicate decided entry ({value:?}, {mf})");
+        }
+        for &(value, mf, old_date, _reason) in rejected {
+            assert!(
+                corpus.contains(&value),
+                "rejected entry {value:?} missing from corpus"
+            );
+            let prev = expected_diffs.insert((value, mf), (Some(old_date), None));
+            assert!(prev.is_none(), "duplicate rejected entry ({value:?}, {mf})");
         }
 
         let mut actual_diffs: DiffMap<'_> = HashMap::new();

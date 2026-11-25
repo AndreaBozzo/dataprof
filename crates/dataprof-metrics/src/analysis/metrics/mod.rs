@@ -85,6 +85,7 @@ use validity::ValidityCalculator;
 use crate::analysis::inference::LexicalTally;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
+use crate::quality::TimelinessClockMode;
 use crate::types::{
     AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, DataType,
     PrecisionMetrics, QualityDimension, QualityMetrics, RowCompletenessSummary,
@@ -158,10 +159,17 @@ impl MetricsCalculator {
                 .reference_date
                 .is_none_or(|date| date == tallies.window.reference_date)
         {
+            // A date the caller fixed is a fixed clock, whatever mode the
+            // engine captured when it opened the tallies.
+            let mode = if self.reference_date.is_some() {
+                TimelinessClockMode::Fixed
+            } else {
+                tallies.clock_mode
+            };
             return TimelinessCalculator::with_clock(
                 &self.thresholds,
                 tallies.window.reference_date,
-                tallies.clock_mode,
+                mode,
             );
         }
         TimelinessCalculator::new(&self.thresholds, self.reference_date)
@@ -1225,5 +1233,30 @@ mod tests {
         assert_eq!(precision.inconsistent_precision_values, 0);
         assert_eq!(precision.numeric_values_checked, 0);
         assert!(result.metrics.assessed_dimensions().is_empty());
+    }
+
+    #[test]
+    fn a_reference_date_the_caller_fixed_reads_as_a_fixed_clock() {
+        // The engine opened its tallies on a rolling clock that read the same
+        // date the caller then fixed: the report must say the date was fixed.
+        let day = chrono::NaiveDate::from_ymd_opt(2024, 6, 1).unwrap();
+        let tallies = TimelinessTallies {
+            columns: HashMap::new(),
+            pairs: HashMap::new(),
+            clock_mode: TimelinessClockMode::Rolling,
+            window: crate::stats::datetime::TimelinessWindow::new(day, 5.0),
+        };
+        let fixed = MetricsCalculator::new()
+            .with_reference_date(Some(day))
+            .with_timeliness_tallies(Some(tallies.clone()));
+        assert_eq!(
+            fixed.timeliness_calculator().clock().mode,
+            TimelinessClockMode::Fixed
+        );
+        let rolling = MetricsCalculator::new().with_timeliness_tallies(Some(tallies));
+        assert_eq!(
+            rolling.timeliness_calculator().clock().mode,
+            TimelinessClockMode::Rolling
+        );
     }
 }
