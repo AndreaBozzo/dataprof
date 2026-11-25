@@ -40,6 +40,8 @@ dataprof-runtime = { version = "0.14.1", path = "crates/dataprof-runtime" }
 # External dependencies
 anyhow = "1.0"
 arrow = { version = "60.1.0", features = ["ffi", "chrono-tz"] }
+arrow-array = "60.1.0"
+arrow-schema = "60.1.0"
 async-trait = "0.1"
 bytes = "1.10"
 chrono = { version = "0.4", features = ["serde"] }

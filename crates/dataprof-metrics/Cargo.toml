@@ -9,7 +9,14 @@ repository.workspace = true
 description = "Metrics and statistical analysis engine for dataprof"
 readme = "README.md"
 
+[features]
+# The Arrow entry point of the canonical value encoder. Off by default so the
+# no-default-features graph stays free of Arrow; the Arrow-reading crates enable it.
+arrow = ["dep:arrow-array", "dep:arrow-schema"]
+
 [dependencies]
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
 twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_128"] }
 chrono = { workspace = true }
 dataprof-core = { workspace = true }

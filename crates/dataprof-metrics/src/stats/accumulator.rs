@@ -991,6 +991,20 @@ impl ExactDecimal {
         }
     }
 
+    pub(crate) fn from_coefficient(unscaled: i128, scale: i64) -> Option<Self> {
+        // decode-audit: no-data — a scale past u32 is outside ExactDecimal's
+        // range; None sends the caller to the exact wide-decimal encoding, not
+        // to a default value.
+        if scale < 0 {
+            return Some(Self::integer(scale_up(
+                unscaled,
+                u32::try_from(scale.unsigned_abs()).ok()?,
+            )?));
+        }
+        let scale = u32::try_from(scale).ok()?;
+        (scale <= MAX_DECIMAL_SCALE).then_some(Self { unscaled, scale })
+    }
+
     /// The value, when it is an integer. In `i64` where both fit: `i128`
     /// division is a library call.
     fn as_integer(self) -> Option<i128> {
@@ -1111,20 +1125,30 @@ impl ExactDecimal {
     /// The canonical decimal spelling: no exponent, no trailing zeros in a
     /// fraction, `-` before a negative value, `0` for zero.
     pub(crate) fn canonical(self) -> String {
+        let mut bytes = Vec::new();
+        self.write_canonical(&mut bytes);
+        String::from_utf8(bytes).expect("decimal formatting writes ASCII")
+    }
+
+    pub(crate) fn write_canonical(self, bytes: &mut Vec<u8>) {
+        use std::io::Write;
+
         let (unscaled, scale) = self.normalized();
-        let digits = unscaled.unsigned_abs().to_string();
-        let sign = if unscaled < 0 { "-" } else { "" };
-        let scale = scale as usize;
         if scale == 0 {
-            return format!("{sign}{digits}");
+            write!(bytes, "{unscaled}").expect("writing to Vec is infallible");
+            return;
         }
-        let digits = if digits.len() <= scale {
-            format!("{}{digits}", "0".repeat(scale + 1 - digits.len()))
-        } else {
-            digits
-        };
-        let (whole, fraction) = digits.split_at(digits.len() - scale);
-        format!("{sign}{whole}.{fraction}")
+        let sign = if unscaled < 0 { "-" } else { "" };
+        let magnitude = unscaled.unsigned_abs();
+        let (whole, fraction) = 10_u128
+            .checked_pow(scale)
+            .map_or((0, magnitude), |unit| (magnitude / unit, magnitude % unit));
+        write!(
+            bytes,
+            "{sign}{whole}.{fraction:0width$}",
+            width = scale as usize
+        )
+        .expect("writing to Vec is infallible");
     }
 
     /// The unscaled digits and scale with trailing zeros of the fraction
