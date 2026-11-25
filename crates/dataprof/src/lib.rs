@@ -60,13 +60,13 @@ pub use dataprof_parquet::{
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
     AnalysisSettings, BaselineComparison, BaselineReading, COLUMN_SAMPLE_CAPACITY, Check,
-    CheckBounds, CheckCode, CheckStatus, ColumnSelection, DEFAULT_MIXED_TYPES_PERCENTAGE,
-    DEFAULT_NULL_HEAVY_PERCENTAGE, Diagnostic, DiagnosticCode, Evidence, EvidenceGap,
-    EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy, FindingPolicyError,
-    FindingsInput, FindingsResult, GateResult, KeyRepeats, MetricSemantics, MetricValue,
-    NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError, PolicyScope, ProfileReport,
-    QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, ReportGenerator, RequiredMetric,
-    SettingDifference, Severity, SourceIdentity, TemporalPair, TimelinessClockRule,
+    CheckBounds, CheckCode, CheckStatus, ColumnFingerprintAlgorithm, ColumnSelection,
+    DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE, Diagnostic, DiagnosticCode,
+    Evidence, EvidenceGap, EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy,
+    FindingPolicyError, FindingsInput, FindingsResult, GateResult, KeyRepeats, MetricSemantics,
+    MetricValue, NotEvaluated, NotEvaluatedReason, PatternLocale, PolicyError, PolicyScope,
+    ProfileReport, QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, ReportGenerator,
+    RequiredMetric, SettingDifference, Severity, SourceIdentity, TemporalPair, TimelinessClockRule,
     UnevaluatedRule, UniqueKeyEvidence, Verdict,
 };
 pub use dataprof_runtime::{

@@ -758,6 +758,7 @@ impl Default for ArrowProfiler {
 struct ColumnAnalyzer {
     total_count: usize,
     null_count: usize,
+    fingerprint: dataprof_metrics::stats::canonical_value::ColumnFingerprint,
     cardinality: CardinalityEstimator,
     // Numeric statistics
     numeric: NumericAccumulator,
@@ -781,6 +782,7 @@ impl ColumnAnalyzer {
         Self {
             total_count: 0,
             null_count: 0,
+            fingerprint: Default::default(),
             cardinality: CardinalityEstimator::with_exact_limit(limit),
             numeric: NumericAccumulator::new(),
             min_length: usize::MAX,
@@ -824,6 +826,7 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
+                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // CSV cells always arrive as strings. Keep exact aggregates
                 // over every finite number, independent of the sample.
@@ -885,7 +888,7 @@ impl ColumnAnalyzer {
             0.0
         };
 
-        build_column_profile(ColumnProfileInput {
+        let mut profile = build_column_profile(ColumnProfileInput {
             name,
             data_type,
             total_count: self.total_count,
@@ -908,7 +911,9 @@ impl ColumnAnalyzer {
             exact_dates: Some(&self.dates),
             exact_lexical: Some(&self.lexical),
             decimal_values: false,
-        })
+        });
+        profile.fingerprint = self.fingerprint.finish(self.total_count, self.null_count);
+        profile
     }
 
     /// Get collected sample values for quality metrics calculation
@@ -923,6 +928,20 @@ mod tests {
     use dataprof_core::ColumnStats;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn column_fingerprint_arrow_csv() {
+        let mut analyzer = ColumnAnalyzer::with_exact_limit(None);
+        analyzer
+            .process_array(&StringArray::from(vec![None, Some("1.00")]))
+            .unwrap();
+        let profile =
+            analyzer.to_column_profile("v".into(), true, true, None, &SemanticHints::default());
+        assert_eq!(
+            profile.fingerprint.as_deref(),
+            Some("481db9fedb03926f0426b11cbf2ec0be")
+        );
+    }
 
     /// A source that hands out one byte per read, so every multi-byte
     /// character arrives split across reads.

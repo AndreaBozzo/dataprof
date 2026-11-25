@@ -308,6 +308,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         total_count: input.total_count,
         unique_count: input.unique_count,
         unique_count_is_approximate: input.unique_count_is_approximate,
+        fingerprint: None,
         unique_count_lower_bound: input.unique_count_lower_bound,
         invalid_count,
         // Over every value read: the engine's tally, or the samples when they
@@ -342,6 +343,7 @@ pub fn nested_column_profile(name: String, total_count: usize, null_count: usize
         total_count,
         unique_count: None,
         unique_count_is_approximate: None,
+        fingerprint: None,
         unique_count_lower_bound: None,
         invalid_count: None,
         type_homogeneity: None,
@@ -375,7 +377,7 @@ pub fn mark_container_columns(
 ) -> Vec<ColumnProfile> {
     profiles
         .into_iter()
-        .map(|profile| {
+        .map(|mut profile| {
             let containers = container_counts.get(&profile.name).copied().unwrap_or(0);
             let non_null = profile.total_count - profile.null_count;
             if containers > 0 && containers == non_null {
@@ -386,6 +388,9 @@ pub fn mark_container_columns(
                 nested.native_type = profile.native_type;
                 nested
             } else {
+                if containers > 0 {
+                    profile.fingerprint = None;
+                }
                 profile
             }
         })
@@ -469,7 +474,7 @@ pub fn profile_from_stats_with_hints(
     };
     let text_stats = stats.text_length_stats();
 
-    build_column_profile(ColumnProfileInput {
+    let mut profile = build_column_profile(ColumnProfileInput {
         name: name.to_string(),
         data_type,
         total_count: stats.count,
@@ -492,7 +497,9 @@ pub fn profile_from_stats_with_hints(
         exact_dates: Some(stats.date_statistics()),
         exact_lexical: Some(stats.lexical_tally()),
         decimal_values: false,
-    })
+    });
+    profile.fingerprint = stats.fingerprint();
+    profile
 }
 
 /// Infer [`DataType`] from the lexical facts a [`StreamingStatistics`] counted

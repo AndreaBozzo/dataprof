@@ -229,6 +229,7 @@ mod tests {
             total_count: total,
             unique_count: unique,
             unique_count_is_approximate: unique.map(|_| false),
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,

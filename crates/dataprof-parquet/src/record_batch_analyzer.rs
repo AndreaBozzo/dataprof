@@ -847,6 +847,11 @@ impl RecordBatchAnalyzer {
                 .get_mut(&column_name)
                 .expect("schema initialization creates every column analyzer");
 
+            if container_markers.get(column_index).is_some_and(|markers| {
+                markers.is_some_and(|markers| markers.iter().any(|&marked| marked))
+            }) {
+                analyzer.fingerprint.withhold();
+            }
             analyzer.process_array(column)?;
         }
 
@@ -1022,6 +1027,7 @@ pub struct ColumnAnalyzer {
     native_type: Option<NativeType>,
     total_count: usize,
     null_count: usize,
+    fingerprint: dataprof_metrics::stats::canonical_value::ColumnFingerprint,
     cardinality: CardinalityEstimator,
     numeric: NumericAccumulator,
     min_length: usize,
@@ -1049,13 +1055,22 @@ impl ColumnAnalyzer {
         data_type: &arrow::datatypes::DataType,
         exact_limit: Option<usize>,
     ) -> Self {
+        use dataprof_metrics::stats::canonical_value::supports_arrow_type;
+
+        let data_type = logical_arrow_type(data_type);
+        let mut fingerprint =
+            dataprof_metrics::stats::canonical_value::ColumnFingerprint::default();
+        if !supports_arrow_type(&data_type) {
+            fingerprint.withhold();
+        }
         Self {
             // The physical encoding is stripped once, here, so nothing
             // downstream has to know about dictionaries or view layouts.
-            data_type: logical_arrow_type(data_type),
+            data_type,
             native_type: None,
             total_count: 0,
             null_count: 0,
+            fingerprint,
             cardinality: CardinalityEstimator::with_exact_limit(exact_limit),
             numeric: NumericAccumulator::new(),
             min_length: usize::MAX,
@@ -1135,6 +1150,16 @@ impl ColumnAnalyzer {
         // logical_null_count, not null_count: a NullArray has no validity
         // buffer, so the physical count reports 0 nulls for an all-null array.
         self.null_count += array.logical_null_count();
+
+        use arrow::datatypes::DataType as ArrowDataType;
+        // Text needs column-wide slash order. Float32 uses the same lossless
+        // promotion as its numeric statistics and Parquet/Arrow parity.
+        if !matches!(
+            array.data_type(),
+            ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 | ArrowDataType::Float32
+        ) {
+            self.fingerprint.update_arrow(array)?;
+        }
 
         match array.data_type() {
             arrow::datatypes::DataType::Null => {
@@ -1347,6 +1372,7 @@ impl ColumnAnalyzer {
                 // exact aggregates read. A Float32 column then profiles like its
                 // lossless Float64 promotion (#1041).
                 let text = value_f64.to_string();
+                self.fingerprint.update_float(value_f64);
                 self.offer_sample(&text);
                 self.cardinality.insert_owned(text);
             }
@@ -1464,6 +1490,7 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
+                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // Utf8 columns often carry numeric content (the Arrow CSV
                 // reader may deliver strings): keep the exact accumulators
@@ -1488,6 +1515,7 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
+                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
@@ -1864,6 +1892,7 @@ impl ColumnAnalyzer {
             ),
         });
         profile.native_type = self.native_type.clone();
+        profile.fingerprint = self.fingerprint.finish(self.total_count, self.null_count);
         profile
     }
 
@@ -2030,10 +2059,14 @@ mod tests {
         let mut plain = RecordBatchAnalyzer::new();
         plain.process_batch(&batch).unwrap();
         assert_eq!(plain.row_duplicate_summary().unwrap().duplicate_rows, 4);
+        let marked_profiles = marked.to_profiles(false, false, None);
+        let mut plain_profiles = plain.to_profiles(false, false, None);
+        assert!(marked_profiles[1].fingerprint.is_none());
+        assert!(plain_profiles[1].fingerprint.take().is_some());
         assert_eq!(
-            serde_json::to_value(marked.to_profiles(false, false, None)).unwrap(),
-            serde_json::to_value(plain.to_profiles(false, false, None)).unwrap(),
-            "container markers must not change the Arrow column profiles"
+            serde_json::to_value(marked_profiles).unwrap(),
+            serde_json::to_value(plain_profiles).unwrap(),
+            "container markers change only the payload fingerprint"
         );
 
         // Seed the record path's signature, then feed the Arrow rows into the
@@ -2360,6 +2393,33 @@ mod tests {
     }
 
     #[test]
+    fn column_fingerprint_arrow_batch() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("typed", ArrowDataType::Int64, true),
+            Field::new("text", ArrowDataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![Some(1), None])),
+                Arc::new(StringArray::from(vec![None, Some("1.0")])),
+            ],
+        )
+        .unwrap();
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let profiles = analyzer.to_profiles(true, true, None);
+        for profile in profiles {
+            assert_eq!(
+                profile.fingerprint.as_deref(),
+                Some("481db9fedb03926f0426b11cbf2ec0be"),
+                "{}",
+                profile.name
+            );
+        }
+    }
+
+    #[test]
     fn test_all_null_column_profiles_as_all_nulls() {
         // A NullArray has no validity buffer: physically null_count() is 0 and
         // is_null() is false everywhere. Profiled naively, an all-null column
@@ -2617,8 +2677,9 @@ mod tests {
 
         let expected = observable(list);
         assert!(
-            expected
-                .contains("data_type: Nested, null_count: 1, total_count: 3, unique_count: None"),
+            expected.contains(
+                "data_type: Nested, null_count: 1, total_count: 3, fingerprint: None, unique_count: None"
+            ),
             "{expected}"
         );
         assert_eq!(observable(view), expected);

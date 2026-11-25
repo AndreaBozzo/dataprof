@@ -66,6 +66,24 @@ pub enum QualityAnalysisStatus {
     Unrecorded,
 }
 
+/// Algorithm used for a column's canonical value fingerprint.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub enum ColumnFingerprintAlgorithm {
+    /// XXH3-128 per canonical cell, summed modulo 2^128.
+    #[serde(rename = "xxh3_128_sum_v1")]
+    Xxh3_128SumV1,
+}
+
+impl ColumnFingerprintAlgorithm {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Xxh3_128SumV1 => "xxh3_128_sum_v1",
+        }
+    }
+}
+
 /// How the measurements in a report were defined.
 ///
 /// `schema_version` answers whether a document validates. It cannot answer
@@ -279,6 +297,14 @@ pub struct MetricSemantics {
     )]
     #[schemars(with = "ValueFacts")]
     pub value_facts: Option<ValueFacts>,
+    /// Algorithm for `fingerprint` on a column. Absent in older reports.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "ColumnFingerprintAlgorithm")]
+    pub column_fingerprint: Option<ColumnFingerprintAlgorithm>,
 }
 
 /// Decode a field that may be absent (serde's `default` covers that) but,
@@ -311,6 +337,7 @@ impl MetricSemantics {
             outlier_spread: Some(OutlierSpread::NonzeroIqr),
             date_forms: Some(DateForms::SpacedIsoDatetimes),
             value_facts: Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRules),
+            column_fingerprint: Some(ColumnFingerprintAlgorithm::Xxh3_128SumV1),
         }
     }
 
@@ -336,6 +363,7 @@ impl MetricSemantics {
             outlier_spread,
             date_forms,
             value_facts,
+            column_fingerprint,
         } = self;
         text_length_unit.is_some()
             && null_tokens.is_some()
@@ -353,6 +381,7 @@ impl MetricSemantics {
             && outlier_spread.is_some()
             && date_forms.is_some()
             && value_facts.is_some()
+            && column_fingerprint.is_some()
     }
 }
 
@@ -917,6 +946,13 @@ struct PythonColumnDocument {
     data_type: PythonDataType,
     total_count: usize,
     null_count: usize,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "dataprof_core::serde_helpers::deserialize_column_fingerprint"
+    )]
+    #[schemars(with = "String", regex(pattern = "^[0-9a-f]{32}$"))]
+    fingerprint: Option<String>,
     #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     null_percentage: Option<f64>,
     unique_count: Option<usize>,
@@ -1173,6 +1209,7 @@ impl PythonProfileReportDocument {
                     },
                     total_count: column.total_count,
                     null_count: column.null_count,
+                    fingerprint: column.fingerprint.clone(),
                     null_percentage: (column.total_count > 0)
                         .then(|| column.null_count as f64 / column.total_count as f64 * 100.0),
                     unique_count: column.unique_count,
@@ -1866,6 +1903,7 @@ mod tests {
             "outlier_spread": "nonzero_iqr",
             "date_forms": "spaced_iso_datetimes",
             "value_facts": "every_value_consistency_precision_accuracy_rules",
+            "column_fingerprint": "xxh3_128_sum_v1",
         });
         assert_eq!(document["metric_semantics"], recorded);
         assert_eq!(summary_value(&report)["metric_semantics"], recorded);

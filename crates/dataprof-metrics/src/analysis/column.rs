@@ -4,6 +4,7 @@ use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
 use crate::analysis::inference::{LexicalTally, is_null_like_token, parse_strict_boolean_token};
 use crate::analysis::patterns::{detect_patterns, pattern_value_count};
+use crate::stats::canonical_value::ColumnFingerprint;
 use crate::stats::numeric::{
     compute_decimal_stats_with_parsed_count, compute_integer_stats_with_parsed_count,
     compute_numeric_stats_with_parsed_count,
@@ -31,6 +32,8 @@ struct ColumnAnalysis {
     /// as a decimal's renderings, as `build_column_profile` reads an Arrow
     /// decimal's (#1268).
     decimal_values: bool,
+    /// A binary32 database value rendered at its native shortest precision.
+    float32_values: bool,
 }
 
 /// The statistics a column carries: none when it holds no non-null value.
@@ -61,6 +64,7 @@ pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
             skip_unique_count: false,
             unique_count_exact_limit: None,
             decimal_values: false,
+            float32_values: false,
         },
     )
 }
@@ -77,6 +81,7 @@ pub fn analyze_column_fast(name: &str, data: &[String]) -> ColumnProfile {
             skip_unique_count: true,
             unique_count_exact_limit: None,
             decimal_values: false,
+            float32_values: false,
         },
     )
 }
@@ -119,6 +124,12 @@ pub fn analyze_declared_column(
             decimal_values: native_type
                 .as_ref()
                 .is_some_and(NativeType::declares_decimal),
+            float32_values: native_type.as_ref().is_some_and(|native| {
+                matches!(
+                    (native.system.as_str(), native.name.as_str()),
+                    (NativeType::POSTGRESQL, "FLOAT4") | (NativeType::MYSQL, "FLOAT")
+                )
+            }),
         },
     );
     profile.native_type = native_type;
@@ -140,8 +151,24 @@ fn analyze_column_with_options(
 ) -> ColumnProfile {
     let total_count = data.len();
 
-    // Aligned with inference.rs: whitespace-only strings are treated as null
-    let null_count = data.iter().filter(|s| is_null_like_token(s.trim())).count();
+    let mut fingerprint = ColumnFingerprint::default();
+    let mut null_count = 0;
+    for value in data {
+        if is_null_like_token(value) {
+            null_count += 1;
+        } else if analysis.float32_values {
+            // Decode the connector's shortest f32 rendering, then apply the
+            // same exact promotion as Arrow's Float32 column analyzer.
+            match value.parse::<f32>() {
+                Ok(number) => fingerprint.update_float(f64::from(number)),
+                Err(_) => fingerprint.withhold(),
+            }
+        } else if analysis.decimal_values {
+            fingerprint.update_decimal_text(value);
+        } else {
+            fingerprint.update_text(value);
+        }
+    }
 
     // One tally types the column and gives its lexical forms, over `data`,
     // which on this path is the whole column.
@@ -260,6 +287,7 @@ fn analyze_column_with_options(
         data_type,
         null_count,
         total_count,
+        fingerprint: fingerprint.finish(total_count, null_count),
         unique_count,
         unique_count_is_approximate,
         unique_count_lower_bound,

@@ -152,6 +152,7 @@ class ColumnProfile(_View):
     zero_padded_count = _Field[int | None]()
     pattern_values_checked = _Field[int | None]()
     native_type = _Field[dict[str, str] | None]()
+    fingerprint = _Field[str | None]()
     null_percentage = _Field[float | None]()
     uniqueness_ratio = _Field[float | None]()
     min = _Field[float | None](section="stats")

@@ -14,6 +14,7 @@ use dataprof::{
     CsvSourceMetadata, DataFrameLibrary, DataSource, DelimiterDetection, ExecutionMetadata,
     FileFormat, MetricPack, TruncationReason, is_null_like_token,
 };
+use dataprof_metrics::stats::canonical_value::ColumnFingerprint;
 use dataprof_runtime::{
     ColumnProfileInput, LexicalTally, ReportAssembler, RowCompletenessTracker, RowSignature,
     RowUniquenessTracker, build_column_profile, nested_column_profile,
@@ -242,7 +243,14 @@ pub fn profile_columns(
                     present.iter().map(String::as_str),
                     options.unique_count_exact_limit(col_name),
                 );
-            let lexical = LexicalTally::from_values(&present);
+            let mut lexical = LexicalTally::new();
+            let mut fingerprint = ColumnFingerprint::default();
+            for value in &present {
+                lexical.record(value);
+                if analyzed_containers == 0 {
+                    fingerprint.update_text(value);
+                }
+            }
 
             let data_type = if semantic_hints.is_identifier_column(col_name) {
                 dataprof::DataType::Identifier
@@ -250,7 +258,7 @@ pub fn profile_columns(
                 lexical.data_type()
             };
 
-            profiles.push(build_column_profile(ColumnProfileInput {
+            let mut profile = build_column_profile(ColumnProfileInput {
                 name: col_name.clone(),
                 data_type,
                 total_count: num_rows,
@@ -271,7 +279,11 @@ pub fn profile_columns(
                 exact_dates: None,
                 exact_lexical: Some(&lexical),
                 decimal_values: false,
-            }));
+            });
+            if analyzed_containers == 0 {
+                profile.fingerprint = fingerprint.finish(num_rows, null_count);
+            }
+            profiles.push(profile);
 
             if include_quality {
                 samples.insert(col_name.clone(), present);

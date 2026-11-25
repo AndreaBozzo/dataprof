@@ -41,7 +41,26 @@
 //! binary value is not: `23.0 / 4000.0 * 100.0` prints as `0.575` but is stored
 //! just below it, and so rounds to `0.57`.
 
-use serde::Serializer;
+use serde::{Deserialize, Serializer};
+
+/// Decode a fingerprint if the column document carries one.
+#[doc(hidden)]
+pub fn deserialize_column_fingerprint<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.len() != 32
+        || !value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(serde::de::Error::custom(
+            "fingerprint must contain 32 lowercase hexadecimal digits",
+        ));
+    }
+    Ok(Some(value))
+}
 
 fn round_finite(value: f64, scale: f64) -> f64 {
     let scaled = value * scale;

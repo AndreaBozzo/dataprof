@@ -139,11 +139,26 @@
       ],
       "type": "object"
     },
+    "ColumnFingerprintAlgorithm": {
+      "description": "Algorithm used for a column's canonical value fingerprint.",
+      "oneOf": [
+        {
+          "const": "xxh3_128_sum_v1",
+          "description": "XXH3-128 per canonical cell, summed modulo 2^128.",
+          "type": "string"
+        }
+      ]
+    },
     "ColumnProfile": {
       "description": "Profiling statistics for a single column.",
       "properties": {
         "data_type": {
           "$ref": "#/$defs/DataType"
+        },
+        "fingerprint": {
+          "description": "Order-independent fingerprint of all column values, including nulls.\nAbsent when the values are unavailable or the read was incomplete.",
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
         },
         "invalid_count": {
           "description": "Non-null values that failed the column type's raw validity predicate:\nnon-finite or malformed numbers on numeric columns, and values that do\nnot parse directly as calendar dates on date columns. The date predicate\nintentionally does not trim surrounding whitespace; descriptive date\nstatistics may normalize whitespace independently.\n\nFor numeric columns, `mean`/`std_dev` cover\n`total_count - null_count - invalid_count` values. For date columns,\nthis count audits the strict raw-value quality predicate. `None` means\nthe check did not run (another column type, or statistics skipped) —\nnever \"no invalid values\", which is `Some(0)`.",
@@ -1405,6 +1420,10 @@
           "$ref": "#/$defs/AccuracyComparison",
           "description": "How the accuracy score compares a value with its outlier fences and\nits range and sign bounds.\n\nAbsent means not recorded: through 0.13 both comparisons went through\nthe value's nearest `f64`."
         },
+        "column_fingerprint": {
+          "$ref": "#/$defs/ColumnFingerprintAlgorithm",
+          "description": "Algorithm for `fingerprint` on a column. Absent in older reports."
+        },
         "date_forms": {
           "$ref": "#/$defs/DateForms",
           "description": "Which text forms read as dates.\n\nAbsent means not recorded: through 0.13 the spaced ISO datetime with a\nfraction or an offset (`2026-06-01 12:00:00+00:00`) was text."
@@ -1925,6 +1944,10 @@
       "properties": {
         "data_type": {
           "$ref": "#/$defs/PythonDataType"
+        },
+        "fingerprint": {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
         },
         "invalid_count": {
           "format": "uint",

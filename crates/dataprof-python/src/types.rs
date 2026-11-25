@@ -54,6 +54,9 @@ pub struct PyColumnProfile {
     pub total_count: usize,
     #[pyo3(get)]
     pub null_count: usize,
+    /// Canonical, order-independent fingerprint of the complete column.
+    #[pyo3(get)]
+    pub fingerprint: Option<String>,
     #[pyo3(get)]
     pub unique_count: Option<usize>,
     /// `None` when `unique_count` is `None`; `Some(False)` for an exact count;
@@ -292,6 +295,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             data_type: profile.data_type.name().to_string(),
             total_count: profile.total_count,
             null_count: profile.null_count,
+            fingerprint: profile.fingerprint.clone(),
             unique_count: profile.unique_count,
             unique_count_is_approximate: profile.unique_count_is_approximate,
             invalid_count: profile.invalid_count,
@@ -1445,6 +1449,9 @@ impl PyProfileReport {
                     }
                 },
             )?;
+        }
+        if let Some(algorithm) = semantics.column_fingerprint {
+            dict.set_item("column_fingerprint", algorithm.as_str())?;
         }
         Ok(Some(dict))
     }

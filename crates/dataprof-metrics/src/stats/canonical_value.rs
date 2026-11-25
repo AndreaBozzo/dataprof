@@ -21,6 +21,10 @@ use twox_hash::XxHash3_128;
 use super::{ExactDecimal, datetime::parse_local_date_or_datetime};
 use crate::analysis::inference::{holds_digit_codes, lexical_class, parse_strict_boolean_token};
 
+#[path = "column_fingerprint.rs"]
+mod column_fingerprint;
+pub use column_fingerprint::ColumnFingerprint;
+
 /// Tag for null cells, including a floating-point NaN.
 pub const NULL_TAG: u8 = 0x00;
 const DECIMAL: u8 = 0x01;

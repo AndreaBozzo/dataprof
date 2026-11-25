@@ -241,6 +241,15 @@ impl ReportAssembler {
     /// [`ProfileReport::quality_status`] rather than discarding the column
     /// profiles that did compute.
     pub fn build(mut self) -> ProfileReport {
+        if !self.execution.source_exhausted
+            || self.execution.sampling_applied
+            || self.execution.error_count != 0
+            || self.execution.unterminated_quote == Some(true)
+        {
+            for column in &mut self.columns {
+                column.fingerprint = None;
+            }
+        }
         self.withhold_container_values();
         let (quality, status) = match &self.skip {
             Some(reason) => (None, reason.clone()),
@@ -568,6 +577,37 @@ mod tests {
     }
 
     #[test]
+    fn column_fingerprint_requires_a_complete_read() {
+        use dataprof_metrics::analysis::column::analyze_column;
+
+        let execution = ExecutionMetadata::new(1, 1, 0);
+        let column = analyze_column("v", &["1".to_string()]);
+        assert!(column.fingerprint.is_some());
+        let fingerprint = |execution| {
+            ReportAssembler::new(test_source(), execution)
+                .columns(vec![column.clone()])
+                .build()
+                .column_profiles
+                .remove(0)
+                .fingerprint
+        };
+        assert_eq!(fingerprint(execution.clone()), column.fingerprint);
+        for incomplete in [
+            execution
+                .clone()
+                .with_truncation(TruncationReason::MaxRows(1)),
+            execution
+                .clone()
+                .with_truncation(TruncationReason::StopCondition("rows".into())),
+            execution.clone().with_sampling(0.5),
+            execution.clone().with_error_count(1),
+            execution.with_unterminated_quote(true),
+        ] {
+            assert_eq!(fingerprint(incomplete.clone()), None, "{incomplete:?}");
+        }
+    }
+
+    #[test]
     fn test_basic_report_assembly() {
         let report =
             ReportAssembler::new(test_source(), ExecutionMetadata::new(100, 3, 50)).build();
@@ -787,6 +827,7 @@ mod tests {
             total_count: 1000,
             unique_count: None,
             unique_count_is_approximate: None,
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
@@ -841,6 +882,7 @@ mod tests {
             total_count: 1000,
             unique_count: None,
             unique_count_is_approximate: None,
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
@@ -1029,6 +1071,7 @@ mod tests {
             total_count: 1000,
             unique_count: None,
             unique_count_is_approximate: None,
+            fingerprint: None,
             unique_count_lower_bound: None,
             invalid_count: None,
             type_homogeneity: None,
