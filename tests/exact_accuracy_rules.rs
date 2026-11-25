@@ -345,7 +345,7 @@ fn every_route_counts_accuracy_rules_and_hint_bindings_over_every_value() {
     let mut wrong = Vec::new();
     for (label, report) in all_route_reports(&cols) {
         let semantics = report.metric_semantics.as_ref().and_then(|s| s.value_facts);
-        if semantics != Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRules) {
+        if semantics != Some(ValueFacts::EveryValueConsistencyPrecisionAccuracyRulesTimeliness) {
             wrong.push(format!("[{label}] value_facts={semantics:?}"));
         }
 

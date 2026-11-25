@@ -39,9 +39,74 @@
 //! was written. Mixing the two in one column mixes local wall clocks with UTC
 //! instants; that is a property of the data, not something this module can fix.
 
+use crate::analysis::inference::is_null_like_token;
+use crate::core::config::IsoQualityConfig;
+use crate::quality::TimelinessClockMode;
 use crate::types::{ColumnStats, DATE_GAP_YEAR_LIMIT, DateGap, DateTimeStats, SlashDateOrder};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
+use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, Timelike, Utc, Weekday};
 use std::collections::{BTreeMap, HashMap};
+
+/// The reference date and stale cutoff against which timeliness judges dates
+/// during a single-pass scan (#788 step 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimelinessWindow {
+    pub reference_date: NaiveDate,
+    pub stale_cutoff: NaiveDate,
+}
+
+impl TimelinessWindow {
+    /// Build a window from `reference_date` and `max_data_age_years`, using the
+    /// Gregorian mean year so fractional policies stay meaningful.
+    pub fn new(reference_date: NaiveDate, max_data_age_years: f64) -> Self {
+        let age_days = (max_data_age_years * 365.2425).floor() as u64;
+        let stale_cutoff = reference_date
+            .checked_sub_days(Days::new(age_days))
+            .unwrap_or(NaiveDate::MIN);
+        Self {
+            reference_date,
+            stale_cutoff,
+        }
+    }
+
+    /// Build a window and clock mode from `thresholds` and an optional fixed
+    /// `reference_date`. Captures UTC today once when `reference_date` is `None`.
+    pub fn from_config(
+        thresholds: &IsoQualityConfig,
+        reference_date: Option<NaiveDate>,
+    ) -> (Self, TimelinessClockMode) {
+        match reference_date {
+            Some(date) => (
+                Self::new(date, thresholds.max_data_age_years),
+                TimelinessClockMode::Fixed,
+            ),
+            None => (
+                Self::new(Utc::now().date_naive(), thresholds.max_data_age_years),
+                TimelinessClockMode::Rolling,
+            ),
+        }
+    }
+}
+
+/// Both calendar readings of a single value while its column's slash order is
+/// still open. For any value other than an ambiguous slash date (`01/02/2024`),
+/// both fields hold the same `NaiveDate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DualDate {
+    pub day_first: NaiveDate,
+    pub month_first: NaiveDate,
+}
+
+/// Per-column timeliness counts derived from [`DateTimeAccumulator`] once the
+/// column's slash order is settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ColumnDateSummary {
+    pub checked: usize,
+    pub valid_dates: usize,
+    pub invalid_dates: usize,
+    pub future_dates: usize,
+    pub stale_dates: usize,
+    pub slash_order: Option<SlashDateOrder>,
+}
 
 /// Parse result containing both date and optional time component
 struct ParsedDateTime {
@@ -155,7 +220,7 @@ impl SlashTally {
 ///
 /// Every order but `MonthFirst` reads them day-first. In a `Mixed` column the
 /// values that only parse month-first still do, through the fallback.
-fn reads_month_first(order: Option<SlashDateOrder>) -> bool {
+pub(crate) fn reads_month_first(order: Option<SlashDateOrder>) -> bool {
     order == Some(SlashDateOrder::MonthFirst)
 }
 
@@ -191,6 +256,12 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 #[derive(Debug, Clone, Default)]
 pub struct DateTimeAccumulator {
     slash: SlashTally,
+    /// Non-null values offered to this accumulator.
+    checked: usize,
+    /// Freshness/future window used to tally timeliness counts in the same
+    /// pass as date statistics (#788 step 4). `None` when constructed without
+    /// a timeliness window.
+    timeliness_window: Option<TimelinessWindow>,
     /// Values whose reading does not depend on the column's slash order.
     settled: DateTally,
     /// Ambiguous slash dates read day-first.
@@ -204,31 +275,129 @@ impl DateTimeAccumulator {
         Self::default()
     }
 
-    /// Offer one value. A value that does not parse as a date is ignored, as
-    /// the statistics over a retained sample ignore it.
-    pub fn update(&mut self, value: &str) {
-        let trimmed = value.trim();
-        if !may_parse_as_date(trimmed) {
-            return;
+    /// Construct an accumulator that also counts timeliness future/stale dates
+    /// against `window` in the same pass (#788 step 4).
+    pub fn with_timeliness_window(window: TimelinessWindow) -> Self {
+        Self {
+            timeliness_window: Some(window),
+            ..Self::default()
         }
+    }
+
+    /// The timeliness window this accumulator counted against, if any.
+    pub fn timeliness_window(&self) -> Option<TimelinessWindow> {
+        self.timeliness_window
+    }
+
+    /// The column's slash date order decided over every value offered so far.
+    pub fn slash_order(&self) -> Option<SlashDateOrder> {
+        self.slash.order()
+    }
+
+    /// Total valid calendar dates parsed over every value offered.
+    pub fn valid_dates(&self) -> usize {
+        let ambiguous = if reads_month_first(self.slash.order()) {
+            &self.ambiguous_month_first
+        } else {
+            &self.ambiguous_day_first
+        };
+        self.settled.valid_dates + ambiguous.valid_dates
+    }
+
+    /// Timeliness counts over every non-null value offered, resolved under the
+    /// column's final slash order. Returns `None` if this accumulator was not
+    /// configured for `window`.
+    pub(crate) fn timeliness_summary(&self, window: TimelinessWindow) -> Option<ColumnDateSummary> {
+        if self.timeliness_window != Some(window) {
+            return None;
+        }
+        let slash_order = self.slash.order();
+        let ambiguous = if reads_month_first(slash_order) {
+            &self.ambiguous_month_first
+        } else {
+            &self.ambiguous_day_first
+        };
+        let valid_dates = self.settled.valid_dates + ambiguous.valid_dates;
+        let future_dates = self.settled.future_dates + ambiguous.future_dates;
+        let stale_dates = self.settled.stale_dates + ambiguous.stale_dates;
+        Some(ColumnDateSummary {
+            checked: self.checked,
+            valid_dates,
+            invalid_dates: self.checked.saturating_sub(valid_dates),
+            future_dates,
+            stale_dates,
+            slash_order,
+        })
+    }
+
+    /// Offer one value. Null-like tokens are ignored; non-null values increment
+    /// the checked count, and values that parse as dates update the statistics
+    /// and timeliness tallies.
+    pub fn update(&mut self, value: &str) {
+        self.update_returning_date(value);
+    }
+
+    /// Like [`Self::update`], returning the parsed `(day_first, month_first)`
+    /// dates for row-level pair comparison without reparsing.
+    pub fn update_returning_date(&mut self, value: &str) -> Option<DualDate> {
+        let trimmed = value.trim();
+        if is_null_like_token(trimmed) {
+            return None;
+        }
+        self.checked += 1;
+        if !may_parse_as_date(trimmed) {
+            return None;
+        }
+        let window = self.timeliness_window;
         match self.slash.observe(trimmed) {
             SlashReading::Ambiguous => {
-                if let Some(parsed) = parse_flexible_full(trimmed, false) {
-                    self.ambiguous_day_first.add(&parsed);
+                let dmy = parse_flexible_full(trimmed, false);
+                let mdy = parse_flexible_full(trimmed, true);
+                if let Some(ref parsed) = dmy {
+                    self.ambiguous_day_first.add(parsed, window);
                 }
-                if let Some(parsed) = parse_flexible_full(trimmed, true) {
-                    self.ambiguous_month_first.add(&parsed);
+                if let Some(ref parsed) = mdy {
+                    self.ambiguous_month_first.add(parsed, window);
+                }
+                match (dmy, mdy) {
+                    (Some(d), Some(m)) => Some(DualDate {
+                        day_first: d.date,
+                        month_first: m.date,
+                    }),
+                    (Some(d), None) => Some(DualDate {
+                        day_first: d.date,
+                        month_first: d.date,
+                    }),
+                    (None, Some(m)) => Some(DualDate {
+                        day_first: m.date,
+                        month_first: m.date,
+                    }),
+                    (None, None) => None,
                 }
             }
             _ => {
                 if let Some(parsed) = parse_flexible_full(trimmed, false) {
-                    self.settled.add(&parsed);
+                    let date = parsed.date;
+                    self.settled.add(&parsed, window);
+                    Some(DualDate {
+                        day_first: date,
+                        month_first: date,
+                    })
+                } else {
+                    None
                 }
             }
         }
     }
 
     pub fn merge(&mut self, other: &Self) {
+        self.timeliness_window = match (self.timeliness_window, other.timeliness_window) {
+            (Some(a), Some(b)) if a == b => Some(a),
+            (None, Some(b)) if self.checked == 0 => Some(b),
+            (Some(a), None) if other.checked == 0 => Some(a),
+            _ => None,
+        };
+        self.checked += other.checked;
         self.slash.merge(&other.slash);
         self.settled.merge(&other.settled);
         self.ambiguous_day_first.merge(&other.ambiguous_day_first);
@@ -318,6 +487,12 @@ struct DateTally {
     datetimes: usize,
     /// The distinct days, for the largest gap between them.
     days: DaySet,
+    /// Valid parsed calendar dates in this partition.
+    valid_dates: usize,
+    /// Valid dates strictly after the timeliness window's reference date.
+    future_dates: usize,
+    /// Valid dates strictly before the timeliness window's stale cutoff.
+    stale_dates: usize,
 }
 
 /// Words in a year's day bitmap: 366 days fit in six.
@@ -429,7 +604,7 @@ impl DateTally {
         self.years.capacity() * (std::mem::size_of::<(i32, usize)>() + 1) + self.days.heap_bytes()
     }
 
-    fn add(&mut self, parsed: &ParsedDateTime) {
+    fn add(&mut self, parsed: &ParsedDateTime, window: Option<TimelinessWindow>) {
         let date = parsed.date;
         self.min = Some(self.min.map_or(date, |min| min.min(date)));
         self.max = Some(self.max.map_or(date, |max| max.max(date)));
@@ -440,6 +615,15 @@ impl DateTally {
         if let Some(datetime) = parsed.datetime {
             self.hours[datetime.hour() as usize] += 1;
             self.datetimes += 1;
+        }
+        self.valid_dates += 1;
+        if let Some(window) = window {
+            if date > window.reference_date {
+                self.future_dates += 1;
+            }
+            if date < window.stale_cutoff {
+                self.stale_dates += 1;
+            }
         }
     }
 
@@ -466,6 +650,9 @@ impl DateTally {
         }
         self.datetimes += other.datetimes;
         self.days.merge(&other.days);
+        self.valid_dates += other.valid_dates;
+        self.future_dates += other.future_dates;
+        self.stale_dates += other.stale_dates;
     }
 }
 
@@ -604,12 +791,49 @@ pub(crate) fn parse_local_date_or_datetime(s: &str) -> Option<(NaiveDate, Option
     parse_flexible_full(s, false).map(|parsed| (parsed.date, parsed.datetime))
 }
 
-/// Parse a raw quality-metric value and return its calendar date.
-///
-/// Unlike the descriptive datetime statistics path, quality predicates do not
-/// normalize surrounding whitespace: a value must be directly parseable as it
-/// appeared in the source. The calendar parser validates month/day ranges, so
-/// shape-only strings such as `2024-13-45` are rejected.
+/// Parse a date value using the same reading as [`DateTimeAccumulator`]
+/// (`s.trim()`, `may_parse_as_date`, `parse_flexible_full`), honoring
+/// `order` for ambiguous slash dates (#788 step 4).
+pub fn parse_date_value(s: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
+    let trimmed = s.trim();
+    if !may_parse_as_date(trimmed) {
+        return None;
+    }
+    parse_flexible_full(trimmed, reads_month_first(order)).map(|parsed| parsed.date)
+}
+
+/// Parse both `(day_first, month_first)` calendar readings of one cell using
+/// the same reading as [`DateTimeAccumulator`] (#788 step 4).
+pub fn parse_dual_date(s: &str) -> Option<DualDate> {
+    let trimmed = s.trim();
+    if is_null_like_token(trimmed) || !may_parse_as_date(trimmed) {
+        return None;
+    }
+    match slash_reading(trimmed) {
+        SlashReading::Ambiguous => {
+            let dmy = parse_flexible_full(trimmed, false).map(|p| p.date);
+            let mdy = parse_flexible_full(trimmed, true).map(|p| p.date);
+            match (dmy, mdy) {
+                (Some(day_first), Some(month_first)) => Some(DualDate {
+                    day_first,
+                    month_first,
+                }),
+                (Some(d), None) | (None, Some(d)) => Some(DualDate {
+                    day_first: d,
+                    month_first: d,
+                }),
+                (None, None) => None,
+            }
+        }
+        _ => parse_flexible_full(trimmed, false).map(|parsed| DualDate {
+            day_first: parsed.date,
+            month_first: parsed.date,
+        }),
+    }
+}
+
+/// Parse a quality-metric date value and return its calendar date using the
+/// same reading as [`DateTimeAccumulator`] (#788 step 4).
 ///
 /// Prefer this over [`parse_raw_datetime_year`] whenever the caller compares
 /// values against each other or against a reference point. The supported
@@ -619,50 +843,17 @@ pub(crate) fn parse_local_date_or_datetime(s: &str) -> Option<(NaiveDate, Option
 /// `order` is the column's [`resolve_slash_order`] result, so a value is read
 /// the way the column's statistics read it.
 pub(crate) fn parse_raw_datetime_date(s: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
-    if !looks_like_raw_datetime_candidate(s) {
-        return None;
-    }
-    parse_flexible_full(s, reads_month_first(order)).map(|parsed| parsed.date)
+    parse_date_value(s, order)
 }
 
-/// Parse a raw quality-metric value and return its calendar year.
+/// Parse a quality-metric date value and return its calendar year using the
+/// same reading as [`DateTimeAccumulator`] (#788 step 4).
 ///
 /// A year is the right granularity only for thresholds expressed in whole
 /// years. Anything finer must use [`parse_raw_datetime_date`]. The year of a
 /// slash date is the same in either order, so no column order is needed.
 pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
     parse_raw_datetime_date(s, None).map(|date| date.year())
-}
-
-/// Cheap shape check before attempting the multi-format chrono parser.
-///
-/// Every supported raw format starts with either `YYYY<sep>MM<sep>DD` or
-/// `DD<sep>MM<sep>YYYY`. Malformed date-shaped values remain candidates so the
-/// calendar parser can reject and count values such as `2024-13-45`.
-///
-/// Runs on every value of every column, so the byte tests come before the
-/// whitespace test, and that one compares lengths instead of contents.
-fn looks_like_raw_datetime_candidate(s: &str) -> bool {
-    if s.len() < 10 {
-        return false;
-    }
-
-    let bytes = s.as_bytes();
-    let ascii_digits = |range: std::ops::Range<usize>| {
-        bytes
-            .get(range)
-            .is_some_and(|slice| slice.iter().all(u8::is_ascii_digit))
-    };
-    let supported_separator = |byte: u8| matches!(byte, b'-' | b'/' | b'.');
-
-    let year_first = ascii_digits(0..4)
-        && bytes.get(4).is_some_and(|byte| supported_separator(*byte))
-        && bytes.get(7) == bytes.get(4);
-    let year_last = ascii_digits(6..10)
-        && bytes.get(2).is_some_and(|byte| supported_separator(*byte))
-        && bytes.get(5) == bytes.get(2);
-
-    (year_first || year_last) && s.trim().len() == s.len()
 }
 
 fn weekday_name(weekday: Weekday) -> &'static str {
@@ -725,7 +916,8 @@ mod tests {
         assert_eq!(parse_raw_datetime_year("2200-01-01"), Some(2200));
         assert_eq!(parse_raw_datetime_year("2024-13-45"), None);
         assert_eq!(parse_raw_datetime_year("2023-02-29"), None);
-        assert_eq!(parse_raw_datetime_year(" 2024-02-29"), None);
+        // Surrounding whitespace is trimmed, matching DateTimeAccumulator (#788 step 4).
+        assert_eq!(parse_raw_datetime_year(" 2024-02-29"), Some(2024));
         assert_eq!(parse_raw_datetime_year("ordinary text value"), None);
     }
 
@@ -1184,6 +1376,392 @@ mod tests {
                 assert_eq!(d.duration_days, 0.0);
             }
             _ => panic!("Expected DateTime stats"),
+        }
+    }
+
+    /// Exact copy of the pre-#788-step-4 timeliness pre-filter
+    /// (`looks_like_raw_datetime_candidate`) so the corpus test runs both
+    /// readers side by side and enforces an explicit decision for every
+    /// disagreement.
+    fn legacy_looks_like_raw_datetime_candidate(s: &str) -> bool {
+        if s.len() < 10 {
+            return false;
+        }
+        let bytes = s.as_bytes();
+        let ascii_digits = |range: std::ops::Range<usize>| {
+            bytes
+                .get(range)
+                .is_some_and(|slice| slice.iter().all(u8::is_ascii_digit))
+        };
+        let supported_separator = |byte: u8| matches!(byte, b'-' | b'/' | b'.');
+        let year_first = ascii_digits(0..4)
+            && bytes.get(4).is_some_and(|byte| supported_separator(*byte))
+            && bytes.get(7) == bytes.get(4);
+        let year_last = ascii_digits(6..10)
+            && bytes.get(2).is_some_and(|byte| supported_separator(*byte))
+            && bytes.get(5) == bytes.get(2);
+        (year_first || year_last) && s.trim().len() == s.len()
+    }
+
+    /// Exact pre-#788-step-4 timeliness date reader (`parse_raw_datetime_date`).
+    fn legacy_timeliness_reader(s: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
+        if !legacy_looks_like_raw_datetime_candidate(s) {
+            return None;
+        }
+        parse_flexible_full(s, reads_month_first(order)).map(|parsed| parsed.date)
+    }
+
+    /// Corpus test (#788 step 4): runs the old timeliness date reader and the
+    /// unified date statistics reader (`parse_date_value` / `DateTimeAccumulator`)
+    /// over a comprehensive corpus of date spellings drawn from the repo's
+    /// fixtures (`raw_date_forms.json`, `edge_cases_nightmare.csv`,
+    /// `spaced_datetimes.csv`, `decimals.csv`, `pattern_detection.json`), #1305,
+    /// #1335, and #815.
+    ///
+    /// Every value where the two readers disagree MUST appear in
+    /// `DECIDED_DIFFERENCES` with its expected old reading, new reading, and
+    /// rationale. Any unlisted or resolved difference fails the test so no
+    /// spelling changes silently.
+    #[test]
+    fn date_reader_corpus_lists_and_decides_every_difference() {
+        let corpus: &[&str] = &[
+            // --- Canonical forms from raw_date_forms.json ---
+            "2024-03-14",
+            "14/03/2024",
+            "03/14/2024",
+            "14-03-2024",
+            "14.03.2024",
+            "2024/03/14",
+            "2024-03-14 10:30:00",
+            "14/03/2024 10:30:00",
+            "03/14/2024 10:30:00",
+            "2024-03-14T10:30:00",
+            "2024-03-14T10:30:00.123",
+            "2024-03-14T10:30:00Z",
+            "2024-03-14T10:30:00z",
+            "2024-03-14T10:30:00+02:00",
+            "2024-03-14T10:30:00-05:30",
+            "2024-03-14T10:30:00.123+02:00",
+            // --- #1335 spaced datetimes (spaced_datetimes.csv) ---
+            "2026-06-01 12:00:00+00:00",
+            "2026-06-01 12:05:00.250Z",
+            "2026-06-02 08:30:00+02:00",
+            "2026-06-02 23:59:59-05:00",
+            "2026-06-02 09:00:00.5",
+            "2026-06-01 12:00:00+24:00",
+            "2026-06-01 12:00:00+00:60",
+            "2026-06-01 12:00:00+00",
+            "2024-03-14T10:30:00+0200",
+            "2024-03-14T10:30:00 EST",
+            // --- #1305 & decimals.csv slash dates ---
+            "12/01/2024",
+            "01/12/2024",
+            "01/05/2024",
+            "02/03/2024",
+            "12/30/2023",
+            "12/31/2023",
+            "31/12/2023",
+            "03/04/2024",
+            "13/04/2024",
+            "25/12/2023",
+            "01/01/2024",
+            "30/06/2024",
+            "12/31/2024 10:00:00",
+            "01/02/2024 09:30:00",
+            // --- #815 compact 8-digit dates (must stay unparsed in both) ---
+            "20240115",
+            "20231231",
+            "18000101",
+            "21991231",
+            // --- edge_cases_nightmare.csv & pattern_detection.json ---
+            "2024-02-29",
+            "2023-02-29",
+            "1900-01-01",
+            "9999-12-31",
+            "0000-00-00",
+            "2024-00-00",
+            "2024-13-45",
+            "2024-02-30",
+            "2024-13-14",
+            "2024-03-14T10:",
+            "2024-01-15T10:30",
+            "2024-03-14T25:30:00",
+            "2024-03-14T10:30:00junk",
+            "2024-W01-1",
+            "2024-001",
+            "2024-366",
+            "2024.01.01",
+            "Tue, 01 Jan 2024 00:00:00 GMT",
+            "Jan 1, 2024",
+            "Monday, January 1, 2024",
+            "1st Jan 2024",
+            "Jan 1st, 2024",
+            "2024年1月1日",
+            "1-Jan-2024",
+            "Mon Jan 1 2024",
+            "01 JAN 2024",
+            "1 January 2024",
+            "not-a-date",
+            "東京",
+            "1234567890",
+            // --- Category A: surrounding whitespace (raw_date_forms.json, rfc3339_timestamps.rs) ---
+            " 2024-03-14",
+            "2024-03-14 ",
+            " 2024-01-15T10:30:00Z ",
+            "\t01/02/2024\n",
+            // --- Category B: single-digit month or day (edge_cases_nightmare.csv, datetime.rs) ---
+            "1/1/2024",
+            "1/2/2024",
+            "01/2/2024",
+            "1/02/2024",
+            "1/31/2024",
+            "31/1/2024",
+            "2024-1-5",
+            "2024-01-5",
+            "2024-1-05",
+            "5-1-2024",
+            "5.1.2024",
+            "2024/1/5",
+            "1/2/2024 10:30:00",
+            "2024-1-5T10:30:00",
+            "2024-1-5 10:30:00",
+            // Note: old reader accidentally accepted `2024-01-5 10:30:00` because
+            // len >= 10 and bytes[4] == bytes[7] == '-'; both accept it.
+            "2024-01-5 10:30:00",
+            // --- Category C: signed or non-4-digit years (datetime.rs, edge_cases_nightmare.csv) ---
+            "+2024-01-15",
+            "-2024-01-15",
+            "05/01/+2025",
+            "05-01--2025",
+            "05-01/-2025", // mixed separators: rejected by both
+            "+12000-01-05",
+            "999-01-05",
+            "01/05/999",
+            "24-01-01",
+            "01.01.24",
+            // --- Category D: internal whitespace before numeric fields (datetime.rs) ---
+            // Note: old reader accidentally accepted single-space `2025- 1-01`
+            // and `05/ 1/2025` (len 10, seps at fixed offsets) while rejecting
+            // double-space `2025-  1-01` and `05/  1/2025`.
+            "2025- 1-01",
+            "2025-  1-01",
+            "05/ 1/2025",
+            "05/  1/2025",
+            "05/01/ 2025",
+            // --- Category E: a no-break space inside a field ---
+            "2024-01-\u{a0}5",
+            "05/\u{a0}1/2025",
+        ];
+
+        // Every expected (value, month_first, new_date, reason) disagreement.
+        // In every case the old reader returned `None` due to its fixed-offset
+        // `looks_like_raw_datetime_candidate` pre-filter, whereas the unified
+        // date statistics reader (`DateTimeAccumulator` / `parse_flexible_full`)
+        // parses the date.
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        let decided: &[(&str, bool, NaiveDate, &str)] = &[
+            // Category A: surrounding whitespace — new reader (date statistics) wins,
+            // matching LexicalTally type inference, DateTimeAccumulator, and numeric rules.
+            (" 2024-03-14", false, d(2024, 3, 14), "whitespace trimmed"),
+            (" 2024-03-14", true, d(2024, 3, 14), "whitespace trimmed"),
+            ("2024-03-14 ", false, d(2024, 3, 14), "whitespace trimmed"),
+            ("2024-03-14 ", true, d(2024, 3, 14), "whitespace trimmed"),
+            (
+                " 2024-01-15T10:30:00Z ",
+                false,
+                d(2024, 1, 15),
+                "whitespace trimmed",
+            ),
+            (
+                " 2024-01-15T10:30:00Z ",
+                true,
+                d(2024, 1, 15),
+                "whitespace trimmed",
+            ),
+            ("\t01/02/2024\n", false, d(2024, 2, 1), "whitespace trimmed"),
+            ("\t01/02/2024\n", true, d(2024, 1, 2), "whitespace trimmed"),
+            // Category B: single-digit month/day — new reader (date statistics) wins;
+            // old fixed-offset pre-filter missed short fields (including `1/31/2024`
+            // which already settled MonthFirst in DateTimeAccumulator).
+            ("1/1/2024", false, d(2024, 1, 1), "single-digit fields"),
+            ("1/1/2024", true, d(2024, 1, 1), "single-digit fields"),
+            ("1/2/2024", false, d(2024, 2, 1), "single-digit fields"),
+            ("1/2/2024", true, d(2024, 1, 2), "single-digit fields"),
+            ("01/2/2024", false, d(2024, 2, 1), "single-digit fields"),
+            ("01/2/2024", true, d(2024, 1, 2), "single-digit fields"),
+            ("1/02/2024", false, d(2024, 2, 1), "single-digit fields"),
+            ("1/02/2024", true, d(2024, 1, 2), "single-digit fields"),
+            ("1/31/2024", false, d(2024, 1, 31), "single-digit fields"),
+            ("1/31/2024", true, d(2024, 1, 31), "single-digit fields"),
+            ("31/1/2024", false, d(2024, 1, 31), "single-digit fields"),
+            ("31/1/2024", true, d(2024, 1, 31), "single-digit fields"),
+            ("2024-1-5", false, d(2024, 1, 5), "single-digit fields"),
+            ("2024-1-5", true, d(2024, 1, 5), "single-digit fields"),
+            ("2024-01-5", false, d(2024, 1, 5), "single-digit fields"),
+            ("2024-01-5", true, d(2024, 1, 5), "single-digit fields"),
+            ("2024-1-05", false, d(2024, 1, 5), "single-digit fields"),
+            ("2024-1-05", true, d(2024, 1, 5), "single-digit fields"),
+            ("5-1-2024", false, d(2024, 1, 5), "single-digit fields"),
+            ("5-1-2024", true, d(2024, 1, 5), "single-digit fields"),
+            ("5.1.2024", false, d(2024, 1, 5), "single-digit fields"),
+            ("5.1.2024", true, d(2024, 1, 5), "single-digit fields"),
+            ("2024/1/5", false, d(2024, 1, 5), "single-digit fields"),
+            ("2024/1/5", true, d(2024, 1, 5), "single-digit fields"),
+            (
+                "1/2/2024 10:30:00",
+                false,
+                d(2024, 2, 1),
+                "single-digit fields",
+            ),
+            (
+                "1/2/2024 10:30:00",
+                true,
+                d(2024, 1, 2),
+                "single-digit fields",
+            ),
+            (
+                "2024-1-5T10:30:00",
+                false,
+                d(2024, 1, 5),
+                "single-digit fields",
+            ),
+            (
+                "2024-1-5T10:30:00",
+                true,
+                d(2024, 1, 5),
+                "single-digit fields",
+            ),
+            (
+                "2024-1-5 10:30:00",
+                false,
+                d(2024, 1, 5),
+                "single-digit fields",
+            ),
+            (
+                "2024-1-5 10:30:00",
+                true,
+                d(2024, 1, 5),
+                "single-digit fields",
+            ),
+            // Category C: signed or non-4-digit years — new reader (date statistics) wins
+            // because DateTimeAccumulator already parses chrono %Y directly (note 2-digit
+            // years like `24-01-01` and `01.01.24` parse as year 0024 AD in chrono %Y,
+            // matching DateTimeStats; flagged as a separate gap rather than changed silently).
+            ("+2024-01-15", false, d(2024, 1, 15), "signed year"),
+            ("+2024-01-15", true, d(2024, 1, 15), "signed year"),
+            ("-2024-01-15", false, d(-2024, 1, 15), "signed year"),
+            ("-2024-01-15", true, d(-2024, 1, 15), "signed year"),
+            ("05/01/+2025", false, d(2025, 1, 5), "signed year"),
+            ("05/01/+2025", true, d(2025, 5, 1), "signed year"),
+            ("05-01--2025", false, d(-2025, 1, 5), "signed year"),
+            ("05-01--2025", true, d(-2025, 1, 5), "signed year"),
+            ("+12000-01-05", false, d(12000, 1, 5), "extended year"),
+            ("+12000-01-05", true, d(12000, 1, 5), "extended year"),
+            ("999-01-05", false, d(999, 1, 5), "short year"),
+            ("999-01-05", true, d(999, 1, 5), "short year"),
+            ("01/05/999", false, d(999, 5, 1), "short year"),
+            ("01/05/999", true, d(999, 1, 5), "short year"),
+            (
+                "24-01-01",
+                false,
+                d(24, 1, 1),
+                "two-digit year in chrono %Y",
+            ),
+            ("24-01-01", true, d(24, 1, 1), "two-digit year in chrono %Y"),
+            (
+                "01.01.24",
+                false,
+                d(24, 1, 1),
+                "two-digit year in chrono %Y",
+            ),
+            ("01.01.24", true, d(24, 1, 1), "two-digit year in chrono %Y"),
+            // Category D: internal whitespace before numeric fields — new reader wins,
+            // removing the old fixed-offset split between 1 space and 2 spaces.
+            ("2025-  1-01", false, d(2025, 1, 1), "internal whitespace"),
+            ("2025-  1-01", true, d(2025, 1, 1), "internal whitespace"),
+            ("05/  1/2025", false, d(2025, 1, 5), "internal whitespace"),
+            ("05/  1/2025", true, d(2025, 5, 1), "internal whitespace"),
+            ("05/01/ 2025", false, d(2025, 1, 5), "internal whitespace"),
+            ("05/01/ 2025", true, d(2025, 5, 1), "internal whitespace"),
+        ];
+
+        type DiffMap<'a> = HashMap<(&'a str, bool), (Option<NaiveDate>, Option<NaiveDate>)>;
+
+        // Every expected (value, month_first, old_date, reason) the old reader
+        // accepted and the new one rejects.
+        let rejected: &[(&str, bool, NaiveDate, &str)] = &[
+            // Category E: a no-break space (U+00A0) inside a field. The old
+            // fixed-offset gate only trimmed the ends and let chrono skip it;
+            // the date statistics reader skips ASCII whitespace between
+            // fields only, so the value is text there. Timeliness now agrees:
+            // a no-break space inside a date is an encoding artefact, not a
+            // date form. (`05/\u{a0}1/2025` is in the corpus too: both readers
+            // already reject it.)
+            ("2024-01-\u{a0}5", false, d(2024, 1, 5), "no-break space"),
+            ("2024-01-\u{a0}5", true, d(2024, 1, 5), "no-break space"),
+        ];
+
+        let mut expected_diffs: DiffMap<'_> = HashMap::new();
+        for &(value, mf, new_date, _reason) in decided {
+            assert!(
+                corpus.contains(&value),
+                "decided entry {value:?} missing from corpus"
+            );
+            let prev = expected_diffs.insert((value, mf), (None, Some(new_date)));
+            assert!(prev.is_none(), "duplicate decided entry ({value:?}, {mf})");
+        }
+        for &(value, mf, old_date, _reason) in rejected {
+            assert!(
+                corpus.contains(&value),
+                "rejected entry {value:?} missing from corpus"
+            );
+            let prev = expected_diffs.insert((value, mf), (Some(old_date), None));
+            assert!(prev.is_none(), "duplicate rejected entry ({value:?}, {mf})");
+        }
+
+        let mut actual_diffs: DiffMap<'_> = HashMap::new();
+        for &value in corpus {
+            for (mf, order) in [(false, None), (true, Some(SlashDateOrder::MonthFirst))] {
+                let old = legacy_timeliness_reader(value, order);
+                let new = parse_date_value(value, order);
+                // Verify DateTimeAccumulator itself produces the exact same date.
+                let mut acc = DateTimeAccumulator::new();
+                let dual = acc.update_returning_date(value);
+                let acc_date = dual.map(|dd| if mf { dd.month_first } else { dd.day_first });
+                assert_eq!(
+                    new, acc_date,
+                    "parse_date_value disagreed with DateTimeAccumulator on {value:?} (mf={mf})"
+                );
+                if old != new {
+                    actual_diffs.insert((value, mf), (old, new));
+                }
+            }
+        }
+
+        let mut unexpected = Vec::new();
+        for (key, got) in &actual_diffs {
+            if expected_diffs.get(key) != Some(got) {
+                unexpected.push(format!(
+                    "{key:?}: actual={got:?}, expected={:?}",
+                    expected_diffs.get(key)
+                ));
+            }
+        }
+        let mut stale = Vec::new();
+        for (key, exp) in &expected_diffs {
+            if !actual_diffs.contains_key(key) {
+                stale.push(format!("{key:?}: expected={exp:?} no longer disagrees"));
+            }
+        }
+        assert!(
+            unexpected.is_empty() && stale.is_empty(),
+            "corpus disagreements out of sync:\nunexpected: {unexpected:#?}\nstale: {stale:#?}"
+        );
+
+        // Compact #815 forms must stay unparsed by both readers until #815.
+        for compact in ["20240115", "20231231", "18000101", "21991231"] {
+            assert_eq!(legacy_timeliness_reader(compact, None), None, "{compact}");
+            assert_eq!(parse_date_value(compact, None), None, "{compact}");
         }
     }
 }

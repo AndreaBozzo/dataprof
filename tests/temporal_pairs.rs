@@ -41,10 +41,12 @@ fn pairs(report: &dataprof::ProfileReport) -> (usize, usize) {
 }
 
 #[test]
-fn a_pair_with_nulls_is_not_compared_on_any_engine() {
-    // The issue's example: no row has its start after its end, but zipping
-    // the null-free values paired 2024-01-05 with 2024-01-02, and 2024-01-10
-    // with 2024-01-06, and reported two violations.
+fn a_pair_with_nulls_is_compared_row_by_row_without_inventing_violations() {
+    // The #787 example: row 0 has a null start, rows 1 and 2 are valid and
+    // ordered. Zipping null-free reservoirs used to pair 2024-01-05 with
+    // 2024-01-02 and 2024-01-10 with 2024-01-06 and report two violations.
+    // Row-level tracking (#788 step 4) skips row 0 and compares rows 1 and 2:
+    // 2 pairs checked, 0 violations.
     let csv = write_csv(
         "start_date,end_date\n,2024-01-02\n2024-01-05,2024-01-06\n2024-01-10,2024-01-11\n",
     );
@@ -53,7 +55,7 @@ fn a_pair_with_nulls_is_not_compared_on_any_engine() {
             .engine(engine)
             .analyze_file(csv.path())
             .unwrap();
-        assert_eq!(pairs(&report), (0, 0), "{engine:?}");
+        assert_eq!(pairs(&report), (2, 0), "{engine:?}");
         let findings = report.findings();
         assert!(
             !findings
@@ -63,11 +65,11 @@ fn a_pair_with_nulls_is_not_compared_on_any_engine() {
             "{engine:?} reported violations nobody made"
         );
         assert!(
-            findings
+            !findings
                 .not_evaluated
                 .iter()
                 .any(|rule| rule.code == FindingCode::TemporalOrderViolations),
-            "{engine:?} must say the ordering was not assessed"
+            "{engine:?} should have assessed the pair row by row"
         );
     }
 }
@@ -158,7 +160,7 @@ fn null_free_columns_keep_the_same_rows_past_the_sample() {
             .analyze_file(csv.path())
             .unwrap();
         let (checked, violations) = pairs(&report);
-        assert_eq!(checked, 10_000, "{engine:?}");
+        assert_eq!(checked, 20_000, "{engine:?}");
         assert_eq!(
             violations, 0,
             "{engine:?} paired values from different rows"

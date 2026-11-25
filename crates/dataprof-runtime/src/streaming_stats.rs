@@ -4,11 +4,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::profile_builder::infer_data_type_streaming;
-use dataprof_core::char_len;
+use dataprof_core::{IsoQualityConfig, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, DateTimeAccumulator, EXACT_CARDINALITY_THRESHOLD, LexicalTally,
+    CardinalityEstimator, DateTimeAccumulator, DualDate, EXACT_CARDINALITY_THRESHOLD, LexicalTally,
     NumericAccumulator, ParsedNumber, RowCompletenessSummary, RowDuplicateSummary,
+    TemporalPairTracker, TimelinessClockMode, TimelinessTallies, TimelinessWindow,
 };
 
 pub use dataprof_core::COLUMN_SAMPLE_CAPACITY;
@@ -280,6 +281,13 @@ impl StreamingStatistics {
     }
 
     fn with_exact_limit(limit: Option<usize>) -> Self {
+        Self::with_exact_limit_and_timeliness(limit, None)
+    }
+
+    fn with_exact_limit_and_timeliness(
+        limit: Option<usize>,
+        timeliness_window: Option<TimelinessWindow>,
+    ) -> Self {
         Self {
             count: 0,
             null_count: 0,
@@ -289,7 +297,10 @@ impl StreamingStatistics {
             distinct: CardinalityEstimator::with_exact_limit(limit),
             sampler: StreamReservoirSampler::new(COLUMN_SAMPLE_CAPACITY),
             text_length_tracker: TextLengthStats::new(),
-            dates: DateTimeAccumulator::new(),
+            dates: match timeliness_window {
+                Some(window) => DateTimeAccumulator::with_timeliness_window(window),
+                None => DateTimeAccumulator::new(),
+            },
             lexical: LexicalTally::new(),
         }
     }
@@ -302,18 +313,22 @@ impl StreamingStatistics {
     }
 
     pub fn update(&mut self, value: &str) {
+        self.update_returning_date(value);
+    }
+
+    pub(crate) fn update_returning_date(&mut self, value: &str) -> Option<DualDate> {
         self.count += 1;
 
         if is_null_like_token(value) {
             self.null_count += 1;
-            return;
+            return None;
         }
 
         self.distinct.insert(value);
         self.sampler.offer(value);
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
         self.text_length_tracker.update(char_len(value));
-        self.dates.update(value);
+        let parsed_date = self.dates.update_returning_date(value);
         self.lexical.record(value);
 
         if let Some(number) = ParsedNumber::parse(value) {
@@ -321,6 +336,7 @@ impl StreamingStatistics {
             self.min = self.min.min(number.to_f64());
             self.max = self.max.max(number.to_f64());
         }
+        parsed_date
     }
 
     pub fn merge(&mut self, other: &StreamingStatistics) {
@@ -742,10 +758,19 @@ pub struct StreamingColumnCollection {
     completeness_tracker: RowCompletenessTracker,
     unique_count_exact_limits: BTreeMap<String, usize>,
     composite_keys: crate::CompositeKeyTracker,
+    timeliness_window: TimelinessWindow,
+    timeliness_clock_mode: TimelinessClockMode,
+    temporal_pairs: TemporalPairTracker,
+    /// The parsed dates of the record being processed, by position, kept so
+    /// a record that introduces a column can replay them into the pair
+    /// tracker once every column of the record is registered.
+    row_dates: Vec<Option<DualDate>>,
 }
 
 impl StreamingColumnCollection {
     pub fn new() -> Self {
+        let (timeliness_window, timeliness_clock_mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None);
         Self {
             columns: HashMap::new(),
             ordered_names: Vec::new(),
@@ -754,10 +779,16 @@ impl StreamingColumnCollection {
             completeness_tracker: RowCompletenessTracker::default(),
             unique_count_exact_limits: BTreeMap::new(),
             composite_keys: crate::CompositeKeyTracker::default(),
+            timeliness_window,
+            timeliness_clock_mode,
+            temporal_pairs: TemporalPairTracker::default(),
+            row_dates: Vec::new(),
         }
     }
 
     pub fn memory_limit(limit_mb: usize) -> Self {
+        let (timeliness_window, timeliness_clock_mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), None);
         Self {
             columns: HashMap::new(),
             ordered_names: Vec::new(),
@@ -766,6 +797,10 @@ impl StreamingColumnCollection {
             completeness_tracker: RowCompletenessTracker::default(),
             unique_count_exact_limits: BTreeMap::new(),
             composite_keys: crate::CompositeKeyTracker::default(),
+            timeliness_window,
+            timeliness_clock_mode,
+            temporal_pairs: TemporalPairTracker::default(),
+            row_dates: Vec::new(),
         }
     }
 
@@ -788,6 +823,17 @@ impl StreamingColumnCollection {
         self
     }
 
+    /// Configure the timeliness clock window and declared `temporal_pairs`
+    /// before any columns or records are processed (#788 step 4).
+    pub fn with_timeliness(mut self, options: &dataprof_core::AnalysisOptions) -> Self {
+        let (window, mode) =
+            TimelinessWindow::from_config(&IsoQualityConfig::default(), options.reference_date());
+        self.timeliness_window = window;
+        self.timeliness_clock_mode = mode;
+        self.temporal_pairs = TemporalPairTracker::new(&options.semantic_hints().temporal_pairs);
+        self
+    }
+
     /// Full-stream repeat counts for the requested groups.
     pub fn composite_key_summaries(
         &self,
@@ -796,7 +842,10 @@ impl StreamingColumnCollection {
     }
 
     fn new_column(&self, name: &str) -> StreamingStatistics {
-        StreamingStatistics::with_exact_limit(self.unique_count_exact_limits.get(name).copied())
+        StreamingStatistics::with_exact_limit_and_timeliness(
+            self.unique_count_exact_limits.get(name).copied(),
+            Some(self.timeliness_window),
+        )
     }
 
     pub fn init_columns(&mut self, headers: &[String]) {
@@ -806,6 +855,7 @@ impl StreamingColumnCollection {
                 self.ordered_names.push(header.clone());
             }
         }
+        self.temporal_pairs.register_columns(headers);
     }
 
     /// Add a column discovered after `prior_rows` records have already passed.
@@ -815,8 +865,30 @@ impl StreamingColumnCollection {
     /// total/null counters rather than looking shorter and more complete than
     /// the dataset.
     pub fn init_column_with_missing(&mut self, header: &str, prior_rows: usize) {
+        if self.insert_missing_column(header, prior_rows) {
+            self.temporal_pairs.register_column(header);
+        }
+    }
+
+    /// [`Self::init_column_with_missing`] for every column one record
+    /// introduces, registering them with the start/end pair tracker in one
+    /// call, so a wide record recomputes the candidate pairs once rather
+    /// than once per column.
+    pub fn init_columns_with_missing(&mut self, headers: &[String], prior_rows: usize) {
+        let mut added = false;
+        for header in headers {
+            added |= self.insert_missing_column(header, prior_rows);
+        }
+        if added {
+            self.temporal_pairs.register_columns(headers);
+        }
+    }
+
+    /// Insert a column padded with `prior_rows` missing values; `false` when
+    /// it already exists.
+    fn insert_missing_column(&mut self, header: &str, prior_rows: usize) -> bool {
         if self.columns.contains_key(header) {
-            return;
+            return false;
         }
 
         let stats = StreamingStatistics {
@@ -829,6 +901,7 @@ impl StreamingColumnCollection {
         if prior_rows > 0 {
             self.completeness_tracker.invalidate_completed_rows();
         }
+        true
     }
 
     pub fn process_record<I>(&mut self, headers: &[String], values: I)
@@ -854,13 +927,17 @@ impl StreamingColumnCollection {
         let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
         let mut values = values.into_iter();
+        let track_pairs = self.temporal_pairs.is_enabled();
+        let mut introduced_column = false;
+        self.row_dates.clear();
 
         // Headers define the row schema. Normalize a missing trailing field to
         // the profiler's empty/null representation so ragged flexible records
         // update every column and hash identically to an explicit empty field.
         for (position, header) in headers.iter().enumerate() {
             let value = values.next().unwrap_or_default();
-            if containers.contains(&position) {
+            let is_container = containers.contains(&position);
+            if is_container {
                 row_signature.push_container_field(&value);
                 self.composite_keys.unsupported_field(header);
             } else {
@@ -870,13 +947,21 @@ impl StreamingColumnCollection {
                 }
             }
 
-            if let Some(stats) = self.columns.get_mut(header) {
-                stats.update(&value);
+            let parsed_date = if let Some(stats) = self.columns.get_mut(header) {
+                stats.update_returning_date(&value)
             } else {
                 self.ordered_names.push(header.clone());
                 let mut stats = self.new_column(header);
-                stats.update(&value);
+                let parsed = stats.update_returning_date(&value);
                 self.columns.insert(header.clone(), stats);
+                self.temporal_pairs.register_column(header);
+                introduced_column = true;
+                parsed
+            };
+            let parsed_date = (!is_container).then_some(parsed_date).flatten();
+            self.row_dates.push(parsed_date);
+            if track_pairs || self.temporal_pairs.is_enabled() {
+                self.temporal_pairs.record_date(header, parsed_date);
             }
             // Same null definition the column counters use, so the record
             // count and the cell counts always describe the same nulls.
@@ -889,6 +974,15 @@ impl StreamingColumnCollection {
         self.row_tracker.observe(row_signature.finish());
         self.completeness_tracker.observe(row_has_null);
         self.composite_keys.finish_row();
+        // A column registered mid-record can form a pair with a column read
+        // earlier in the same record, whose date had no slot yet: replay the
+        // record's dates so its first row is compared too.
+        if introduced_column && self.temporal_pairs.is_enabled() {
+            for (header, date) in headers.iter().zip(&self.row_dates) {
+                self.temporal_pairs.record_date(header, *date);
+            }
+        }
+        self.temporal_pairs.finish_row();
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen.
@@ -908,6 +1002,22 @@ impl StreamingColumnCollection {
             .iter()
             .map(|(name, stats)| (name.clone(), stats.lexical_tally().clone()))
             .collect()
+    }
+
+    /// Full-stream timeliness accumulators (per-column date accumulators and
+    /// row-level start/end pair counts) over every scanned value and row
+    /// (#788 step 4).
+    pub fn timeliness_tallies(&self) -> TimelinessTallies {
+        TimelinessTallies {
+            columns: self
+                .columns
+                .iter()
+                .map(|(name, stats)| (name.clone(), stats.date_statistics().clone()))
+                .collect(),
+            pairs: self.temporal_pairs.finish(),
+            clock_mode: self.timeliness_clock_mode,
+            window: self.timeliness_window,
+        }
     }
 
     pub fn get_column_stats(&self, column_name: &str) -> Option<&StreamingStatistics> {
@@ -930,6 +1040,7 @@ impl StreamingColumnCollection {
             .retain(|name, _| selected.contains(name.as_str()));
         self.ordered_names
             .retain(|name| selected.contains(name.as_str()));
+        self.temporal_pairs.retain_columns(names);
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
@@ -1072,10 +1183,16 @@ impl StreamingColumnCollection {
             mut completeness_tracker,
             unique_count_exact_limits,
             composite_keys,
+            timeliness_window,
+            timeliness_clock_mode,
+            temporal_pairs,
+            row_dates: _,
         } = other;
 
         if self_rows == 0 && self.columns.is_empty() && self.unique_count_exact_limits.is_empty() {
             self.unique_count_exact_limits = unique_count_exact_limits;
+            self.timeliness_window = timeliness_window;
+            self.timeliness_clock_mode = timeliness_clock_mode;
         }
 
         // Signatures are positional over the record's own headers, so they
@@ -1133,6 +1250,7 @@ impl StreamingColumnCollection {
         } else {
             self.composite_keys.merge(composite_keys);
         }
+        self.temporal_pairs.merge(&temporal_pairs);
         // Only a side that signed rows can make them incomparable, so folding
         // a partition into a fresh accumulator stays a plain accumulation.
         if self_rows > 0 && other_rows > 0 && !schemas_match {
@@ -1961,5 +2079,21 @@ mod tests {
         }
         let usage = stats.memory_usage_bytes();
         assert!(usage < 1_000_000);
+    }
+
+    #[test]
+    fn a_first_record_without_init_columns_compares_its_dates() {
+        // A direct `process_record` caller that never registered the header:
+        // `start_date` is read before `end_date` exists, so the pair forms
+        // after its date was read. The first row must still be compared.
+        let headers = vec!["start_date".to_string(), "end_date".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        for row in [["2025-02-02", "2025-02-01"], ["2025-01-01", "2025-01-02"]] {
+            collection.process_record(&headers, row.iter().map(|value| value.to_string()));
+        }
+        let counts = collection.timeliness_tallies().pairs
+            [&("start_date".to_string(), "end_date".to_string())];
+        assert_eq!(counts.pairs_checked, 2);
+        assert_eq!(counts.violations_for(false, false), 1);
     }
 }

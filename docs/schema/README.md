@@ -1482,30 +1482,41 @@ or predate `key_values_checked` retain their recorded `key_uniqueness` value.
 
 | field | values | meaning |
 | --- | --- | --- |
-| `value_facts` | `"every_value"`, `"every_value_consistency_precision"`, `"every_value_consistency_precision_accuracy_rules"` | which values a column's `data_type`, `type_homogeneity`, `locale_number_count`, `zero_padded_count`, consistency, precision, accuracy rules and value-driven semantic-hint bindings are counted over, and how many zero-padded numbers make digit codes |
+| `value_facts` | `"every_value"`, `"every_value_consistency_precision"`, `"every_value_consistency_precision_accuracy_rules"`, `"every_value_consistency_precision_accuracy_rules_timeliness"` | which values a column's `data_type`, `type_homogeneity`, `locale_number_count`, `zero_padded_count`, consistency, precision, accuracy rules, timeliness and value-driven semantic-hint bindings are counted over, and how many zero-padded numbers make digit codes |
 
 The file, Arrow and streaming engines keep at most 10,000 values of each
 column. Through 0.14 they typed a column read as text, classified its values,
-and computed consistency, precision and accuracy rules from those, while the
-same data profiled in memory was measured from every value (#788). On a larger
-source, one zero-padded code outside the sample, or a share of numbers, dates
-or booleans at a type threshold, typed the column otherwise by input route, and
-minority type, format, encoding, decimal-scale or accuracy rule violations
-outside the sample went unseen. Each engine now counts the lexical,
-consistency, precision, accuracy rule and hint-binding facts of every non-null
-value it reads (`"every_value_consistency_precision_accuracy_rules"`), so the
-type, `type_homogeneity`, `locale_number_count`, `zero_padded_count`,
-`consistency`, `precision`, accuracy rule counts (`rule_values_checked`,
+and computed consistency, precision, accuracy rules and timeliness from those,
+while the same data profiled in memory was measured from every value (#788). On
+a larger source, one zero-padded code outside the sample, or a share of
+numbers, dates or booleans at a type threshold, typed the column otherwise by
+input route, and minority type, format, encoding, decimal-scale, accuracy rule
+or timeliness violations outside the sample went unseen. Each engine now counts
+the lexical, consistency, precision, accuracy rule, hint-binding and timeliness
+facts of every non-null value it reads
+(`"every_value_consistency_precision_accuracy_rules_timeliness"`), using the
+same date reading for timeliness as the date statistics and comparing start/end
+pairs row by row over every scanned row (#787, #1305). Thus `data_type`,
+`type_homogeneity`, `locale_number_count`, `zero_padded_count`, `consistency`,
+`precision`, accuracy rule counts (`rule_values_checked`,
 `rule_violating_values`, `range_violations`, `negative_values_in_positive`,
-`numeric_values_checked`) and value-driven `semantic_hint_bindings` cover every
-value read on every route; `consistency` and `precision` appear in
-`exact_dimensions` rather than `sampled_dimensions`, and `accuracy` leaves
-`sampled_dimensions` whenever no outlier-eligible numeric column is sampled.
-Reports written by step 1 recorded `"every_value"` (types and lexical forms
-exact; consistency, precision and accuracy rules sampled); reports written by
-step 2 recorded `"every_value_consistency_precision"` (consistency and
-precision also exact; accuracy rules still sampled). Patterns, accuracy outlier
-fences, timeliness and validity still read the sample.
+`numeric_values_checked`), value-driven `semantic_hint_bindings` and
+`timeliness` cover every value read on every route; `consistency`, `precision`
+and `timeliness` appear in `exact_dimensions` rather than `sampled_dimensions`,
+and `accuracy` leaves `sampled_dimensions` whenever no outlier-eligible numeric
+column is sampled. One exception: when a selected start/end pair or temporal
+column has no full-read count (a table with more than 256 unrelated `start*` by
+`end*` name combinations, where an unrelated pair is not followed row by row),
+timeliness reads the retained sample and stays in `sampled_dimensions`. Read
+`exact_dimensions` and `sampled_dimensions`, not `value_facts`, to learn which
+dimensions a report counted over every value. Reports written by step 1 recorded `"every_value"` (types
+and lexical forms exact; consistency, precision, accuracy rules and timeliness
+sampled); reports written by step 2 recorded
+`"every_value_consistency_precision"` (consistency and precision also exact);
+reports written by step 3 recorded
+`"every_value_consistency_precision_accuracy_rules"` (accuracy rules and hint
+bindings also exact; timeliness still sampled). Patterns, accuracy outlier
+fences and validity still read the sample.
 
 Counted over every value, one stray zero-padded number would retype a column
 of quantities on every route, where before only a sample that held it did.

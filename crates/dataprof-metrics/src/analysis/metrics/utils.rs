@@ -200,13 +200,14 @@ pub(crate) fn identifier_words(column_name: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Extract year from common date formats
-/// Supports: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+/// Extract year from any date form accepted by the shared date statistics
+/// parser ([`parse_raw_datetime_year`]).
 pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
     parse_raw_datetime_year(date_str)
 }
 
-/// Extract the full calendar date from the same formats [`extract_year`] accepts.
+/// Extract the full calendar date from the same shared date parser as the date
+/// statistics (`DateTimeAccumulator` / `parse_flexible_full`).
 ///
 /// Required wherever dates are ordered or compared against a reference point:
 /// two of the supported formats put the day first, so neither the year alone
