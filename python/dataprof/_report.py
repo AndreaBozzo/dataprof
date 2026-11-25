@@ -967,8 +967,9 @@ class ProfileReport:
                 ``unique_keys=[["country", "year"]]`` when profiling. Even a
                 group of one uses the tuple tracker. All-null tuples are
                 skipped. A witnessed repeat fails and includes repeat counts
-                and up to five tuples. Passing requires an exact count and
-                complete scan. Set ``unique_keys_exact_limit`` when a bounded
+                and up to five tuples. Passing requires an exact count, and
+                with ``scope="full_source"`` a complete scan, as for a single
+                column. Set ``unique_keys_exact_limit`` when a bounded
                 count cannot decide the check.
             max_date_age: Days a column's newest date (its ``max_datetime``)
                 may lie before the timeliness reference date the report

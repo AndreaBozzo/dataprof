@@ -113,7 +113,8 @@
 //! ([`NotEvaluated::ApproximateCount`]).
 //! [`QualityPolicy::unique_keys`] evaluates ordered column groups from
 //! `composite_keys`. A witnessed repeat fails even with an incomplete scan
-//! or a bounded count. Passing requires an exact count over the full source.
+//! or a bounded count. Passing requires an exact count, and under
+//! [`PolicyScope::FullSource`] a scan that covered the source.
 //!
 //! # Freshness
 //!
@@ -1233,8 +1234,9 @@ impl QualityPolicy {
     ///
     /// Request [`unique_key_groups`](Self::unique_key_groups) as `unique_keys`
     /// when profiling. A missing summary leaves the check unevaluated. Any
-    /// witnessed repeat fails. Passing requires exact counts from a complete
-    /// scan, under either policy scope.
+    /// witnessed repeat fails. Passing requires exact counts, and under
+    /// [`PolicyScope::FullSource`] a complete scan, as for
+    /// [`unique_columns`](Self::unique_columns).
     pub fn unique_keys<I, G, S>(mut self, groups: I) -> Self
     where
         I: IntoIterator<Item = G>,
@@ -2691,7 +2693,7 @@ impl QualityPolicy {
                  with unique_keys_exact_limit set to at least {} (CLI: --unique-keys-exact-limit {}).",
                 summary.rows_counted, summary.rows_counted
             );
-        } else if let Some(gap) = scan.gap() {
+        } else if let (PolicyScope::FullSource, Some(gap)) = (self.scope, scan.gap()) {
             check.status = CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete { gap });
             check.message =
                 "no key tuple was observed more than once, and the rows that were not read may repeat one"

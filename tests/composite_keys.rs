@@ -347,47 +347,62 @@ fn unique_key_gate_uses_policy_groups() {
 }
 
 #[test]
-fn unique_key_gate_requires_full_scan_even_in_observed_scope() {
+fn unique_key_gate_decides_partial_reads_by_scope() {
+    // As for a single column: a partial read with no repeat passes under
+    // `observed`, whose claim covers only the rows read, and is inconclusive
+    // under `full_source`. A repeat in the rows read fails under both.
     let path = file(
         ".csv",
         b"country,year\nIT,2024\nIT,2025\nIT,2024\nIT,2026\n",
     );
-    let policy = QualityPolicy::new()
-        .unique_keys([["country", "year"]])
-        .scope(PolicyScope::Observed);
-    for (profiler, verdict, reason) in [
+    // A partial read, the verdict when it holds a repeat, and its evidence.
+    type PartialRead = (fn() -> Profiler, Option<Verdict>, Value);
+    let partial_reads: [PartialRead; 4] = [
         (
-            Profiler::new().stop_when(StopCondition::MaxRows(2)),
-            Verdict::Inconclusive,
+            || Profiler::new().stop_when(StopCondition::MaxRows(2)),
+            None,
             json!({"coverage": "incomplete", "reason": "truncated"}),
         ),
         (
-            Profiler::new().stop_when(StopCondition::MaxBytes(29)),
-            Verdict::Inconclusive,
+            || Profiler::new().stop_when(StopCondition::MaxBytes(29)),
+            None,
             json!({"coverage": "incomplete", "reason": "truncated"}),
         ),
         (
-            Profiler::new().sampling(SamplingStrategy::Systematic { interval: 3 }),
-            Verdict::Inconclusive,
+            || Profiler::new().sampling(SamplingStrategy::Systematic { interval: 3 }),
+            None,
             json!({"coverage": "incomplete", "reason": "sampled"}),
         ),
         (
-            Profiler::new().stop_when(StopCondition::MaxRows(3)),
-            Verdict::Fail,
+            || Profiler::new().stop_when(StopCondition::MaxRows(3)),
+            Some(Verdict::Fail),
             json!({"coverage": "incomplete", "reason": "truncated"}),
         ),
+    ];
+    for (scope, unrepeated) in [
+        (PolicyScope::Observed, Verdict::Pass),
+        (PolicyScope::FullSource, Verdict::Inconclusive),
     ] {
-        let report = profiler
-            .engine(EngineType::Incremental)
-            .unique_keys_from_policy(&policy)
-            .analyze_file(path.path())
-            .unwrap();
-        let result = policy.evaluate(&report).unwrap();
-        assert_eq!(result.verdict, verdict);
-        assert_eq!(
-            serde_json::to_value(result.checks[0].evidence).unwrap(),
-            reason
-        );
+        let policy = QualityPolicy::new()
+            .unique_keys([["country", "year"]])
+            .scope(scope);
+        for (profiler, repeated, reason) in &partial_reads {
+            let report = profiler()
+                .engine(EngineType::Incremental)
+                .unique_keys_from_policy(&policy)
+                .analyze_file(path.path())
+                .unwrap();
+            let result = policy.evaluate(&report).unwrap();
+            assert_eq!(
+                result.verdict,
+                repeated.unwrap_or(unrepeated),
+                "{scope:?} {reason}"
+            );
+            assert_eq!(
+                &serde_json::to_value(result.checks[0].evidence).unwrap(),
+                reason
+            );
+        }
     }
 }
 

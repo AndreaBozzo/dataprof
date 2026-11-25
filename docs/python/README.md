@@ -1105,7 +1105,8 @@ value. A repeat fails even on a partial scan or when the tracker exceeded
 its distinct limit. The check puts repeated rows in `observed` and the
 distinct repeat count and up to five sample tuples in `key.repeats`. These
 counts are lower bounds on a partial scan or after the limit is exceeded.
-Passing requires an exact count on a complete scan under either scope.
+Passing requires an exact count, and under `scope="full_source"` a complete
+scan, as for a single column.
 A report that did not count the group leaves it unevaluated. If the count
 exceeded its limit without witnessing a repeat, profile again with a higher
 `unique_keys_exact_limit`.

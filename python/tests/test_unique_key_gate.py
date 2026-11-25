@@ -140,14 +140,17 @@ def test_key_gate_fails_on_a_witness_after_the_limit(drops):
     }
 
 
-def test_key_gate_needs_complete_evidence(drops):
+def test_key_gate_decides_a_partial_read_by_scope(drops):
+    # As for a single column: no repeat in the rows read passes under
+    # "observed" and is inconclusive under "full_source".
     _, bad = drops
     report = dp.profile_file(bad, unique_keys=POLICY, max_rows=2)
-    for scope in ("observed", "full_source"):
-        result = report.check(unique_columns=POLICY, scope=scope)
-        assert result.verdict == "inconclusive"
-        (check,) = result.checks
-        assert check.reason == {"reason": "evidence_incomplete", "gap": "truncated"}
+    observed = report.check(unique_columns=POLICY, scope="observed")
+    assert observed.verdict == "pass"
+    full = report.check(unique_columns=POLICY, scope="full_source")
+    assert full.verdict == "inconclusive"
+    (check,) = full.checks
+    assert check.reason == {"reason": "evidence_incomplete", "gap": "truncated"}
 
 
 def test_key_gate_survives_canonical_round_trips_and_flat_baselines(drops):
