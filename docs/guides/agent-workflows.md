@@ -31,7 +31,7 @@ The workflow above includes fields added in 0.14. Choose explicit checks for the
 | Did a feed stop advancing? | `max_date_age={"published_at": 3}`; `reference_date=` fixes the profiling clock |
 | Is a period missing inside its date range? | `max_date_gap={"published_at": 1}` checks consecutive distinct days |
 | Did volume fall or grow? | `baseline=...`, `max_row_count_drop=10`, `max_row_count_growth=20`; `min_rows=1` sets a floor |
-| Did a business key repeat? | `unique_columns=["order_id"]`, paired with `max_null_count={"order_id": 0}`; `identifier_columns` supplies the key for the score and `key_duplicates` finding |
+| Did a business key repeat? | Use `unique_columns=["order_id"]` with `max_null_count={"order_id": 0}`, or request `unique_keys=[["order_id", "line_no"]]` when profiling and pass the group to `unique_columns`. `identifier_columns` supplies a single column for the score and `key_duplicates` finding. |
 | Did a reported defect occur? | `forbid_findings=["key_duplicates"]` |
 
 Keep profiling settings consistent between runs. `temporal_columns` adds

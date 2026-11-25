@@ -11,7 +11,7 @@ use dataprof_core::{
 use dataprof_db::DatabaseConfig;
 use dataprof_engines::adaptive::AdaptiveProfiler;
 use dataprof_partial as partial;
-use dataprof_runtime::ProfileReport;
+use dataprof_runtime::{ProfileReport, QualityPolicy};
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -372,6 +372,15 @@ impl Profiler {
     /// Count repeats in the given ordered groups of key columns.
     pub fn unique_keys(mut self, keys: Vec<Vec<String>>) -> Self {
         self.config.unique_keys = keys;
+        self
+    }
+
+    /// Add the key groups required by a quality policy to the profiling
+    /// options. Evaluate the policy on the resulting report.
+    pub fn unique_keys_from_policy(mut self, policy: &QualityPolicy) -> Self {
+        self.config
+            .unique_keys
+            .extend(policy.unique_key_groups().map(<[String]>::to_vec));
         self
     }
 

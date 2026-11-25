@@ -8,7 +8,7 @@ from typing import Any
 
 from ._accessors import ColumnProfile, DataQualityMetrics
 from ._findings import FindingsResult
-from ._gate import QualityGateResult
+from ._gate import QualityGateResult, _UniqueColumns
 
 def _check_source_version(source_version: object) -> None: ...
 
@@ -165,7 +165,7 @@ class ProfileReport:
         max_null_percentage: Mapping[str, float] | float | None = ...,
         max_null_count: Mapping[str, int] | int | None = ...,
         max_duplicate_rows: int | None = ...,
-        unique_columns: Sequence[str] | None = ...,
+        unique_columns: _UniqueColumns | None = ...,
         max_date_age: Mapping[str, int] | None = ...,
         max_date_gap: Mapping[str, int] | None = ...,
         require_metrics: Sequence[str] | None = ...,

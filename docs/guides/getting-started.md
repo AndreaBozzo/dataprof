@@ -261,6 +261,9 @@ Whole-row duplicates and key duplicates answer separate questions. The
 `key_duplicates` finding reads the first declared `identifier_columns` entry
 present in the report. `check(unique_columns=["order_id"])` checks that
 column directly without requiring a hint; nulls need their own count rule.
+For a key such as `["order_id", "line_no"]`, request the group with
+`unique_keys` when profiling and pass it as a nested list to `unique_columns`.
+The CLI does both with `--unique-key order_id,line_no`.
 
 The row tracker counts duplicates exactly up to 1,000,000 distinct rows by
 default, or fewer under memory pressure. In 0.14, raise that limit with

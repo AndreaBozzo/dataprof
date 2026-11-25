@@ -1039,7 +1039,7 @@ if not result.passed:
 | `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
 | `max_null_count` | `dict[str, int] \| int` | Ceiling for a column's null count, decided on the exact count (0.13.1+). Same shape as `max_null_percentage`; `{"customer_id": 0}` means no nulls at any row count |
 | `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
-| `unique_columns` | `list[str]` | Columns whose non-null values must not repeat, such as a business key; whole-row duplicates miss a reused key whenever another column differs (0.14+) |
+| `unique_columns` | `Sequence[str \| Sequence[str]]` | Columns whose non-null values must not repeat, such as a business key; whole-row duplicates miss a reused key whenever another column differs (0.14+). An ordered group such as `["country", "year"]` checks a key over several columns, profiled with `unique_keys` (0.15+) |
 | `max_date_age` | `dict[str, int]` | Days a column's newest date may lie before the timeliness reference date the report recorded, so a feed that stopped moving fails: `{"published_at": 3}`. Names its columns; there is no `"*"` form (0.14+) |
 | `max_date_gap` | `dict[str, int]` | Days the largest gap between a column's consecutive distinct dates may span, so a daily file that lost a period from its middle fails: `{"published_at": 1}` allows no missing day. Names its columns; there is no `"*"` form (0.14+) |
 | `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
@@ -1085,6 +1085,30 @@ distinct values or sooner under memory pressure, settles neither direction
 profiling option that picks the key the uniqueness score and the
 `key_duplicates` finding read. Neither implies the other: a pipeline that
 wants both scores and gates its key names it in both.
+
+For a key spanning several columns, request the group while profiling and
+check it on the resulting report.
+
+```python
+import dataprof as dp
+
+key = ["country", "year"]
+report = dp.profile_file("annual_totals.csv", unique_keys=[key])
+result = report.check(unique_columns=["id", key])
+print(result.verdict)
+```
+
+Each group gets a `unique_key` check from the report's `composite_keys` block.
+An explicit one-column group such as `["id"]` uses the same tuple tracker.
+A group skips all-null tuples and counts tuples with at least one non-null
+value. A repeat fails even on a partial scan or when the tracker exceeded
+its distinct limit. The check puts repeated rows in `observed` and the
+distinct repeat count and up to five sample tuples in `key.repeats`. These
+counts are lower bounds on a partial scan or after the limit is exceeded.
+Passing requires an exact count on a complete scan under either scope.
+A report that did not count the group leaves it unevaluated. If the count
+exceeded its limit without witnessing a repeat, profile again with a higher
+`unique_keys_exact_limit`.
 
 `max_date_age` reads the column's `max_datetime` against the reference date
 the report's timeliness clock recorded: the `reference_date=` of the profiling
@@ -1276,8 +1300,8 @@ cells as written, so a one-column group such as `unique_keys=[["amount"]]` can
 count fewer distinct keys than `report["amount"].unique_count` when the column
 spells one value in two ways. A zero-padded code such as `007` stays distinct
 from `7`, and an ambiguous slash date reads day first. `compare()` shows
-changed groups under `configuration`. The quality gate does not read the
-block yet.
+changed groups under `configuration`. Use `check(unique_columns=[group])` to
+gate a group stored in the block.
 
 `min_rows` reads the report's `execution.rows_processed`. Rows already read do
 not go away when more are read, so a scan that read at least `min_rows` rows
@@ -1698,6 +1722,7 @@ Thresholds are JSON numbers; a quoted one such as `"90"` is a policy error
   "max_null_count": {"customer_id": 0},
   "max_null_percentage": {"*": 20},
   "max_duplicate_rows": 0,
+  "unique_columns": ["id", ["country", "year"]],
   "require_metrics": ["quality"],
   "scope": "full_source"
 }
@@ -1709,6 +1734,12 @@ any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
 `--max-null-count COLUMN=COUNT` (0.13.1+), `--min-dimension NAME=PERCENT`,
 `--require-metric NAME`, `--require-column NAME`, `--unique-column NAME` (0.14+),
 or `--forbid-finding CODE` (0.14+) to supply multiple entries; the last occurrence of a repeated mapping key wins.
+`--unique-key country,year` is repeatable and requests a group from each
+source before evaluating it. Combine it with `--unique-column id` for both
+forms. Together these flags replace the policy file's `unique_columns` entry.
+`--unique-column` accepts a literal comma in a name. For groups whose column
+names contain commas, use nested arrays in the policy file.
+Use `--unique-keys-exact-limit LIMIT` to raise the per-group tracking limit.
 `--max-date-age COLUMN=DAYS` (0.14+) is repeatable too, and measures against
 today's date, since the command line takes no reference date.
 `--max-date-gap COLUMN=DAYS` (0.14+) is repeatable as well.
@@ -1717,7 +1748,8 @@ other policy keywords. Empty policies, unknown keywords, and duplicate JSON keys
 inside dimension or column mappings) are policy errors (exit 3).
 
 `--engine`, `--format`, `--max-rows`, `--duplicate-rows-exact-limit ROWS`
-(0.14+), and repeatable `--metric PACK` pass through to `profile_file()`. As with the library, capped or sampled evidence may leave a
+(0.14+), `--unique-keys-exact-limit LIMIT`, and repeatable `--metric PACK` pass
+through to `profile_file()`. As with the library, capped or sampled evidence may leave a
 full-source requirement inconclusive. `--scope observed` explicitly limits the
 claim to the analyzed population. A threshold on an unavailable metric stays
 unevaluated; an explicit `--require-metric` requirement fails if it is absent.

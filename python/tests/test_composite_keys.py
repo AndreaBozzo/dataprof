@@ -129,9 +129,28 @@ def test_composite_keys_match_sync_routes(sources):
         ),
     }
     wrong: list[str] = []
+    gate_checks = None
     for route, run in routes.items():
         try:
-            verify_report(route, run(), wrong)
+            report = run()
+            verify_report(route, report, wrong)
+            result = report.check(unique_columns=GROUPS)
+            assert result.verdict == "fail"
+            failed, passed = result.checks
+            assert (failed.code, failed.status, failed.observed) == ("unique_key", "failed", 8)
+            assert failed.key == {
+                "columns": GROUPS[0],
+                "repeats": {
+                    "distinct_repeated_keys": 7,
+                    "sample_repeated_keys": EXPECTED[0]["sample_repeated_keys"],
+                    "is_exact": True,
+                },
+            }
+            assert (passed.code, passed.status, passed.observed) == ("unique_key", "passed", 0)
+            checks = result.to_dict()["checks"]
+            if gate_checks is None:
+                gate_checks = checks
+            assert checks == gate_checks
         except Exception as exc:
             wrong.append(f"{route}: {exc!r}")
     assert not wrong, "\n".join(wrong)

@@ -15,7 +15,7 @@ from typing import Any, NoReturn
 
 import dataprof
 from dataprof import profile_file
-from dataprof._gate import _Policy, _PolicyFieldError, _summary_lines
+from dataprof._gate import _check_summary, _Policy, _PolicyFieldError, _summary_lines
 
 _EXIT_CODES = {"pass": 0, "fail": 1, "inconclusive": 2}
 _ERROR_EXIT_CODE = 3
@@ -146,6 +146,15 @@ def _column_exact_limit(value: str) -> tuple[str, int]:
     if not separator:
         raise argparse.ArgumentTypeError("expected COLUMN=LIMIT")
     return name, _positive_int(limit)
+
+
+def _key_group(value: str) -> list[str]:
+    columns = value.split(",")
+    if not all(columns) or len(set(columns)) != len(columns):
+        raise argparse.ArgumentTypeError(
+            "expected a comma-separated group of distinct column names"
+        )
+    return columns
 
 
 def _json_requested(parser: ArgumentParser, argv: Sequence[str]) -> bool:
@@ -372,6 +381,13 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         help="fail when a non-null value of the column occurs more than once; repeatable",
     )
     parser.add_argument(
+        "--unique-key",
+        action="append",
+        metavar="COLUMN[,COLUMN...]",
+        type=_key_group,
+        help="require uniqueness of this ordered column group (repeatable)",
+    )
+    parser.add_argument(
         "--forbid-finding",
         dest="forbid_findings",
         action="append",
@@ -414,6 +430,12 @@ def _parser(argv: list[str] | None = None) -> _CheckArgumentParser:
         metavar="COLUMN=LIMIT",
         type=_column_exact_limit,
         help="count distinct values exactly up to LIMIT for COLUMN; repeatable",
+    )
+    parser.add_argument(
+        "--unique-keys-exact-limit",
+        type=_positive_int,
+        metavar="LIMIT",
+        help="track up to LIMIT distinct keys per group (default: 1000000)",
     )
     parser.add_argument(
         "--metric",
@@ -588,6 +610,8 @@ def _policy(args: argparse.Namespace) -> dict[str, Any]:
             ):
                 value = dict(value)
             policy[key] = value
+    if args.unique_key is not None:
+        policy["unique_columns"] = [*(args.unique_columns or ()), *args.unique_key]
 
     # Validate JSON container shapes before handing values to the same policy
     # validator the public check() method uses. Thresholds, dimension names,
@@ -759,7 +783,9 @@ def _policy_error(
     # A value error names the file only when the file supplied that key
     # and no flag replaced it. A missing baseline is no file's key.
     from_flag = isinstance(exc, _PolicyFieldError) and (
-        exc.key == "baseline" or getattr(args, exc.key, None) is not None
+        exc.key == "baseline"
+        or getattr(args, exc.key, None) is not None
+        or (exc.key == "unique_columns" and args.unique_key is not None)
     )
 
     if (
@@ -781,12 +807,28 @@ def _validate_policy(
     baseline: dataprof.ProfileReport | None,
     *,
     several_sources: bool = False,
-) -> int | None:
+) -> _Policy | int:
     try:
-        _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
+        return _Policy(**policy, baseline=None if baseline is None else baseline._delta_input())
     except (OSError, ValueError, RuntimeError) as exc:
         return _policy_error(args, exc, several_sources=several_sources)
-    return None
+
+
+def _profile_for_policy(
+    source: Path, args: argparse.Namespace, policy: _Policy
+) -> dataprof.ProfileReport:
+    return profile_file(
+        source,
+        engine=args.engine,
+        format=args.format,
+        max_rows=args.max_rows,
+        metrics=args.metrics,
+        duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
+        unique_count_exact_limits=dict(args.unique_count_exact_limit or ()),
+        unique_keys=policy.unique_keys or None,
+        unique_keys_exact_limit=args.unique_keys_exact_limit,
+        source_version=args.source_version,
+    )
 
 
 def _multi_summary_lines(
@@ -819,12 +861,7 @@ def _multi_summary_lines(
         )
         for check in result.checks:
             if check.status != "passed":
-                subject = next(
-                    (s for s in (check.column, check.dimension, check.finding) if s is not None),
-                    None,
-                )
-                label = f" [{subject}]" if subject is not None else ""
-                lines.append(f"    {check.status}: {check.code}{label}: {check.message}")
+                lines.append(f"    {_check_summary(check)}")
     for path, reason in skipped:
         lines.append(f"  skipped: {path}: {_SKIP_REASONS[reason]}")
     return lines
@@ -918,20 +955,11 @@ def _run_single(
                 path=args.baseline,
                 json_output=args.json,
             )
-    policy_err = _validate_policy(args, policy, baseline)
-    if policy_err is not None:
-        return policy_err
+    validated = _validate_policy(args, policy, baseline)
+    if isinstance(validated, int):
+        return validated
     try:
-        report = profile_file(
-            source,
-            engine=args.engine,
-            format=args.format,
-            max_rows=args.max_rows,
-            metrics=args.metrics,
-            duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
-            unique_count_exact_limits=dict(args.unique_count_exact_limit or ()),
-            source_version=args.source_version,
-        )
+        report = _profile_for_policy(source, args, validated)
     except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
         return _report_error("input", str(exc), path=source, json_output=args.json)
     try:
@@ -978,9 +1006,9 @@ def _run_multi(
         parser.error("--promote is only supported with a single source file")
     if policy["allow_missing_baseline"]:
         parser.error("--allow-missing-baseline is only supported with a single source file")
-    policy_err = _validate_policy(args, policy, baseline=None, several_sources=True)
-    if policy_err is not None:
-        return policy_err
+    validated = _validate_policy(args, policy, baseline=None, several_sources=True)
+    if isinstance(validated, int):
+        return validated
 
     items, skipped = _expand_sources(
         args.sources,
@@ -1001,16 +1029,7 @@ def _run_multi(
             error_count += 1
             continue
         try:
-            report = profile_file(
-                path,
-                engine=args.engine,
-                format=args.format,
-                max_rows=args.max_rows,
-                metrics=args.metrics,
-                duplicate_rows_exact_limit=args.duplicate_rows_exact_limit,
-                unique_count_exact_limits=dict(args.unique_count_exact_limit or ()),
-                source_version=args.source_version,
-            )
+            report = _profile_for_policy(path, args, validated)
             result = report.check(**policy)
         except (OSError, ValueError, TypeError, RuntimeError, OverflowError) as exc:
             message = str(exc)

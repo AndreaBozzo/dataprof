@@ -6,7 +6,8 @@
 //! cargo run --example etl_quality_gate
 //! ```
 //!
-//! The scenario: a daily drop lands in a staging bucket. You want the pipeline to
+//! The scenario: a daily drop with one entry per account and booking date lands
+//! in a staging bucket. You want the pipeline to
 //! stop on the bad file rather than propagate it downstream, and you want the
 //! rejection reason in the logs. [`QualityPolicy`] states the policy as data and
 //! returns a structured result, so the gate composes into any orchestrator.
@@ -36,6 +37,7 @@ T-2002,,88.50,2026-01-04
 T-2002,ACC-1,-45.25,2026-01-05
 T-2004,,,2026-01-05
 T-2005,,17.99,2026-01-06
+T-2006,ACC-1,22.00,2026-01-05
 ";
 
 const KEY_COLUMN: &str = "transaction_id";
@@ -51,6 +53,7 @@ fn policy() -> QualityPolicy {
         .max_null_count(KEY_COLUMN, 0)
         .max_null_percentage_any(5.0)
         .max_duplicate_rows(0)
+        .unique_keys([["account", "booked_at"]])
         // Without these, a run that never computed quality would leave the
         // score check unevaluated rather than failing. A pipeline wants the
         // misconfiguration to be loud.
@@ -76,8 +79,10 @@ fn missing_columns(report: &ProfileReport) -> Vec<&'static str> {
         .collect()
 }
 
-fn profile(path: &Path, max_rows: Option<u64>) -> Result<ProfileReport> {
-    let mut profiler = Profiler::new().identifier_columns(vec![KEY_COLUMN.to_string()]);
+fn profile(path: &Path, max_rows: Option<u64>, policy: &QualityPolicy) -> Result<ProfileReport> {
+    let mut profiler = Profiler::new()
+        .identifier_columns(vec![KEY_COLUMN.to_string()])
+        .unique_keys_from_policy(policy);
     if let Some(max_rows) = max_rows {
         profiler = profiler.stop_when(StopCondition::MaxRows(max_rows));
     }
@@ -98,12 +103,13 @@ fn main() -> Result<()> {
         ("capped_scan.csv", &duplicated_drop, Some(3)),
     ];
 
+    let policy = policy();
     for (label, contents, max_rows) in drops {
         let path = dir.path().join(label);
         write!(std::fs::File::create(&path)?, "{contents}")?;
 
-        let report = profile(&path, max_rows)?;
-        let result = policy().evaluate(&report)?;
+        let report = profile(&path, max_rows, &policy)?;
+        let result = policy.evaluate(&report)?;
 
         println!("{label}");
         let missing = missing_columns(&report);
@@ -132,14 +138,25 @@ fn main() -> Result<()> {
         let reported: Vec<_> = result.violations().chain(result.unevaluated()).collect();
         println!("  {outcome} -- {} finding(s):", reported.len());
         for check in reported {
-            let where_ = check.column.clone().unwrap_or_else(|| {
-                check
-                    .dimension
-                    .map_or_else(|| "report".to_string(), |d| d.to_string())
-            });
+            let where_ = if let Some(key) = &check.key {
+                key.columns.join(", ")
+            } else {
+                check.column.clone().unwrap_or_else(|| {
+                    check
+                        .dimension
+                        .map_or_else(|| "report".to_string(), |d| d.to_string())
+                })
+            };
             println!("    - [{}] {where_}: {}", check.code, check.message);
             if let Some(observed) = &check.observed {
                 println!("        observed {observed}, expected {}", check.expected);
+            }
+            if let Some(repeats) = check.key.as_ref().and_then(|key| key.repeats.as_ref()) {
+                println!(
+                    "        {} distinct repeated keys, examples {}",
+                    repeats.distinct_repeated_keys,
+                    serde_json::to_string(&repeats.sample_repeated_keys)?
+                );
             }
         }
         println!("  a real pipeline would exit(1) here\n");

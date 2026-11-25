@@ -147,8 +147,10 @@ when it already expresses the requirements you need to enforce.
 dataprof fits when the requirement is a threshold over the profile it already
 produces, and you want the decision tied to the available evidence. It does
 not replace arbitrary row-level expectations or business logic in these tools.
-Use `check(unique_columns=["order_id"])` to reject repeated non-null keys, or
-declare the key with `identifier_columns` and use
+Use `check(unique_columns=["order_id"])` to reject repeated non-null keys.
+For a key spanning several columns, request `unique_keys=[["order_id", "line_no"]]`
+when profiling and use `check(unique_columns=[["order_id", "line_no"]])`.
+To gate on the key selected by `identifier_columns`, use
 `check(forbid_findings=["key_duplicates"])`.
 `check()` has no rule for per-column value bounds, allowed-value sets or declared
 column types. Use a validation tool for those requirements. `max_duplicate_rows`

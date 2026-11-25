@@ -527,6 +527,26 @@ python -m dataprof.check orders.csv --unique-column order_id \
   --duplicate-rows-exact-limit 2000000
 ```
 
+For order lines, profile the pair and require that each tuple occur once.
+
+```python
+import dataprof as dp
+
+key = ["order_id", "line_no"]
+report = dp.profile_file("order_lines.csv", unique_keys=[key])
+result = report.check(unique_columns=[key])
+print(result.verdict)
+```
+
+The CLI requests the group when it profiles each file.
+
+```bash
+python -m dataprof.check order_lines.csv --unique-key order_id,line_no
+```
+
+The [Rust gate example](../../examples/etl_quality_gate.rs) shows the same
+flow with `QualityPolicy::unique_keys` and `Profiler::unique_keys_from_policy`.
+
 ### Inspect schema drift and declared decimals
 
 `forbid_removed_columns=True` rejects a removed column against a baseline.
