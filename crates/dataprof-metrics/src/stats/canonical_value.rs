@@ -119,10 +119,10 @@ pub fn supports_arrow_type(data_type: &DataType) -> bool {
 }
 
 #[cfg(feature = "arrow")]
-/// Append the value at `index` in a typed Arrow array. String arrays use
-/// Arrow's declared string type and retain the supplied bytes, with the
-/// profiler's usual null markers. Text ingestion routes that store raw cells
-/// in a string array use [`encode_text`].
+/// Append the value at `index` in a typed Arrow array. String cells go
+/// through [`encode_text`], as the profiler reads a string column by
+/// inference, so `"1.50"` in a string array and `1.50` in a CSV cell encode
+/// the same.
 pub fn encode_arrow(
     array: &dyn Array,
     index: usize,
@@ -211,9 +211,9 @@ pub fn encode_arrow(
                 output,
             );
         }
-        Utf8 => encode_string(array.as_string::<i32>().value(index), output),
-        LargeUtf8 => encode_string(array.as_string::<i64>().value(index), output),
-        Utf8View => encode_string(array.as_string_view().value(index), output),
+        Utf8 => encode_text(Some(array.as_string::<i32>().value(index)), output),
+        LargeUtf8 => encode_text(Some(array.as_string::<i64>().value(index)), output),
+        Utf8View => encode_text(Some(array.as_string_view().value(index)), output),
         Binary => bytes!(BinaryArray, BINARY),
         LargeBinary => bytes!(LargeBinaryArray, BINARY),
         BinaryView => bytes!(BinaryViewArray, BINARY),
@@ -230,15 +230,6 @@ pub fn encode_arrow(
 fn tagged(tag: u8, payload: &[u8], output: &mut Vec<u8>) {
     output.push(tag);
     output.extend_from_slice(payload);
-}
-
-#[cfg(feature = "arrow")]
-fn encode_string(value: &str, output: &mut Vec<u8>) {
-    if is_null_like_token(value) {
-        output.push(NULL_TAG);
-    } else {
-        tagged(TEXT, value.as_bytes(), output);
-    }
 }
 
 fn decimal(value: ExactDecimal, output: &mut Vec<u8>) {
@@ -467,13 +458,16 @@ impl CellFingerprint {
     }
 }
 
-#[cfg(all(test, feature = "arrow"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "arrow")]
     use arrow_array::*;
 
+    #[cfg(feature = "arrow")]
     type Decimal256Native = <Decimal256Type as ArrowPrimitiveType>::Native;
 
+    #[cfg(feature = "arrow")]
     #[test]
     fn canonical_cell_vectors() {
         struct Vector {
@@ -516,6 +510,8 @@ mod tests {
                 text: &[Some("1.50"), Some("1.5"), Some("15e-1")],
                 arrow: vec![
                     std::sync::Arc::new(Float64Array::from(vec![1.5])),
+                    std::sync::Arc::new(StringArray::from(vec!["1.50"])),
+                    std::sync::Arc::new(StringViewArray::from(vec![" 1.5 "])),
                     std::sync::Arc::new(
                         Decimal256Array::from(vec![
                             "15000000000000000000000000000000000000000"
@@ -562,7 +558,10 @@ mod tests {
             },
             Vector {
                 text: &[Some("True"), Some("true")],
-                arrow: vec![std::sync::Arc::new(BooleanArray::from(vec![true]))],
+                arrow: vec![
+                    std::sync::Arc::new(BooleanArray::from(vec![true])),
+                    std::sync::Arc::new(LargeStringArray::from(vec!["True"])),
+                ],
                 bytes: b"\x04\x01",
                 hash: 0xd96e724ebb109a113bd631e4a5582d1f,
             },
@@ -634,7 +633,7 @@ mod tests {
             },
             Vector {
                 text: &[Some("2024-02-30")],
-                arrow: vec![],
+                arrow: vec![std::sync::Arc::new(StringArray::from(vec!["2024-02-30"]))],
                 bytes: b"\xfe2024-02-30",
                 hash: 0x33767ddb9d094d94e12455a8a4025ff1,
             },
