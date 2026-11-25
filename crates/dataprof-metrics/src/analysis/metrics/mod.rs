@@ -708,9 +708,14 @@ impl MetricsCalculator {
                 }
             };
             // Range/sign rules are exact when tallies are supplied (#788 step 3),
-            // while Tukey outlier fences stay sampled whenever any numeric column
-            // eligible for outlier testing has fewer sampled values than its
-            // non-null population.
+            // while Tukey outlier fences stay sampled whenever a numeric column
+            // eligible for outlier testing reaches past the column sample. That is
+            // decided from the column's non-null count against the sample
+            // capacity, which is the same on every route: a route that holds every
+            // value (Python containers, bytes) would otherwise call the fences
+            // exact where a streaming route calls them sampled, for the same
+            // data. A route that kept fewer values than the column holds (a
+            // reservoir shrunk under memory pressure) is sampled too.
             let outliers_sampled = self.lexical_tallies.is_none()
                 || column_profiles.iter().any(|profile| {
                     let sampled = data.get(&profile.name).map_or(0, Vec::len);
@@ -720,7 +725,9 @@ impl MetricsCalculator {
                     } else {
                         profile.total_count.max(sampled)
                     };
-                    sampled < population && accuracy_calculator.may_test_source(profile, population)
+                    let past_sample =
+                        non_null > dataprof_core::COLUMN_SAMPLE_CAPACITY || sampled < population;
+                    past_sample && accuracy_calculator.may_test_source(profile, population)
                 });
             if outliers_sampled {
                 sampled_dimensions.push("accuracy".to_string());

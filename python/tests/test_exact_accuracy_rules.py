@@ -323,3 +323,36 @@ def test_truncated_run_marks_hint_bindings_non_exact_on_dict_and_file(tmp_path: 
             "matched_values": 0,
             "exact": False,
         }, label
+
+
+def test_a_numeric_column_past_the_sample_keeps_accuracy_sampled_on_every_route(
+    tmp_path: Path,
+) -> None:
+    """A route that holds every value must not call the outlier fences exact.
+
+    The dict and bytes routes keep all 40,000 values of ``v``, while the file
+    routes keep the 10,000-value sample, so a rule that compared the values a
+    route kept with the column's count put ``accuracy`` in ``exact_dimensions``
+    on the first and in ``sampled_dimensions`` on the second.
+    """
+    # "null", not an empty cell: a one-column CSV reads an empty cell as a blank line.
+    cells = ["0"] * 29_992 + ["5"] * 10_008 + ["null"] * 10_000
+    text = "v\n" + "\n".join(cells) + "\n"
+    path = tmp_path / "past_sample.csv"
+    path.write_text(text)
+
+    reports = {
+        "file": dp.profile(str(path)),
+        "bytes": dp.profile(text.encode(), format="csv"),
+        "dict": dp.profile({"v": [None if cell == "null" else cell for cell in cells]}),
+    }
+    dimensions = {
+        route: (
+            report.to_dict()["quality"]["exact_dimensions"],
+            report.to_dict()["quality"]["sampled_dimensions"],
+        )
+        for route, report in reports.items()
+    }
+    assert len(set(map(json.dumps, dimensions.values()))) == 1, dimensions
+    exact, sampled = dimensions["file"]
+    assert "accuracy" in sampled and "accuracy" not in exact, dimensions

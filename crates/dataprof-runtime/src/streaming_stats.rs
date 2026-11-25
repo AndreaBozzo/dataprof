@@ -11,10 +11,7 @@ use dataprof_metrics::{
     NumericAccumulator, ParsedNumber, RowCompletenessSummary, RowDuplicateSummary,
 };
 
-/// How many values of each column the engines that read a source in parts
-/// retain for the checks that still read a sample: patterns, the quality
-/// pass and order statistics.
-pub const COLUMN_SAMPLE_CAPACITY: usize = 10_000;
+pub use dataprof_core::COLUMN_SAMPLE_CAPACITY;
 
 /// Incremental statistics computation for streaming data processing.
 ///
