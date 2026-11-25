@@ -299,6 +299,7 @@ The cookbook covers these checks, added in 0.14:
 | Exact whole-row duplicate counts on larger sources | `duplicate_rows_exact_limit` in the same recipe; the default is 1,000,000 distinct rows, or fewer under memory pressure, and an explicit limit retains the set even past the memory budget |
 | Removed or retyped columns | `forbid_removed_columns` rejects removals; `compare()` and baseline diagnostics report inferred type changes without rejecting them on their own, in [schema drift and declared decimals](../docs/guides/examples.md#inspect-schema-drift-and-declared-decimals) |
 | A finding that should reject the batch | `forbid_findings=["key_duplicates"]` in the key recipe; `identifier_columns` supplies the key for that finding |
+| A training set with a missing label, a repeated example, a feature recorded after its label, or examples shared with the test set | [gate a training set before a training run](../docs/guides/examples.md#gate-a-training-set-before-a-training-run) |
 
 ### Setup
 
