@@ -1463,7 +1463,7 @@
         },
         "value_facts": {
           "$ref": "#/$defs/ValueFacts",
-          "description": "Which values a column's `data_type`, `type_homogeneity`,\n`locale_number_count`, `zero_padded_count`, consistency and precision\nare counted over, and how many zero-padded numbers make digit codes.\n\nAbsent means not recorded: through 0.14 an engine that retained a\nbounded sample typed and classified a text column, and computed\nconsistency and precision, from that sample; and one zero-padded number\nmade a column digit codes. `every_value` (step 1) counted type inference\nand lexical forms over every value read while consistency and precision\nstill read the sample. `every_value_consistency_precision` (step 2) also\ncounts consistency and precision over every value read."
+          "description": "Which values a column's `data_type`, `type_homogeneity`,\n`locale_number_count`, `zero_padded_count`, consistency, precision,\naccuracy rules and value-driven semantic-hint bindings are counted over,\nand how many zero-padded numbers make digit codes.\n\nAbsent means not recorded: through 0.14 an engine that retained a\nbounded sample typed and classified a text column, and computed\nconsistency, precision and accuracy rules, from that sample; and one\nzero-padded number made a column digit codes. `every_value` (step 1)\ncounted type inference and lexical forms over every value read while\nconsistency, precision and accuracy rules still read the sample.\n`every_value_consistency_precision` (step 2) also counts consistency\nand precision over every value read.\n`every_value_consistency_precision_accuracy_rules` (step 3) also counts\naccuracy range/sign rules and value-driven hint bindings over every\nvalue read."
         }
       },
       "type": "object"
@@ -3772,16 +3772,21 @@
       ]
     },
     "ValueFacts": {
-      "description": "Which values column types, `type_homogeneity`, `locale_number_count`,\n`zero_padded_count`, consistency and precision are counted over, as recorded\nin a report's metric semantics (#788).\n\nThrough 0.14 the engines that retain a bounded sample of each column (files,\nArrow and the streaming readers) typed a text column, classified its values,\nand computed consistency and precision from that sample; those releases\nrecorded no definition. Step 1 (`every_value`) moved type inference,\n`type_homogeneity`, `locale_number_count` and `zero_padded_count` to every\nnon-null value read and changed the digit-code rule to 1%. Step 2\n(`every_value_consistency_precision`) also counts consistency and precision\nover every non-null value read on every engine.",
+      "description": "Which values column types, `type_homogeneity`, `locale_number_count`,\n`zero_padded_count`, consistency, precision, accuracy rules and\nvalue-driven semantic-hint bindings are counted over, as recorded in a\nreport's metric semantics (#788).\n\nThrough 0.14 the engines that retain a bounded sample of each column (files,\nArrow and the streaming readers) typed a text column, classified its values,\nand computed consistency, precision and accuracy rules from that sample;\nthose releases recorded no definition. Step 1 (`every_value`) moved type\ninference, `type_homogeneity`, `locale_number_count` and\n`zero_padded_count` to every non-null value read and changed the digit-code\nrule to 1%. Step 2 (`every_value_consistency_precision`) also counts\nconsistency and precision over every non-null value read on every engine.\nStep 3 (`every_value_consistency_precision_accuracy_rules`) also counts\naccuracy range/sign rules (`rule_values_checked`, `rule_violating_values`,\n`range_violations`, `negative_values_in_positive`,\n`numeric_values_checked`) and value-driven hint bindings over every\nnon-null value read on every engine.",
       "oneOf": [
         {
           "const": "every_value",
-          "description": "Step 1 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count` and `zero_padded_count`;\nconsistency and precision still read the retained sample.",
+          "description": "Step 1 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count` and `zero_padded_count`;\nconsistency, precision and accuracy rules still read the retained sample.",
           "type": "string"
         },
         {
           "const": "every_value_consistency_precision",
-          "description": "Step 2 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count`, `zero_padded_count`,\nconsistency and precision, on every engine.",
+          "description": "Step 2 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count`, `zero_padded_count`,\nconsistency and precision, on every engine; accuracy rules still read\nthe retained sample.",
+          "type": "string"
+        },
+        {
+          "const": "every_value_consistency_precision_accuracy_rules",
+          "description": "Step 3 (#788): every non-null value read for type inference,\n`type_homogeneity`, `locale_number_count`, `zero_padded_count`,\nconsistency, precision, accuracy range/sign rules and value-driven\nsemantic-hint bindings, on every engine.",
           "type": "string"
         }
       ]

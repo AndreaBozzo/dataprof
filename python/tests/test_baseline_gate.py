@@ -663,3 +663,50 @@ def test_step_1_or_0_14_baseline_with_sampled_consistency_precision_is_definitio
     assert _find(result, "max_dimension_score_drop", "consistency").reason == unevaluated
     assert _find(result, "max_dimension_score_drop", "precision").reason == unevaluated
     assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+
+
+@pytest.mark.parametrize(
+    "value_facts",
+    [None, "every_value", "every_value_consistency_precision"],
+    ids=["0.14", "step1", "step2"],
+)
+def test_pre_step_3_baseline_with_sampled_accuracy_is_definition_not_comparable(
+    value_facts: str | None, tmp_path: Path
+):
+    path = tmp_path / "accuracy_drift.csv"
+    path.write_text(
+        "id,customer_age\n"
+        + "".join(f"{row},{-5 if row >= 11_000 else 30}\n" for row in range(12_000)),
+        encoding="utf-8",
+    )
+    report = dp.profile(str(path))
+    baseline = report.to_dict()
+    if value_facts is None:
+        del baseline["metric_semantics"]["value_facts"]
+    else:
+        baseline["metric_semantics"]["value_facts"] = value_facts
+    baseline["quality"]["exact_dimensions"] = [
+        "completeness",
+        "consistency",
+        "duplicate_rows",
+        "precision",
+    ]
+    baseline["quality"]["sampled_dimensions"] = ["accuracy", "validity"]
+    baseline["quality"]["dimension_scores"]["accuracy"] = 100.0
+    baseline["quality"]["overall_score"] = 100.0
+
+    result = report.check(
+        baseline=dp.ProfileReport.from_dict(baseline),
+        max_quality_score_drop=0,
+        max_dimension_score_drops={
+            "accuracy": 0,
+            "consistency": 0,
+            "completeness": 0,
+        },
+    )
+    unevaluated = {"reason": "definition_not_comparable", "definition": "value_facts"}
+    assert _find(result, "max_quality_score_drop").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "accuracy").reason == unevaluated
+    assert _find(result, "max_dimension_score_drop", "completeness").status == "passed"
+    if value_facts == "every_value_consistency_precision":
+        assert _find(result, "max_dimension_score_drop", "consistency").status == "passed"

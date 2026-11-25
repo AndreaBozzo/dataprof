@@ -4,8 +4,12 @@ use std::sync::LazyLock;
 
 use dataprof_core::{LexicalClass, TypeHomogeneity};
 
+use crate::analysis::metrics::accuracy::{
+    RULE_REGION_COUNT, classify_rule_region_f64, classify_rule_region_i64, classify_rule_region_u64,
+};
 use crate::analysis::metrics::consistency::has_encoding_issue;
 use crate::analysis::metrics::precision::decimal_scale;
+use crate::analysis::metrics::utils::extract_year;
 use crate::types::DataType;
 
 // Date grammar shared by type inference and the date patterns in `patterns.rs`,
@@ -158,10 +162,11 @@ impl DecimalScaleHistogram {
 }
 
 /// Per-column quality counters fed beside type inference over every scanned
-/// non-null value (#788 step 2).
+/// non-null value (#788 steps 2–3).
 ///
 /// Tracks the four `DATE_FORMAT_REGEXES` date formats, decimal separator usage,
-/// encoding issues, and the decimal scale histogram for precision.
+/// encoding issues, the decimal scale histogram for precision, the six accuracy
+/// rule-bound regions, and raw temporal-hint matches.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ValueQualityCounters {
     /// Counts per `DATE_FORMAT_REGEXES` entry (`DATE_REGEXES[0..4]`):
@@ -177,6 +182,14 @@ struct ValueQualityCounters {
     encoding_issues: usize,
     /// Effective decimal scales of finite numeric tokens.
     decimal_scales: DecimalScaleHistogram,
+    /// Counts of rule-checkable numeric values across the six real-line regions
+    /// partitioned by `{0, 100, 150, 1900, 2100}`. Their sum is also the
+    /// `positive_columns` hint match count.
+    rule_regions: [usize; RULE_REGION_COUNT],
+    /// Non-null values whose original (untrimmed) text parses via
+    /// [`extract_year`]: the `temporal_columns` / `temporal_pairs` hint match
+    /// count and date-column parsed count.
+    temporal_hint_matches: usize,
 }
 
 impl ValueQualityCounters {
@@ -213,6 +226,10 @@ impl ValueQualityCounters {
         self.single_comma += other.single_comma;
         self.encoding_issues += other.encoding_issues;
         self.decimal_scales.merge(&other.decimal_scales);
+        for (dst, src) in self.rule_regions.iter_mut().zip(other.rule_regions.iter()) {
+            *dst += *src;
+        }
+        self.temporal_hint_matches += other.temporal_hint_matches;
     }
 
     fn format_violations(&self) -> usize {
@@ -285,28 +302,42 @@ impl LexicalTally {
         }
         let Classified {
             class,
-            integer,
-            finite_float,
+            numeric_token,
             inferred_date,
             date_format,
         } = classify(trimmed);
         self.forms.record(class);
         match class {
             LexicalClass::Numeric => {
-                if integer {
-                    self.integers += 1;
-                    // Integer tokens are finite ASCII digits with optional sign
-                    // (never `.`, `,`, or non-ASCII) and effective scale 0.
-                    self.quality.decimal_scales.record(0);
-                } else {
-                    // Valid `f64` tokens are strictly ASCII with at most one `.`
-                    // and never `,`.
-                    if trimmed.as_bytes().contains(&b'.') {
-                        self.quality.single_dot += 1;
+                match numeric_token {
+                    NumericToken::IntegerI64(n) => {
+                        self.integers += 1;
+                        // Integer tokens are finite ASCII digits with optional sign
+                        // (never `.`, `,`, or non-ASCII) and effective scale 0.
+                        self.quality.decimal_scales.record(0);
+                        self.quality.rule_regions[classify_rule_region_i64(n)] += 1;
                     }
-                    if finite_float && let Some(scale) = decimal_scale(trimmed) {
-                        self.quality.decimal_scales.record(scale);
+                    NumericToken::IntegerU64 => {
+                        self.integers += 1;
+                        self.quality.decimal_scales.record(0);
+                        self.quality.rule_regions[classify_rule_region_u64()] += 1;
                     }
+                    NumericToken::Float(number) => {
+                        // Valid `f64` tokens are strictly ASCII with at most one `.`
+                        // and never `,`.
+                        if trimmed.as_bytes().contains(&b'.') {
+                            self.quality.single_dot += 1;
+                        }
+                        if number.is_finite()
+                            && let Some(scale) = decimal_scale(trimmed)
+                        {
+                            self.quality.decimal_scales.record(scale);
+                        }
+                        if let Some(region) = classify_rule_region_f64(trimmed, number) {
+                            self.quality.rule_regions[region] += 1;
+                        }
+                    }
+                    NumericToken::None => unreachable!("Numeric class always carries a token"),
                 }
                 if is_zero_padded_digits(trimmed) {
                     self.zero_padded += 1;
@@ -329,15 +360,21 @@ impl LexicalTally {
                 } else {
                     self.quality.record_separators_and_encoding(trimmed);
                 }
+                if extract_year(value).is_some() {
+                    self.quality.temporal_hint_matches += 1;
+                }
             }
             // Strict booleans (`true`/`false`) are ASCII letters with no
-            // separators or encoding artifacts.
+            // separators, encoding artifacts, or date shape.
             LexicalClass::Boolean => {}
             LexicalClass::Text => {
                 if may_be_locale_number(trimmed) && LOCALE_NUMBER_REGEX.is_match(trimmed) {
                     self.locale_numbers += 1;
                 }
                 self.quality.record_separators_and_encoding(trimmed);
+                if extract_year(value).is_some() {
+                    self.quality.temporal_hint_matches += 1;
+                }
             }
         }
     }
@@ -398,6 +435,25 @@ impl LexicalTally {
     /// `(finite_numeric_values, dominant_scale_count)` for precision.
     pub(crate) fn decimal_scale_summary(&self) -> (usize, usize) {
         self.quality.decimal_scales.summary()
+    }
+
+    /// Counts of rule-checkable numeric values across the six accuracy
+    /// rule-bound regions (#788 step 3).
+    pub(crate) fn rule_regions(&self) -> [usize; RULE_REGION_COUNT] {
+        self.quality.rule_regions
+    }
+
+    /// Non-null values accepted by [`crate::analysis::metrics::accuracy::rule_value`]:
+    /// the `positive_columns` hint match count and numeric rule denominator.
+    pub(crate) fn rule_numeric_count(&self) -> usize {
+        self.quality.rule_regions.iter().sum()
+    }
+
+    /// Non-null values whose original (untrimmed) text parses as a calendar
+    /// date (`value_matches_hint(_, Temporal)`): the `temporal_columns` /
+    /// `temporal_pairs` hint match count and date-column parsed count.
+    pub fn temporal_match_count(&self) -> usize {
+        self.quality.temporal_hint_matches
     }
 
     /// The counts by lexical class, which a profile reports as
@@ -616,14 +672,23 @@ pub fn lexical_class(value: &str) -> LexicalClass {
     classify(value).class
 }
 
+/// The parsed numeric value remembered from [`classify`], so
+/// [`LexicalTally::record`] does not parse the same token a second time for
+/// precision or accuracy rule regions.
+#[derive(Debug, Clone, Copy)]
+enum NumericToken {
+    None,
+    IntegerI64(i64),
+    IntegerU64,
+    Float(f64),
+}
+
 /// One value's class and the facts the tally needs beside it, from a single
 /// pass: an integer is parsed once, and an inferred date form matched once.
 struct Classified {
     class: LexicalClass,
-    /// A numeric value that is an integer token.
-    integer: bool,
-    /// A numeric value that parses as a finite `f64`.
-    finite_float: bool,
+    /// Parsed numeric token when `class == LexicalClass::Numeric`.
+    numeric_token: NumericToken,
     /// A date value in a form [`is_inferred_date_token`] accepts.
     inferred_date: bool,
     /// Index into `DATE_REGEXES[0..4]` (identical to `DATE_FORMAT_REGEXES`)
@@ -632,11 +697,18 @@ struct Classified {
 }
 
 fn classify(value: &str) -> Classified {
-    if is_integer_token(value) {
+    if let Ok(n) = value.parse::<i64>() {
         return Classified {
             class: LexicalClass::Numeric,
-            integer: true,
-            finite_float: true,
+            numeric_token: NumericToken::IntegerI64(n),
+            inferred_date: false,
+            date_format: None,
+        };
+    }
+    if value.parse::<u64>().is_ok() {
+        return Classified {
+            class: LexicalClass::Numeric,
+            numeric_token: NumericToken::IntegerU64,
             inferred_date: false,
             date_format: None,
         };
@@ -644,8 +716,7 @@ fn classify(value: &str) -> Classified {
     if let Ok(number) = value.parse::<f64>() {
         return Classified {
             class: LexicalClass::Numeric,
-            integer: false,
-            finite_float: number.is_finite(),
+            numeric_token: NumericToken::Float(number),
             inferred_date: false,
             date_format: None,
         };
@@ -670,8 +741,7 @@ fn classify(value: &str) -> Classified {
     };
     Classified {
         class,
-        integer: false,
-        finite_float: false,
+        numeric_token: NumericToken::None,
         inferred_date,
         date_format,
     }
@@ -1537,5 +1607,43 @@ mod tests {
         tally.record("0e-2147483648");
         tally.record("0e2147483647");
         assert_eq!(tally.decimal_scale_summary(), (2, 1));
+    }
+
+    #[test]
+    fn tally_merge_matches_whole_for_accuracy_rules_and_hint_bindings() {
+        let values = [
+            "-1e-700",
+            "-5",
+            " 0 ",
+            "50",
+            "100",
+            "100.000000000000000001",
+            "150",
+            "1000",
+            "1900",
+            "2100",
+            "2100.000000000000000001",
+            "1e400",
+            "inf",
+            "NaN",
+            "2024-06-15",
+            " 2024-06-15",
+            "not-a-date",
+            "",
+        ];
+        let whole = LexicalTally::from_values(&values);
+        // Leading whitespace is accepted for numeric rules, rejected for temporal hints.
+        assert_eq!(whole.rule_numeric_count(), 12);
+        assert_eq!(whole.temporal_match_count(), 1);
+        assert_eq!(whole.rule_regions(), [2, 3, 2, 1, 2, 2]);
+        for split in [0, 1, 4, 9, 14, values.len()] {
+            let mut left = LexicalTally::from_values(&values[..split]);
+            let right = LexicalTally::from_values(&values[split..]);
+            left.merge(&right);
+            assert_eq!(left, whole, "split at {split}");
+            assert_eq!(left.rule_regions(), whole.rule_regions());
+            assert_eq!(left.rule_numeric_count(), whole.rule_numeric_count());
+            assert_eq!(left.temporal_match_count(), whole.temporal_match_count());
+        }
     }
 }

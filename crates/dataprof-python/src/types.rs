@@ -1440,6 +1440,9 @@ impl PyProfileReport {
                     ValueFacts::EveryValueConsistencyPrecision => {
                         "every_value_consistency_precision"
                     }
+                    ValueFacts::EveryValueConsistencyPrecisionAccuracyRules => {
+                        "every_value_consistency_precision_accuracy_rules"
+                    }
                 },
             )?;
         }

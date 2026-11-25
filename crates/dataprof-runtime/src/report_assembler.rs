@@ -14,7 +14,7 @@ use dataprof_core::{
 use dataprof_metrics::{
     LexicalTally, MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
     RowDuplicateSummary, analysis::metrics::BifurcatedResult, columns_without_value_checks,
-    compute_value_hint_bindings,
+    compute_value_hint_bindings, compute_value_hint_bindings_from_tallies,
 };
 
 use crate::{AnalysisSettings, ProfileReport, QualityAnalysisStatus};
@@ -263,12 +263,13 @@ impl ReportAssembler {
             .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
             .with_analysis_settings(self.analysis_settings);
-        // Without tallies, consistency and precision read the retained sample,
-        // which is step 1's definition: record that, not the current one.
+        // Without tallies, consistency, precision and accuracy rules read the
+        // retained sample, which is step 1's definition: record that, not the
+        // current one.
         if !tallied
             && let Some(semantics) = report.metric_semantics.as_mut()
             && semantics.value_facts
-                == Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecision)
+                == Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecisionAccuracyRules)
         {
             semantics.value_facts = Some(dataprof_core::ValueFacts::EveryValue);
         }
@@ -293,7 +294,7 @@ impl ReportAssembler {
                     values.clear();
                 }
                 if let Some(tallies) = self.lexical_tallies.as_mut() {
-                    tallies.remove(&column.name);
+                    tallies.insert(column.name.clone(), LexicalTally::new());
                 }
             }
         }
@@ -344,6 +345,13 @@ impl ReportAssembler {
                 binding.exact &= full_coverage;
                 binding
             }));
+        } else if let Some(tallies) = &self.lexical_tallies {
+            let full_coverage = self.execution.source_exhausted && !self.execution.sampling_applied;
+            bindings.extend(compute_value_hint_bindings_from_tallies(
+                tallies,
+                &self.semantic_hints,
+                full_coverage,
+            ));
         } else if let Some(data) = &self.quality_data {
             let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
             let exact = !self.is_streaming_context(sample_size);
@@ -812,7 +820,7 @@ mod tests {
         );
         assert_eq!(
             value_facts(true),
-            Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecision)
+            Some(dataprof_core::ValueFacts::EveryValueConsistencyPrecisionAccuracyRules)
         );
     }
 
@@ -1004,5 +1012,79 @@ mod tests {
             assert!(!report.semantic_hint_bindings[0].exact);
             assert!(!report.semantic_hint_bindings[0].is_proven_inert());
         }
+    }
+
+    #[test]
+    fn tally_hint_bindings_and_exact_accuracy_rules_flow_through_assembler() {
+        let mut mixed_tally = LexicalTally::new();
+        for _ in 0..999 {
+            mixed_tally.record("not-a-number");
+        }
+        mixed_tally.record("-5");
+
+        let col = dataprof_core::ColumnProfile {
+            name: "mixed_amount".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 1000,
+            unique_count: None,
+            unique_count_is_approximate: None,
+            unique_count_lower_bound: None,
+            invalid_count: None,
+            type_homogeneity: None,
+            locale_number_count: None,
+            zero_padded_count: None,
+            pattern_values_checked: None,
+            native_type: None,
+            stats: ColumnStats::None,
+            patterns: None,
+        };
+        let data = HashMap::from([(
+            "mixed_amount".to_string(),
+            vec!["not-a-number".to_string(), "not-a-number".to_string()],
+        )]);
+        let tallies = HashMap::from([("mixed_amount".to_string(), mixed_tally)]);
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(1000, 1, 50))
+            .columns(vec![col.clone()])
+            .with_quality_data(data.clone())
+            .with_lexical_tallies(tallies.clone())
+            .with_semantic_hints(SemanticHints::new(vec!["mixed_amount".to_string()], vec![]))
+            .build();
+
+        assert_eq!(report.semantic_hint_bindings.len(), 1);
+        assert_eq!(report.semantic_hint_bindings[0].checked_values, 1000);
+        assert_eq!(report.semantic_hint_bindings[0].matched_values, 1);
+        assert!(report.semantic_hint_bindings[0].exact);
+
+        let quality = report.quality.expect("quality assessment");
+        let acc = quality.metrics.accuracy.as_ref().expect("accuracy metrics");
+        assert_eq!(acc.rule_values_checked, 1);
+        assert_eq!(acc.rule_violating_values, 1);
+        assert_eq!(acc.negative_values_in_positive, 1);
+        // No numeric column is outlier-eligible, so accuracy is exact.
+        match &quality.confidence {
+            MetricConfidence::Mixed {
+                exact_dimensions,
+                sampled_dimensions,
+                ..
+            } => {
+                assert!(exact_dimensions.contains(&"accuracy".to_string()));
+                assert!(!sampled_dimensions.contains(&"accuracy".to_string()));
+            }
+            other => panic!("Expected Mixed confidence, got {other:?}"),
+        }
+
+        // Truncated execution downgrades tally-derived hint binding exactness.
+        let truncated = ReportAssembler::new(
+            test_source(),
+            ExecutionMetadata::new(1000, 1, 50).with_truncation(TruncationReason::MaxRows(1000)),
+        )
+        .columns(vec![col])
+        .with_quality_data(data)
+        .with_lexical_tallies(tallies)
+        .with_semantic_hints(SemanticHints::new(vec!["mixed_amount".to_string()], vec![]))
+        .build();
+        assert!(!truncated.semantic_hint_bindings[0].exact);
     }
 }

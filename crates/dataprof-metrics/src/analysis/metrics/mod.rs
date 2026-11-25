@@ -50,7 +50,7 @@
 //! - Data Quality 2025 Guide: <https://www.ewsolutions.com/data-quality-quide/>
 //! - MDPI Framework Review: <https://www.mdpi.com/2504-2289/9/4/93>
 
-mod accuracy;
+pub(crate) mod accuracy;
 mod bounds;
 mod completeness;
 pub(crate) mod consistency;
@@ -66,8 +66,11 @@ pub use utils::is_likely_date_column;
 mod validity;
 
 // Re-export public types for backward compatibility
+pub use accuracy::is_accuracy_ruled_column;
 pub use bounds::SCORE_BOUNDS_CONFIDENCE;
-pub use hint_binding::{compute_value_hint_bindings, value_matches_hint};
+pub use hint_binding::{
+    compute_value_hint_bindings, compute_value_hint_bindings_from_tallies, value_matches_hint,
+};
 pub use utils::{StatisticalValidation, validate_sample_size};
 
 use accuracy::AccuracyCalculator;
@@ -323,7 +326,14 @@ impl MetricsCalculator {
         // Accuracy dimension
         let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
             let accuracy_calculator = AccuracyCalculator::new(&self.thresholds);
-            let a = if semantic_hints.positive_columns.is_empty() {
+            let a = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                accuracy_calculator.calculate_with_tallies(
+                    data,
+                    tallies,
+                    column_profiles,
+                    &semantic_hints.positive_columns,
+                )?
+            } else if semantic_hints.positive_columns.is_empty() {
                 accuracy_calculator.calculate(data, column_profiles)?
             } else {
                 accuracy_calculator.calculate_with_positive_columns(
@@ -671,8 +681,16 @@ impl MetricsCalculator {
         };
 
         let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
-            let a = if !data.is_empty() {
-                AccuracyCalculator::new(&self.thresholds).calculate_with_positive_columns(
+            let accuracy_calculator = AccuracyCalculator::new(&self.thresholds);
+            let a = if let Some(tallies) = self.lexical_tallies.as_ref() {
+                accuracy_calculator.calculate_with_tallies(
+                    data,
+                    tallies,
+                    column_profiles,
+                    &semantic_hints.positive_columns,
+                )?
+            } else if !data.is_empty() {
+                accuracy_calculator.calculate_with_positive_columns(
                     data,
                     column_profiles,
                     &semantic_hints.positive_columns,
@@ -689,7 +707,26 @@ impl MetricsCalculator {
                     outlier_values_checked: 0,
                 }
             };
-            sampled_dimensions.push("accuracy".to_string());
+            // Range/sign rules are exact when tallies are supplied (#788 step 3),
+            // while Tukey outlier fences stay sampled whenever any numeric column
+            // eligible for outlier testing has fewer sampled values than its
+            // non-null population.
+            let outliers_sampled = self.lexical_tallies.is_none()
+                || column_profiles.iter().any(|profile| {
+                    let sampled = data.get(&profile.name).map_or(0, Vec::len);
+                    let non_null = profile.total_count.saturating_sub(profile.null_count);
+                    let population = if sampled <= non_null {
+                        non_null
+                    } else {
+                        profile.total_count.max(sampled)
+                    };
+                    sampled < population && accuracy_calculator.may_test_source(profile, population)
+                });
+            if outliers_sampled {
+                sampled_dimensions.push("accuracy".to_string());
+            } else {
+                exact_dimensions.push("accuracy".to_string());
+            }
             Some(AccuracyMetrics {
                 outlier_ratio: a.outlier_ratio,
                 outlier_values_checked: Some(a.outlier_values_checked),
@@ -799,6 +836,7 @@ impl MetricsCalculator {
             &metrics,
             &sampled_dimensions,
             row_duplicates,
+            self.lexical_tallies.is_some(),
         )?;
         let (score_bounds, estimated_scores) = match sampled_scores {
             Some(scores) => (Some(scores.bounds), scores.estimates),
@@ -850,6 +888,7 @@ impl MetricsCalculator {
                 metrics,
                 sampled,
                 row_duplicates,
+                self.lexical_tallies.is_some(),
             )? {
                 Some(scores) => (Some(scores.bounds), scores.estimates),
                 None => (None, None),

@@ -14,7 +14,7 @@ use dataprof_metrics::{
 };
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
-    StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
+    StreamReservoirSampler, TextLengths, build_column_profile,
 };
 use std::fs::File;
 use std::path::Path;
@@ -125,7 +125,6 @@ struct CsvDecodeOutcome {
     column_analyzers: std::collections::HashMap<String, ColumnAnalyzer>,
     row_tracker: BatchRowTracker,
     key_tracker: dataprof_runtime::CompositeKeyTracker,
-    hint_bindings: ValueHintBindingAccumulator,
     total_rows: usize,
     /// Rows `arrow-csv` padded to the schema width, cumulative over the decode.
     /// This is the ragged-row count only when no record is *wider* than the
@@ -384,7 +383,6 @@ impl ArrowProfiler {
                     self.options.duplicate_rows_exact_limit(),
                 ),
                 key_tracker: dataprof_runtime::CompositeKeyTracker::new(&self.options),
-                hint_bindings: ValueHintBindingAccumulator::new(self.options.semantic_hints()),
                 total_rows: 0,
                 padded_rows: 0,
                 peak_memory_mb: memory_sampler.peak_mb(),
@@ -439,7 +437,6 @@ impl ArrowProfiler {
         let mut row_tracker =
             BatchRowTracker::with_exact_limit(self.options.duplicate_rows_exact_limit());
         let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(&self.options);
-        let mut hint_bindings = ValueHintBindingAccumulator::new(self.options.semantic_hints());
 
         let mut memory_sampler = PeakMemorySampler::new();
         // The share of the memory limit the exact distinct sets may hold, the
@@ -491,13 +488,6 @@ impl ArrowProfiler {
                         .process_array(column)
                         .map_err(CsvDecodeFailure::Other)?;
                 }
-                if let Some(values) = column.as_any().downcast_ref::<StringArray>() {
-                    for row_index in 0..values.len() {
-                        if !values.is_null(row_index) {
-                            hint_bindings.observe(field.name(), values.value(row_index));
-                        }
-                    }
-                }
             }
 
             // The exact distinct sets are what grows with the data; keep them
@@ -526,7 +516,6 @@ impl ArrowProfiler {
             column_analyzers,
             row_tracker,
             key_tracker,
-            hint_bindings,
             total_rows,
             // Read after the final flush: the counter is cumulative across
             // flushes, so this is the whole decode's total.
@@ -623,7 +612,6 @@ impl ArrowProfiler {
             column_analyzers,
             row_tracker,
             key_tracker,
-            hint_bindings,
             total_rows,
             padded_rows,
             peak_memory_mb,
@@ -715,9 +703,6 @@ impl ArrowProfiler {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_lexical_tallies(lexical_tallies)
-                .with_exact_value_hint_bindings(
-                    hint_bindings.bindings(projected_header_names.iter().map(String::as_str)),
-                )
                 .with_analysis_options(options);
         }
 
@@ -782,12 +767,12 @@ struct ColumnAnalyzer {
     total_length: usize,
     // Reservoir sample for pattern detection and order statistics
     sample_values: StreamReservoirSampler,
-    date_matched_values: usize,
     /// Date statistics over every non-null value, independent of the
     /// sample (#1297).
     dates: DateTimeAccumulator,
     /// Lexical facts over every non-null value, independent of the sample:
-    /// the column's type and `type_homogeneity` (#788).
+    /// the column's type, `type_homogeneity`, consistency, precision,
+    /// accuracy rules and hint binding counts (#788).
     lexical: LexicalTally,
 }
 
@@ -802,16 +787,12 @@ impl ColumnAnalyzer {
             max_length: 0,
             total_length: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
-            date_matched_values: 0,
             dates: DateTimeAccumulator::new(),
             lexical: LexicalTally::new(),
         }
     }
 
     fn offer_sample(&mut self, value: &str) {
-        if dataprof_metrics::value_matches_hint(value, dataprof_core::SemanticHintKind::Temporal) {
-            self.date_matched_values += 1;
-        }
         self.dates.update(value);
         self.lexical.record(value);
         self.sample_values.offer(value);
@@ -923,7 +904,7 @@ impl ColumnAnalyzer {
             skip_patterns,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
-            exact_date_matches: Some(self.date_matched_values),
+            exact_date_matches: Some(self.lexical.temporal_match_count()),
             exact_dates: Some(&self.dates),
             exact_lexical: Some(&self.lexical),
             decimal_values: false,

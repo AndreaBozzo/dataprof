@@ -9,8 +9,9 @@ pub mod types;
 pub use analysis::{
     LexicalTally, MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast,
     analyze_column_with_analysis_options, analyze_declared_column, classify_lexical_forms,
-    compute_value_hint_bindings, detect_patterns, infer_type, is_null_like_token, lexical_class,
-    list_patterns, value_matches_hint,
+    compute_value_hint_bindings, compute_value_hint_bindings_from_tallies, detect_patterns,
+    infer_type, is_accuracy_ruled_column, is_null_like_token, lexical_class, list_patterns,
+    value_matches_hint,
 };
 pub use quality::{
     AccuracyMetrics, ColumnWithoutValueChecks, CompletenessMetrics, ConsistencyMetrics,

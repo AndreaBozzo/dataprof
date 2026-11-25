@@ -110,7 +110,7 @@ def test_every_route_types_and_classifies_every_value(tmp_path: Path) -> None:
     for label, run in _routes(tmp_path).items():
         report = run()
         semantics = report.metric_semantics or {}
-        if semantics.get("value_facts") != "every_value_consistency_precision":
+        if semantics.get("value_facts") != "every_value_consistency_precision_accuracy_rules":
             wrong.append(f"[{label}] value_facts {semantics.get('value_facts')!r}")
         saved = dp.ProfileReport.from_dict(report.to_dict())
         for name, want in EXPECTED.items():

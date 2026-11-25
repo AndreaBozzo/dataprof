@@ -1159,6 +1159,42 @@ impl ReportSide {
         }
     }
 
+    /// Whether `value_facts` step 3 (exact accuracy range/sign rules) may move
+    /// the score of `dimension` (or the overall score for `None`) on this side
+    /// (#788 step 3). A side recording
+    /// `every_value_consistency_precision_accuracy_rules` already counted
+    /// accuracy rules over every value; an older side (0.14, step 1 or step 2)
+    /// can move whenever accuracy was computed over a retained sample and at
+    /// least one column may be under a range or sign rule.
+    pub(crate) fn may_sample_accuracy_rules(&self, dimension: Option<QualityDimension>) -> bool {
+        let exact = self
+            .metric_semantics
+            .as_ref()
+            .and_then(|semantics| semantics.value_facts)
+            .is_some_and(ValueFacts::has_exact_accuracy_rules);
+        if exact {
+            return false;
+        }
+        let sampled = match dimension {
+            Some(QualityDimension::Accuracy) | None => !self
+                .sample_evidence(Some(QualityDimension::Accuracy))
+                .is_complete(),
+            Some(_) => false,
+        };
+        if !sampled {
+            return false;
+        }
+        let has_positive_hint = self
+            .semantic_hints
+            .as_ref()
+            .is_none_or(|hints| !hints.positive_columns.is_empty());
+        has_positive_hint
+            || self
+                .columns
+                .iter()
+                .any(|column| dataprof_metrics::is_accuracy_ruled_column(&column.name))
+    }
+
     /// Which columns the side profiled, or `None` when it did not record it.
     pub(crate) fn column_selection(&self) -> Option<&ColumnSelection> {
         self.column_selection.as_ref()
