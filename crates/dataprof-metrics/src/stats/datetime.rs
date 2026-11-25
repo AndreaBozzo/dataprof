@@ -792,7 +792,7 @@ pub(crate) fn parse_local_date_or_datetime(s: &str) -> Option<(NaiveDate, Option
 }
 
 /// Parse a date value using the same reading as [`DateTimeAccumulator`]
-/// (`s.trim()`, [`may_parse_as_date`], [`parse_flexible_full`]), honoring
+/// (`s.trim()`, `may_parse_as_date`, `parse_flexible_full`), honoring
 /// `order` for ambiguous slash dates (#788 step 4).
 pub fn parse_date_value(s: &str, order: Option<SlashDateOrder>) -> Option<NaiveDate> {
     let trimmed = s.trim();
