@@ -4,8 +4,8 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{Field, Schema};
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
-    FileFormat, IsoQualityConfig, Locale, MetricPack, PeakMemorySampler, QualityDimension,
-    SemanticHints, TruncationReason, char_len,
+    FileFormat, IsoQualityConfig, LexicalClass, Locale, MetricPack, PeakMemorySampler,
+    QualityDimension, SemanticHints, TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::is_null_like_token;
@@ -855,10 +855,12 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: &str) {
+    /// Returns the value's class from the tally, for the fingerprint.
+    fn offer_sample(&mut self, value: &str) -> Option<LexicalClass> {
         self.dates.update(value);
-        self.lexical.record(value);
+        let class = self.lexical.record(value);
         self.sample_values.offer(value);
+        class
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
@@ -887,7 +889,6 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
-                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // CSV cells always arrive as strings. Keep exact aggregates
                 // over every finite number, independent of the sample.
@@ -901,7 +902,8 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value);
 
-                self.offer_sample(value);
+                let class = self.offer_sample(value);
+                self.fingerprint.update_classified_text(value, class);
             }
         }
     }

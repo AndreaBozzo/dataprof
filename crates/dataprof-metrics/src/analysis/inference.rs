@@ -295,10 +295,14 @@ impl LexicalTally {
 
     /// Count one value. Surrounding whitespace is ignored, and a null-like
     /// value is not counted: it is absence, not a lexical form.
-    pub fn record(&mut self, value: &str) {
+    ///
+    /// Returns the value's class, or `None` for a null-like value, so a caller
+    /// that also fingerprints the value does not classify it a second time
+    /// ([`ColumnFingerprint::update_classified_text`](crate::stats::canonical_value::ColumnFingerprint::update_classified_text)).
+    pub fn record(&mut self, value: &str) -> Option<LexicalClass> {
         let trimmed = value.trim();
         if is_null_like_token(trimmed) {
-            return;
+            return None;
         }
         let Classified {
             class,
@@ -377,6 +381,7 @@ impl LexicalTally {
                 }
             }
         }
+        Some(class)
     }
 
     /// Add the counts of a part of the same column read separately.
@@ -609,6 +614,13 @@ fn digit_code_rule(numeric: usize, zero_padded: usize, compact_dates: usize) -> 
     let codes = zero_padded > 0
         && zero_padded.saturating_mul(100) >= numeric.saturating_mul(ZERO_PADDED_CODE_PERCENT);
     codes || (numeric > 0 && compact_dates == numeric)
+}
+
+/// Whether one numeric token is a digit code on its own: exactly what
+/// `holds_digit_codes([value])` decides for a value already known numeric,
+/// without parsing it again.
+pub(crate) fn is_digit_code_token(value: &str) -> bool {
+    is_zero_padded_digits(value) || is_compact_date_token(value)
 }
 
 /// `0` followed by one or more ASCII digits, and nothing else.

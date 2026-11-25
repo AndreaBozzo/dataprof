@@ -326,13 +326,14 @@ impl StreamingStatistics {
             return None;
         }
 
-        self.fingerprint.update_text(value);
         self.distinct.insert(value);
         self.sampler.offer(value);
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
         self.text_length_tracker.update(char_len(value));
         let parsed_date = self.dates.update_returning_date(value);
-        self.lexical.record(value);
+        // The tally classifies the value once; the fingerprint reuses it.
+        let class = self.lexical.record(value);
+        self.fingerprint.update_classified_text(value, class);
 
         if let Some(number) = ParsedNumber::parse(value) {
             self.welford.update_number(number);

@@ -267,10 +267,10 @@ pub fn profile_columns(
             let mut date_acc = DateTimeAccumulator::with_timeliness_window(timeliness_window);
             let mut fingerprint = ColumnFingerprint::default();
             for value in &present {
-                lexical.record(value);
+                let class = lexical.record(value);
                 date_acc.update(value);
                 if analyzed_containers == 0 {
-                    fingerprint.update_text(value);
+                    fingerprint.update_classified_text(value, class);
                 }
             }
 
