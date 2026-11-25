@@ -609,8 +609,10 @@ impl<'a> TimelinessCalculator<'a> {
         let mut invalid_dates = 0usize;
 
         for column_name in temporal_columns {
+            // A temporal column the engine did not tally would drop its dates
+            // from every count: fall back to the sample instead.
             let Some(acc) = tallies.columns.get(column_name) else {
-                continue;
+                return Ok(None);
             };
             let Some(summary) = acc.timeliness_summary(window) else {
                 return Ok(None);
@@ -648,11 +650,16 @@ impl<'a> TimelinessCalculator<'a> {
                     .get(end_name)
                     .and_then(DateTimeAccumulator::slash_order),
             );
-            let counts = tallies
+            // A pair the tracker did not follow (past `LONE_PAIR_CARTESIAN_CAP`)
+            // has no row counts: fall back to the sample rather than report
+            // it compared over zero rows.
+            let Some(counts) = tallies
                 .pairs
                 .get(&(start_name.to_string(), end_name.to_string()))
                 .copied()
-                .unwrap_or_default();
+            else {
+                return Ok(None);
+            };
             pairs_checked += counts.pairs_checked;
             violations += counts.violations_for(start_mf, end_mf);
             compared_pairs.push((start_name.to_string(), end_name.to_string()));

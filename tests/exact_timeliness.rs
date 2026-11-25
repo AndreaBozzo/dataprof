@@ -515,6 +515,51 @@ fn issue_1422_timeliness_is_exact_on_every_route() {
 }
 
 #[test]
+fn a_lone_pair_in_a_wide_table_is_never_reported_with_zero_rows() {
+    // 17 `start_*` and 16 `end_*` names exceed the tracker's 256 cross-product
+    // cap, so the unrelated `start_a` / `end_b` pair is not tracked row by
+    // row. Only those two columns hold dates, so the calculator still selects
+    // them as the lone pair: the report must count its rows, not list it as
+    // compared with nothing checked.
+    let starts: Vec<String> = ('a'..='q').map(|c| format!("start_{c}")).collect();
+    let ends: Vec<String> = ('b'..='q').map(|c| format!("end_{c}x")).collect();
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(file, "{},{}", starts.join(","), ends.join(",")).unwrap();
+    for row in 0..20 {
+        let (start, end) = if row < 5 {
+            ("2024-03-10", "2024-03-01")
+        } else {
+            ("2024-03-01", "2024-03-10")
+        };
+        let mut cells = vec![start.to_string()];
+        cells.extend(std::iter::repeat_n("x".to_string(), starts.len() - 1));
+        cells.push(end.to_string());
+        cells.extend(std::iter::repeat_n("x".to_string(), ends.len() - 1));
+        writeln!(file, "{}", cells.join(",")).unwrap();
+    }
+    file.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .reference_date(day(REFERENCE))
+        .analyze_file(file.path())
+        .unwrap();
+    let t = report
+        .quality
+        .as_ref()
+        .unwrap()
+        .metrics
+        .timeliness
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        (t.temporal_pairs_checked, t.temporal_violations),
+        (20, 5),
+        "{t:?}"
+    );
+}
+
+#[test]
 fn truncated_csv_reports_exact_timeliness_for_read_rows_only() {
     let mut file = NamedTempFile::with_suffix(".csv").unwrap();
     writeln!(file, "start_date,end_date").unwrap();
