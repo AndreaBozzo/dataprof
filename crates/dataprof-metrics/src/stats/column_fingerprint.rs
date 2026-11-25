@@ -1,11 +1,11 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
-use dataprof_core::SlashDateOrder;
+use dataprof_core::{LexicalClass, SlashDateOrder};
 use twox_hash::XxHash3_128;
 
 use super::super::datetime::resolve_slash_order;
 use super::{
     CellFingerprint, CellText, DATE, DECIMAL, FLOAT, NAIVE, NULL_TAG, TEXT, WIDE_DECIMAL,
-    WideDecimal, date_bytes, encode_float, encode_text, timestamp,
+    WideDecimal, date_bytes, encode_classified_text, encode_float, encode_text, timestamp,
 };
 
 /// The canonical multiset of a column's scalar values. Nulls are added from
@@ -24,12 +24,22 @@ pub struct ColumnFingerprint {
 
 impl ColumnFingerprint {
     pub fn update_text(&mut self, value: &str) {
-        self.update_text_value(value, false);
+        self.update_text_value(value, None, false);
+    }
+
+    /// [`Self::update_text`] for a value the caller has already classified
+    /// with `LexicalTally::record`, which returns `None` for a null-like
+    /// value. Encodes the same bytes without classifying the value again.
+    pub fn update_classified_text(&mut self, value: &str, class: Option<LexicalClass>) {
+        match class {
+            Some(class) => self.update_text_value(value, Some(class), false),
+            None => self.update_text(value),
+        }
     }
 
     /// A known decimal cannot fall back to a binary float's representation.
     pub fn update_decimal_text(&mut self, value: &str) {
-        self.update_text_value(value, true);
+        self.update_text_value(value, None, true);
     }
 
     /// Encode a floating-point value at the precision used by the profiler.
@@ -41,12 +51,20 @@ impl ColumnFingerprint {
         }
     }
 
-    fn update_text_value(&mut self, value: &str, declared_decimal: bool) {
+    fn update_text_value(
+        &mut self,
+        value: &str,
+        class: Option<LexicalClass>,
+        declared_decimal: bool,
+    ) {
         if self.unavailable {
             return;
         }
         self.encoded.clear();
-        encode_text(Some(value), &mut self.encoded);
+        match class {
+            Some(class) => encode_classified_text(value, class, &mut self.encoded),
+            None => encode_text(Some(value), &mut self.encoded),
+        }
         let tag = self.encoded[0];
         // A float writer may use %.17g instead of the shortest spelling
         // (#783, #1182). Reuse the binary float encoder for that same value.

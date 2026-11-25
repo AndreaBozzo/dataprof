@@ -19,7 +19,7 @@ use dataprof_core::{LexicalClass, is_null_like_token};
 use twox_hash::XxHash3_128;
 
 use super::{ExactDecimal, datetime::parse_local_date_or_datetime};
-use crate::analysis::inference::{holds_digit_codes, lexical_class, parse_strict_boolean_token};
+use crate::analysis::inference::{is_digit_code_token, lexical_class, parse_strict_boolean_token};
 
 #[path = "column_fingerprint.rs"]
 mod column_fingerprint;
@@ -50,9 +50,16 @@ pub fn encode_text(value: Option<&str>, output: &mut Vec<u8>) {
         output.push(NULL_TAG);
         return;
     };
+    encode_classified_text(raw, lexical_class(raw.trim()), output);
+}
+
+/// [`encode_text`] for a non-null value whose [`LexicalClass`] the caller
+/// already has, from `lexical_class(raw.trim())` or `LexicalTally::record`.
+/// Skips classifying the value a second time on routes that tally it.
+pub(crate) fn encode_classified_text(raw: &str, class: LexicalClass, output: &mut Vec<u8>) {
     let value = raw.trim();
-    match lexical_class(value) {
-        LexicalClass::Numeric if !holds_digit_codes([value]) => encode_number(value, output),
+    match class {
+        LexicalClass::Numeric if !is_digit_code_token(value) => encode_number(value, output),
         LexicalClass::Boolean => {
             let boolean = parse_strict_boolean_token(value).expect("classified as boolean");
             output.extend_from_slice(&[BOOLEAN, u8::from(boolean)]);

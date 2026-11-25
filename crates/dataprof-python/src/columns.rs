@@ -246,9 +246,9 @@ pub fn profile_columns(
             let mut lexical = LexicalTally::new();
             let mut fingerprint = ColumnFingerprint::default();
             for value in &present {
-                lexical.record(value);
+                let class = lexical.record(value);
                 if analyzed_containers == 0 {
-                    fingerprint.update_text(value);
+                    fingerprint.update_classified_text(value, class);
                 }
             }
 

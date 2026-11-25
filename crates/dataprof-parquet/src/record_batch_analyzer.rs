@@ -5,8 +5,8 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataType, Locale, NativeType, SemanticHintBinding,
-    SemanticHints, char_len,
+    AnalysisOptions, ColumnProfile, DataType, LexicalClass, Locale, NativeType,
+    SemanticHintBinding, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
@@ -1084,14 +1084,17 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn offer_sample(&mut self, value: &str) {
+    /// Returns the value's class from the tally, for the fingerprint of a
+    /// string column.
+    fn offer_sample(&mut self, value: &str) -> Option<LexicalClass> {
         // Every rendering the sample is offered, so the tally classifies the
         // values the sample would hold if it held them all.
-        self.lexical.record(value);
+        let class = self.lexical.record(value);
         if !is_null_like_token(value.trim()) && self.should_track_date_matches() {
             self.dates.update(value);
         }
         self.sample_values.offer(value);
+        class
     }
 
     /// Whether this column's text rendering is an *encoding* of its values
@@ -1490,7 +1493,6 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
-                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // Utf8 columns often carry numeric content (the Arrow CSV
                 // reader may deliver strings): keep the exact accumulators
@@ -1501,7 +1503,8 @@ impl ColumnAnalyzer {
                     self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value);
+                let class = self.offer_sample(value);
+                self.fingerprint.update_classified_text(value, class);
             }
         }
         Ok(())
@@ -1515,7 +1518,6 @@ impl ColumnAnalyzer {
                     self.null_count += 1;
                     continue;
                 }
-                self.fingerprint.update_text(value);
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
@@ -1523,7 +1525,8 @@ impl ColumnAnalyzer {
                     self.numeric.update_number(number);
                 }
                 self.cardinality.insert(value);
-                self.offer_sample(value);
+                let class = self.offer_sample(value);
+                self.fingerprint.update_classified_text(value, class);
             }
         }
         Ok(())
