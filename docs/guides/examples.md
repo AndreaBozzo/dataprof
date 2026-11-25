@@ -547,6 +547,62 @@ python -m dataprof.check order_lines.csv --unique-key order_id,line_no
 The [Rust gate example](../../examples/etl_quality_gate.rs) shows the same
 flow with `QualityPolicy::unique_keys` and `Profiler::unique_keys_from_policy`.
 
+### Gate a training set before a training run
+
+A training set fails in the same ways as any other load: a missing label, a
+repeated example, a stale extract. One more failure is specific to models:
+a feature recorded after the label it predicts. The rules below catch all of
+them with the gate you already use for pipelines.
+
+```python
+import dataprof as dp
+
+key = ["user_id", "event_date"]
+report = dp.profile(
+    "train.csv",
+    unique_keys=[key],
+    temporal_pairs=[("feature_time", "label_time")],
+)
+result = report.check(
+    min_rows=1,
+    max_null_count={"user_id": 0, "event_date": 0, "label": 0},
+    max_duplicate_rows=0,
+    unique_columns=[key],
+    forbid_findings=["temporal_order_violations"],
+)
+print(result.verdict)
+for check in result.violations:
+    print(check.code, check.message)
+```
+
+`temporal_pairs` declares that `feature_time` must not fall after
+`label_time` in the same row; a row where it does raises the
+`temporal_order_violations` finding, and `forbid_findings` turns that into a
+failure. `unique_columns=[key]` fails on any repeated `(user_id, event_date)`
+pair. To catch a set that shrank or lost a column since the last accepted run,
+add the baseline rules from
+[checkpoint and volume changes](#checkpoint-and-volume-changes).
+
+A training set and its test set must not share examples. Check each set on
+its own first, then profile the union of their key columns: a repeat in the
+union is then a key that occurs in both.
+
+```python
+import pandas as pd
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test.csv")
+both = pd.concat([train[key], test[key]], ignore_index=True)
+overlap = dp.profile(both, unique_keys=[key]).check(unique_columns=[key])
+print(overlap.verdict)
+for check in overlap.violations:
+    print(check.key["repeats"]["sample_repeated_keys"])
+```
+
+This loads both key columns into memory. A check that compares two sources
+without the union is tracked in
+[issue 1417](https://github.com/AndreaBozzo/dataprof/issues/1417).
+
 ### Inspect schema drift and declared decimals
 
 `forbid_removed_columns=True` rejects a removed column against a baseline.
