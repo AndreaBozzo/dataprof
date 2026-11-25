@@ -658,11 +658,19 @@ def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
         "test would compare unmasked timings"
     )
 
-    # The same run as one that took under a millisecond, which this machine may never
-    # produce on its own.
-    unmeasured = re.sub(r'\n\s*"throughput_rows_sec": [^,\n}]+,?', "", documents[0])
-    assert unmeasured != documents[0], "the throughput field was not found"
+    # The same run with and without a measured throughput, whichever this machine
+    # produced: a fast runner omits the field on every run, a slow one never does.
+    throughput = re.compile(r'\n\s*"throughput_rows_sec": [^,\n}]+,?')
+    anchor = '"source_exhausted": true,'
+    assert anchor in documents[0], "the execution block changed shape"
+    measured = (
+        documents[0]
+        if throughput.search(documents[0])
+        else documents[0].replace(anchor, f'{anchor}\n    "throughput_rows_sec": 1234.5,', 1)
+    )
+    unmeasured = throughput.sub("", measured)
+    assert unmeasured != measured
 
-    rendered = {volatile.sub("", document) for document in [*documents, unmeasured]}
+    rendered = {volatile.sub("", document) for document in [*documents, measured, unmeasured]}
 
     assert len(rendered) == 1, f"to_json() rendered {len(rendered)} different documents"
