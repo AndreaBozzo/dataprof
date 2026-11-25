@@ -331,11 +331,11 @@ pub async fn analyze_database_with_options(
     }
     if !aligned.is_empty() {
         let container_rows: Vec<&[usize]> = columns.container_rows().collect();
-        let key_columns: Vec<_> = columns.names().zip(columns.type_names()).collect();
+        let names: Vec<_> = columns.names().collect();
         for row_index in 0..actual_rows_processed {
             let mut signature = RowSignature::default();
             for (index, (cells, containers)) in aligned.iter().zip(&container_rows).enumerate() {
-                let (name, type_name) = key_columns[index];
+                let name = names[index];
                 let value = &cells[row_index];
                 // Ascending by construction: rows are pushed in order.
                 if containers.binary_search(&row_index).is_ok() {
@@ -344,11 +344,7 @@ pub async fn analyze_database_with_options(
                 } else {
                     signature.push_field(value);
                     if key_tracker.is_enabled() {
-                        if type_name == Some("TIMESTAMPTZ") {
-                            key_tracker.utc_timestamp_field(name, value);
-                        } else {
-                            key_tracker.text_field(name, Some(value));
-                        }
+                        key_tracker.text_field(name, Some(value));
                     }
                 }
             }

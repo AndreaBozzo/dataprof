@@ -422,6 +422,121 @@ mod postgres_tests {
         }
     }
 
+    #[cfg(feature = "parquet")]
+    #[tokio::test]
+    async fn postgres_timestamptz_matches_zoned_arrow_and_csv() {
+        use std::{io::Write as _, sync::Arc};
+
+        use arrow::{array::TimestampMicrosecondArray, record_batch::RecordBatch};
+        use chrono::{DateTime, NaiveDate};
+        use dataprof::{AnalysisOptions, QualityPolicy, Verdict};
+        use parquet::arrow::ArrowWriter;
+        use serde_json::{json, to_value};
+
+        let Some(url) = postgres_url() else {
+            return;
+        };
+        let options = AnalysisOptions::default()
+            .with_reference_date(NaiveDate::from_ymd_opt(2024, 1, 3))
+            .with_unique_keys(vec![vec!["published_at".into()]]);
+        let postgres = dataprof::analyze_database_with_options(
+            postgres_config(&url),
+            "SELECT published_at FROM (VALUES
+                (1, TIMESTAMPTZ '2024-01-02 01:45:00.123456+02'),
+                (2, TIMESTAMPTZ '2024-01-01 18:45:00.123456-05'),
+                (3, TIMESTAMPTZ '2024-01-02 12:00:00+00'),
+                (4, NULL)
+            ) AS timestamps(position, published_at) ORDER BY position",
+            &options,
+        )
+        .await
+        .unwrap();
+
+        let first = "2024-01-01T23:45:00.123456Z";
+        let last = "2024-01-02T12:00:00Z";
+        let mut csv_file = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+        writeln!(csv_file, "published_at\n{first}\n{first}\n{last}\nNULL").unwrap();
+        csv_file.flush().unwrap();
+        let csv =
+            dataprof::analyze_csv_file_with_options(csv_file.path(), &Default::default(), &options)
+                .unwrap();
+
+        let timestamps = [Some(first), Some(first), Some(last), None].map(|value| {
+            value.map(|value| {
+                DateTime::parse_from_rfc3339(value)
+                    .unwrap()
+                    .timestamp_micros()
+            })
+        });
+        let array = TimestampMicrosecondArray::from(timestamps.to_vec()).with_timezone("UTC");
+        let batch = RecordBatch::try_from_iter([("published_at", Arc::new(array) as _)]).unwrap();
+        let mut bytes = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut bytes, batch.schema(), None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+        let arrow = dataprof_parquet::analyze_parquet_bytes_with_options(
+            bytes.into(),
+            "timestamps.parquet",
+            &Default::default(),
+            &options,
+        )
+        .unwrap();
+
+        let policy = QualityPolicy::new().max_date_age("published_at", 1);
+        let postgres_gate = policy.evaluate(&postgres).unwrap();
+        assert_eq!(postgres_gate.verdict, Verdict::Pass);
+        let postgres_findings = to_value(postgres.findings().findings).unwrap();
+        let postgres = to_value(&postgres).unwrap();
+        let mut postgres_column = postgres["column_profiles"][0].clone();
+        assert_eq!(postgres_column["native_type"]["name"], "TIMESTAMPTZ");
+        assert_eq!(
+            postgres_column["stats"]["DateTime"]["min_datetime"],
+            "2024-01-01"
+        );
+        assert_eq!(
+            postgres_column["stats"]["DateTime"]["max_datetime"],
+            "2024-01-02"
+        );
+        assert_eq!(
+            postgres["quality"]["metrics"]["timeliness"]["date_values_checked"],
+            3
+        );
+        assert_eq!(
+            postgres["composite_keys"][0]["sample_repeated_keys"],
+            json!([[first]])
+        );
+        // The declared type identifies the source's type system.
+        postgres_column
+            .as_object_mut()
+            .unwrap()
+            .remove("native_type");
+        for (route, report) in [("CSV", csv), ("Arrow via Parquet", arrow)] {
+            let gate = policy.evaluate(&report).unwrap();
+            assert_eq!(
+                to_value(gate.checks).unwrap(),
+                to_value(&postgres_gate.checks).unwrap(),
+                "{route} date age"
+            );
+            assert_eq!(
+                to_value(report.findings().findings).unwrap(),
+                postgres_findings,
+                "{route} findings"
+            );
+            let document = to_value(report).unwrap();
+            let mut actual_column = document["column_profiles"][0].clone();
+            actual_column.as_object_mut().unwrap().remove("native_type");
+            assert_eq!(actual_column, postgres_column, "{route} column profile");
+            assert_eq!(
+                document["composite_keys"], postgres["composite_keys"],
+                "{route} composite keys"
+            );
+            assert_eq!(
+                document["quality"]["metrics"], postgres["quality"]["metrics"],
+                "{route} quality metrics"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_postgres_connect() {
         let Some(url) = postgres_url() else {

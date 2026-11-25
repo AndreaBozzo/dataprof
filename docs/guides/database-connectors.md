@@ -28,12 +28,11 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 > they get a binary column type (#645). Profile an exported CSV or Parquet file
 > if you need statistics for one.
 >
-> Timestamps render in dataprof's naive ISO form (`YYYY-MM-DDTHH:MM:SS`) rather
-> than RFC 3339. A `TIMESTAMPTZ` is converted to UTC and its offset dropped: the
-> instant survives, the marker saying it is UTC does not. Since 0.12 the date
-> grammar accepts a trailing offset too, but the two renderings profile
-> identically — dataprof normalizes an offset-bearing value to UTC before any
-> statistic reads it — so the connectors keep converting here.
+> PostgreSQL `TIMESTAMPTZ` renders in UTC with a trailing `Z`, for example
+> `2024-01-15T10:30:00.123456Z`. PostgreSQL `TIMESTAMP` and MySQL `TIMESTAMP`
+> and `DATETIME` use the naive ISO form (`YYYY-MM-DDTHH:MM:SS` with optional
+> fractional seconds). Date statistics use the UTC date of an offset-bearing
+> timestamp.
 > `NUMERIC`/`DECIMAL` keeps the exact digits the database stored rather than
 > routing through `f64`.
 

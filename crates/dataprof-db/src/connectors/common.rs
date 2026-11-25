@@ -72,16 +72,9 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// `Type<Postgres>`) and `BigDecimal` (PostgreSQL and MySQL, no `Type<Sqlite>`
 /// because SQLite has no decimal type).
 ///
-/// Temporal values render in the naive ISO form `YYYY-MM-DD` /
-/// `YYYY-MM-DDTHH:MM:SS`. `TIMESTAMPTZ` is converted to UTC and its offset
-/// dropped; the instant survives, the "this is UTC" marker does not.
-///
-/// The grammar now accepts a trailing `Z` or `±HH:MM` (#643), so this is no
-/// longer forced. It stays because it is numerically indistinguishable from the
-/// alternative: dataprof normalizes an offset-bearing value to UTC before any
-/// statistic reads it, so `...T10:30:00` and `...T10:30:00+00:00` produce the
-/// same profile. Rendering the offset would buy fidelity in the raw sample
-/// values and nothing in the numbers.
+/// PostgreSQL `TIMESTAMPTZ` renders as a UTC instant with a trailing `Z`,
+/// matching Arrow's UTC timestamp spelling. Other temporal renderings keep
+/// their existing forms, including naive ISO text for PostgreSQL `TIMESTAMP`.
 ///
 /// The last arm is [`DecodeStructured`]: JSON, array and PostgreSQL enum types,
 /// which each backend decodes its own way (#766, #952). It yields the only
@@ -136,7 +129,15 @@ macro_rules! db_column_to_string {
                 index,
             )
         {
-            v.map(|x| $crate::render_naive_datetime(x.naive_utc()))
+            let column = ::sqlx::Row::column(row, index);
+            let type_name = ::sqlx::TypeInfo::name(::sqlx::Column::type_info(column));
+            v.map(|x| {
+                let mut text = $crate::render_naive_datetime(x.naive_utc());
+                if type_name == "TIMESTAMPTZ" {
+                    text.push('Z');
+                }
+                text
+            })
         } else if let Ok(v) =
             row.try_get::<Option<::sqlx::types::chrono::NaiveDateTime>, _>(index)
         {
