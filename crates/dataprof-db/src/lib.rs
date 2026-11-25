@@ -322,6 +322,13 @@ pub async fn analyze_database_with_options(
     let mut uniqueness =
         RowUniquenessTracker::with_exact_limit(options.duplicate_rows_exact_limit());
     let mut key_tracker = dataprof_runtime::CompositeKeyTracker::new(options);
+    // Binary values still read as null (#645), so a key over them would skip
+    // or merge rows that differ.
+    for (name, type_name) in columns.names().zip(columns.type_names()) {
+        if type_name.is_some_and(is_binary_type) {
+            key_tracker.unsupported_field(name);
+        }
+    }
     if !aligned.is_empty() {
         let container_rows: Vec<&[usize]> = columns.container_rows().collect();
         let key_columns: Vec<_> = columns.names().zip(columns.type_names()).collect();

@@ -173,6 +173,27 @@ fn composite_keys_agree_over_whole_rows() {
                 &options,
             ),
         ));
+
+        // The same amounts as a string column keep their two spellings.
+        let ids = StringArray::from_iter_values(rows.iter().map(|(id, _, _)| id));
+        let countries =
+            StringArray::from_iter(rows.iter().map(|(_, country, _)| country.as_deref()));
+        let amounts = StringArray::from_iter(rows.iter().map(|(_, _, amount)| *amount));
+        let batch = RecordBatch::try_from_iter([
+            ("id", Arc::new(ids) as ArrayRef),
+            ("country", Arc::new(countries) as ArrayRef),
+            ("amount", Arc::new(amounts) as ArrayRef),
+        ])
+        .unwrap();
+        let mut parquet_data = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut parquet_data, batch.schema(), None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+        let path = file(".parquet", &parquet_data);
+        reports.push((
+            "Parquet string amounts",
+            profiler().analyze_file(path.path()),
+        ));
     }
 
     #[cfg(feature = "async-streaming")]
@@ -272,6 +293,49 @@ fn composite_keys_agree_over_whole_rows() {
         }
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn database_binary_key_columns_are_rejected() {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let db = file(".sqlite", b"");
+    let path = db.path().display().to_string();
+    let runtime = runtime();
+    runtime.block_on(async {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite://{path}"))
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE blobs (id TEXT, payload BLOB)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, payload) in [("a", &b"\x01"[..]), ("a", &b"\x02"[..])] {
+            sqlx::query("INSERT INTO blobs VALUES (?, ?)")
+                .bind(id)
+                .bind(payload)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+    });
+    let profiler = Profiler::new()
+        .unique_keys(vec![vec!["id".into(), "payload".into()]])
+        .database(dataprof::DatabaseConfig {
+            connection_string: path,
+            load_credentials_from_env: false,
+            ..Default::default()
+        });
+    // Both payloads read as null, so ("a", 0x01) and ("a", 0x02) would count
+    // as one repeated key.
+    let error = runtime
+        .block_on(profiler.analyze_query("SELECT * FROM blobs"))
+        .unwrap_err();
+    assert!(error.to_string().contains("payload"), "{error}");
 }
 
 #[cfg(any(feature = "async-streaming", feature = "sqlite"))]
