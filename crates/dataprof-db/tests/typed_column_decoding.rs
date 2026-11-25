@@ -46,7 +46,7 @@ mod postgres {
         )";
 
     const ROWS: &str = "INSERT INTO typed_decoding_pg VALUES
-            (1, '2024-01-15 10:30:00', '2024-01-15 10:30:00+00', '2024-01-15',
+            (1, '2024-01-15 10:30:00', '2024-01-15 12:30:00.123456+02', '2024-01-15',
              '10:30:00', 1234.5678, '11111111-2222-3333-4444-555555555555'),
             (2, NULL, NULL, NULL, NULL, NULL, NULL)";
 
@@ -102,13 +102,37 @@ mod postgres {
             return;
         };
 
-        // Naive ISO, not RFC 3339. Since #643 the grammar would accept the
-        // offset too, and an offset-bearing value is normalized to UTC before
-        // any statistic reads it — so the two renderings profile identically
-        // and the connectors keep converting to UTC here instead.
         assert_eq!(column(columns, "ts"), ["2024-01-15T10:30:00", ""]);
-        assert_eq!(column(columns, "tstz"), ["2024-01-15T10:30:00", ""]);
+        assert_eq!(column(columns, "tstz"), ["2024-01-15T10:30:00.123456Z", ""]);
         assert_eq!(column(columns, "d"), ["2024-01-15", ""]);
+    }
+
+    #[tokio::test]
+    async fn timestamptz_date_statistics_keep_extended_years() {
+        let Ok(url) = std::env::var("POSTGRES_TEST_URL") else {
+            return;
+        };
+        let report = dataprof_db::analyze_database(
+            dataprof_db::DatabaseConfig {
+                connection_string: url,
+                load_credentials_from_env: false,
+                ..Default::default()
+            },
+            "SELECT ts FROM (VALUES
+                (TIMESTAMPTZ '2024-01-01 00:00:00+00'),
+                (TIMESTAMPTZ '2024-01-02 00:00:00+00'),
+                (TIMESTAMPTZ '2024-01-03 00:00:00+00'),
+                (TIMESTAMPTZ '10000-01-01 00:00:00+00')
+            ) AS timestamps(ts)",
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let dataprof_core::ColumnStats::DateTime(stats) = &report.column_profiles[0].stats else {
+            panic!("expected datetime statistics");
+        };
+        assert_eq!(stats.max_datetime, "+10000-01-01");
     }
 
     #[tokio::test]
@@ -173,6 +197,10 @@ mod postgres {
 
         assert_eq!(column(&columns, "amount"), ["1234.5678", ""]);
         assert_eq!(column(&columns, "ts"), ["2024-01-15T10:30:00", ""]);
+        assert_eq!(
+            column(&columns, "tstz"),
+            ["2024-01-15T10:30:00.123456Z", ""]
+        );
         assert_eq!(
             column(&columns, "uid"),
             ["11111111-2222-3333-4444-555555555555", ""]

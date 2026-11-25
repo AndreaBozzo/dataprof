@@ -9,7 +9,7 @@ use twox_hash::XxHash3_128;
 
 #[cfg(feature = "arrow")]
 use super::canonical_value::encode_arrow;
-use super::canonical_value::{NULL_TAG, encode_text, encode_utc_timestamp_text, sample_value};
+use super::canonical_value::{NULL_TAG, encode_text, sample_value};
 
 const SAMPLE_LIMIT: usize = 5;
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -106,14 +106,6 @@ impl CompositeKeyTracker {
         if let Some(&index) = self.fields.get(name) {
             self.values[index].clear();
             encode_text(value, &mut self.values[index]);
-        }
-    }
-
-    /// Record a declared UTC instant whose source renders without an offset.
-    pub fn utc_timestamp_field(&mut self, name: &str, value: &str) {
-        if let Some(&index) = self.fields.get(name) {
-            self.values[index].clear();
-            encode_utc_timestamp_text(value, &mut self.values[index]);
         }
     }
 

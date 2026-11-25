@@ -81,14 +81,6 @@ pub fn encode_text(value: Option<&str>, output: &mut Vec<u8>) {
     }
 }
 
-pub(crate) fn encode_utc_timestamp_text(value: &str, output: &mut Vec<u8>) {
-    let start = output.len();
-    encode_text(Some(value), output);
-    if output[start] == NAIVE {
-        output[start] = ZONED;
-    }
-}
-
 #[cfg(feature = "arrow")]
 /// Whether this Arrow type has a canonical scalar encoding. Dictionary and
 /// run-end arrays can be decoded to their value type before encoding.
