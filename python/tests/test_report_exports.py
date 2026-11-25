@@ -643,20 +643,26 @@ def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
     p.write_text("name,age,salary\nAlice,30,50000\nBob,25,60000\nCarol,35,70000\n")
 
     # Report identity and the measured-duration fields may differ between runs of the same
-    # input. Everything else, values included, is expected to be reproducible.
+    # input. Everything else, values included, is expected to be reproducible. The fields are
+    # removed whole, not masked: a run under one millisecond records no throughput, so the
+    # throughput_rows_sec key itself appears in some runs and not in others.
     volatile = re.compile(
-        r'"(id|timestamp|scan_time_ms|throughput_rows_sec|memory_peak_mb)": [^,\n}]+'
-    )
-
-    assert volatile.search(dataprof.profile(str(p)).to_json()), (
-        "the mask matched nothing; the execution field names changed and this "
-        "test would compare unmasked timings"
+        r'\n\s*"(id|timestamp|scan_time_ms|throughput_rows_sec|memory_peak_mb)": [^,\n}]+,?'
     )
 
     # Five runs, not two: HashMap ordering is randomized per instance, so a
     # single pair can coincide by luck.
-    rendered = {
-        volatile.sub(r'"\1": <masked>', dataprof.profile(str(p)).to_json()) for _ in range(5)
-    }
+    documents = [dataprof.profile(str(p)).to_json() for _ in range(5)]
+    assert volatile.search(documents[0]), (
+        "the mask matched nothing; the execution field names changed and this "
+        "test would compare unmasked timings"
+    )
+
+    # The same run as one that took under a millisecond, which this machine may never
+    # produce on its own.
+    unmeasured = re.sub(r'\n\s*"throughput_rows_sec": [^,\n}]+,?', "", documents[0])
+    assert unmeasured != documents[0], "the throughput field was not found"
+
+    rendered = {volatile.sub("", document) for document in [*documents, unmeasured]}
 
     assert len(rendered) == 1, f"to_json() rendered {len(rendered)} different documents"
