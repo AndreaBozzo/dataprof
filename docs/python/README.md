@@ -606,9 +606,11 @@ config = dp.ProfilerConfig(
 )
 
 # Accepted by asyncio, database, and interop calls:
-await dp.asyncio.profile_file_async("data.csv", config=config)
+await dp.asyncio.profile_file("data.csv", config=config)
 await dp.analyze_database_async("sqlite:///app.db", "users", config=config)
-dp.interop.analyze_file("data.csv", config=config)
+
+import dataprof.interop as dp_interop
+dp_interop.analyze_file("data.csv", config=config)
 ```
 
 The synchronous `dp.profile()` and `dp.profile_file()` functions do not take a `config=` object; pass configuration options directly as keyword arguments to them.
